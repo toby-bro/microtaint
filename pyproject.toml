@@ -152,7 +152,7 @@ warn_return_any = false
 [tool.pytest.ini_options]
 filterwarnings = ["ignore::DeprecationWarning:multiprocessing.popen_fork"]
 addopts = "--cov=microtaint --cov-report=xml --cov-report=term-missing"
-testpaths = ["microtaint"]
+testpaths = ["microtaint", "tests"]
 
 [tool.coverage.run]
 omit = [
