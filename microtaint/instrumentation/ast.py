@@ -182,7 +182,7 @@ class InstructionCellExpr(Expr):
 
     def __str__(self) -> str:
         args = ', '.join(f'{k}={v}' for k, v in self.inputs.items())
-        return f'SimulateCell(instr=0x{self.instruction}, out={self.out_reg}[{self.out_bit_end}:{self.out_bit_start}], {args})'
+        return f'SimulateCell(instr=0x{self.instruction}, out={self.out_reg}[{self.out_bit_end}:{self.out_bit_start}], {args})'  # noqa: E501
 
     def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:
         raise NotImplementedError('Evaluating instruction cell expr dynamically outside emulator is not supported.')
