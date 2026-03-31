@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "microtaint"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Bit-precise taint rules generation using Ghidra's P-Code."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -179,3 +179,6 @@ exclude = [".gitignore", ".github/"]
 
 [tool.hatch.build.targets.wheel]
 exclude = [".gitignore", ".github/"]
+
+[tool.hatch.version]
+source = "vcs"
