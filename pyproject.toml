@@ -162,4 +162,5 @@ omit = [
     "*/__init__.py",
     "*/__main__.py",
     "*/stubs/*",
+    "demo.py",
 ]
