@@ -1,0 +1,157 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "microtaint"
+version = "0.1.0"
+description = "Bit-precise taint rules generation using Ghidra's P-Code."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pypcode>=3.3.3",
+]
+
+[dependency-groups]
+dev = [
+    "black>=26.3.1",
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "pytest-cov>=7.1.0",
+    "pytest-mock>=3.15.1",
+    "ruff>=0.15.8",
+    "types-setuptools>=82.0.0.20260210",
+]
+
+[tool.ruff]
+exclude = [".venv", "__pycache__", "pyproject.toml"]
+line-length = 120
+target-version = "py312"
+format.quote-style = "single"
+
+[tool.ruff.lint]
+unfixable = ["F841"]
+ignore = ["UP015", "S311", "S101", "INP001", "S501"]
+task-tags = ["TODO"]
+select = [
+    ## Here are all available rules
+    # https://beta.ruff.rs/docs/rules/
+    # Please, comment or uncomment lines but do not remove them
+
+    "F",   # Pyflakes                          https://beta.ruff.rs/docs/rules/#pyflakes-f
+    "E",   # pycodestyle - Error               https://beta.ruff.rs/docs/rules/#error-e
+    "W",   # pycodestyle - Warning             https://beta.ruff.rs/docs/rules/#warning-w
+    "C90", # mccabe                            https://beta.ruff.rs/docs/rules/#mccabe-c90
+    "I",   # isort                             https://beta.ruff.rs/docs/rules/#isort-i
+    # "N",          # pep8-naming                   x   https://beta.ruff.rs/docs/rules/#pep8-naming-n
+    # "D",          # pydocstyle                    x   https://beta.ruff.rs/docs/rules/#pydocstyle-d
+    # "UP",         # pyupgrade                     x   https://beta.ruff.rs/docs/rules/#pyupgrade-up
+    "YTT", # flake8-2020                       https://beta.ruff.rs/docs/rules/#flake8-2020-ytt
+    # "ANN",        # flake8-annotations                https://beta.ruff.rs/docs/rules/#flake8-annotations-ann
+    "S", # flake8-bandit                     https://beta.ruff.rs/docs/rules/#flake8-bandit-s
+    # "BLE",        # flake8-blind-except               https://beta.ruff.rs/docs/rules/#flake8-blind-except-ble
+    # "FBT",        # flake8-boolean-trap               https://beta.ruff.rs/docs/rules/#flake8-boolean-trap-fbt
+    "B", # flake8-bugbear                    https://beta.ruff.rs/docs/rules/#flake8-bugbear-b
+    # "A",          # flake8-builtins              x    https://beta.ruff.rs/docs/rules/#flake8-builtins-a
+    "COM", # flake8-commas                     https://beta.ruff.rs/docs/rules/#flake8-commas-com
+    "C4",  # flake8-comprehensions             https://beta.ruff.rs/docs/rules/#flake8-comprehensions-c4
+    # "DTZ",        # flake8-datetimez                  https://beta.ruff.rs/docs/rules/#flake8-datetimez-dtz
+    # "T10",        # flake8-debugger                   https://beta.ruff.rs/docs/rules/#flake8-debugger-t10
+    # "DJ",         # flake8-django                     https://beta.ruff.rs/docs/rules/#flake8-django-dj
+    # "EM",         # flake8-errmsg                     https://beta.ruff.rs/docs/rules/#flake8-errmsg-em
+    # "EXE",        # flake8-executable                 https://beta.ruff.rs/docs/rules/#flake8-executable-exe
+    "ISC", # flake8-implicit-str-concat        https://beta.ruff.rs/docs/rules/#flake8-implicit-str-concat-isc
+    "ICN", # flake8-import-conventions         https://beta.ruff.rs/docs/rules/#flake8-import-conventions-icn
+    # "G",          # flake8-logging-format             https://beta.ruff.rs/docs/rules/#flake8-logging-format-g
+    "INP", # flake8-no-pep420                  https://beta.ruff.rs/docs/rules/#flake8-no-pep420-inp
+    "PIE", # flake8-pie                        https://beta.ruff.rs/docs/rules/#flake8-pie-pie
+    # "T20", # flake8-print                      https://beta.ruff.rs/docs/rules/#flake8-print-t20
+    "PYI", # flake8-pyi                        https://beta.ruff.rs/docs/rules/#flake8-pyi-pyi
+    "PT",  # flake8-pytest-style               https://beta.ruff.rs/docs/rules/#flake8-pytest-style-pt
+    "Q",   # flake8-quotes                     https://beta.ruff.rs/docs/rules/#flake8-quotes-q
+    "RSE", # flake8-raise                      https://beta.ruff.rs/docs/rules/#flake8-raise-rse
+    "RET", # flake8-return                     https://beta.ruff.rs/docs/rules/#flake8-return-ret
+    # "SLF",        # flake8-self                       https://beta.ruff.rs/docs/rules/#flake8-self-slf
+    # "SIM",        # flake8-simplify              x    https://beta.ruff.rs/docs/rules/#flake8-simplify-sim
+    "TID", # flake8-tidy-imports               https://beta.ruff.rs/docs/rules/#flake8-tidy-imports-tid
+    # "TCH",        # flake8-type-checking              https://beta.ruff.rs/docs/rules/#flake8-type-checking-tch
+    "ARG", # flake8-unused-arguments           https://beta.ruff.rs/docs/rules/#flake8-unused-arguments-arg
+    # "PTH",        # flake8-use-pathlib           x    https://beta.ruff.rs/docs/rules/#flake8-use-pathlib-pth
+    # "ERA",        # eradicate                         https://beta.ruff.rs/docs/rules/#eradicate-era
+    # "PD",         # pandas-vet                        https://beta.ruff.rs/docs/rules/#pandas-vet-pd
+    "PGH", # pygrep-hooks                      https://beta.ruff.rs/docs/rules/#pygrep-hooks-pgh
+    # "PL",         # Pylint                       x    https://beta.ruff.rs/docs/rules/#pylint-pl
+    "PLC", # Pylint - Convention               https://beta.ruff.rs/docs/rules/#convention-plc
+    "PLE", # Pylint - Error                    https://beta.ruff.rs/docs/rules/#error-ple
+    # "PLR",        # Pylint - Refactor            x    https://beta.ruff.rs/docs/rules/#refactor-plr
+    "PLW", # Pylint - Warning                  https://beta.ruff.rs/docs/rules/#warning-plw
+    # "TRY",        # tryceratops                  x    https://beta.ruff.rs/docs/rules/#tryceratops-try
+    "NPY", # NumPy-specific rules              https://beta.ruff.rs/docs/rules/#numpy-specific-rules-npy
+    "RUF", # Ruff-specific rules               https://beta.ruff.rs/docs/rules/#ruff-specific-rules-ruf
+    # "TD002", # flake8-missing-todo-author               https://beta.ruff.rs/docs/rules/#flake8-todos-td
+    "TD004", # flake8-missing-todo-colon                https://beta.ruff.rs/docs/rules/#flake8-todos-td
+    "TD005", # flake8-missing-todo-description              https://beta.ruff.rs/docs/rules/#flake8-todos-td
+    "TD007", # flake8-missing-space-after-todo-colon        https://beta.ruff.rs/docs/rules/#flake8-todos-td
+]
+
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = [
+    "F401", # Module imported but unused
+    "F403", # 'from module import *' used; unable to detect undefined names
+]
+"*/test/*" = [
+    "INP001", # is part of an implicit namespace package, missing __init__.py
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "single"
+
+[tool.ruff.lint.pylint]
+max-args = 4
+max-branches = 5
+max-statements = 5
+
+[tool.ruff.lint.pycodestyle]
+max-doc-length = 160
+ignore-overlong-task-comments = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.mypy]
+python_version = "3.12"
+disallow_untyped_defs = true
+disallow_untyped_calls = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+disallow_any_generics = true
+mypy_path = ["stubs"]
+no_implicit_optional = false
+strict_equality = true
+strict = true
+show_error_codes = true
+warn_unreachable = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unused_configs = true
+namespace_packages = true
+pretty = true
+exclude = [".venv/", ".git/", "__pycache__/", "output/", "peekaboo/", "tools/"]
+
+[[tool.mypy.overrides]]
+module = ["keystone.*", "unicorn.*", "capstone.*"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["taintinduce.isa.*"]
+warn_return_any = false
+
+[tool.pytest.ini_options]
+filterwarnings = ["ignore::DeprecationWarning:multiprocessing.popen_fork"]
+addopts = "--cov=microtaint --cov-report=xml --cov-report=term-missing"
+testpaths = ["microtaint"]
