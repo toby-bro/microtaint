@@ -94,7 +94,7 @@ def extract_assignment_slices(
                         out = _get_varnode_id(s_op.output)
                     out += ' = '
 
-                op_str = f'   > {out}{s_op.opcode.name}({", ".join(inps)})'
+                op_str = f'   > {out}{s_op.opcode.name}({", ".join(inps)})'  # type: ignore[attr-defined]
                 if op_str not in matched_ops:
                     matched_ops.append(op_str)
 

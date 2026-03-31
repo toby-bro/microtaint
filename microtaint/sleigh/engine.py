@@ -78,7 +78,7 @@ def generate_static_rule(  # noqa: C901
 
     # Add branch implicits (CBRANCH, BRANCHIND, CALLIND) mapping to Program Counter (PC)
     for op in translation.ops:
-        op_name = op.opcode.name
+        op_name = op.opcode.name  # type: ignore[attr-defined]
         if op_name in ('CBRANCH', 'BRANCHIND', 'CALLIND'):
             pc_name = 'EIP' if 'X86' in arch.upper() else 'RIP' if 'AMD64' in arch.upper() else 'PC'
             pc_reg = next((r for r in state_format if r.name.upper() == pc_name), None)

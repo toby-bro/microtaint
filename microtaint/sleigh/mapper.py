@@ -60,7 +60,7 @@ def determine_category(slice_ops: list[pypcode.pypcode_native.PcodeOp]) -> Instr
     has_mapped = False
 
     for op in slice_ops:
-        op_name = op.opcode.name
+        op_name = op.opcode.name  # type: ignore[attr-defined]
 
         # If any operation in the slice relies on avalanche operations
         if op_name in AVALANCHE_OPCODES:

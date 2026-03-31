@@ -39,7 +39,7 @@ def compute_polarity(  # noqa: C901
         # If this node's output isn't part of tracking, assume D=1
         current_polarity = node_polarities.get(out_id, 1)
 
-        op_name = op.opcode.name
+        op_name = op.opcode.name  # type: ignore[attr-defined]
 
         # Mapped bitwise logic functions generally act as 1 (unless NOT is involved)
         # Arithmetic logic passes through the polarity, except subtraction
