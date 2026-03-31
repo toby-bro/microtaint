@@ -38,7 +38,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/* # Uploads the wheel and sdist to the GH Release
+          files: |
+            dist/*.whl
+            dist/*.tar.gz # Uploads the wheel and sdist to the GH Release
           generate_release_notes: true # Generate release notes based on the commit history
           draft: false
           prerelease: false
