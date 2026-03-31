@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from microtaint.classifier.categories import InstructionCategory
 from microtaint.sleigh.engine import generate_static_rule
+from microtaint.sleigh.lifter import get_context
 from microtaint.types import Architecture, Register
 
 
@@ -116,7 +118,7 @@ def test_mul_register(x86_registers: list[Register]) -> None:
 def test_branch_instruction(x86_registers: list[Register]) -> None:
     # JMP RAX -> \xff\xe0
     # Includes RIP as well
-    regs = x86_registers + [Register(name='RIP', bits=64)]
+    regs = [*x86_registers, Register(name='RIP', bits=64)]
     arch = Architecture.AMD64
     byte_string = b'\xff\xe0'
 
@@ -149,7 +151,7 @@ def test_jump_const(x86_registers: list[Register]) -> None:
     # JMP +10 -> \xeb\x0a
     arch = Architecture.AMD64
     byte_string = b'\xeb\x0a'
-    regs = x86_registers + [Register(name='RIP', bits=64)]
+    regs = [*x86_registers, Register(name='RIP', bits=64)]
     rule = generate_static_rule(arch, byte_string, regs)
     assert len(rule.assignments) == 0
 
@@ -201,7 +203,7 @@ def test_avalanche_pc(x86_registers: list[Register]) -> None:
     arch = Architecture.AMD64
     # RET -> \xc3
     byte_string = b'\xc3'
-    regs = x86_registers + [Register(name='RIP', bits=64)]
+    regs = [*x86_registers, Register(name='RIP', bits=64)]
     rule = generate_static_rule(arch, byte_string, regs)
     assigned = [a.target.name for a in rule.assignments]
     assert 'RIP' in assigned
@@ -215,6 +217,7 @@ def test_imul_avalanche(x86_registers: list[Register]) -> None:
     t = {a.target.name for a in rule.assignments}
     assert 'RAX' in t
 
+
 def test_not_polarity(x86_registers: list[Register]) -> None:
     # NOT RAX -> \x48\xf7\xd0
     arch = Architecture.AMD64
@@ -223,12 +226,11 @@ def test_not_polarity(x86_registers: list[Register]) -> None:
     rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
     assert len(rax_assignments) > 0
 
+
 def test_unsupported_arch_error() -> None:
-    from microtaint.sleigh.lifter import get_context
-    with pytest.raises(ValueError, match="Unsupported architecture"):
+    with pytest.raises(ValueError, match='Unsupported architecture'):
         get_context('XYZ')
 
-def test_unknown_category_str() -> None:
-    from microtaint.classifier.categories import InstructionCategory
-    assert str(InstructionCategory.UNKNOWN) == 'Unknown'
 
+def test_unknown_category_str() -> None:
+    assert str(InstructionCategory.UNKNOWN) == 'Unknown'
