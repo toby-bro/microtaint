@@ -1,0 +1,47 @@
+name: Publish PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    name: Build & Publish to PyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/microtaint
+    permissions:
+      id-token: write # MANDATORY for Trusted Publishing OIDC
+      contents: write # Need write access to publish the GH Release
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # for automatic changelog generation
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Build with uv
+        run: uv build
+
+      # Check that basic features work and we didn't miss to include crucial files
+      - name: Smoke test (wheel)
+        run: uv run --isolated --no-project --with dist/*.whl python tests/smoke_test.py
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/* # Uploads the wheel and sdist to the GH Release
+          generate_release_notes: true # Generate release notes based on the commit history
+          draft: false
+          prerelease: false
+
+      - name: Publish to PyPI
+        run: uv publish
