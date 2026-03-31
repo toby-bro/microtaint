@@ -20,16 +20,20 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Install the project
+        id: install
         run: uv sync --locked --all-extras --dev
 
       - name: Lint with Ruff
+        if: always() && steps.install.outcome == 'success'
         run: |
           uv run ruff check .
 
       - name: Type Check with Mypy
+        if: always() && steps.install.outcome == 'success'
         run: |
           uv run mypy .
 
       - name: Test with pytest
+        if: always() && steps.install.outcome == 'success'
         run: |
           uv run pytest
