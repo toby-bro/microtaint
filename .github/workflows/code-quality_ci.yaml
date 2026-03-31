@@ -28,7 +28,7 @@ jobs:
 
       - name: Type Check with Mypy
         run: |
-          uv run mypy pcode_taint
+          uv run mypy .
 
       - name: Test with pytest
         run: |
