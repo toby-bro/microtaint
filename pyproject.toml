@@ -19,6 +19,7 @@ classifiers = [
     "Operating System :: OS Independent",
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 dependencies = ["pypcode>=3.3.3"]
 
