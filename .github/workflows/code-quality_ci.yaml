@@ -34,11 +34,13 @@ jobs:
           uv run mypy .
 
       - name: Test with pytest
+        id: test
         if: always() && steps.install.outcome == 'success'
         run: |
           uv run pytest --cov --cov-branch --cov-report=xml
 
       - name: Upload coverage reports to Codecov
+        if: always() && steps.test.outcome == 'success'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
