@@ -7,7 +7,6 @@ from microtaint.instrumentation.ast import (
     BinaryExpr,
     Constant,
     EvalContext,
-    InstructionCellExpr,
     LogicCircuit,
     Op,
     TaintAssignment,
@@ -124,18 +123,3 @@ def test_logic_circuit() -> None:
     circuit.assignments = [assign3]
     with pytest.raises(NotImplementedError):
         circuit.evaluate(EvalContext({}, {}))
-
-
-def test_instruction_cell_expr() -> None:
-    cell = InstructionCellExpr(
-        architecture=Architecture.AMD64,
-        instruction='4801d8',
-        out_reg='RAX',
-        out_bit_start=0,
-        out_bit_end=63,
-        inputs={'RAX': TaintOperand('RAX', 0, 63, is_taint=True)},
-    )
-    assert str(cell) == 'SimulateCell(instr=0x4801d8, out=RAX[63:0], RAX=T_RAX[63:0])'
-
-    with pytest.raises(NotImplementedError):
-        cell.evaluate(EvalContext({}, {}))
