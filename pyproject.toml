@@ -39,6 +39,9 @@ dev = [
     "types-setuptools>=82.0.0.20260210",
 ]
 
+[tool.uv.sources]
+pypcode = { git = "https://github.com/angr/pypcode.git", branch = "master" }
+
 [tool.ruff]
 exclude = [".venv", "__pycache__", "pyproject.toml"]
 line-length = 120

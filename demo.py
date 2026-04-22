@@ -4,7 +4,7 @@ import pypcode
 
 from microtaint.sleigh.engine import _map_sleigh_to_state, generate_static_rule
 from microtaint.sleigh.lifter import get_context
-from microtaint.sleigh.slicer import _get_varnode_id, slice_backward
+from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
 
 
@@ -73,11 +73,11 @@ def extract_assignment_slices(
                 for inp in s_op.inputs:
                     if inp.space.name == 'register':
                         r_map = _map_sleigh_to_state(ctx, arch, state_format, inp.offset, inp.size)
-                        inps.append(r_map[0] if r_map else _get_varnode_id(inp))
+                        inps.append(r_map[0] if r_map else get_varnode_id(inp))
                     elif inp.space.name == 'const':
                         inps.append(hex(inp.offset))
                     else:
-                        inps.append(_get_varnode_id(inp))
+                        inps.append(get_varnode_id(inp))
 
                 out = ''
                 if s_op.output:
@@ -89,12 +89,12 @@ def extract_assignment_slices(
                             s_op.output.offset,
                             s_op.output.size,
                         )
-                        out = r_map[0] if r_map else _get_varnode_id(s_op.output)
+                        out = r_map[0] if r_map else get_varnode_id(s_op.output)
                     else:
-                        out = _get_varnode_id(s_op.output)
+                        out = get_varnode_id(s_op.output)
                     out += ' = '
 
-                op_str = f'   > {out}{s_op.opcode.name}({", ".join(inps)})'  # type: ignore[attr-defined]
+                op_str = f'   > {out}{s_op.opcode.name}({", ".join(inps)})'
                 if op_str not in matched_ops:
                     matched_ops.append(op_str)
 

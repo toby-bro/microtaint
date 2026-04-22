@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pypcode
 
-from microtaint.sleigh.slicer import _get_varnode_id
+from microtaint.sleigh.slicer import get_varnode_id
 
 
 def compute_polarity(  # noqa: C901
@@ -26,33 +26,33 @@ def compute_polarity(  # noqa: C901
     # To properly propagate inversions (e.g., `- (A + B) => -A - B`), we track the
     # expected polarity of intermediate nodes.
 
-    node_polarities = {}
+    node_polarities: dict[str, int] = {}
     if slice_ops[-1].output:
-        node_polarities[_get_varnode_id(slice_ops[-1].output)] = 1
+        node_polarities[get_varnode_id(slice_ops[-1].output)] = 1
 
     for op in reversed(slice_ops):
         if not op.output:
             continue
 
-        out_id = _get_varnode_id(op.output)
+        out_id = get_varnode_id(op.output)
 
         # If this node's output isn't part of tracking, assume D=1
         current_polarity = node_polarities.get(out_id, 1)
 
-        op_name = op.opcode.name  # type: ignore[attr-defined]
+        op_name = op.opcode.name
 
         # Mapped bitwise logic functions generally act as 1 (unless NOT is involved)
         # Arithmetic logic passes through the polarity, except subtraction
 
         if op_name == 'INT_SUB':
             # LHS maintains current polarity
-            lhs = _get_varnode_id(op.inputs[0])
+            lhs = get_varnode_id(op.inputs[0])
             node_polarities[lhs] = current_polarity
             if op.inputs[0].space.name != 'const':
                 polarity_map[lhs] = current_polarity
 
             # RHS inverses the current polarity (1 becomes 0, 0 becomes 1)
-            rhs = _get_varnode_id(op.inputs[1])
+            rhs = get_varnode_id(op.inputs[1])
             inv_polarity = 0 if current_polarity == 1 else 1
             node_polarities[rhs] = inv_polarity
             if op.inputs[1].space.name != 'const':
@@ -62,14 +62,14 @@ def compute_polarity(  # noqa: C901
             # Operations where polarity is directly propagated to operands
             for inp in op.inputs:
                 if inp.space.name != 'const':
-                    inp_id = _get_varnode_id(inp)
+                    inp_id = get_varnode_id(inp)
                     node_polarities[inp_id] = current_polarity
                     polarity_map[inp_id] = current_polarity
 
         elif op_name == 'INT_NEGATE':  # Bitwise NOT (often simulated logically as negative)
             for inp in op.inputs:
                 if inp.space.name != 'const':
-                    inp_id = _get_varnode_id(inp)
+                    inp_id = get_varnode_id(inp)
                     inv_polarity = 0 if current_polarity == 1 else 1
                     node_polarities[inp_id] = inv_polarity
                     polarity_map[inp_id] = inv_polarity
@@ -78,7 +78,7 @@ def compute_polarity(  # noqa: C901
             # Default fallback for unhandled or neutral operations
             for inp in op.inputs:
                 if inp.space.name != 'const':
-                    inp_id = _get_varnode_id(inp)
+                    inp_id = get_varnode_id(inp)
                     node_polarities[inp_id] = current_polarity
                     polarity_map[inp_id] = current_polarity
 

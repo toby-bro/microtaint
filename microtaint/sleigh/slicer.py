@@ -3,7 +3,7 @@ from __future__ import annotations
 from pypcode.pypcode_native import PcodeOp, Varnode
 
 
-def _get_varnode_id(vn: Varnode) -> str:
+def get_varnode_id(vn: Varnode) -> str:
     """Helper to get a unique identifier for a varnode."""
     if not vn:
         return ''
@@ -18,7 +18,7 @@ def slice_backward(
     Given an ordered list of P-code operations and a target output varnode,
     traverse backward to find all operations that contribute to computing it.
     """
-    target_id = _get_varnode_id(target_varnode)
+    target_id = get_varnode_id(target_varnode)
 
     # Track which varnodes we care about parsing backward
     worklist: set[str] = {target_id}
@@ -28,7 +28,7 @@ def slice_backward(
         if not op.output:
             continue
 
-        out_id = _get_varnode_id(op.output)
+        out_id = get_varnode_id(op.output)
         if out_id in worklist:
             # This operation contributes to our slice
             slice_ops.append(op)
@@ -40,7 +40,7 @@ def slice_backward(
             else:
                 for inp in op.inputs:
                     if inp.space.name != 'const':
-                        worklist.add(_get_varnode_id(inp))
+                        worklist.add(get_varnode_id(inp))
 
     # Return operations in their original execution (forward) order
     return list(reversed(slice_ops))
