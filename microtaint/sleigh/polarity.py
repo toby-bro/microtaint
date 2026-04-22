@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import pypcode
+from pypcode import PcodeOp
 
 from microtaint.sleigh.slicer import get_varnode_id
 
 
 def compute_polarity(  # noqa: C901
-    slice_ops: list[pypcode.pypcode_native.PcodeOp],
+    slice_ops: list[PcodeOp],
 ) -> dict[str, int]:
     """
     Given a backwards slice of P-Code operations defining an output,
