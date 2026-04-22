@@ -58,7 +58,6 @@ def _map_sleigh_to_state(
         for sf_reg in state_format:
             if 'FLAGS' in sf_reg.name.upper():
                 bit_idx = offset - 512
-                # Flags are mapped as 1-bit internally despite Sleigh giving them size=1 (byte)
                 return RegMapping(sf_reg.name, bit_idx, bit_idx)
 
     for sf_reg in state_format:
@@ -70,7 +69,9 @@ def _map_sleigh_to_state(
         if s_r.offset <= offset and (offset + size) <= (s_r.offset + s_r.size):
             rel_byte = offset - s_r.offset
             bit_start = rel_byte * 8
-            bit_end = bit_start + (size * 8) - 1
+            # FIX: Clamp bit_end to the declared bit width of the Register
+            # to handle Sleigh padding booleans into 8-bit varnodes
+            bit_end = min(bit_start + (size * 8) - 1, sf_reg.bits - 1)
             return RegMapping(sf_reg.name, bit_start, bit_end)
 
     return None
@@ -133,7 +134,7 @@ def generate_static_rule(
     )
 
 
-def generate_taint_assignments(
+def generate_taint_assignments(  # noqa: C901
     arch: Architecture,
     bytestring: bytes,
     assignments: list[TaintAssignment],
@@ -173,10 +174,16 @@ def generate_taint_assignments(
     elif cat == InstructionCategory.TRANSPORTABLE:
         diff_expr = make_differential()
         # Transportable cells require the transport term (OR of inputs) added back
-        transport_term = dependencies[0]
-        for dep in dependencies[1:]:
-            transport_term = BinaryExpr(Op.OR, transport_term, dep)
-        expr = BinaryExpr(Op.OR, diff_expr, transport_term)
+        # EXCEPTION: 1-bit boolean flags evaluate their conditions perfectly via the differential.
+        is_flag = out_bit_end == out_bit_start
+
+        if dependencies and not is_flag:
+            transport_term = dependencies[0]
+            for dep in dependencies[1:]:
+                transport_term = BinaryExpr(Op.OR, transport_term, dep)
+            expr = BinaryExpr(Op.OR, diff_expr, transport_term)
+        else:
+            expr = diff_expr
 
     elif cat == InstructionCategory.MAPPED:
         simple_ops = {'COPY', 'LOAD', 'STORE'}

@@ -4,29 +4,27 @@ from pypcode import PcodeOp
 
 from microtaint.classifier.categories import InstructionCategory
 
-# CellIFT Avalanche Operations (Multiplications, Divisions)
+# CellIFT Avalanche Operations (Multiplications, Divisions, Parity/Popcount)
 AVALANCHE_OPCODES: set[str] = {
     'INT_MULT',
     'INT_DIV',
     'INT_SDIV',
     'INT_REM',
     'INT_SREM',
+    'POPCOUNT',
 }
 
 # CellIFT Translatable Operations (Shifts)
 TRANSLATABLE_OPCODES: set[str] = {
-    'INT_LEFT',  # Logical Shift Left
-    'INT_RIGHT',  # Logical Shift Right
-    'INT_SRIGHT',  # Arithmetic Shift Right
+    'INT_LEFT',
+    'INT_RIGHT',
+    'INT_SRIGHT',
 }
 
 # CellIFT Transportable Operations (Arithmetic Add/Sub)
 TRANSPORTABLE_OPCODES: set[str] = {
     'INT_ADD',
     'INT_SUB',
-    'INT_CARRY',
-    'INT_SCARRY',
-    'INT_SBORROW',
 }
 
 # CellIFT Conditionally Transportable (Equalities)
@@ -35,28 +33,30 @@ COND_TRANSPORTABLE_OPCODES: set[str] = {
     'INT_NOTEQUAL',
 }
 
-# CellIFT Monotonic Operations (Comparisons)
+# CellIFT Monotonic Operations (Comparisons & Flags)
 MONOTONIC_OPCODES: set[str] = {
     'INT_LESS',
     'INT_SLESS',
     'INT_LESSEQUAL',
     'INT_SLESSEQUAL',
+    'INT_CARRY',  # <-- MOVED HERE (Carry flags are monotonic)
+    'INT_SCARRY',  # <-- MOVED HERE (Overflow flags are monotonic bounds)
+    'INT_SBORROW',  # <-- MOVED HERE
 }
 
 # CellIFT Mapped Operations (Bitwise logical operations, exact copies, memory)
 MAPPED_OPCODES: set[str] = {
-    'COPY',  # Register to register exact move
-    'LOAD',  # Memory read
-    'STORE',  # Memory write
+    'COPY',
+    'LOAD',
+    'STORE',
     'INT_AND',
     'INT_OR',
     'INT_XOR',
-    'INT_NEGATE',  # Bitwise NOT
-    'INT_ZEXT',  # Zero extension
-    'INT_SEXT',  # Sign extension
-    'SUBPIECE',  # Bit slice extraction
-    'PIECE',  # Bit concatenation
-    'POPCOUNT',  # Counting bits maps directly linearly
+    'INT_NEGATE',
+    'INT_ZEXT',
+    'INT_SEXT',
+    'SUBPIECE',
+    'PIECE',
 }
 
 

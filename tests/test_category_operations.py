@@ -23,10 +23,10 @@ def amd64_registers() -> list[Register]:
         Register(name='RBX', bits=64),
         Register(name='RCX', bits=64),
         Register(name='RDX', bits=64),
-        Register(name='ZF', bits=8),
-        Register(name='CF', bits=8),
-        Register(name='SF', bits=8),
-        Register(name='OF', bits=8),
+        Register(name='ZF', bits=1),
+        Register(name='CF', bits=1),
+        Register(name='SF', bits=1),
+        Register(name='OF', bits=1),
     ]
 
 

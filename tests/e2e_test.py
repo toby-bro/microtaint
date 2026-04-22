@@ -19,11 +19,11 @@ def x86_registers() -> list[Register]:
         Register(name='RBP', bits=64),
         Register(name='RSI', bits=64),
         Register(name='RDI', bits=64),
-        Register(name='ZF', bits=8),
-        Register(name='CF', bits=8),
-        Register(name='SF', bits=8),
-        Register(name='OF', bits=8),
-        Register(name='PF', bits=8),
+        Register(name='ZF', bits=1),
+        Register(name='CF', bits=1),
+        Register(name='SF', bits=1),
+        Register(name='OF', bits=1),
+        Register(name='PF', bits=1),
     ]
 
 
