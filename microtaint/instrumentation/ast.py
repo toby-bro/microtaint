@@ -1,9 +1,24 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 
+from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture, Register
+
+
+def _build_machine_state(input_dict: dict[str, int]) -> MachineState:
+    regs: dict[str, int] = {}
+    mem: dict[int, int] = {}
+    for name, val in input_dict.items():
+        if name.startswith('MEM_'):
+            parts = name.split('_')
+            addr = int(parts[1], 16)
+            mem[addr] = val
+        else:
+            regs[name] = val
+    return MachineState(regs=regs, mem=mem)
 
 
 class Op(str, Enum):
@@ -16,11 +31,19 @@ class Op(str, Enum):
 
 
 @dataclass
-class Expr:
+class EvalContext:
+    input_taint: dict[str, int]
+    input_values: dict[str, int]
+    simulator: CellSimulator | None = None
+
+
+@dataclass
+class Expr(ABC):
     """Base class for AST expressions."""
 
-    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:
-        raise NotImplementedError
+    @abstractmethod
+    def evaluate(self, context: EvalContext) -> int:
+        pass
 
 
 @dataclass
@@ -32,8 +55,8 @@ class AvalancheExpr(Expr):
     def __str__(self) -> str:
         return f'AVALANCHE({self.expr})'
 
-    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:
-        val = self.expr.evaluate(input_taint, input_values)
+    def evaluate(self, context: EvalContext) -> int:
+        val = self.expr.evaluate(context)
         if val != 0:
             return -1
         return 0
@@ -54,8 +77,8 @@ class TaintOperand(Expr):
             return f'{prefix}_{self.name}[{self.bit_start}]'
         return f'{prefix}_{self.name}[{self.bit_end}:{self.bit_start}]'
 
-    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:
-        state = input_taint if self.is_taint else input_values
+    def evaluate(self, context: EvalContext) -> int:
+        state = context.input_taint if self.is_taint else context.input_values
         val = state.get(self.name, 0)
         # Extract the bit slice
         mask = (1 << (self.bit_end - self.bit_start + 1)) - 1
@@ -74,10 +97,10 @@ class MemoryOperand(Expr):
         prefix = 'T' if self.is_taint else 'V'
         return f'{prefix}_MEM[{self.address_expr}, size={self.size}]'
 
-    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:
-        address = self.address_expr.evaluate(input_taint, input_values)
+    def evaluate(self, context: EvalContext) -> int:
+        address = self.address_expr.evaluate(context)
         mem_name = f'MEM_{hex(address)}_{self.size}'
-        state = input_taint if self.is_taint else input_values
+        state = context.input_taint if self.is_taint else context.input_values
         return state.get(mem_name, 0)
 
 
@@ -91,7 +114,7 @@ class Constant(Expr):
     def __str__(self) -> str:
         return hex(self.value)
 
-    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:  # noqa: ARG002
+    def evaluate(self, context: EvalContext) -> int:  # noqa: ARG002
         return self.value
 
 
@@ -105,8 +128,8 @@ class UnaryExpr(Expr):
     def __str__(self) -> str:
         return f'{self.op.value}({self.expr})'
 
-    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:
-        val = self.expr.evaluate(input_taint, input_values)
+    def evaluate(self, context: EvalContext) -> int:
+        val = self.expr.evaluate(context)
         if self.op == Op.NOT:
             return ~val
         raise NotImplementedError(f'Unsupported unary op {self.op}')
@@ -123,9 +146,9 @@ class BinaryExpr(Expr):
     def __str__(self) -> str:
         return f'({self.lhs} {self.op.value} {self.rhs})'
 
-    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:
-        left = self.lhs.evaluate(input_taint, input_values)
-        right = self.rhs.evaluate(input_taint, input_values)
+    def evaluate(self, context: EvalContext) -> int:
+        left = self.lhs.evaluate(context)
+        right = self.rhs.evaluate(context)
         if self.op == Op.AND:
             return left & right
         if self.op == Op.OR:
@@ -166,24 +189,22 @@ class LogicCircuit:
     def __str__(self) -> str:
         return '\n'.join(str(a) for a in self.assignments)
 
-    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int] | None = None) -> dict[str, int]:
-        if input_values is None:
-            input_values = {}
+    def evaluate(self, context: EvalContext) -> dict[str, int]:
         output_taint: dict[str, int] = {}
         for assignment in self.assignments:
             if assignment.expression is not None:
-                val = assignment.expression.evaluate(input_taint, input_values)
+                val = assignment.expression.evaluate(context)
             elif assignment.expression_str:
                 raise NotImplementedError('Arbitrary string expressions not supported for evaluation right now.')
             else:
                 # For purely mapped operations, it's just an OR of dependencies
                 val = 0
                 for dep in assignment.dependencies:
-                    val |= dep.evaluate(input_taint, input_values)
+                    val |= dep.evaluate(context)
 
             # Resolve targets securely
             if isinstance(assignment.target, MemoryOperand):
-                address = assignment.target.address_expr.evaluate(input_taint, input_values)
+                address = assignment.target.address_expr.evaluate(context)
                 target_name = f'MEM_{hex(address)}_{assignment.target.size}'
                 bit_start = 0
             else:
@@ -212,5 +233,16 @@ class InstructionCellExpr(Expr):
         args = ', '.join(f'{k}={v}' for k, v in self.inputs.items())
         return f'SimulateCell(instr=0x{self.instruction}, out={self.out_reg}[{self.out_bit_end}:{self.out_bit_start}], {args})'  # noqa: E501
 
-    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:
-        raise NotImplementedError('Evaluating instruction cell expr dynamically outside emulator is not supported.')
+    def evaluate(self, context: EvalContext) -> int:
+        v_state = _build_machine_state(context.input_values)
+        t_state = _build_machine_state(context.input_taint)
+
+        target_name_with_bits = f'{self.out_reg}[{self.out_bit_end}:{self.out_bit_start}]'
+        assert context.simulator is not None, 'Simulator instance required in context to evaluate instruction cell'
+
+        return context.simulator.evaluate_cell_differential(
+            bytes.fromhex(self.instruction),
+            (self.out_reg, self.out_bit_start, self.out_bit_end),
+            v_state,
+            t_state,
+        )

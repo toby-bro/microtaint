@@ -6,7 +6,7 @@ from microtaint.instrumentation.ast import (
     AvalancheExpr,
     BinaryExpr,
     Constant,
-    Expr,
+    EvalContext,
     InstructionCellExpr,
     LogicCircuit,
     Op,
@@ -17,20 +17,15 @@ from microtaint.instrumentation.ast import (
 from microtaint.types import Architecture, Register
 
 
-def test_base_expr() -> None:
-    with pytest.raises(NotImplementedError):
-        Expr().evaluate({}, {})
-
-
 def test_avalanche_expr() -> None:
     inner = Constant(5, 32)
     av = AvalancheExpr(inner)
     assert str(av) == 'AVALANCHE(0x5)'
-    assert av.evaluate({}, {}) == -1
+    assert av.evaluate(EvalContext({}, {})) == -1
 
     zero_inner = Constant(0, 32)
     av_zero = AvalancheExpr(zero_inner)
-    assert av_zero.evaluate({}, {}) == 0
+    assert av_zero.evaluate(EvalContext({}, {})) == 0
 
 
 def test_taint_operand() -> None:
@@ -43,18 +38,18 @@ def test_taint_operand() -> None:
 
     # Evaluation
     # Value for V_RAX is 0x12345678, shifted down 0, masked to 32 bits
-    assert t_op.evaluate({'RAX': 0xFFFFFFFF}, {}) == 0xFFFFFFFF
-    assert v_op.evaluate({}, {'ZF': 1}) == 1
+    assert t_op.evaluate(EvalContext({'RAX': 0xFFFFFFFF}, {})) == 0xFFFFFFFF
+    assert v_op.evaluate(EvalContext({}, {'ZF': 1})) == 1
 
     # Check bit slice
     t_op2 = TaintOperand('RAX', 8, 15, is_taint=True)
-    assert t_op2.evaluate({'RAX': 0x12345678}, {}) == 0x56
+    assert t_op2.evaluate(EvalContext({'RAX': 0x12345678}, {})) == 0x56
 
 
 def test_constant() -> None:
     c = Constant(42, 32)
     assert str(c) == '0x2a'
-    assert c.evaluate({}, {}) == 42
+    assert c.evaluate(EvalContext({}, {})) == 42
 
 
 def test_unary_expr() -> None:
@@ -62,10 +57,10 @@ def test_unary_expr() -> None:
     un_expr = UnaryExpr(Op.NOT, op)
     assert str(un_expr) == 'NOT(V_RAX[7:0])'
 
-    assert un_expr.evaluate({'RAX': 0}, {'RAX': 0x0F}) == ~0x0F
+    assert un_expr.evaluate(EvalContext({'RAX': 0}, {'RAX': 0x0F})) == ~0x0F
 
     with pytest.raises(NotImplementedError):
-        UnaryExpr(Op.AND, op).evaluate({}, {})
+        UnaryExpr(Op.AND, op).evaluate(EvalContext({}, {}))
 
 
 def test_binary_expr() -> None:
@@ -74,16 +69,16 @@ def test_binary_expr() -> None:
 
     bin_and = BinaryExpr(Op.AND, t_op1, t_op2)
     assert str(bin_and) == '(0x3 AND 0x5)'
-    assert bin_and.evaluate({}, {}) == (3 & 5)
+    assert bin_and.evaluate(EvalContext({}, {})) == (3 & 5)
 
     bin_or = BinaryExpr(Op.OR, t_op1, t_op2)
-    assert bin_or.evaluate({}, {}) == (3 | 5)
+    assert bin_or.evaluate(EvalContext({}, {})) == (3 | 5)
 
     bin_xor = BinaryExpr(Op.XOR, t_op1, t_op2)
-    assert bin_xor.evaluate({}, {}) == (3 ^ 5)
+    assert bin_xor.evaluate(EvalContext({}, {})) == (3 ^ 5)
 
     with pytest.raises(NotImplementedError):
-        BinaryExpr(Op.NOT, t_op1, t_op2).evaluate({}, {})
+        BinaryExpr(Op.NOT, t_op1, t_op2).evaluate(EvalContext({}, {}))
 
 
 def test_taint_assignment() -> None:
@@ -121,14 +116,14 @@ def test_logic_circuit() -> None:
 
     assert str(assign1) in str(circuit)
 
-    out_taint = circuit.evaluate({'RBX': 0xAB, 'RDX': 0x1234})
+    out_taint = circuit.evaluate(EvalContext({'RBX': 0xAB, 'RDX': 0x1234}, {}))
     assert out_taint['RAX'] == 0xAB
     assert out_taint['RCX'] == 0x1200  # RDX[8:15] evaluated is 0x12, pushed up back by bit_start (8) gives 0x1200
 
     assign3 = TaintAssignment(tgt1, [], expression_str='FOO')
     circuit.assignments = [assign3]
     with pytest.raises(NotImplementedError):
-        circuit.evaluate({})
+        circuit.evaluate(EvalContext({}, {}))
 
 
 def test_instruction_cell_expr() -> None:
@@ -143,4 +138,4 @@ def test_instruction_cell_expr() -> None:
     assert str(cell) == 'SimulateCell(instr=0x4801d8, out=RAX[63:0], RAX=T_RAX[63:0])'
 
     with pytest.raises(NotImplementedError):
-        cell.evaluate({}, {})
+        cell.evaluate(EvalContext({}, {}))
