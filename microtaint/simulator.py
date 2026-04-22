@@ -1,69 +1,88 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import logging
+from dataclasses import dataclass, field
 from typing import Any
 
-import unicorn
-import unicorn.arm64_const
-import unicorn.x86_const
+import unicorn.arm64_const as uc_arm64_const
+import unicorn.unicorn_py3 as uc_py3
+import unicorn.x86_const as uc_x86_const
+from unicorn import (
+    UC_ARCH_ARM64,
+    UC_ARCH_X86,
+    UC_ERR_MAP,
+    UC_HOOK_MEM_UNMAPPED,
+    UC_MEM_FETCH_UNMAPPED,
+    UC_MODE_32,
+    UC_MODE_64,
+    UC_MODE_ARM,
+)
 
 from microtaint.types import Architecture
 
+logger = logging.getLogger(__name__)
+
 _ARCH_MAP = {
-    Architecture.X86: (unicorn.UC_ARCH_X86, unicorn.UC_MODE_32),
-    Architecture.AMD64: (unicorn.UC_ARCH_X86, unicorn.UC_MODE_64),
-    Architecture.ARM64: (unicorn.UC_ARCH_ARM64, unicorn.UC_MODE_ARM),
+    Architecture.X86: (UC_ARCH_X86, UC_MODE_32),
+    Architecture.AMD64: (UC_ARCH_X86, UC_MODE_64),
+    Architecture.ARM64: (UC_ARCH_ARM64, UC_MODE_ARM),
 }
 
 _UC_REGS = {
     Architecture.X86: {
-        'EAX': unicorn.x86_const.UC_X86_REG_EAX,
-        'EBX': unicorn.x86_const.UC_X86_REG_EBX,
-        'ECX': unicorn.x86_const.UC_X86_REG_ECX,
-        'EDX': unicorn.x86_const.UC_X86_REG_EDX,
-        'ESI': unicorn.x86_const.UC_X86_REG_ESI,
-        'EDI': unicorn.x86_const.UC_X86_REG_EDI,
-        'EBP': unicorn.x86_const.UC_X86_REG_EBP,
-        'ESP': unicorn.x86_const.UC_X86_REG_ESP,
-        'EIP': unicorn.x86_const.UC_X86_REG_EIP,
+        'EAX': uc_x86_const.UC_X86_REG_EAX,
+        'EBX': uc_x86_const.UC_X86_REG_EBX,
+        'ECX': uc_x86_const.UC_X86_REG_ECX,
+        'EDX': uc_x86_const.UC_X86_REG_EDX,
+        'ESI': uc_x86_const.UC_X86_REG_ESI,
+        'EDI': uc_x86_const.UC_X86_REG_EDI,
+        'EBP': uc_x86_const.UC_X86_REG_EBP,
+        'ESP': uc_x86_const.UC_X86_REG_ESP,
+        'EIP': uc_x86_const.UC_X86_REG_EIP,
     },
     Architecture.AMD64: {
-        'RAX': unicorn.x86_const.UC_X86_REG_RAX,
-        'RBX': unicorn.x86_const.UC_X86_REG_RBX,
-        'RCX': unicorn.x86_const.UC_X86_REG_RCX,
-        'RDX': unicorn.x86_const.UC_X86_REG_RDX,
-        'RSI': unicorn.x86_const.UC_X86_REG_RSI,
-        'RDI': unicorn.x86_const.UC_X86_REG_RDI,
-        'RBP': unicorn.x86_const.UC_X86_REG_RBP,
-        'RSP': unicorn.x86_const.UC_X86_REG_RSP,
-        'RIP': unicorn.x86_const.UC_X86_REG_RIP,
-        'R8': unicorn.x86_const.UC_X86_REG_R8,
-        'R9': unicorn.x86_const.UC_X86_REG_R9,
-        'R10': unicorn.x86_const.UC_X86_REG_R10,
-        'R11': unicorn.x86_const.UC_X86_REG_R11,
-        'R12': unicorn.x86_const.UC_X86_REG_R12,
-        'R13': unicorn.x86_const.UC_X86_REG_R13,
-        'R14': unicorn.x86_const.UC_X86_REG_R14,
-        'R15': unicorn.x86_const.UC_X86_REG_R15,
-        'EFLAGS': unicorn.x86_const.UC_X86_REG_EFLAGS,
+        'RAX': uc_x86_const.UC_X86_REG_RAX,
+        'RBX': uc_x86_const.UC_X86_REG_RBX,
+        'RCX': uc_x86_const.UC_X86_REG_RCX,
+        'RDX': uc_x86_const.UC_X86_REG_RDX,
+        'RSI': uc_x86_const.UC_X86_REG_RSI,
+        'RDI': uc_x86_const.UC_X86_REG_RDI,
+        'RBP': uc_x86_const.UC_X86_REG_RBP,
+        'RSP': uc_x86_const.UC_X86_REG_RSP,
+        'RIP': uc_x86_const.UC_X86_REG_RIP,
+        'R8': uc_x86_const.UC_X86_REG_R8,
+        'R9': uc_x86_const.UC_X86_REG_R9,
+        'R10': uc_x86_const.UC_X86_REG_R10,
+        'R11': uc_x86_const.UC_X86_REG_R11,
+        'R12': uc_x86_const.UC_X86_REG_R12,
+        'R13': uc_x86_const.UC_X86_REG_R13,
+        'R14': uc_x86_const.UC_X86_REG_R14,
+        'R15': uc_x86_const.UC_X86_REG_R15,
+        'EFLAGS': uc_x86_const.UC_X86_REG_EFLAGS,
     },
     Architecture.ARM64: {
-        'X0': unicorn.arm64_const.UC_ARM64_REG_X0,
-        'X1': unicorn.arm64_const.UC_ARM64_REG_X1,
-        'X2': unicorn.arm64_const.UC_ARM64_REG_X2,
-        'X3': unicorn.arm64_const.UC_ARM64_REG_X3,
-        'X4': unicorn.arm64_const.UC_ARM64_REG_X4,
-        'X5': unicorn.arm64_const.UC_ARM64_REG_X5,
-        'X6': unicorn.arm64_const.UC_ARM64_REG_X6,
-        'X7': unicorn.arm64_const.UC_ARM64_REG_X7,
-        'X8': unicorn.arm64_const.UC_ARM64_REG_X8,
-        'X29': unicorn.arm64_const.UC_ARM64_REG_X29,
-        'X30': unicorn.arm64_const.UC_ARM64_REG_X30,
-        'SP': unicorn.arm64_const.UC_ARM64_REG_SP,
-        'PC': unicorn.arm64_const.UC_ARM64_REG_PC,
-        'NZCV': unicorn.arm64_const.UC_ARM64_REG_NZCV,
+        'X0': uc_arm64_const.UC_ARM64_REG_X0,
+        'X1': uc_arm64_const.UC_ARM64_REG_X1,
+        'X2': uc_arm64_const.UC_ARM64_REG_X2,
+        'X3': uc_arm64_const.UC_ARM64_REG_X3,
+        'X4': uc_arm64_const.UC_ARM64_REG_X4,
+        'X5': uc_arm64_const.UC_ARM64_REG_X5,
+        'X6': uc_arm64_const.UC_ARM64_REG_X6,
+        'X7': uc_arm64_const.UC_ARM64_REG_X7,
+        'X8': uc_arm64_const.UC_ARM64_REG_X8,
+        'X29': uc_arm64_const.UC_ARM64_REG_X29,
+        'X30': uc_arm64_const.UC_ARM64_REG_X30,
+        'SP': uc_arm64_const.UC_ARM64_REG_SP,
+        'PC': uc_arm64_const.UC_ARM64_REG_PC,
+        'NZCV': uc_arm64_const.UC_ARM64_REG_NZCV,
     },
 }
+
+
+@dataclass
+class MachineState:
+    regs: dict[str, int] = field(default_factory=dict[str, int])
+    mem: dict[int, int] = field(default_factory=dict[int, int])
 
 
 class CellSimulator:
@@ -77,23 +96,23 @@ class CellSimulator:
             raise ValueError(f'Architecture {arch} is not supported by CellSimulator.')
         self.arch = arch
         uc_arch, uc_mode = _ARCH_MAP[arch]
-        self.uc = unicorn.Uc(uc_arch, uc_mode)  # type: ignore[attr-defined, no-untyped-call]
+        self.uc = uc_py3.Uc(uc_arch, uc_mode)
 
         self.CODE_ADDR = 0x400000  # Use high address to avoid conflicts with test data
-        self.uc.mem_map(self.CODE_ADDR, 4096)  # type: ignore[no-untyped-call]
-        self.uc.hook_add(unicorn.UC_HOOK_MEM_UNMAPPED, self._hook_mem_unmapped)
+        self.uc.mem_map(self.CODE_ADDR, 4096)
+        self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._hook_mem_unmapped)  # pyright: ignore[reportUnknownMemberType]
         self.memory_addrs: set[int] = set()  # Track memory addresses used
 
     def _hook_mem_unmapped(
         self,
-        uc: unicorn.Uc,
+        uc: uc_py3.Uc,
         type_: int,
         address: int,
         _size: int,
         _value: int,
         _user_data: Any,
     ) -> bool:
-        if type_ == unicorn.UC_MEM_FETCH_UNMAPPED:
+        if type_ == UC_MEM_FETCH_UNMAPPED:
             return False  # Do not map on instruction fetch unmapped
 
         page_addr = address & ~0xFFF
@@ -101,10 +120,8 @@ class CellSimulator:
         try:
             uc.mem_map(page_addr, 4096)
             return True
-        except unicorn.UcError as e:
-            if e.errno == unicorn.UC_ERR_MAP:
-                return True
-            return False
+        except uc_py3.UcError as e:
+            return e.errno == UC_ERR_MAP
 
     def _get_uc_reg(self, reg_name: str) -> int:
         mapping = _UC_REGS.get(self.arch, {})
@@ -122,14 +139,15 @@ class CellSimulator:
             page_addr = addr & ~0xFFF
             try:
                 self.uc.mem_map(page_addr, 4096)
-            except unicorn.UcError:
+            except uc_py3.UcError:
                 pass  # Already mapped
 
             mem_data = self.uc.mem_read(addr, size)
             return int.from_bytes(mem_data, 'little')
+
         if self.arch in (Architecture.X86, Architecture.AMD64):
             if reg_name in ('ZF', 'CF', 'SF', 'OF'):
-                eflags = int(self.uc.reg_read(unicorn.x86_const.UC_X86_REG_EFLAGS))  # type: ignore[no-untyped-call]
+                eflags = int(self.uc.reg_read(uc_x86_const.UC_X86_REG_EFLAGS))
                 if reg_name == 'ZF':
                     return (eflags >> 6) & 1
                 if reg_name == 'CF':
@@ -138,43 +156,81 @@ class CellSimulator:
                     return (eflags >> 7) & 1
                 if reg_name == 'OF':
                     return (eflags >> 11) & 1
+
         uc_reg = self._get_uc_reg(reg_name)
-        return int(self.uc.reg_read(uc_reg))  # type: ignore[no-untyped-call]
+        return int(self.uc.reg_read(uc_reg))
 
     def _execute(
         self,
         bytestring: bytes,
-        state: Mapping[str, int | dict[int, int]],
+        state: MachineState,
         mem_sizes: dict[int, int] | None = None,
     ) -> None:
         """
-        Executes the exact instruction over a given concrete state (writes to registers and memory).
+        Executes the exact instruction over a given concrete MachineState (writes to registers and memory).
 
         mem_sizes: Optional dict mapping addresses to their expected sizes in bytes.
         """
+        self.clear_memory_and_registers()
+
+        self.setup_registers_and_memory(state, mem_sizes)
+
+        # Set the Program Counter to the address of the code
+        match self.arch:
+            case Architecture.X86:
+                pc_reg = uc_x86_const.UC_X86_REG_EIP
+            case Architecture.AMD64:
+                pc_reg = uc_x86_const.UC_X86_REG_RIP
+            case Architecture.ARM64:
+                pc_reg = uc_arm64_const.UC_ARM64_REG_PC
+            case _:
+                raise ValueError(f'Unsupported architecture: {self.arch}')
+
+        self.uc.reg_write(pc_reg, self.CODE_ADDR)  # pyright: ignore[reportUnknownMemberType]
+
+        self.uc.mem_write(self.CODE_ADDR, bytestring)
+        self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
+
+    def setup_registers_and_memory(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:
+        for reg_name, val in state.regs.items():
+            # Legacy fallback: Handle if target registers were provided as 'MEM_addr_size' flat strings
+            if reg_name.startswith('MEM_'):
+                logger.warning(
+                    f'Legacy MEM register format detected: {reg_name}. Consider using tuple format for clarity.',
+                )
+                parts = reg_name.split('_')
+                addr = int(parts[1], 16)
+                size = int(parts[2])
+
+                self.memory_addrs.add(addr)
+                page_addr = addr & ~0xFFF
+                try:
+                    self.uc.mem_map(page_addr, 4096)
+                except uc_py3.UcError:
+                    logger.warning(
+                        f'Failed to map memory at {page_addr:#x} during state setup. Address may already be mapped.',
+                    )
+
+                try:
+                    self.uc.mem_write(addr, val.to_bytes(size, 'little'))
+                except ValueError:
+                    mask = (1 << (size * 8)) - 1
+                    self.uc.mem_write(addr, (val & mask).to_bytes(size, 'little'))
+                continue
+
+            uc_reg = self._get_uc_reg(reg_name)
+            self.uc.reg_write(uc_reg, val)  # pyright: ignore[reportUnknownMemberType]
+
+        self.load_memory_state(state, mem_sizes)
+
+    def clear_memory_and_registers(self) -> None:
         # Clear all registers to zero first to avoid state leakage
-        reg_names = [
-            'RAX',
-            'RBX',
-            'RCX',
-            'RDX',
-            'RSI',
-            'RDI',
-            'R8',
-            'R9',
-            'R10',
-            'R11',
-            'R12',
-            'R13',
-            'R14',
-            'R15',
-            'RSP',
-            'RBP',
-        ]
-        for reg_name in reg_names:
+        defined_registers = _UC_REGS.get(self.arch, {}).keys()
+
+        for reg_name in defined_registers:
             try:
                 uc_reg = self._get_uc_reg(reg_name)
-                self.uc.reg_write(uc_reg, 0)  # type: ignore[no-untyped-call]
+                self.uc.reg_write(uc_reg, 0)  # pyright: ignore[reportUnknownMemberType]
             except (ValueError, KeyError):
                 pass  # Register not available in this architecture
 
@@ -182,76 +238,36 @@ class CellSimulator:
         for addr in self.memory_addrs:
             try:
                 self.uc.mem_write(addr, b'\x00' * 8)
-            except unicorn.UcError:
-                pass  # Memory not mapped or accessible
+            except uc_py3.UcError:
+                logger.warning(f'Failed to clear memory at {addr:#x} during state setup. Address may not be mapped.')
 
-        # Load state
-        for reg_name, val in state.items():
-            if reg_name == 'MEM':
-                # Handle dict format: 'MEM': {addr: value, ...}
-                if isinstance(val, dict):
-                    for addr, mem_val in val.items():
-                        # Use provided size or infer from the value
-                        if mem_sizes and addr in mem_sizes:
-                            size = mem_sizes[addr]
-                        elif mem_val == 0:
-                            size = 8  # Default to 8 bytes for zero
-                        else:
-                            # Infer size, but ensure minimum of 8 bytes for large addresses
-                            size = max(8, (mem_val.bit_length() + 7) // 8)
+    def load_memory_state(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:
+        for addr, mem_val in state.mem.items():
+            if mem_sizes and addr in mem_sizes:
+                size = mem_sizes[addr]
+            elif mem_val == 0:
+                size = 8  # Default to 8 bytes for zero
+            else:
+                # Infer size, but ensure minimum of 8 bytes for large addresses
+                size = max(8, (mem_val.bit_length() + 7) // 8)
 
-                        # Track this address for clearing
-                        self.memory_addrs.add(addr)
+            self.memory_addrs.add(addr)
+            page_addr = addr & ~0xFFF
 
-                        # Ensure memory page is mapped before writing
-                        page_addr = addr & ~0xFFF
-                        try:
-                            self.uc.mem_map(page_addr, 4096)
-                        except unicorn.UcError:
-                            pass  # Already mapped
+            try:
+                self.uc.mem_map(page_addr, 4096)
+            except uc_py3.UcError:
+                logger.warning(
+                    f'Failed to map memory at {page_addr:#x} during state setup. Address may already be mapped.',
+                )
 
-                        try:
-                            self.uc.mem_write(addr, mem_val.to_bytes(size, 'little'))
-                        except ValueError:
-                            mask = (1 << (size * 8)) - 1
-                            self.uc.mem_write(addr, (mem_val & mask).to_bytes(size, 'little'))
-                continue
-            if reg_name.startswith('MEM_'):
-                parts = reg_name.split('_')
-                addr = int(parts[1], 16)
-                size = int(parts[2])
+            try:
+                self.uc.mem_write(addr, mem_val.to_bytes(size, 'little'))
+            except ValueError:
+                mask = (1 << (size * 8)) - 1
+                self.uc.mem_write(addr, (mem_val & mask).to_bytes(size, 'little'))
 
-                # Track this address for clearing
-                self.memory_addrs.add(addr)
-
-                # Ensure memory page is mapped
-                page_addr = addr & ~0xFFF
-                try:
-                    self.uc.mem_map(page_addr, 4096)
-                except unicorn.UcError:
-                    pass  # Already mapped
-
-                try:
-                    self.uc.mem_write(addr, val.to_bytes(size, 'little'))  # type: ignore[union-attr]
-                except ValueError:
-                    # In python 3.12, to_bytes can take negative values if signed=True,
-                    # but memory is 2s complement. So we explicitly mask it.
-                    mask = (1 << (size * 8)) - 1
-                    self.uc.mem_write(addr, (val & mask).to_bytes(size, 'little'))  # type: ignore[union-attr]
-                continue
-            uc_reg = self._get_uc_reg(reg_name)
-            self.uc.reg_write(uc_reg, val)  # type: ignore[no-untyped-call,arg-type]
-
-        # CRITICAL: Set the Program Counter to the address of the code
-        pc_reg = (
-            unicorn.x86_const.UC_X86_REG_RIP if self.arch == Architecture.AMD64 else unicorn.x86_const.UC_X86_REG_EIP
-        )
-        self.uc.reg_write(pc_reg, self.CODE_ADDR)  # type: ignore[no-untyped-call]
-
-        self.uc.mem_write(self.CODE_ADDR, bytestring)  # type: ignore[no-untyped-call]
-        self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))  # type: ignore[no-untyped-call]
-
-    def evaluate_concrete(self, cell: Any, v_state: Mapping[str, int]) -> int:
+    def evaluate_concrete(self, cell: Any, v_state: MachineState) -> int:
         """
         Tests concrete evaluation natively without taint tracking.
         """
@@ -264,16 +280,13 @@ class CellSimulator:
         self,
         bytestring: bytes,
         target_reg: str | tuple[str, int, int],
-        v_state: Mapping[str, int | dict[int, int]],
-        t_state: Mapping[str, int | dict[int, int]],
+        v_state: MachineState,
+        t_state: MachineState,
     ) -> int:
         """
         Computes exactly the cell logic: C_instr(V | T) ^ C_instr(V & ~T)
-        returning the precise integer bitmask of the output taint for target_reg.
-
-        target_reg can be either a register name string or a tuple ('MEM', address, size).
         """
-        # Convert tuple format to string format for memory targets
+        # 1. Resolve target format
         if isinstance(target_reg, tuple):
             if target_reg[0] == 'MEM':
                 target_reg_str = f'MEM_{target_reg[1]:x}_{target_reg[2]}'
@@ -282,42 +295,35 @@ class CellSimulator:
         else:
             target_reg_str = target_reg
 
-        state_or: dict[str, int | dict[int, int]] = {}
-        state_and: dict[str, int | dict[int, int]] = {}
+        # 2. Setup unified states
+        state_or = MachineState()
+        state_and = MachineState()
         mem_sizes: dict[int, int] = {}
 
-        # Collect all registers and memory addresses from both states
-        all_keys = set(v_state.keys()) | set(t_state.keys())
+        # 3. Process Registers
+        all_regs = set(v_state.regs.keys()) | set(t_state.regs.keys())
+        for reg in all_regs:
+            v = v_state.regs.get(reg, 0)
+            t = t_state.regs.get(reg, 0)
+            state_or.regs[reg] = v | t
+            state_and.regs[reg] = v & ~t
 
-        for reg_name in all_keys:
-            v = v_state.get(reg_name, 0 if reg_name != 'MEM' else {})
-            t = t_state.get(reg_name, 0 if reg_name != 'MEM' else {})
+        # 4. Process Memory
+        all_addrs = set(v_state.mem.keys()) | set(t_state.mem.keys())
+        for addr in all_addrs:
+            v_val = v_state.mem.get(addr, 0)
+            t_val = t_state.mem.get(addr, 0)
 
-            # Handle memory dict format specially
-            if reg_name == 'MEM':
-                if not isinstance(v, dict):
-                    v = {}
-                if not isinstance(t, dict):
-                    t = {}
-                state_or[reg_name] = {}
-                state_and[reg_name] = {}
-                all_addrs = set(v.keys()) | set(t.keys())
-                for addr in all_addrs:
-                    v_val = v.get(addr, 0)
-                    t_val = t.get(addr, 0)
-                    state_or[reg_name][addr] = v_val | t_val  # type: ignore[index]
-                    state_and[reg_name][addr] = v_val & ~t_val  # type: ignore[index]
-                    # Determine size from v_val (the actual value, not the taint)
-                    if v_val == 0:
-                        mem_sizes[addr] = 8  # Default
-                    else:
-                        mem_sizes[addr] = max(8, (v_val.bit_length() + 7) // 8)
+            state_or.mem[addr] = v_val | t_val
+            state_and.mem[addr] = v_val & ~t_val
+
+            # Determine size from v_val
+            if v_val == 0:
+                mem_sizes[addr] = 8
             else:
-                # Simulated flip high
-                state_or[reg_name] = v | t  # type: ignore[assignment,operator]
-                # Simulated flip low
-                state_and[reg_name] = v & ~t  # type: ignore[assignment,operator]
+                mem_sizes[addr] = max(8, (v_val.bit_length() + 7) // 8)
 
+        # 5. Execute using the typed MachineState structures directly
         self._execute(bytestring, state_or, mem_sizes)
         res_or = self._read_reg(target_reg_str)
 
