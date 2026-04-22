@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterable
 
-from pypcode import Context, PcodeOp, Varnode
+from pypcode import Context, PcodeOp, Translation, Varnode
 
 from microtaint.classifier.categories import InstructionCategory
 from microtaint.instrumentation.ast import (
@@ -86,16 +87,254 @@ def generate_static_rule(
     ctx = get_context(arch)
     translation = ctx.translate(bytestring, 0x1000)
 
-    outputs: list[Varnode] = []
-    store_ops: list[PcodeOp] = []
-    for op in translation.ops:
-        if op.output and op.output.space.name == 'register':
-            outputs.append(op.output)
-        if op.opcode.name == 'STORE':
-            store_ops.append(op)
+    outputs, store_ops = get_register_outputs_and_stores(translation)
 
     unique_outputs = {get_varnode_id(out): out for out in outputs}.values()
 
+    targets_to_evaluate, assignments = map_outputs_to_targets(
+        arch,
+        state_format,
+        ctx,
+        translation,
+        store_ops,
+        unique_outputs,
+    )
+
+    for target in targets_to_evaluate:
+        out_vn = target.varnode
+        mapping = target.mapping
+
+        slice_ops = slice_backward(translation.ops, out_vn)
+        polarities = compute_polarity(slice_ops)
+
+        deps = extract_dependencies(arch, state_format, ctx, out_vn, slice_ops, polarities)
+
+        out_target, out_name, out_bit_start, out_bit_end = generate_output_target(mapping)
+
+        # If there are no register dependencies (e.g., MOV reg, constant),
+        # create an assignment with an InstructionCellExpr that has no inputs.
+        # This will correctly evaluate to 0 taint.
+        if not deps:
+            empty_in_dict: dict[str, Expr] = {}
+            expression = InstructionCellExpr(
+                arch,
+                bytestring.hex(),
+                out_name,
+                out_bit_start,
+                out_bit_end,
+                empty_in_dict,
+            )
+            assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expression))
+            continue
+
+        generate_taint_assignments(
+            arch,
+            bytestring,
+            assignments,
+            slice_ops,
+            deps,
+            out_target,
+            out_name,
+            out_bit_start,
+            out_bit_end,
+        )
+
+    return LogicCircuit(
+        assignments=assignments,
+        architecture=arch,
+        instruction=bytestring.hex(),
+        state_format=state_format,
+    )
+
+
+def generate_taint_assignments(
+    arch: Architecture,
+    bytestring: bytes,
+    assignments: list[TaintAssignment],
+    slice_ops: list[PcodeOp],
+    deps: dict[RegMapping | MemMapping, int],
+    out_target: TaintOperand | MemoryOperand,
+    out_name: str,
+    out_bit_start: int,
+    out_bit_end: int,
+) -> None:
+    dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(deps)
+
+    cat = determine_category(slice_ops)
+    if cat == InstructionCategory.MAPPED:
+        # For pure bitwise operations (AND, OR, XOR) or operations with constants,
+        # use cell simulation to get bit-precise results
+        has_bitwise_ops = any(op.opcode.name in ('INT_AND', 'INT_OR', 'INT_XOR') for op in slice_ops)
+
+        if has_bitwise_ops or not dependencies:
+            mapped_in_dict = {dependency_names[i]: dependencies[i] for i in range(len(dependencies))}
+            expr: Expr = InstructionCellExpr(
+                arch,
+                bytestring.hex(),
+                out_name,
+                out_bit_start,
+                out_bit_end,
+                mapped_in_dict,
+            )
+        else:
+            # For simple register copies, OR the dependencies
+            expr = dependencies[0]
+            for dep in dependencies[1:]:
+                expr = BinaryExpr(Op.OR, expr, dep)
+
+            # Automatically apply Avalanche to program counter branches
+            # Because if a branch condition or address is tainted, the entire PC is entirely tainted.
+        if out_name in ('EIP', 'RIP', 'PC'):
+            expr = AvalancheExpr(expr)
+
+        assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
+
+    elif cat == InstructionCategory.AVALANCHE:
+        expr = dependencies[0]
+        for dep in dependencies[1:]:
+            expr = BinaryExpr(Op.OR, expr, dep)
+        expr = AvalancheExpr(expr)
+        assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
+
+    elif cat == InstructionCategory.TRANSPORTABLE:
+        C1_cell = InstructionCellExpr(
+            arch,
+            bytestring.hex(),
+            out_name,
+            out_bit_start,
+            out_bit_end,
+            cell_inputs_rep1,
+        )
+        C2_cell = InstructionCellExpr(
+            arch,
+            bytestring.hex(),
+            out_name,
+            out_bit_start,
+            out_bit_end,
+            cell_inputs_rep2,
+        )
+
+        # Bit-precise differential: XOR of high and low flip simulations
+        expr = BinaryExpr(Op.XOR, C1_cell, C2_cell)
+
+        # Should transport term be added back (for transportable instructions) ?
+
+        if out_name in ('EIP', 'RIP', 'PC'):
+            expr = AvalancheExpr(expr)
+        assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
+
+    else:
+        default_in_dict: dict[str, Expr] = {dependency_names[i]: dependencies[i] for i in range(len(dependencies))}
+        expr = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, default_in_dict)
+        if out_name in ('EIP', 'RIP', 'PC'):
+            expr = AvalancheExpr(expr)
+        assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
+
+
+def process_dependencies(
+    deps: dict[RegMapping | MemMapping, int],
+) -> tuple[list[Expr], list[str], dict[str, Expr], dict[str, Expr]]:
+    dependencies: list[Expr] = []
+    dependency_names: list[str] = []
+    cell_inputs_rep1: dict[str, Expr] = {}
+    cell_inputs_rep2: dict[str, Expr] = {}
+
+    # -- Process Dependencies Cleanly --
+    for dep_map, p in deps.items():
+        T_in: Expr
+        V_in: Expr
+        if isinstance(dep_map, MemMapping):
+            addr_expr = TaintOperand(
+                dep_map.addr_reg.name,
+                dep_map.addr_reg.bit_start,
+                dep_map.addr_reg.bit_end,
+                is_taint=False,
+            )
+            T_in = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=True)
+            V_in = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
+            dep_name = f'MEM_{dep_map.addr_reg.name}'
+        else:
+            T_in = TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=True)
+            V_in = TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=False)
+            dep_name = dep_map.name
+
+        dependencies.append(T_in)
+        dependency_names.append(dep_name)
+        v_and_not_t = BinaryExpr(Op.AND, V_in, UnaryExpr(Op.NOT, T_in))
+
+        if p == 1:
+            rep1_expr = BinaryExpr(Op.OR, V_in, T_in)
+            rep2_expr = v_and_not_t
+        else:
+            rep1_expr = v_and_not_t
+            rep2_expr = BinaryExpr(Op.OR, V_in, T_in)
+
+            # In Cell inputs we just use the name if it is disjoint, but here multiple pieces of same reg could be used
+            # We assume disjoint parent registers mapping for cell formulas simplification
+        cell_inputs_rep1[dep_name] = rep1_expr
+        cell_inputs_rep2[dep_name] = rep2_expr
+    return dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2
+
+
+def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOperand | MemoryOperand, str, int, int]:
+    out_target: TaintOperand | MemoryOperand
+    if isinstance(mapping, MemMapping):
+        addr_expr = TaintOperand(mapping.addr_reg.name, 0, 63, is_taint=False)  # Quick hack: 64-bit addr
+        out_target = MemoryOperand(addr_expr, mapping.size_bytes, is_taint=True)
+        out_name = f'MEM_{mapping.addr_reg.name}'
+        out_bit_start, out_bit_end = 0, (mapping.size_bytes * 8) - 1
+    else:
+        out_target = TaintOperand(mapping.name, mapping.bit_start, mapping.bit_end, is_taint=True)
+        out_name = mapping.name
+        out_bit_start, out_bit_end = mapping.bit_start, mapping.bit_end
+    return out_target, out_name, out_bit_start, out_bit_end
+
+
+def extract_dependencies(  # noqa: C901
+    arch: Architecture,
+    state_format: list[Register],
+    ctx: Context,
+    out_vn: Varnode,
+    slice_ops: list[PcodeOp],
+    polarities: dict[str, int],
+) -> dict[RegMapping | MemMapping, int]:
+    deps: dict[RegMapping | MemMapping, int] = {}
+
+    # If the output varnode was never produced by any operation in this instruction,
+    # it is intrinsically its own direct read dependency (e.g. CBRANCH reading flags).
+    if not slice_ops:
+        if out_vn.space.name == 'register':
+            mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, out_vn.offset, out_vn.size)
+            if mapped_dep:
+                deps[mapped_dep] = 1
+    else:
+        for op in slice_ops:
+            if op.opcode.name == 'LOAD':
+                ptr_vn = op.inputs[1]
+                mapped_addr = _map_sleigh_to_state(ctx, arch, state_format, ptr_vn.offset, ptr_vn.size)
+                if mapped_addr:
+                    deps[MemMapping(ptr_vn.offset, ptr_vn.size, mapped_addr)] = 1
+
+        for vn_id, p in polarities.items():
+            parts = vn_id.split(':')
+            if len(parts) != 3:
+                continue
+            space, st_offset, st_size = parts
+            if space == 'register':
+                mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, int(st_offset), int(st_size))
+                if mapped_dep:
+                    deps[mapped_dep] = p
+    return deps
+
+
+def map_outputs_to_targets(
+    arch: Architecture,
+    state_format: list[Register],
+    ctx: Context,
+    translation: Translation,
+    store_ops: list[PcodeOp],
+    unique_outputs: Iterable[Varnode],
+) -> tuple[list[EvalTarget], list[TaintAssignment]]:
     targets_to_evaluate: list[EvalTarget] = []
     mem_targets: list[tuple[Varnode, Varnode, int]] = []
 
@@ -134,181 +373,15 @@ def generate_static_rule(
         if mapped_addr:
             mem_map = MemMapping(ptr_vn.offset, size, mapped_addr)
             targets_to_evaluate.append(EvalTarget(val_vn, mem_map))
+    return targets_to_evaluate, assignments
 
-    for target in targets_to_evaluate:
-        out_vn = target.varnode
-        mapping = target.mapping
 
-        slice_ops = slice_backward(translation.ops, out_vn)
-        cat = determine_category(slice_ops)
-        polarities = compute_polarity(slice_ops)
-
-        deps: dict[RegMapping | MemMapping, int] = {}
-
-        # If the output varnode was never produced by any operation in this instruction,
-        # it is intrinsically its own direct read dependency (e.g. CBRANCH reading flags).
-        if not slice_ops:
-            if out_vn.space.name == 'register':
-                mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, out_vn.offset, out_vn.size)
-                if mapped_dep:
-                    deps[mapped_dep] = 1
-        else:
-            for op in slice_ops:
-                if op.opcode.name == 'LOAD':
-                    ptr_vn = op.inputs[1]
-                    mapped_addr = _map_sleigh_to_state(ctx, arch, state_format, ptr_vn.offset, ptr_vn.size)
-                    if mapped_addr:
-                        deps[MemMapping(ptr_vn.offset, ptr_vn.size, mapped_addr)] = 1
-
-            for vn_id, p in polarities.items():
-                parts = vn_id.split(':')
-                if len(parts) != 3:
-                    continue
-                space, st_offset, st_size = parts
-                if space == 'register':
-                    mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, int(st_offset), int(st_size))
-                    if mapped_dep:
-                        deps[mapped_dep] = p
-
-        out_target: TaintOperand | MemoryOperand
-        if isinstance(mapping, MemMapping):
-            addr_expr = TaintOperand(mapping.addr_reg.name, 0, 63, is_taint=False)  # Quick hack: 64-bit addr
-            out_target = MemoryOperand(addr_expr, mapping.size_bytes, is_taint=True)
-            out_name = f'MEM_{mapping.addr_reg.name}'
-            out_bit_start, out_bit_end = 0, (mapping.size_bytes * 8) - 1
-        else:
-            out_target = TaintOperand(mapping.name, mapping.bit_start, mapping.bit_end, is_taint=True)
-            out_name = mapping.name
-            out_bit_start, out_bit_end = mapping.bit_start, mapping.bit_end
-
-        # If there are no register dependencies (e.g., MOV reg, constant),
-        # create an assignment with an InstructionCellExpr that has no inputs.
-        # This will correctly evaluate to 0 taint.
-        if not deps:
-            empty_in_dict: dict[str, Expr] = {}
-            expression = InstructionCellExpr(
-                arch,
-                bytestring.hex(),
-                out_name,
-                out_bit_start,
-                out_bit_end,
-                empty_in_dict,
-            )
-            assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expression))
-            continue
-
-        dependencies: list[Expr] = []
-        dependency_names: list[str] = []
-        cell_inputs_rep1: dict[str, Expr] = {}
-        cell_inputs_rep2: dict[str, Expr] = {}
-
-        # -- Process Dependencies Cleanly --
-        for dep_map, p in deps.items():
-            T_in: Expr
-            V_in: Expr
-            if isinstance(dep_map, MemMapping):
-                addr_expr = TaintOperand(
-                    dep_map.addr_reg.name,
-                    dep_map.addr_reg.bit_start,
-                    dep_map.addr_reg.bit_end,
-                    is_taint=False,
-                )
-                T_in = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=True)
-                V_in = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
-                dep_name = f'MEM_{dep_map.addr_reg.name}'
-            else:
-                T_in = TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=True)
-                V_in = TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=False)
-                dep_name = dep_map.name
-
-            dependencies.append(T_in)
-            dependency_names.append(dep_name)
-            v_and_not_t = BinaryExpr(Op.AND, V_in, UnaryExpr(Op.NOT, T_in))
-
-            if p == 1:
-                rep1_expr = BinaryExpr(Op.OR, V_in, T_in)
-                rep2_expr = v_and_not_t
-            else:
-                rep1_expr = v_and_not_t
-                rep2_expr = BinaryExpr(Op.OR, V_in, T_in)
-
-            # In Cell inputs we just use the name if it is disjoint, but here multiple pieces of same reg could be used
-            # We assume disjoint parent registers mapping for cell formulas simplification
-            cell_inputs_rep1[dep_name] = rep1_expr
-            cell_inputs_rep2[dep_name] = rep2_expr
-
-        if cat == InstructionCategory.MAPPED:
-            # For pure bitwise operations (AND, OR, XOR) or operations with constants,
-            # use cell simulation to get bit-precise results
-            has_bitwise_ops = any(op.opcode.name in ('INT_AND', 'INT_OR', 'INT_XOR') for op in slice_ops)
-
-            if has_bitwise_ops or not dependencies:
-                mapped_in_dict = {dependency_names[i]: dependencies[i] for i in range(len(dependencies))}
-                expr: Expr = InstructionCellExpr(
-                    arch,
-                    bytestring.hex(),
-                    out_name,
-                    out_bit_start,
-                    out_bit_end,
-                    mapped_in_dict,
-                )
-            else:
-                # For simple register copies, OR the dependencies
-                expr = dependencies[0]
-                for dep in dependencies[1:]:
-                    expr = BinaryExpr(Op.OR, expr, dep)
-
-            # Automatically apply Avalanche to program counter branches
-            # Because if a branch condition or address is tainted, the entire PC is entirely tainted.
-            if out_name in ('EIP', 'RIP', 'PC'):
-                expr = AvalancheExpr(expr)
-
-            assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
-
-        elif cat == InstructionCategory.AVALANCHE:
-            expr = dependencies[0]
-            for dep in dependencies[1:]:
-                expr = BinaryExpr(Op.OR, expr, dep)
-            expr = AvalancheExpr(expr)
-            assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
-
-        elif cat == InstructionCategory.TRANSPORTABLE:
-            C1_cell = InstructionCellExpr(
-                arch,
-                bytestring.hex(),
-                out_name,
-                out_bit_start,
-                out_bit_end,
-                cell_inputs_rep1,
-            )
-            C2_cell = InstructionCellExpr(
-                arch,
-                bytestring.hex(),
-                out_name,
-                out_bit_start,
-                out_bit_end,
-                cell_inputs_rep2,
-            )
-
-            # Bit-precise differential: XOR of high and low flip simulations
-            expr = BinaryExpr(Op.XOR, C1_cell, C2_cell)
-
-            # Should transport term be added back (for transportable instructions) ?
-
-            if out_name in ('EIP', 'RIP', 'PC'):
-                expr = AvalancheExpr(expr)
-            assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
-
-        else:
-            default_in_dict: dict[str, Expr] = {dependency_names[i]: dependencies[i] for i in range(len(dependencies))}
-            expr = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, default_in_dict)
-            if out_name in ('EIP', 'RIP', 'PC'):
-                expr = AvalancheExpr(expr)
-            assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
-
-    return LogicCircuit(
-        assignments=assignments,
-        architecture=arch,
-        instruction=bytestring.hex(),
-        state_format=state_format,
-    )
+def get_register_outputs_and_stores(translation: Translation) -> tuple[list[Varnode], list[PcodeOp]]:
+    outputs: list[Varnode] = []
+    store_ops: list[PcodeOp] = []
+    for op in translation.ops:
+        if op.output and op.output.space.name == 'register':
+            outputs.append(op.output)
+        if op.opcode.name == 'STORE':
+            store_ops.append(op)
+    return outputs, store_ops
