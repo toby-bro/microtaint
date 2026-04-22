@@ -62,6 +62,26 @@ class TaintOperand(Expr):
         return (val >> self.bit_start) & mask
 
 
+
+@dataclass
+class MemoryOperand(Expr):
+    """Represents a memory operand (dynamically resolved at concrete execution time)."""
+
+    address_expr: Expr
+    size: int  # size in bytes
+    is_taint: bool = True
+
+    def __str__(self) -> str:
+        prefix = 'T' if self.is_taint else 'V'
+        return f'{prefix}_MEM[{self.address_expr}, size={self.size}]'
+
+    def evaluate(self, input_taint: dict[str, int], input_values: dict[str, int]) -> int:
+        address = self.address_expr.evaluate(input_taint, input_values)
+        mem_name = f'MEM_{hex(address)}_{self.size}'
+        state = input_taint if self.is_taint else input_values
+        return state.get(mem_name, 0)
+
+
 @dataclass
 class Constant(Expr):
     """A constant boolean or integer value."""

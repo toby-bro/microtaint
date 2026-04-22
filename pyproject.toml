@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-dependencies = ["pypcode>=3.3.3"]
+dependencies = ["pypcode>=3.3.3", "unicorn>=2.1.4"]
 
 [project.urls]
 Homepage = "https://github.com/toby-bro/microtaint"
