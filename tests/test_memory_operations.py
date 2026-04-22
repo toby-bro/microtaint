@@ -5,6 +5,9 @@ These tests verify exact taint propagation through memory LOAD and STORE operati
 at the static analysis level (AST generation from P-code).
 """
 
+# mypy: disable-error-code="union-attr"
+# mypy: disable-error-code="attr-defined"
+
 from __future__ import annotations
 
 import pytest

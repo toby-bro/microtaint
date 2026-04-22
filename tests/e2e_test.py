@@ -1,3 +1,5 @@
+# mypy: disable-error-code="union-attr"
+# mypy: disable-error-code="attr-defined"
 from __future__ import annotations
 
 import pytest

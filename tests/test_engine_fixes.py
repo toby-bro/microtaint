@@ -2,6 +2,9 @@
 Unit tests for bit-precise taint propagation fixes in the engine.
 """
 
+# mypy: disable-error-code="union-attr"
+# mypy: disable-error-code="attr-defined"
+
 from __future__ import annotations
 
 from microtaint.instrumentation.ast import BinaryExpr, Constant, InstructionCellExpr, Op
