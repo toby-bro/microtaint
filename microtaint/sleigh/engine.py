@@ -9,6 +9,7 @@ from microtaint.classifier.categories import InstructionCategory
 from microtaint.instrumentation.ast import (
     AvalancheExpr,
     BinaryExpr,
+    Constant,
     Expr,
     InstructionCellExpr,
     LogicCircuit,
@@ -111,22 +112,7 @@ def generate_static_rule(
 
         out_target, out_name, out_bit_start, out_bit_end = generate_output_target(mapping)
 
-        # If there are no register dependencies (e.g., MOV reg, constant),
-        # create an assignment with an InstructionCellExpr that has no inputs.
-        # This will correctly evaluate to 0 taint.
-        if not deps:
-            empty_in_dict: dict[str, Expr] = {}
-            expression = InstructionCellExpr(
-                arch,
-                bytestring.hex(),
-                out_name,
-                out_bit_start,
-                out_bit_end,
-                empty_in_dict,
-            )
-            assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expression))
-            continue
-
+        # Delegate ALL assignment generation (even zero-dependency cases) to the helper function
         generate_taint_assignments(
             arch,
             bytestring,
@@ -158,77 +144,62 @@ def generate_taint_assignments(
     out_bit_start: int,
     out_bit_end: int,
 ) -> None:
-    dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(deps)
+    dependencies, _dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(deps)
 
-    cat = determine_category(slice_ops)
-    if cat == InstructionCategory.MAPPED:
-        # For pure bitwise operations (AND, OR, XOR) or operations with constants,
-        # use cell simulation to get bit-precise results
-        has_bitwise_ops = any(op.opcode.name in ('INT_AND', 'INT_OR', 'INT_XOR') for op in slice_ops)
-
-        if has_bitwise_ops or not dependencies:
-            mapped_in_dict = {dependency_names[i]: dependencies[i] for i in range(len(dependencies))}
-            expr: Expr = InstructionCellExpr(
-                arch,
-                bytestring.hex(),
-                out_name,
-                out_bit_start,
-                out_bit_end,
-                mapped_in_dict,
-            )
-        else:
-            # For simple register copies, OR the dependencies
-            expr = dependencies[0]
-            for dep in dependencies[1:]:
-                expr = BinaryExpr(Op.OR, expr, dep)
-
-            # Automatically apply Avalanche to program counter branches
-            # Because if a branch condition or address is tainted, the entire PC is entirely tainted.
+    # Universal Rule: If there are absolutely no tainted dependencies (e.g., loading a constant),
+    # the output taint is guaranteed to be 0.
+    if not dependencies:
+        expr: Expr = Constant(0, out_bit_end - out_bit_start + 1)
+        # Apply Avalanche to program counter branches (e.g., unconditional jumps)
         if out_name in ('EIP', 'RIP', 'PC'):
             expr = AvalancheExpr(expr)
+        assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expr))
+        return
 
-        assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
+    cat = determine_category(slice_ops)
 
-    elif cat == InstructionCategory.AVALANCHE:
+    # Helper function to generate the standard CellIFT bit-precise differential
+    def make_differential() -> Expr:
+        C1_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep1)
+        C2_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep2)
+        return BinaryExpr(Op.XOR, C1_cell, C2_cell)
+
+    if cat == InstructionCategory.AVALANCHE:
         expr = dependencies[0]
         for dep in dependencies[1:]:
             expr = BinaryExpr(Op.OR, expr, dep)
         expr = AvalancheExpr(expr)
-        assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
 
     elif cat == InstructionCategory.TRANSPORTABLE:
-        C1_cell = InstructionCellExpr(
-            arch,
-            bytestring.hex(),
-            out_name,
-            out_bit_start,
-            out_bit_end,
-            cell_inputs_rep1,
-        )
-        C2_cell = InstructionCellExpr(
-            arch,
-            bytestring.hex(),
-            out_name,
-            out_bit_start,
-            out_bit_end,
-            cell_inputs_rep2,
-        )
+        diff_expr = make_differential()
+        # Transportable cells require the transport term (OR of inputs) added back
+        transport_term = dependencies[0]
+        for dep in dependencies[1:]:
+            transport_term = BinaryExpr(Op.OR, transport_term, dep)
+        expr = BinaryExpr(Op.OR, diff_expr, transport_term)
 
-        # Bit-precise differential: XOR of high and low flip simulations
-        expr = BinaryExpr(Op.XOR, C1_cell, C2_cell)
+    elif cat == InstructionCategory.MAPPED:
+        simple_ops = {'COPY', 'LOAD', 'STORE'}
+        is_simple = all(op.opcode.name in simple_ops for op in slice_ops)
 
-        # Should transport term be added back (for transportable instructions) ?
-
-        if out_name in ('EIP', 'RIP', 'PC'):
-            expr = AvalancheExpr(expr)
-        assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
+        if is_simple:
+            # Fast path for direct copies
+            expr = dependencies[0]
+            for dep in dependencies[1:]:
+                expr = BinaryExpr(Op.OR, expr, dep)
+        else:
+            # Bitwise ops (AND/OR/XOR), SEXT, ZEXT, PIECE, etc.
+            expr = make_differential()
 
     else:
-        default_in_dict: dict[str, Expr] = {dependency_names[i]: dependencies[i] for i in range(len(dependencies))}
-        expr = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, default_in_dict)
-        if out_name in ('EIP', 'RIP', 'PC'):
-            expr = AvalancheExpr(expr)
-        assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
+        # Handle TRANSLATABLE, MONOTONIC, COND_TRANSPORTABLE, UNKNOWN
+        expr = make_differential()
+
+    # Automatically apply Avalanche to program counter conditional branches
+    if out_name in ('EIP', 'RIP', 'PC'):
+        expr = AvalancheExpr(expr)
+
+    assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
 
 
 def process_dependencies(

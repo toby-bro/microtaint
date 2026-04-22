@@ -1,28 +1,8 @@
 from __future__ import annotations
 
-import pypcode
+from pypcode import PcodeOp
 
 from microtaint.classifier.categories import InstructionCategory
-
-# CellIFT Transportable Operations (Arithmetic, Multiplications, Shifts)
-TRANSPORTABLE_OPCODES: set[str] = {
-    'INT_ADD',
-    'INT_SUB',
-    'INT_LEFT',  # Logical Shift Left
-    'INT_RIGHT',  # Logical Shift Right
-    'INT_SRIGHT',  # Arithmetic Shift Right
-    'INT_LESS',  # Math comparisons that calculate bounds
-    'INT_SLESS',
-    'INT_LESSEQUAL',
-    'INT_SLESSEQUAL',
-    'INT_EQUAL',
-    'INT_NOTEQUAL',
-    'INT_CARRY',
-    'INT_SCARRY',
-    'INT_SBORROW',
-}
-
-# CellIFT Mapped Operations (Bitwise logical operations, exact copies)
 
 # CellIFT Avalanche Operations (Multiplications, Divisions)
 AVALANCHE_OPCODES: set[str] = {
@@ -33,6 +13,37 @@ AVALANCHE_OPCODES: set[str] = {
     'INT_SREM',
 }
 
+# CellIFT Translatable Operations (Shifts)
+TRANSLATABLE_OPCODES: set[str] = {
+    'INT_LEFT',  # Logical Shift Left
+    'INT_RIGHT',  # Logical Shift Right
+    'INT_SRIGHT',  # Arithmetic Shift Right
+}
+
+# CellIFT Transportable Operations (Arithmetic Add/Sub)
+TRANSPORTABLE_OPCODES: set[str] = {
+    'INT_ADD',
+    'INT_SUB',
+    'INT_CARRY',
+    'INT_SCARRY',
+    'INT_SBORROW',
+}
+
+# CellIFT Conditionally Transportable (Equalities)
+COND_TRANSPORTABLE_OPCODES: set[str] = {
+    'INT_EQUAL',
+    'INT_NOTEQUAL',
+}
+
+# CellIFT Monotonic Operations (Comparisons)
+MONOTONIC_OPCODES: set[str] = {
+    'INT_LESS',
+    'INT_SLESS',
+    'INT_LESSEQUAL',
+    'INT_SLESSEQUAL',
+}
+
+# CellIFT Mapped Operations (Bitwise logical operations, exact copies, memory)
 MAPPED_OPCODES: set[str] = {
     'COPY',  # Register to register exact move
     'LOAD',  # Memory read
@@ -40,6 +51,7 @@ MAPPED_OPCODES: set[str] = {
     'INT_AND',
     'INT_OR',
     'INT_XOR',
+    'INT_NEGATE',  # Bitwise NOT
     'INT_ZEXT',  # Zero extension
     'INT_SEXT',  # Sign extension
     'SUBPIECE',  # Bit slice extraction
@@ -48,33 +60,47 @@ MAPPED_OPCODES: set[str] = {
 }
 
 
-def determine_category(slice_ops: list[pypcode.pypcode_native.PcodeOp]) -> InstructionCategory:
+def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa: C901
     """
     Given a backwards slice of P-Code operations defining an output,
     determine its highest CellIFT category.
-    Transportable (arithmetic) supersedes Mapped (bitwise).
+
+    Precedence enforces that the most complex transformation in the slice
+    dictates the cell formula used:
+    Avalanche > Translatable > Transportable > Cond_Transportable > Monotonic > Mapped
     """
     if not slice_ops:
         return InstructionCategory.MAPPED  # Zero ops implies exact copy or identity
 
-    has_mapped = False
-
+    # 1. Avalanche supersedes everything (destroys bit-precision tracking)
     for op in slice_ops:
-        op_name = op.opcode.name
-
-        # If any operation in the slice relies on avalanche operations
-        if op_name in AVALANCHE_OPCODES:
+        if op.opcode.name in AVALANCHE_OPCODES:
             return InstructionCategory.AVALANCHE
 
-        # If any operation in the slice relies on arithmetic/carries,
-        if op_name in TRANSPORTABLE_OPCODES:
+    # 2. Translatable (Shifts)
+    for op in slice_ops:
+        if op.opcode.name in TRANSLATABLE_OPCODES:
+            return InstructionCategory.TRANSLATABLE
+
+    # 3. Transportable (Arithmetic combinations)
+    for op in slice_ops:
+        if op.opcode.name in TRANSPORTABLE_OPCODES:
             return InstructionCategory.TRANSPORTABLE
 
-        if op_name in MAPPED_OPCODES:
-            has_mapped = True
+    # 4. Conditionally Transportable (Equality checks)
+    for op in slice_ops:
+        if op.opcode.name in COND_TRANSPORTABLE_OPCODES:
+            return InstructionCategory.COND_TRANSPORTABLE
 
-    if has_mapped:
-        return InstructionCategory.MAPPED
+    # 5. Monotonic (Bounds checks / comparisons)
+    for op in slice_ops:
+        if op.opcode.name in MONOTONIC_OPCODES:
+            return InstructionCategory.MONOTONIC
 
-    # Default to mapped if unsure, though ideally all ops should be classified
+    # 6. Mapped (Direct pass-throughs, bitwise ops, memory mappings)
+    for op in slice_ops:
+        if op.opcode.name in MAPPED_OPCODES:
+            return InstructionCategory.MAPPED
+
+    # Default fallback
     return InstructionCategory.MAPPED

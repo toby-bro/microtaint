@@ -234,15 +234,17 @@ class InstructionCellExpr(Expr):
         return f'SimulateCell(instr=0x{self.instruction}, out={self.out_reg}[{self.out_bit_end}:{self.out_bit_start}], {args})'  # noqa: E501
 
     def evaluate(self, context: EvalContext) -> int:
-        v_state = _build_machine_state(context.input_values)
-        t_state = _build_machine_state(context.input_taint)
-
-        target_name_with_bits = f'{self.out_reg}[{self.out_bit_end}:{self.out_bit_start}]'
         assert context.simulator is not None, 'Simulator instance required in context to evaluate instruction cell'
 
-        return context.simulator.evaluate_cell_differential(
-            bytes.fromhex(self.instruction),
-            (self.out_reg, self.out_bit_start, self.out_bit_end),
-            v_state,
-            t_state,
-        )
+        # 1. Evaluate the exact AST inputs provided to this cell
+        # (e.g. C1 evaluates inputs to V | T, while C2 evaluates inputs to V & ~T)
+        evaluated_inputs: dict[str, int] = {}
+        for name, expr in self.inputs.items():
+            evaluated_inputs[name] = expr.evaluate(context)
+
+        # 2. Build the state
+        m_state = _build_machine_state(evaluated_inputs)
+
+        # 3. Evaluate the instruction concretely ONCE
+        # (The simulator's evaluate_concrete already handles the bit slicing via out_bit_start/end)
+        return context.simulator.evaluate_concrete(self, m_state)

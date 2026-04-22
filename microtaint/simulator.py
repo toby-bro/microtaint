@@ -193,7 +193,7 @@ class CellSimulator:
 
     def setup_registers_and_memory(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:
         for reg_name, val in state.regs.items():
-            # Legacy fallback: Handle if target registers were provided as 'MEM_addr_size' flat strings
+            # Legacy fallback for MEM tuples
             if reg_name.startswith('MEM_'):
                 logger.warning(
                     f'Legacy MEM register format detected: {reg_name}. Consider using tuple format for clarity.',
@@ -216,6 +216,21 @@ class CellSimulator:
                 except ValueError:
                     mask = (1 << (size * 8)) - 1
                     self.uc.mem_write(addr, (val & mask).to_bytes(size, 'little'))
+                continue
+
+            # Flag writing logic for x86/AMD64
+            if reg_name in ('ZF', 'CF', 'SF', 'OF') and self.arch in (Architecture.X86, Architecture.AMD64):
+                eflags_reg = uc_x86_const.UC_X86_REG_EFLAGS
+                eflags = int(self.uc.reg_read(eflags_reg))
+                if reg_name == 'ZF':
+                    eflags = (eflags | (1 << 6)) if val else (eflags & ~(1 << 6))
+                elif reg_name == 'CF':
+                    eflags = (eflags | 1) if val else (eflags & ~1)
+                elif reg_name == 'SF':
+                    eflags = (eflags | (1 << 7)) if val else (eflags & ~(1 << 7))
+                elif reg_name == 'OF':
+                    eflags = (eflags | (1 << 11)) if val else (eflags & ~(1 << 11))
+                self.uc.reg_write(eflags_reg, eflags)  # pyright: ignore[reportUnknownMemberType]
                 continue
 
             uc_reg = self._get_uc_reg(reg_name)
@@ -286,12 +301,15 @@ class CellSimulator:
         """
         Computes exactly the cell logic: C_instr(V | T) ^ C_instr(V & ~T)
         """
-        # 1. Resolve target format
+        # 1. Resolve target format cleanly
+        is_reg_slice = False
         if isinstance(target_reg, tuple):
             if target_reg[0] == 'MEM':
                 target_reg_str = f'MEM_{target_reg[1]:x}_{target_reg[2]}'
             else:
-                raise ValueError(f'Unknown tuple target format: {target_reg}')
+                # Handle register slice tuple safely: e.g., ('CF', 0, 7)
+                target_reg_str = target_reg[0]
+                is_reg_slice = True
         else:
             target_reg_str = target_reg
 
@@ -330,4 +348,13 @@ class CellSimulator:
         self._execute(bytestring, state_and, mem_sizes)
         res_and = self._read_reg(target_reg_str)
 
-        return res_or ^ res_and
+        raw_diff = res_or ^ res_and
+
+        # 6. Apply bit slice if it was requested via legacy tuple
+        if is_reg_slice and isinstance(target_reg, tuple):
+            bit_start = target_reg[1]
+            bit_end = target_reg[2]
+            mask = (1 << (bit_end - bit_start + 1)) - 1
+            return (raw_diff >> bit_start) & mask
+
+        return raw_diff
