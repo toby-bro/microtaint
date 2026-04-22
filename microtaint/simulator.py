@@ -129,7 +129,7 @@ class CellSimulator:
             raise ValueError(f'Register {reg_name} not mapped for {self.arch}')
         return mapping[reg_name]
 
-    def _read_reg(self, reg_name: str) -> int:
+    def _read_reg(self, reg_name: str) -> int:  # noqa: C901
         if reg_name.startswith('MEM_'):
             parts = reg_name.split('_')
             addr = int(parts[1], 16)
@@ -140,22 +140,41 @@ class CellSimulator:
             try:
                 self.uc.mem_map(page_addr, 4096)
             except uc_py3.UcError:
-                pass  # Already mapped
+                logger.warning(
+                    f'Failed to map memory at {page_addr:#x} during register read. Address may already be mapped.',
+                )
+                # Already mapped
 
             mem_data = self.uc.mem_read(addr, size)
             return int.from_bytes(mem_data, 'little')
 
+        # X86 / AMD64 EFLAGS extraction
         if self.arch in (Architecture.X86, Architecture.AMD64):
-            if reg_name in ('ZF', 'CF', 'SF', 'OF'):
+            if reg_name in ('CF', 'PF', 'ZF', 'SF', 'OF'):
                 eflags = int(self.uc.reg_read(uc_x86_const.UC_X86_REG_EFLAGS))
-                if reg_name == 'ZF':
-                    return (eflags >> 6) & 1
                 if reg_name == 'CF':
                     return eflags & 1
+                if reg_name == 'PF':
+                    return (eflags >> 2) & 1
+                if reg_name == 'ZF':
+                    return (eflags >> 6) & 1
                 if reg_name == 'SF':
                     return (eflags >> 7) & 1
                 if reg_name == 'OF':
                     return (eflags >> 11) & 1
+
+        # ARM64 NZCV extraction
+        if self.arch == Architecture.ARM64:
+            if reg_name in ('N', 'Z', 'C', 'V'):
+                nzcv = int(self.uc.reg_read(uc_arm64_const.UC_ARM64_REG_NZCV))
+                if reg_name == 'V':
+                    return (nzcv >> 28) & 1
+                if reg_name == 'C':
+                    return (nzcv >> 29) & 1
+                if reg_name == 'Z':
+                    return (nzcv >> 30) & 1
+                if reg_name == 'N':
+                    return (nzcv >> 31) & 1
 
         uc_reg = self._get_uc_reg(reg_name)
         return int(self.uc.reg_read(uc_reg))
@@ -191,7 +210,7 @@ class CellSimulator:
         self.uc.mem_write(self.CODE_ADDR, bytestring)
         self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
 
-    def setup_registers_and_memory(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:
+    def setup_registers_and_memory(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:  # noqa: C901
         for reg_name, val in state.regs.items():
             # Legacy fallback for MEM tuples
             if reg_name.startswith('MEM_'):
@@ -219,18 +238,35 @@ class CellSimulator:
                 continue
 
             # Flag writing logic for x86/AMD64
-            if reg_name in ('ZF', 'CF', 'SF', 'OF') and self.arch in (Architecture.X86, Architecture.AMD64):
+            if reg_name in ('CF', 'PF', 'ZF', 'SF', 'OF') and self.arch in (Architecture.X86, Architecture.AMD64):
                 eflags_reg = uc_x86_const.UC_X86_REG_EFLAGS
                 eflags = int(self.uc.reg_read(eflags_reg))
-                if reg_name == 'ZF':
-                    eflags = (eflags | (1 << 6)) if val else (eflags & ~(1 << 6))
-                elif reg_name == 'CF':
+                if reg_name == 'CF':
                     eflags = (eflags | 1) if val else (eflags & ~1)
+                elif reg_name == 'PF':
+                    eflags = (eflags | (1 << 2)) if val else (eflags & ~(1 << 2))
+                elif reg_name == 'ZF':
+                    eflags = (eflags | (1 << 6)) if val else (eflags & ~(1 << 6))
                 elif reg_name == 'SF':
                     eflags = (eflags | (1 << 7)) if val else (eflags & ~(1 << 7))
                 elif reg_name == 'OF':
                     eflags = (eflags | (1 << 11)) if val else (eflags & ~(1 << 11))
                 self.uc.reg_write(eflags_reg, eflags)  # pyright: ignore[reportUnknownMemberType]
+                continue
+
+            # Flag writing logic for ARM64
+            if reg_name in ('N', 'Z', 'C', 'V') and self.arch == Architecture.ARM64:
+                nzcv_reg = uc_arm64_const.UC_ARM64_REG_NZCV
+                nzcv = int(self.uc.reg_read(nzcv_reg))
+                if reg_name == 'V':
+                    nzcv = (nzcv | (1 << 28)) if val else (nzcv & ~(1 << 28))
+                elif reg_name == 'C':
+                    nzcv = (nzcv | (1 << 29)) if val else (nzcv & ~(1 << 29))
+                elif reg_name == 'Z':
+                    nzcv = (nzcv | (1 << 30)) if val else (nzcv & ~(1 << 30))
+                elif reg_name == 'N':
+                    nzcv = (nzcv | (1 << 31)) if val else (nzcv & ~(1 << 31))
+                self.uc.reg_write(nzcv_reg, nzcv)  # pyright: ignore[reportUnknownMemberType]
                 continue
 
             uc_reg = self._get_uc_reg(reg_name)
