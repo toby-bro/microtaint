@@ -62,7 +62,6 @@ class TaintOperand(Expr):
         return (val >> self.bit_start) & mask
 
 
-
 @dataclass
 class MemoryOperand(Expr):
     """Represents a memory operand (dynamically resolved at concrete execution time)."""
@@ -140,8 +139,8 @@ class BinaryExpr(Expr):
 class TaintAssignment:
     """Represents assigning a logic block of taint variables to a target"""
 
-    target: TaintOperand
-    dependencies: list[TaintOperand]
+    target: TaintOperand | MemoryOperand
+    dependencies: list[Expr]
     expression: Expr | None = None
     expression_str: str = ''
 
@@ -182,9 +181,18 @@ class LogicCircuit:
                 for dep in assignment.dependencies:
                     val |= dep.evaluate(input_taint, input_values)
 
+            # Resolve targets securely
+            if isinstance(assignment.target, MemoryOperand):
+                address = assignment.target.address_expr.evaluate(input_taint, input_values)
+                target_name = f'MEM_{hex(address)}_{assignment.target.size}'
+                bit_start = 0
+            else:
+                target_name = assignment.target.name
+                bit_start = assignment.target.bit_start
+
             # Shift value up to correct position and combine
-            val = val << assignment.target.bit_start
-            output_taint[assignment.target.name] = output_taint.get(assignment.target.name, 0) | val
+            val = val << bit_start
+            output_taint[target_name] = output_taint.get(target_name, 0) | val
 
         return output_taint
 
