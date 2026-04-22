@@ -48,9 +48,10 @@ class Expr(ABC):
 
 @dataclass
 class AvalancheExpr(Expr):
-    """A unary operation that evaluates to all 1s (-1) if the inner expression is non-zero, else 0."""
+    """Evaluates to a full bitmask of 1s based on size if the inner expression is non-zero, else 0."""
 
     expr: Expr
+    size_bits: int
 
     def __str__(self) -> str:
         return f'AVALANCHE({self.expr})'
@@ -58,7 +59,7 @@ class AvalancheExpr(Expr):
     def evaluate(self, context: EvalContext) -> int:
         val = self.expr.evaluate(context)
         if val != 0:
-            return -1
+            return (1 << self.size_bits) - 1
         return 0
 
 

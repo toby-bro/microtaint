@@ -152,7 +152,7 @@ def generate_taint_assignments(
         expr: Expr = Constant(0, out_bit_end - out_bit_start + 1)
         # Apply Avalanche to program counter branches (e.g., unconditional jumps)
         if out_name in ('EIP', 'RIP', 'PC'):
-            expr = AvalancheExpr(expr)
+            expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
         assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expr))
         return
 
@@ -168,7 +168,7 @@ def generate_taint_assignments(
         expr = dependencies[0]
         for dep in dependencies[1:]:
             expr = BinaryExpr(Op.OR, expr, dep)
-        expr = AvalancheExpr(expr)
+        expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
 
     elif cat == InstructionCategory.TRANSPORTABLE:
         diff_expr = make_differential()
@@ -197,7 +197,7 @@ def generate_taint_assignments(
 
     # Automatically apply Avalanche to program counter conditional branches
     if out_name in ('EIP', 'RIP', 'PC'):
-        expr = AvalancheExpr(expr)
+        expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
 
     assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
 

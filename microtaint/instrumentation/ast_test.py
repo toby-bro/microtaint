@@ -18,12 +18,12 @@ from microtaint.types import Architecture, Register
 
 def test_avalanche_expr() -> None:
     inner = Constant(5, 32)
-    av = AvalancheExpr(inner)
+    av = AvalancheExpr(inner, 32)
     assert str(av) == 'AVALANCHE(0x5)'
-    assert av.evaluate(EvalContext({}, {})) == -1
+    assert av.evaluate(EvalContext({}, {})) == 0xFFFFFFFF
 
     zero_inner = Constant(0, 32)
-    av_zero = AvalancheExpr(zero_inner)
+    av_zero = AvalancheExpr(zero_inner, 32)
     assert av_zero.evaluate(EvalContext({}, {})) == 0
 
 
