@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from microtaint.instrumentation.ast import MemoryOperand
-from microtaint.simulator import CellSimulator
+from microtaint.simulator import CellSimulator, MachineState
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, Register
 
@@ -41,7 +41,7 @@ def x86_64_registers() -> list[Register]:
 class TestMemoryLoad:
     """Test LOAD (memory read) operations with exact taint propagation."""
 
-    def test_load_generates_memory_dependency(self, x86_64_registers) -> None:
+    def test_load_generates_memory_dependency(self, x86_64_registers: list[Register]) -> None:
         """LOAD from memory creates dependency on memory operand."""
         arch = Architecture.AMD64
         # mov rax, [rdi] -> 48 8b 07
@@ -65,7 +65,7 @@ class TestMemoryLoad:
         has_mem_dep = any('Memory' in str(type(dep).__name__) for dep in assignment.dependencies)
         assert has_mem_dep, 'Should have memory operand dependency'
 
-    def test_load_generates_rdi_and_memory_deps(self, x86_64_registers) -> None:
+    def test_load_generates_rdi_and_memory_deps(self, x86_64_registers: list[Register]) -> None:
         """Verify LOAD creates both address register and memory dependencies."""
         arch = Architecture.AMD64
         # mov rax, [rdi]
@@ -90,8 +90,8 @@ class TestMemoryLoad:
         # mov rax, [rdi]
         bytestring = b'\x48\x8b\x07'
 
-        v_state = {'RDI': 0x1000, 'MEM': {0x1000: 0x1122334455667788}}
-        t_state = {'RDI': 0x0, 'MEM': {0x1000: 0xFF}}  # Only low byte tainted
+        v_state = MachineState({'RDI': 0x1000}, {0x1000: 0x1122334455667788})
+        t_state = MachineState({'RDI': 0x0}, {0x1000: 0xFF})  # Only low byte tainted
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -103,8 +103,8 @@ class TestMemoryLoad:
         sim = CellSimulator(Architecture.AMD64)
         bytestring = b'\x48\x8b\x07'
 
-        v_state = {'RDI': 0x1000, 'MEM': {0x1000: 0x1122334455667788}}
-        t_state = {'RDI': 0x0, 'MEM': {0x1000: 0xFFFF00000000}}  # Bytes 4-5 tainted
+        v_state = MachineState({'RDI': 0x1000}, {0x1000: 0x1122334455667788})
+        t_state = MachineState({'RDI': 0x0}, {0x1000: 0xFFFF00000000})  # Bytes 4-5 tainted
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -116,8 +116,8 @@ class TestMemoryLoad:
         sim = CellSimulator(Architecture.AMD64)
         bytestring = b'\x48\x8b\x07'
 
-        v_state = {'RDI': 0x1000, 'MEM': {0x1000: 0x1122334455667788}}
-        t_state = {'RDI': 0xF, 'MEM': {0x1000: 0x0}}  # Address is tainted, memory is not
+        v_state = MachineState({'RDI': 0x1000}, {0x1000: 0x1122334455667788})
+        t_state = MachineState({'RDI': 0xF}, {0x1000: 0x0})  # Address is tainted, memory is not
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -131,8 +131,8 @@ class TestMemoryLoad:
         # mov eax, [rdi] -> 8b 07
         bytestring = b'\x8b\x07'
 
-        v_state = {'RDI': 0x1000, 'MEM': {0x1000: 0x12345678}}
-        t_state = {'RDI': 0x0, 'MEM': {0x1000: 0xFFFFFFFF}}  # Low 32 bits tainted
+        v_state = MachineState({'RDI': 0x1000}, {0x1000: 0x12345678})
+        t_state = MachineState({'RDI': 0x0}, {0x1000: 0xFFFFFFFF})  # Low 32 bits tainted
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -145,8 +145,8 @@ class TestMemoryLoad:
         # mov ax, [rdi] -> 66 8b 07
         bytestring = b'\x66\x8b\x07'
 
-        v_state = {'RDI': 0x1000, 'MEM': {0x1000: 0x1234}}
-        t_state = {'RDI': 0x0, 'MEM': {0x1000: 0xFFFF}}  # 16 bits tainted
+        v_state = MachineState({'RDI': 0x1000}, {0x1000: 0x1234})
+        t_state = MachineState({'RDI': 0x0}, {0x1000: 0xFFFF})  # 16 bits tainted
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -159,8 +159,8 @@ class TestMemoryLoad:
         # mov al, [rdi] -> 8a 07
         bytestring = b'\x8a\x07'
 
-        v_state = {'RDI': 0x1000, 'MEM': {0x1000: 0x12}}
-        t_state = {'RDI': 0x0, 'MEM': {0x1000: 0xFF}}  # 8 bits tainted
+        v_state = MachineState({'RDI': 0x1000}, {0x1000: 0x12})
+        t_state = MachineState({'RDI': 0x0}, {0x1000: 0xFF})  # 8 bits tainted
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -177,8 +177,8 @@ class TestMemoryStore:
         # mov [rsi], rax -> 48 89 06
         bytestring = b'\x48\x89\x06'
 
-        v_state = {'RSI': 0x2000, 'RAX': 0x1122334455667788, 'MEM': {}}
-        t_state = {'RSI': 0x0, 'RAX': 0xFFFFFFFFFFFFFFFF, 'MEM': {}}
+        v_state = MachineState({'RSI': 0x2000, 'RAX': 0x1122334455667788}, {})
+        t_state = MachineState({'RSI': 0x0, 'RAX': 0xFFFFFFFFFFFFFFFF}, {})
 
         # The target is memory at address 0x2000
         # Need to evaluate memory taint at that location
@@ -197,8 +197,8 @@ class TestMemoryStore:
         sim = CellSimulator(Architecture.AMD64)
         bytestring = b'\x48\x89\x06'
 
-        v_state = {'RSI': 0x2000, 'RAX': 0x1122334455667788, 'MEM': {}}
-        t_state = {'RSI': 0x0, 'RAX': 0xFF, 'MEM': {}}  # Only low byte tainted
+        v_state = MachineState({'RSI': 0x2000, 'RAX': 0x1122334455667788}, {})
+        t_state = MachineState({'RSI': 0x0, 'RAX': 0xFF}, {})  # Only low byte tainted
 
         result_taint = sim.evaluate_cell_differential(
             bytestring,
@@ -215,8 +215,8 @@ class TestMemoryStore:
         sim = CellSimulator(Architecture.AMD64)
         bytestring = b'\x48\x89\x06'
 
-        v_state = {'RSI': 0x2000, 'RAX': 0x1122334455667788, 'MEM': {}}
-        t_state = {'RSI': 0x0, 'RAX': 0xFFFF0000, 'MEM': {}}  # Bytes 2-3 tainted
+        v_state = MachineState({'RSI': 0x2000, 'RAX': 0x1122334455667788}, {})
+        t_state = MachineState({'RSI': 0x0, 'RAX': 0xFFFF0000}, {})  # Bytes 2-3 tainted
 
         result_taint = sim.evaluate_cell_differential(
             bytestring,
@@ -233,8 +233,8 @@ class TestMemoryStore:
         sim = CellSimulator(Architecture.AMD64)
         bytestring = b'\x48\x89\x06'
 
-        v_state = {'RSI': 0x2000, 'RAX': 0x1122334455667788, 'MEM': {}}
-        t_state = {'RSI': 0xF, 'RAX': 0x0, 'MEM': {}}  # Address tainted, data clean
+        v_state = MachineState({'RSI': 0x2000, 'RAX': 0x1122334455667788}, {})
+        t_state = MachineState({'RSI': 0xF, 'RAX': 0x0}, {})  # Address tainted, data clean
 
         result_taint = sim.evaluate_cell_differential(
             bytestring,
@@ -253,8 +253,8 @@ class TestMemoryStore:
         # mov [rsi], eax -> 89 06
         bytestring = b'\x89\x06'
 
-        v_state = {'RSI': 0x2000, 'RAX': 0x12345678, 'MEM': {}}
-        t_state = {'RSI': 0x0, 'RAX': 0xFFFFFFFF, 'MEM': {}}
+        v_state = MachineState({'RSI': 0x2000, 'RAX': 0x12345678}, {})
+        t_state = MachineState({'RSI': 0x0, 'RAX': 0xFFFFFFFF}, {})
 
         result_taint = sim.evaluate_cell_differential(
             bytestring,
@@ -272,8 +272,8 @@ class TestMemoryStore:
         # mov [rsi], ax -> 66 89 06
         bytestring = b'\x66\x89\x06'
 
-        v_state = {'RSI': 0x2000, 'RAX': 0x1234, 'MEM': {}}
-        t_state = {'RSI': 0x0, 'RAX': 0xFFFF, 'MEM': {}}
+        v_state = MachineState({'RSI': 0x2000, 'RAX': 0x1234}, {})
+        t_state = MachineState({'RSI': 0x0, 'RAX': 0xFFFF}, {})
 
         result_taint = sim.evaluate_cell_differential(
             bytestring,
@@ -291,8 +291,8 @@ class TestMemoryStore:
         # mov [rsi], al -> 88 06
         bytestring = b'\x88\x06'
 
-        v_state = {'RSI': 0x2000, 'RAX': 0x12, 'MEM': {}}
-        t_state = {'RSI': 0x0, 'RAX': 0xFF, 'MEM': {}}
+        v_state = MachineState({'RSI': 0x2000, 'RAX': 0x12}, {})
+        t_state = MachineState({'RSI': 0x0, 'RAX': 0xFF}, {})
 
         result_taint = sim.evaluate_cell_differential(
             bytestring,
@@ -315,8 +315,8 @@ class TestMemoryReadModifyWrite:
         bytestring = b'\x01\x07'
 
         # Memory has value 0x10, EAX has 0x20, both partially tainted
-        v_state = {'RDI': 0x1000, 'RAX': 0x20, 'MEM': {0x1000: 0x10}}
-        t_state = {'RDI': 0x0, 'RAX': 0xF, 'MEM': {0x1000: 0xF0}}  # Different bits tainted
+        v_state = MachineState({'RDI': 0x1000, 'RAX': 0x20}, {0x1000: 0x10})
+        t_state = MachineState({'RDI': 0x0, 'RAX': 0xF}, {0x1000: 0xF0})  # Different bits tainted
 
         result_taint = sim.evaluate_cell_differential(
             bytestring,
@@ -337,8 +337,8 @@ class TestMemoryReadModifyWrite:
         # inc dword [rdi] -> ff 07
         bytestring = b'\xff\x07'
 
-        v_state = {'RDI': 0x1000, 'MEM': {0x1000: 0xFF}}  # Value that will carry
-        t_state = {'RDI': 0x0, 'MEM': {0x1000: 0x1}}  # Bit 0 tainted
+        v_state = MachineState({'RDI': 0x1000}, {0x1000: 0xFF})  # Value that will carry
+        t_state = MachineState({'RDI': 0x0}, {0x1000: 0x1})  # Bit 0 tainted
 
         result_taint = sim.evaluate_cell_differential(
             bytestring,
@@ -358,8 +358,8 @@ class TestMemoryReadModifyWrite:
         # xor [rdi], eax -> 31 07
         bytestring = b'\x31\x07'
 
-        v_state = {'RDI': 0x1000, 'RAX': 0x12345678, 'MEM': {0x1000: 0xABCDEF00}}
-        t_state = {'RDI': 0x0, 'RAX': 0xFF, 'MEM': {0x1000: 0xFF00}}  # Different bits
+        v_state = MachineState({'RDI': 0x1000, 'RAX': 0x12345678}, {0x1000: 0xABCDEF00})
+        t_state = MachineState({'RDI': 0x0, 'RAX': 0xFF}, {0x1000: 0xFF00})  # Different bits
 
         result_taint = sim.evaluate_cell_differential(
             bytestring,
@@ -382,16 +382,11 @@ class TestMemoryComplexScenarios:
         # mov rax, [rdi]; mov [rsi], rax
         bytestring = b'\x48\x8b\x07\x48\x89\x06'
 
-        v_state = {
-            'RDI': 0x1000,
-            'RSI': 0x2000,
-            'MEM': {0x1000: 0x1122334455667788},
-        }
-        t_state = {
-            'RDI': 0x0,
-            'RSI': 0x0,
-            'MEM': {0x1000: 0xFFFFFFFFFFFFFFFF},  # Source fully tainted
-        }
+        v_state = MachineState({'RDI': 0x1000, 'RSI': 0x2000}, {0x1000: 0x1122334455667788})
+        t_state = MachineState(
+            {'RDI': 0x0, 'RSI': 0x0},
+            {0x1000: 0xFFFFFFFFFFFFFFFF},  # Source fully tainted
+        )
 
         # After both instructions, memory at 0x2000 should be tainted
         result_taint = sim.evaluate_cell_differential(
@@ -409,18 +404,14 @@ class TestMemoryComplexScenarios:
         # mov [rdi], rax; mov [rdi], rbx
         bytestring = b'\x48\x89\x07\x48\x89\x1f'
 
-        v_state = {
-            'RDI': 0x1000,
-            'RAX': 0x1111111111111111,
-            'RBX': 0x2222222222222222,
-            'MEM': {},
-        }
-        t_state = {
-            'RDI': 0x0,
-            'RAX': 0xFFFFFFFFFFFFFFFF,  # RAX fully tainted
-            'RBX': 0x0,  # RBX clean
-            'MEM': {},
-        }
+        v_state = MachineState(
+            {'RDI': 0x1000, 'RAX': 0x1111111111111111, 'RBX': 0x2222222222222222},
+            {},
+        )
+        t_state = MachineState(
+            {'RDI': 0x0, 'RAX': 0xFFFFFFFFFFFFFFFF, 'RBX': 0x0},  # RAX fully tainted  # RBX clean
+            {},
+        )
 
         # After second store, memory should be clean (RBX overwrote tainted RAX)
         result_taint = sim.evaluate_cell_differential(
@@ -438,18 +429,14 @@ class TestMemoryComplexScenarios:
         # mov [rdi], rax; mov [rdi], ebx
         bytestring = b'\x48\x89\x07\x89\x1f'
 
-        v_state = {
-            'RDI': 0x1000,
-            'RAX': 0x1111111111111111,
-            'RBX': 0x22222222,
-            'MEM': {},
-        }
-        t_state = {
-            'RDI': 0x0,
-            'RAX': 0xFFFFFFFFFFFFFFFF,  # RAX fully tainted
-            'RBX': 0x0,  # RBX clean
-            'MEM': {},
-        }
+        v_state = MachineState(
+            {'RDI': 0x1000, 'RAX': 0x1111111111111111, 'RBX': 0x22222222},
+            {},
+        )
+        t_state = MachineState(
+            {'RDI': 0x0, 'RAX': 0xFFFFFFFFFFFFFFFF, 'RBX': 0x0},  # RAX fully tainted  # RBX clean
+            {},
+        )
 
         # After second store, low 32 bits clean, high 32 bits still tainted
         result_taint = sim.evaluate_cell_differential(
@@ -470,8 +457,8 @@ class TestMemoryComplexScenarios:
         bytestring = b'\x48\x89\x07'
 
         # Write to 0x1000, check that 0x1008 is unaffected
-        v_state = {'RDI': 0x1000, 'RAX': 0x1122334455667788, 'MEM': {}}
-        t_state = {'RDI': 0x0, 'RAX': 0xFFFFFFFFFFFFFFFF, 'MEM': {}}
+        v_state = MachineState({'RDI': 0x1000, 'RAX': 0x1122334455667788}, {})
+        t_state = MachineState({'RDI': 0x0, 'RAX': 0xFFFFFFFFFFFFFFFF}, {})
 
         # Memory at 0x1008 should be unaffected
         result_taint_1000 = sim.evaluate_cell_differential(

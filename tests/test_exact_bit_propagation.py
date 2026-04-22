@@ -7,7 +7,7 @@ Each test specifies concrete input values and taint, then validates the exact ou
 
 from __future__ import annotations
 
-from microtaint.simulator import CellSimulator
+from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture
 
 
@@ -22,8 +22,8 @@ class TestAddCarryPropagation:
 
         # Value: 0x00000001 + 0x00000002 = 0x00000003 (no carry)
         # Taint: EAX has bit 0 tainted (0x1), EBX clean
-        v_state = {'RAX': 0x1, 'RBX': 0x2}
-        t_state = {'RAX': 0x1, 'RBX': 0x0}
+        v_state = MachineState({'RAX': 0x1, 'RBX': 0x2})
+        t_state = MachineState({'RAX': 0x1, 'RBX': 0x0})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -39,8 +39,8 @@ class TestAddCarryPropagation:
 
         # Value: 0xFF + 0x01 = 0x100 (carry out of bit 7)
         # Taint: EAX has bit 0 tainted, EBX clean
-        v_state = {'RAX': 0xFF, 'RBX': 0x01}
-        t_state = {'RAX': 0x1, 'RBX': 0x0}
+        v_state = MachineState({'RAX': 0xFF, 'RBX': 0x01})
+        t_state = MachineState({'RAX': 0x1, 'RBX': 0x0})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -55,8 +55,8 @@ class TestAddCarryPropagation:
 
         # Value: 0x10 + 0x20 = 0x30
         # Taint: EAX has bits [0:3] tainted (0xF), EBX has bits [4:5] tainted (0x30)
-        v_state = {'RAX': 0x10, 'RBX': 0x20}
-        t_state = {'RAX': 0xF, 'RBX': 0x30}
+        v_state = MachineState({'RAX': 0x10, 'RBX': 0x20})
+        t_state = MachineState({'RAX': 0xF, 'RBX': 0x30})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -71,8 +71,8 @@ class TestAddCarryPropagation:
 
         # Value: 0x1 + 0x0 = 0x1 (adding zero)
         # Taint: EAX has bit 0 tainted
-        v_state = {'RAX': 0x1, 'RBX': 0x0}
-        t_state = {'RAX': 0x1, 'RBX': 0x0}
+        v_state = MachineState({'RAX': 0x1, 'RBX': 0x0})
+        t_state = MachineState({'RAX': 0x1, 'RBX': 0x0})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -92,8 +92,8 @@ class TestSubBorrowPropagation:
 
         # Value: 0x10 - 0x01 = 0x0F (no borrow)
         # Taint: EAX has bit 0 tainted
-        v_state = {'RAX': 0x10, 'RBX': 0x01}
-        t_state = {'RAX': 0x1, 'RBX': 0x0}
+        v_state = MachineState({'RAX': 0x10, 'RBX': 0x01})
+        t_state = MachineState({'RAX': 0x1, 'RBX': 0x0})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -108,8 +108,8 @@ class TestSubBorrowPropagation:
 
         # Value: 0x100 - 0x01 = 0xFF (borrow propagates)
         # Taint: EAX has bit 0 tainted
-        v_state = {'RAX': 0x100, 'RBX': 0x01}
-        t_state = {'RAX': 0x1, 'RBX': 0x0}
+        v_state = MachineState({'RAX': 0x100, 'RBX': 0x01})
+        t_state = MachineState({'RAX': 0x1, 'RBX': 0x0})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -128,8 +128,8 @@ class TestAndExactMasking:
 
         # Value: 0xFFFF & 0x0F0F = 0x0F0F
         # Taint: EAX has all bits [0:15] tainted (0xFFFF)
-        v_state = {'RAX': 0xFFFF}
-        t_state = {'RAX': 0xFFFF}
+        v_state = MachineState({'RAX': 0xFFFF})
+        t_state = MachineState({'RAX': 0xFFFF})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -146,8 +146,8 @@ class TestAndExactMasking:
 
         # Value: 0xFF & 0xFF = 0xFF
         # Taint: EAX has bits [0:3], EBX has bits [4:7]
-        v_state = {'RAX': 0xFF, 'RBX': 0xFF}
-        t_state = {'RAX': 0x0F, 'RBX': 0xF0}
+        v_state = MachineState({'RAX': 0xFF, 'RBX': 0xFF})
+        t_state = MachineState({'RAX': 0x0F, 'RBX': 0xF0})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -168,8 +168,8 @@ class TestOrExactUnion:
 
         # Value: 0x0F | 0xF0 = 0xFF
         # Taint: EAX has bits [0:3], EBX has bits [4:7]
-        v_state = {'RAX': 0x0F, 'RBX': 0xF0}
-        t_state = {'RAX': 0x0F, 'RBX': 0xF0}
+        v_state = MachineState({'RAX': 0x0F, 'RBX': 0xF0})
+        t_state = MachineState({'RAX': 0x0F, 'RBX': 0xF0})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -189,8 +189,8 @@ class TestXorExactBehavior:
 
         # Value: any XOR itself = 0
         # Taint: EAX fully tainted
-        v_state = {'RAX': 0xFF}
-        t_state = {'RAX': 0xFF}
+        v_state = MachineState({'RAX': 0xFF})
+        t_state = MachineState({'RAX': 0xFF})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -206,8 +206,8 @@ class TestXorExactBehavior:
 
         # Value: 0xFF XOR 0x00 = 0xFF
         # Taint: EAX has bits [0:3], EBX clean
-        v_state = {'RAX': 0xFF, 'RBX': 0x00}
-        t_state = {'RAX': 0x0F, 'RBX': 0x00}
+        v_state = MachineState({'RAX': 0xFF, 'RBX': 0x00})
+        t_state = MachineState({'RAX': 0x0F, 'RBX': 0x00})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -226,8 +226,8 @@ class TestMovExactCopy:
 
         # Value: any
         # Taint: EBX has bits [0:7] tainted
-        v_state = {'RAX': 0x00, 'RBX': 0xFF}
-        t_state = {'RAX': 0x00, 'RBX': 0xFF}
+        v_state = MachineState({'RAX': 0x00, 'RBX': 0xFF})
+        t_state = MachineState({'RAX': 0x00, 'RBX': 0xFF})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -242,8 +242,8 @@ class TestMovExactCopy:
 
         # Value: constant
         # Taint: none (no register inputs)
-        v_state = {'RAX': 0xFF}
-        t_state = {'RAX': 0x00}  # No taint inputs
+        v_state = MachineState({'RAX': 0xFF})
+        t_state = MachineState({'RAX': 0x00})  # No taint inputs
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -262,8 +262,8 @@ class TestShiftExactBitShifts:
 
         # Value: 0x000F << 4 = 0x00F0
         # Taint: bits [0:3] tainted (0x0F)
-        v_state = {'RAX': 0x000F}
-        t_state = {'RAX': 0x000F}
+        v_state = MachineState({'RAX': 0x000F})
+        t_state = MachineState({'RAX': 0x000F})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -278,8 +278,8 @@ class TestShiftExactBitShifts:
 
         # Value: 0x00F0 >> 4 = 0x000F
         # Taint: bits [4:7] tainted (0xF0)
-        v_state = {'RAX': 0x00F0}
-        t_state = {'RAX': 0x00F0}
+        v_state = MachineState({'RAX': 0x00F0})
+        t_state = MachineState({'RAX': 0x00F0})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
@@ -293,8 +293,8 @@ class TestShiftExactBitShifts:
 
         # Value: 0xFFFF << 4 = 0xFFFF0
         # Taint: bits [0:15] tainted (0xFFFF)
-        v_state = {'RAX': 0xFFFF}
-        t_state = {'RAX': 0xFFFF}
+        v_state = MachineState({'RAX': 0xFFFF})
+        t_state = MachineState({'RAX': 0xFFFF})
 
         result_taint = sim.evaluate_cell_differential(bytestring, 'RAX', v_state, t_state)
 
