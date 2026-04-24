@@ -347,14 +347,49 @@ def generate_taint_assignments(  # noqa: C901
             expr = diff_expr
 
     elif cat == InstructionCategory.COND_TRANSPORTABLE:
-        # Note: The paper defines a precise check for this:
+        # Implements precise Conditional Transportability from the CELLIFT paper:
         # Y^t = C(A \wedge T_AB, B \wedge T_AB) \wedge \bigvee I^t
-        # Right now, you are over-approximating (Avalanche).
-        # If you want perfect precision, you need to implement the T_AB logic.
-        expr = dependencies[0]
+        # Where T_AB is the mask of bits NOT tainted in ANY input.
+
+        # 1. Create T_union (A^t \vee B^t)
+        T_union = dependencies[0]
         for dep in dependencies[1:]:
-            expr = BinaryExpr(Op.OR, expr, dep)
-        expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
+            T_union = BinaryExpr(Op.OR, T_union, dep)
+
+        masked_inputs: dict[str, Expr] = {}
+        # 2. Construct (V_in \wedge ~T_union) for all inputs
+        for dep_map in deps.keys():
+            if isinstance(dep_map, MemMapping):
+                addr_expr = TaintOperand(
+                    dep_map.addr_reg.name,
+                    dep_map.addr_reg.bit_start,
+                    dep_map.addr_reg.bit_end,
+                    is_taint=False,
+                )
+                V_in: Expr = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
+                dep_name = f'MEM_{dep_map.addr_reg.name}'
+            else:
+                V_in = TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=False)
+                dep_name = dep_map.name
+
+            masked_V = BinaryExpr(Op.AND, V_in, UnaryExpr(Op.NOT, T_union))
+            masked_inputs[dep_name] = masked_V
+
+        # 3. Evaluate the cell using the masked values: C(A \wedge T_AB, B \wedge T_AB)
+        C_eval = InstructionCellExpr(
+            arch,
+            bytestring.hex(),
+            out_name,
+            out_bit_start,
+            out_bit_end,
+            masked_inputs,
+        )
+
+        # 4. Avalanche T_union to 1-bit to represent \bigvee I^t (Is ANY bit tainted?)
+        T_any = AvalancheExpr(T_union, out_bit_end - out_bit_start + 1)
+
+        # 5. Final Boolean AND
+        expr = BinaryExpr(Op.AND, C_eval, T_any)
 
     elif cat == InstructionCategory.TRANSPORTABLE:
         diff_expr = make_differential()
