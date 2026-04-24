@@ -10,6 +10,7 @@ class InstructionCategory(Enum):
     TRANSPORTABLE = 'Transportable'
     TRANSLATABLE = 'Translatable'
     COND_TRANSPORTABLE = 'Conditionally Transportable'
+    ORABLE = 'Orable'  # for XOR, where we just need to OR the input taints together
     AVALANCHE = 'Avalanche'
     UNKNOWN = 'Unknown'
 
