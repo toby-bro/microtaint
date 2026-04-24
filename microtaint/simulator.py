@@ -10,6 +10,7 @@ import unicorn.x86_const as uc_x86_const
 from unicorn import (
     UC_ARCH_ARM64,
     UC_ARCH_X86,
+    UC_ERR_FETCH_UNMAPPED,
     UC_ERR_MAP,
     UC_HOOK_MEM_UNMAPPED,
     UC_MEM_FETCH_UNMAPPED,
@@ -39,6 +40,7 @@ _UC_REGS = {
         'EBP': uc_x86_const.UC_X86_REG_EBP,
         'ESP': uc_x86_const.UC_X86_REG_ESP,
         'EIP': uc_x86_const.UC_X86_REG_EIP,
+        'EFLAGS': uc_x86_const.UC_X86_REG_EFLAGS,
     },
     Architecture.AMD64: {
         'RAX': uc_x86_const.UC_X86_REG_RAX,
@@ -187,11 +189,8 @@ class CellSimulator:
     ) -> None:
         """
         Executes the exact instruction over a given concrete MachineState (writes to registers and memory).
-
-        mem_sizes: Optional dict mapping addresses to their expected sizes in bytes.
         """
         self.clear_memory_and_registers()
-
         self.setup_registers_and_memory(state, mem_sizes)
 
         # Set the Program Counter to the address of the code
@@ -206,9 +205,18 @@ class CellSimulator:
                 raise ValueError(f'Unsupported architecture: {self.arch}')
 
         self.uc.reg_write(pc_reg, self.CODE_ADDR)  # pyright: ignore[reportUnknownMemberType]
-
         self.uc.mem_write(self.CODE_ADDR, bytestring)
-        self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
+
+        try:
+            self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
+        except uc_py3.UcError as e:
+            # If a branch (CALL, JMP, RET) occurs, the PC jumps outside our mapped boundary.
+            # Unicorn attempts to fetch the next instruction and throws UC_ERR_FETCH_UNMAPPED.
+            # The branch successfully executed, so this is safe to ignore.
+            if e.errno == UC_ERR_FETCH_UNMAPPED:
+                pass
+            else:
+                raise
 
     def setup_registers_and_memory(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:  # noqa: C901
         for reg_name, val in state.regs.items():

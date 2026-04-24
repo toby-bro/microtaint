@@ -4,7 +4,6 @@ from pypcode import PcodeOp
 
 from microtaint.classifier.categories import InstructionCategory
 
-# CellIFT Avalanche Operations (Multiplications, Divisions, Parity/Popcount)
 AVALANCHE_OPCODES: set[str] = {
     'INT_MULT',
     'INT_DIV',
@@ -14,93 +13,113 @@ AVALANCHE_OPCODES: set[str] = {
     'POPCOUNT',
 }
 
-# CellIFT Translatable Operations (Shifts)
 TRANSLATABLE_OPCODES: set[str] = {
     'INT_LEFT',
     'INT_RIGHT',
     'INT_SRIGHT',
 }
 
-# CellIFT Transportable Operations (Arithmetic Add/Sub)
 TRANSPORTABLE_OPCODES: set[str] = {
     'INT_ADD',
     'INT_SUB',
+    'INT_2COMP',
 }
 
-# CellIFT Conditionally Transportable (Equalities)
 COND_TRANSPORTABLE_OPCODES: set[str] = {
     'INT_EQUAL',
     'INT_NOTEQUAL',
 }
 
-# CellIFT Monotonic Operations (Comparisons & Flags)
 MONOTONIC_OPCODES: set[str] = {
     'INT_LESS',
-    'INT_SLESS',
     'INT_LESSEQUAL',
+    'INT_SLESS',
     'INT_SLESSEQUAL',
-    'INT_CARRY',  # <-- MOVED HERE (Carry flags are monotonic)
-    'INT_SCARRY',  # <-- MOVED HERE (Overflow flags are monotonic bounds)
-    'INT_SBORROW',  # <-- MOVED HERE
-}
-
-# CellIFT Mapped Operations (Bitwise logical operations, exact copies, memory)
-MAPPED_OPCODES: set[str] = {
-    'COPY',
-    'LOAD',
-    'STORE',
+    'INT_CARRY',
+    'INT_SCARRY',
+    'INT_SBORROW',
     'INT_AND',
     'INT_OR',
-    'INT_XOR',
     'INT_NEGATE',
+}
+
+ROUTING_OPCODES: set[str] = {
+    'INT_AND',
+    'INT_OR',
+    'INT_LEFT',
+    'INT_RIGHT',
+    'INT_SRIGHT',
+    'COPY',
     'INT_ZEXT',
     'INT_SEXT',
     'SUBPIECE',
     'PIECE',
+    'LOAD',
 }
+
+ORABLE_OPCODES: set[str] = {
+    'INT_XOR',
+}
+
+EXTENSION_OPCODES = {'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'PIECE', 'COPY'}
+
+
+def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:
+    """
+    Heuristic: A true permutation only uses routing/shifting opcodes
+    AND relies on only ONE dynamic input (register/memory). All other inputs must be constants.
+    """
+    dynamic_sources: set[tuple[str, int]] = set()
+
+    for op in slice_ops:
+        if op.opcode.name not in ROUTING_OPCODES:
+            return False
+
+        for vn in op.inputs:
+            # Ignore constants and temporary microcode registers ('unique')
+            if vn.space.name not in ('const', 'unique'):
+                # We track the base offset to ensure it's pulling from the same architectural register
+                dynamic_sources.add((vn.space.name, vn.offset))
+
+    # If it reads from exactly 1 dynamic architectural source, it's a simple mapped permutation
+    return len(dynamic_sources) == 1
 
 
 def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa: C901
-    """
-    Given a backwards slice of P-Code operations defining an output,
-    determine its highest CellIFT category.
-
-    Precedence enforces that the most complex transformation in the slice
-    dictates the cell formula used:
-    Avalanche > Translatable > Transportable > Cond_Transportable > Monotonic > Mapped
-    """
     if not slice_ops:
-        return InstructionCategory.MAPPED  # Zero ops implies exact copy or identity
+        return InstructionCategory.MAPPED
 
-    # 1. Avalanche supersedes everything (destroys bit-precision tracking)
-    for op in slice_ops:
+    # 1. First, check if it fits the perfect single-register permutation heuristic
+    if is_mapped_permutation(slice_ops):
+        return InstructionCategory.MAPPED
+
+    # 2. Otherwise, strip extensions to find the core ALU operation
+    core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
+
+    for op in core_ops:
         if op.opcode.name in AVALANCHE_OPCODES:
             return InstructionCategory.AVALANCHE
 
-    # 2. Translatable (Shifts)
-    for op in slice_ops:
+    for op in core_ops:
         if op.opcode.name in TRANSLATABLE_OPCODES:
             return InstructionCategory.TRANSLATABLE
 
-    # 3. Transportable (Arithmetic combinations)
-    for op in slice_ops:
+    for op in core_ops:
         if op.opcode.name in TRANSPORTABLE_OPCODES:
             return InstructionCategory.TRANSPORTABLE
 
-    # 4. Conditionally Transportable (Equality checks)
-    for op in slice_ops:
+    for op in core_ops:
         if op.opcode.name in COND_TRANSPORTABLE_OPCODES:
             return InstructionCategory.COND_TRANSPORTABLE
 
-    # 5. Monotonic (Bounds checks / comparisons)
-    for op in slice_ops:
+    for op in core_ops:
         if op.opcode.name in MONOTONIC_OPCODES:
             return InstructionCategory.MONOTONIC
 
-    # 6. Mapped (Direct pass-throughs, bitwise ops, memory mappings)
-    for op in slice_ops:
-        if op.opcode.name in MAPPED_OPCODES:
-            return InstructionCategory.MAPPED
+    for op in core_ops:
+        if op.opcode.name in ORABLE_OPCODES:
+            return InstructionCategory.ORABLE
 
-    # Default fallback
-    return InstructionCategory.MAPPED
+    raise ValueError(
+        'Unable to determine instruction category for slice_ops: ' + ', '.join(op.opcode.name for op in slice_ops),
+    )

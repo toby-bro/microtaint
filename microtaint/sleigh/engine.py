@@ -20,7 +20,7 @@ from microtaint.instrumentation.ast import (
     UnaryExpr,
 )
 from microtaint.sleigh.lifter import get_context
-from microtaint.sleigh.mapper import determine_category
+from microtaint.sleigh.mapper import EXTENSION_OPCODES, determine_category
 from microtaint.sleigh.polarity import compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
@@ -145,7 +145,7 @@ def generate_taint_assignments(  # noqa: C901
     out_bit_start: int,
     out_bit_end: int,
 ) -> None:
-    dependencies, _dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(deps)
+    dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(deps)
 
     # Universal Rule: If there are absolutely no tainted dependencies (e.g., loading a constant),
     # the output taint is guaranteed to be 0.
@@ -171,6 +171,16 @@ def generate_taint_assignments(  # noqa: C901
             expr = BinaryExpr(Op.OR, expr, dep)
         expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
 
+    elif cat == InstructionCategory.COND_TRANSPORTABLE:
+        # Note: The paper defines a precise check for this:
+        # Y^t = C(A \wedge T_AB, B \wedge T_AB) \wedge \bigvee I^t
+        # Right now, you are over-approximating (Avalanche).
+        # If you want perfect precision, you need to implement the T_AB logic.
+        expr = dependencies[0]
+        for dep in dependencies[1:]:
+            expr = BinaryExpr(Op.OR, expr, dep)
+        expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
+
     elif cat == InstructionCategory.TRANSPORTABLE:
         diff_expr = make_differential()
         # Transportable cells require the transport term (OR of inputs) added back
@@ -186,20 +196,41 @@ def generate_taint_assignments(  # noqa: C901
             expr = diff_expr
 
     elif cat == InstructionCategory.MAPPED:
-        simple_ops = {'COPY', 'LOAD', 'STORE'}
-        is_simple = all(op.opcode.name in simple_ops for op in slice_ops)
+        # Since the heuristic guarantees exactly ONE dynamic dependency,
+        # the taint output is simply the instruction itself applied to the input taint.
 
-        if is_simple:
-            # Fast path for direct copies
+        # We use rep1_expr from cell_inputs_rep1 because we want to pass the
+        # actual Taint vector directly through the instruction's formula.
+        expr = InstructionCellExpr(
+            arch,
+            bytestring.hex(),
+            out_name,
+            out_bit_start,
+            out_bit_end,
+            {dependency_names[0]: dependencies[0]},  # Apply instruction directly to the Taint
+        )
+
+    elif cat == InstructionCategory.ORABLE:
+        # If there is only one dependency, then it is clearing taint
+        if len(dependencies) == 1:
+            expr = TaintOperand(dependency_names[0], 0, out_bit_end - out_bit_start, is_taint=True)
+        # otherwise, we can just OR the input taints together directly
+        else:
+            expr = dependencies[0]
+            for dep in dependencies[1:]:
+                expr = BinaryExpr(Op.OR, expr, dep)
+
+    else:
+        # Handle core ops like XOR, AND, OR when they have MULTIPLE register inputs
+        core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
+
+        if any(op.opcode.name == 'INT_XOR' for op in core_ops) and dependencies:
+            # XOR taint rule: Output is tainted if ANY input is tainted (Logical OR)
             expr = dependencies[0]
             for dep in dependencies[1:]:
                 expr = BinaryExpr(Op.OR, expr, dep)
         else:
-            # Bitwise ops (AND/OR/XOR), SEXT, ZEXT, PIECE, etc.
-            expr = make_differential()
-
-    else:
-        # Handle TRANSLATABLE, MONOTONIC, COND_TRANSPORTABLE, UNKNOWN
+            # Fallback to differential for generic translatable/monotonic/unknown
         expr = make_differential()
 
     # Automatically apply Avalanche to program counter conditional branches
