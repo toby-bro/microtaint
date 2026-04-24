@@ -61,6 +61,11 @@ ORABLE_OPCODES: set[str] = {
     'INT_XOR',
 }
 
+MAPPED_OPCODES: set[str] = {
+    'LOAD',
+    'STORE',
+}
+
 EXTENSION_OPCODES = {'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'PIECE', 'COPY'}
 
 
@@ -96,6 +101,10 @@ def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa
     # 2. Otherwise, strip extensions to find the core ALU operation
     core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
 
+    # If all operations were just simple routing/copies (e.g., pure mov chains)
+    if not core_ops:
+        return InstructionCategory.MAPPED
+
     for op in core_ops:
         if op.opcode.name in AVALANCHE_OPCODES:
             return InstructionCategory.AVALANCHE
@@ -119,6 +128,11 @@ def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa
     for op in core_ops:
         if op.opcode.name in ORABLE_OPCODES:
             return InstructionCategory.ORABLE
+
+    # 3. Fallback for pure memory operations that weren't caught by the heuristic
+    for op in core_ops:
+        if op.opcode.name in MAPPED_OPCODES:
+            return InstructionCategory.MAPPED
 
     raise ValueError(
         'Unable to determine instruction category for slice_ops: ' + ', '.join(op.opcode.name for op in slice_ops),
