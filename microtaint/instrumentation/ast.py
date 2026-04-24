@@ -28,6 +28,7 @@ class Op(str, Enum):
     XOR = 'XOR'
     # Unary operations
     NOT = 'NOT'
+    LEFT = 'LEFT'
 
 
 @dataclass
@@ -156,6 +157,8 @@ class BinaryExpr(Expr):
             return left | right
         if self.op == Op.XOR:
             return left ^ right
+        if self.op == Op.LEFT:
+            return left << right
         raise NotImplementedError(f'Unsupported binary op {self.op}')
 
 
