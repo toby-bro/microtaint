@@ -75,10 +75,17 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:
     AND relies on only ONE dynamic input (register/memory). All other inputs must be constants.
     """
     dynamic_sources: set[tuple[str, int]] = set()
+    has_and_or = False
+    has_shift = False
 
     for op in slice_ops:
         if op.opcode.name not in ROUTING_OPCODES:
             return False
+
+        if op.opcode.name in {'INT_AND', 'INT_OR'}:
+            has_and_or = True
+        if op.opcode.name in {'INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT'}:
+            has_shift = True
 
         for vn in op.inputs:
             # Ignore constants and temporary microcode registers ('unique')
@@ -87,7 +94,15 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:
                 dynamic_sources.add((vn.space.name, vn.offset))
 
     # If it reads from exactly 1 dynamic architectural source, it's a simple mapped permutation
-    return len(dynamic_sources) == 1
+    if len(dynamic_sources) != 1:
+        return False
+
+    # FIX: If it uses AND/OR, it MUST also use a shift to be a spatial permutation (like BSWAP).
+    # An isolated AND/OR with a constant is just a bitwise mask and must drop to MONOTONIC.
+    if has_and_or and not has_shift:
+        return False
+
+    return True
 
 
 def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa: C901
