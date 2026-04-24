@@ -55,11 +55,20 @@ def _map_sleigh_to_state(
 ) -> RegMapping | None:
     # Handle X86 flags abstract offsets (512-540)
     if 'X86' in arch.upper() and 512 <= offset < 560:
+        bit_idx = offset - 512
+        flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
+
+        # 1. Prioritize explicit flag targets if requested (e.g., 'ZF' directly)
+        for sf_reg in state_format:
+            if sf_reg.name.upper() == flag_names.get(bit_idx):
+                return RegMapping(sf_reg.name, 0, 0)
+
+        # 2. Fallback to mapping into the parent EFLAGS register
         for sf_reg in state_format:
             if 'FLAGS' in sf_reg.name.upper():
-                bit_idx = offset - 512
                 return RegMapping(sf_reg.name, bit_idx, bit_idx)
 
+    best_match = None
     for sf_reg in state_format:
         s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
         if not s_r:
@@ -69,12 +78,112 @@ def _map_sleigh_to_state(
         if s_r.offset <= offset and (offset + size) <= (s_r.offset + s_r.size):
             rel_byte = offset - s_r.offset
             bit_start = rel_byte * 8
-            # FIX: Clamp bit_end to the declared bit width of the Register
-            # to handle Sleigh padding booleans into 8-bit varnodes
             bit_end = min(bit_start + (size * 8) - 1, sf_reg.bits - 1)
-            return RegMapping(sf_reg.name, bit_start, bit_end)
+            mapping = RegMapping(sf_reg.name, bit_start, bit_end)
 
-    return None
+            if s_r.offset == offset and s_r.size == size:
+                return mapping
+
+            if not best_match or s_r.size > best_match[1]:
+                best_match = (mapping, s_r.size)
+
+    return best_match[0] if best_match else None
+
+
+def _map_sleigh_to_state_all(
+    ctx: Context,
+    arch: str,
+    state_format: list[Register],
+    offset: int,
+    size: int,
+) -> list[RegMapping]:
+    mappings: list[RegMapping] = []
+    if 'X86' in arch.upper() and 512 <= offset < 560:
+        bit_idx = offset - 512
+        flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
+        for sf_reg in state_format:
+            if 'FLAGS' in sf_reg.name.upper():
+                mappings.append(RegMapping(sf_reg.name, bit_idx, bit_idx))
+            elif sf_reg.name.upper() == flag_names.get(bit_idx):
+                mappings.append(RegMapping(sf_reg.name, 0, 0))
+        return mappings
+
+    for sf_reg in state_format:
+        s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
+        if not s_r:
+            continue
+
+        overlap_start = max(s_r.offset, offset)
+        overlap_end = min(s_r.offset + s_r.size, offset + size)
+
+        if overlap_start < overlap_end:
+            rel_byte = overlap_start - s_r.offset
+            bit_start = rel_byte * 8
+            bit_end = min(bit_start + ((overlap_end - overlap_start) * 8) - 1, sf_reg.bits - 1)
+            mappings.append(RegMapping(sf_reg.name, bit_start, bit_end))
+
+    return mappings
+
+
+def apply_sless_msb_split(
+    deps: dict[RegMapping | MemMapping, int],
+    slice_ops: list[PcodeOp],
+    ctx: Context,
+    arch: Architecture,
+    state_format: list[Register],
+) -> dict[RegMapping | MemMapping, int]:
+    """
+    Isolates the MSB for Signed Comparisons (INT_SLESS, INT_SLESSEQUAL) and
+    inverts its polarity. The paper dictates signed comparisons are bitwise
+    non-decreasing EXCEPT for the MSB, which is non-increasing.
+    """
+    sless_ops = [op for op in slice_ops if op.opcode.name in {'INT_SLESS', 'INT_SLESSEQUAL'}]
+    if not sless_ops:
+        return deps
+
+    new_deps: dict[RegMapping | MemMapping, int] = {}
+    msb_mappings: list[tuple[str, int]] = []
+
+    # Identify the exact architectural bit that represents the MSB of the operands
+    for op in sless_ops:
+        for vn in (op.inputs[0], op.inputs[1]):
+            if vn.space.name == 'register':
+                m = _map_sleigh_to_state(ctx, arch, state_format, vn.offset, vn.size)
+                if m:
+                    # Calculate the MSB offset (Size in bytes * 8 - 1)
+                    msb_offset_in_reg = m.bit_start + (vn.size * 8) - 1
+                    msb_mappings.append((m.name, msb_offset_in_reg))
+
+    # Apply the split to the dependencies
+    for dep_map, p in deps.items():
+        if isinstance(dep_map, MemMapping):
+            new_deps[dep_map] = p
+            continue
+
+        matched_msb = next(
+            (
+                msb
+                for (name, msb) in msb_mappings
+                if name == dep_map.name and dep_map.bit_start <= msb <= dep_map.bit_end
+            ),
+            None,
+        )
+
+        if matched_msb is not None:
+            # 1. Lower bits: Bitwise non-decreasing (polarity = 1)
+            if matched_msb > dep_map.bit_start:
+                new_deps[RegMapping(dep_map.name, dep_map.bit_start, matched_msb - 1)] = 1
+
+            # 2. MSB: Bitwise non-increasing (polarity = -1)
+            new_deps[RegMapping(dep_map.name, matched_msb, matched_msb)] = -1
+
+            # 3. Upper bits (if mapping extends beyond the SLESS operand size)
+            if dep_map.bit_end > matched_msb:
+                new_deps[RegMapping(dep_map.name, matched_msb + 1, dep_map.bit_end)] = 1
+        else:
+            new_deps[dep_map] = p
+
+    return new_deps
 
 
 def generate_static_rule(
@@ -109,11 +218,12 @@ def generate_static_rule(
         slice_ops = slice_backward(translation.ops, out_vn)
         polarities = compute_polarity(slice_ops)
 
-        deps = extract_dependencies(arch, state_format, ctx, out_vn, slice_ops, polarities)
+        # FIX: Pass translation.ops down to completely bypass slicer truncation
+        deps = extract_dependencies(arch, state_format, ctx, out_vn, slice_ops, polarities, translation.ops)
+        deps = apply_sless_msb_split(deps, slice_ops, ctx, arch, state_format)
 
         out_target, out_name, out_bit_start, out_bit_end = generate_output_target(mapping)
 
-        # Delegate ALL assignment generation (even zero-dependency cases) to the helper function
         generate_taint_assignments(
             arch,
             bytestring,
@@ -151,11 +261,8 @@ def generate_taint_assignments(  # noqa: C901
 ) -> None:
     dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(deps)
 
-    # Universal Rule: If there are absolutely no tainted dependencies (e.g., loading a constant),
-    # the output taint is guaranteed to be 0.
     if not dependencies:
         expr: Expr = Constant(0, out_bit_end - out_bit_start + 1)
-        # Apply Avalanche to program counter branches (e.g., unconditional jumps)
         if out_name in ('EIP', 'RIP', 'PC'):
             expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
         assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expr))
@@ -163,7 +270,6 @@ def generate_taint_assignments(  # noqa: C901
 
     cat = determine_category(slice_ops)
 
-    # Helper function to generate the standard CellIFT bit-precise differential
     def make_differential() -> Expr:
         C1_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep1)
         C2_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep2)
@@ -178,7 +284,6 @@ def generate_taint_assignments(  # noqa: C901
     elif cat == InstructionCategory.TRANSLATABLE:
         diff_expr = make_differential()
 
-        # Robust Shift Offset Detection
         core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
         shift_op = next((op for op in core_ops if op.opcode.name in TRANSLATABLE_OPCODES), None)
 
@@ -218,7 +323,16 @@ def generate_taint_assignments(  # noqa: C901
         if shift_op and len(shift_op.inputs) > 1:
             offset_names = trace_origins(shift_op.inputs[1])
 
-        # Find the resolved architectural sources in our known dependencies
+        # Exclude the primary data source from the fallback avalanche to avoid false positives
+        primary_input_name = None
+        if shift_op and shift_op.inputs[0].space.name == 'register':
+            m = _map_sleigh_to_state(ctx, arch, state_format, shift_op.inputs[0].offset, shift_op.inputs[0].size)
+            if m:
+                primary_input_name = m.name
+
+        if not offset_names:
+            offset_names = {name for name in dependency_names if name not in (out_name, primary_input_name)}
+
         offset_taints = [dep for dep, name in zip(dependencies, dependency_names) if name in offset_names]
 
         # If any originating source for the shift offset is tainted, avalanche the output!
@@ -292,20 +406,12 @@ def generate_taint_assignments(  # noqa: C901
         else:
             expr = Constant(0, out_bit_end - out_bit_start + 1)
 
-    else:
-        # Handle core ops like XOR, AND, OR when they have MULTIPLE register inputs
-        core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
-
-        if any(op.opcode.name == 'INT_XOR' for op in core_ops) and dependencies:
-            # XOR taint rule: Output is tainted if ANY input is tainted (Logical OR)
-            expr = dependencies[0]
-            for dep in dependencies[1:]:
-                expr = BinaryExpr(Op.OR, expr, dep)
-        else:
-            # Fallback to differential for generic translatable/monotonic/unknown
+    elif cat == InstructionCategory.MONOTONIC:
         expr = make_differential()
 
-    # Automatically apply Avalanche to program counter conditional branches
+    else:
+        raise ValueError(f'Unsupported instruction category: {cat}')
+
     if out_name in ('EIP', 'RIP', 'PC'):
         expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
 
@@ -320,7 +426,6 @@ def process_dependencies(
     cell_inputs_rep1: dict[str, Expr] = {}
     cell_inputs_rep2: dict[str, Expr] = {}
 
-    # -- Process Dependencies Cleanly --
     for dep_map, p in deps.items():
         T_in: Expr
         V_in: Expr
@@ -371,40 +476,40 @@ def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOpera
     return out_target, out_name, out_bit_start, out_bit_end
 
 
-def extract_dependencies(  # noqa: C901
+def extract_dependencies(
     arch: Architecture,
     state_format: list[Register],
     ctx: Context,
-    out_vn: Varnode,
-    slice_ops: list[PcodeOp],
+    _out_vn: Varnode,
+    _slice_ops: list[PcodeOp],
     polarities: dict[str, int],
+    all_ops: list[PcodeOp],
 ) -> dict[RegMapping | MemMapping, int]:
     deps: dict[RegMapping | MemMapping, int] = {}
 
-    # If the output varnode was never produced by any operation in this instruction,
-    # it is intrinsically its own direct read dependency (e.g. CBRANCH reading flags).
-    if not slice_ops:
-        if out_vn.space.name == 'register':
-            mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, out_vn.offset, out_vn.size)
-            if mapped_dep:
-                deps[mapped_dep] = 1
-    else:
-        for op in slice_ops:
-            if op.opcode.name == 'LOAD':
-                ptr_vn = op.inputs[1]
-                mapped_addr = _map_sleigh_to_state(ctx, arch, state_format, ptr_vn.offset, ptr_vn.size)
-                if mapped_addr:
-                    deps[MemMapping(ptr_vn.offset, ptr_vn.size, mapped_addr)] = 1
+    # FIX: Scan ALL ops to completely bypass buggy slicer truncation.
+    # Instruction taint is atomic, so any read register contributes to the final state.
+    for op in all_ops:
+        if op.opcode.name == 'LOAD':
+            ptr_vn = op.inputs[1]
+            mapped_addr = _map_sleigh_to_state(ctx, arch, state_format, ptr_vn.offset, ptr_vn.size)
+            if mapped_addr:
+                deps[MemMapping(ptr_vn.offset, ptr_vn.size, mapped_addr)] = 1
 
-        for vn_id, p in polarities.items():
-            parts = vn_id.split(':')
-            if len(parts) != 3:
-                continue
-            space, st_offset, st_size = parts
-            if space == 'register':
-                mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, int(st_offset), int(st_size))
-                if mapped_dep:
-                    deps[mapped_dep] = p
+        for vn in op.inputs:
+            if vn.space.name == 'register':
+                mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, vn.offset, vn.size)
+                if mapped_dep and mapped_dep not in deps:
+                    deps[mapped_dep] = 1  # Default to positive polarity
+
+        # 3. Override with exact, mathematically computed polarities where available
+    for vn_id, p in polarities.items():
+        parts = vn_id.split(':')
+        if len(parts) == 3 and parts[0] == 'register':
+            mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, int(parts[1]), int(parts[2]))
+            if mapped_dep:
+                deps[mapped_dep] = p
+
     return deps
 
 
@@ -420,8 +525,8 @@ def map_outputs_to_targets(
     mem_targets: list[tuple[Varnode, Varnode, int]] = []
 
     for out_vn in unique_outputs:
-        mapped_out = _map_sleigh_to_state(ctx, arch, state_format, out_vn.offset, out_vn.size)
-        if mapped_out:
+        mapped_outs = _map_sleigh_to_state_all(ctx, arch, state_format, out_vn.offset, out_vn.size)
+        for mapped_out in mapped_outs:
             targets_to_evaluate.append(EvalTarget(out_vn, mapped_out))
 
     for store_op in store_ops:
@@ -429,7 +534,6 @@ def map_outputs_to_targets(
         val_vn = store_op.inputs[2]
         mem_targets.append((val_vn, ptr_vn, val_vn.size))
 
-    # Add branch implicits (CBRANCH, BRANCHIND, CALLIND) mapping to Program Counter (PC)
     for op in translation.ops:
         op_name = op.opcode.name
         if op_name in ('CBRANCH', 'BRANCHIND', 'CALLIND'):
@@ -439,8 +543,6 @@ def map_outputs_to_targets(
                 continue
 
             varnode = op.inputs[1] if op_name == 'CBRANCH' else op.inputs[0]
-
-            # Discard if it is strictly a constant dictating the branch
             if varnode.space.name == 'const':
                 continue
 
@@ -454,6 +556,7 @@ def map_outputs_to_targets(
         if mapped_addr:
             mem_map = MemMapping(ptr_vn.offset, size, mapped_addr)
             targets_to_evaluate.append(EvalTarget(val_vn, mem_map))
+
     return targets_to_evaluate, assignments
 
 

@@ -44,8 +44,6 @@ MONOTONIC_OPCODES: set[str] = {
 }
 
 ROUTING_OPCODES: set[str] = {
-    'INT_AND',
-    'INT_OR',
     'INT_LEFT',
     'INT_RIGHT',
     'INT_SRIGHT',
@@ -55,6 +53,8 @@ ROUTING_OPCODES: set[str] = {
     'SUBPIECE',
     'PIECE',
     'LOAD',
+    'INT_AND',
+    'INT_OR',
 }
 
 ORABLE_OPCODES: set[str] = {
@@ -109,11 +109,9 @@ def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa
     if not slice_ops:
         return InstructionCategory.MAPPED
 
-    # 1. First, check if it fits the perfect single-register permutation heuristic
     if is_mapped_permutation(slice_ops):
         return InstructionCategory.MAPPED
 
-    # 2. Otherwise, strip extensions to find the core ALU operation
     core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
 
     # If all operations were just simple routing/copies (e.g., pure mov chains)
@@ -125,20 +123,21 @@ def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa
             return InstructionCategory.AVALANCHE
 
     for op in core_ops:
+        if op.opcode.name in COND_TRANSPORTABLE_OPCODES:
+            return InstructionCategory.COND_TRANSPORTABLE
+
+    # FIX: Translatable MUST be above Monotonic to avoid INT_AND stealing shifts
+    for op in core_ops:
         if op.opcode.name in TRANSLATABLE_OPCODES:
             return InstructionCategory.TRANSLATABLE
 
     for op in core_ops:
-        if op.opcode.name in TRANSPORTABLE_OPCODES:
-            return InstructionCategory.TRANSPORTABLE
-
-    for op in core_ops:
-        if op.opcode.name in COND_TRANSPORTABLE_OPCODES:
-            return InstructionCategory.COND_TRANSPORTABLE
-
-    for op in core_ops:
         if op.opcode.name in MONOTONIC_OPCODES:
             return InstructionCategory.MONOTONIC
+
+    for op in core_ops:
+        if op.opcode.name in TRANSPORTABLE_OPCODES:
+            return InstructionCategory.TRANSPORTABLE
 
     for op in core_ops:
         if op.opcode.name in ORABLE_OPCODES:
