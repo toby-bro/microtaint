@@ -211,14 +211,25 @@ def generate_taint_assignments(  # noqa: C901
         )
 
     elif cat == InstructionCategory.ORABLE:
-        # If there is only one dependency, then it is clearing taint
-        if len(dependencies) == 1:
-            expr = TaintOperand(dependency_names[0], 0, out_bit_end - out_bit_start, is_taint=True)
-        # otherwise, we can just OR the input taints together directly
-        else:
+        core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
+        xor_ops = [op for op in core_ops if op.opcode.name == 'INT_XOR']
+
+        # Detect the XOR zeroing idiom: XOR EAX, EAX
+        is_zeroing_idiom = False
+        if xor_ops:
+            xor_op = xor_ops[0]
+            in1, in2 = xor_op.inputs[0], xor_op.inputs[1]
+            if in1.space == in2.space and in1.offset == in2.offset and in1.size == in2.size:
+                is_zeroing_idiom = True
+
+        if is_zeroing_idiom:
+            expr = Constant(0, out_bit_end - out_bit_start + 1)
+        elif dependencies:
             expr = dependencies[0]
             for dep in dependencies[1:]:
                 expr = BinaryExpr(Op.OR, expr, dep)
+        else:
+            expr = Constant(0, out_bit_end - out_bit_start + 1)
 
     else:
         # Handle core ops like XOR, AND, OR when they have MULTIPLE register inputs
