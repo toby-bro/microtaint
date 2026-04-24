@@ -20,7 +20,7 @@ from microtaint.instrumentation.ast import (
     UnaryExpr,
 )
 from microtaint.sleigh.lifter import get_context
-from microtaint.sleigh.mapper import EXTENSION_OPCODES, determine_category
+from microtaint.sleigh.mapper import EXTENSION_OPCODES, TRANSLATABLE_OPCODES, determine_category
 from microtaint.sleigh.polarity import compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
@@ -124,6 +124,8 @@ def generate_static_rule(
             out_name,
             out_bit_start,
             out_bit_end,
+            ctx,
+            state_format,
         )
 
     return LogicCircuit(
@@ -144,6 +146,8 @@ def generate_taint_assignments(  # noqa: C901
     out_name: str,
     out_bit_start: int,
     out_bit_end: int,
+    ctx: Context,
+    state_format: list[Register],
 ) -> None:
     dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(deps)
 
@@ -170,6 +174,63 @@ def generate_taint_assignments(  # noqa: C901
         for dep in dependencies[1:]:
             expr = BinaryExpr(Op.OR, expr, dep)
         expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
+
+    elif cat == InstructionCategory.TRANSLATABLE:
+        diff_expr = make_differential()
+
+        # Robust Shift Offset Detection
+        core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
+        shift_op = next((op for op in core_ops if op.opcode.name in TRANSLATABLE_OPCODES), None)
+
+        # Recursive helper to unwind SLEIGH's `unique` micro-registers
+        def trace_origins(vn: Varnode, visited: set[int] | None = None) -> set[str]:
+            if visited is None:
+                visited = set()
+            origins: set[str] = set()
+
+            if vn.space.name == 'register':
+                m = _map_sleigh_to_state(ctx, arch, state_format, vn.offset, vn.size)
+                if m:
+                    origins.add(m.name)
+            elif vn.space.name == 'unique':
+                if vn.offset in visited:
+                    return origins
+                visited.add(vn.offset)
+
+                # Find the P-code operation that generated this unique varnode
+                for op in slice_ops:
+                    if op.output and op.output.space.name == 'unique' and op.output.offset == vn.offset:
+                        if op.opcode.name == 'LOAD':
+                            # If the shift offset came from memory
+                            ptr_vn = op.inputs[1]
+                            m = _map_sleigh_to_state(ctx, arch, state_format, ptr_vn.offset, ptr_vn.size)
+                            if m:
+                                origins.add(f'MEM_{m.name}')
+                        else:
+                            # Recurse through the inputs of the micro-operation (e.g., INT_AND)
+                            for inp in op.inputs:
+                                origins.update(trace_origins(inp, visited))
+                        break
+            return origins
+
+        offset_names: set[str] = set()
+        # In SLEIGH shifts, inputs[1] is strictly the shift offset amount
+        if shift_op and len(shift_op.inputs) > 1:
+            offset_names = trace_origins(shift_op.inputs[1])
+
+        # Find the resolved architectural sources in our known dependencies
+        offset_taints = [dep for dep, name in zip(dependencies, dependency_names) if name in offset_names]
+
+        # If any originating source for the shift offset is tainted, avalanche the output!
+        if offset_taints:
+            combined_offset = offset_taints[0]
+            for t in offset_taints[1:]:
+                combined_offset = BinaryExpr(Op.OR, combined_offset, t)
+
+            avalanche_shift = AvalancheExpr(combined_offset, out_bit_end - out_bit_start + 1)
+            expr = BinaryExpr(Op.OR, diff_expr, avalanche_shift)
+        else:
+            expr = diff_expr
 
     elif cat == InstructionCategory.COND_TRANSPORTABLE:
         # Note: The paper defines a precise check for this:
