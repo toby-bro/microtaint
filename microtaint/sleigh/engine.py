@@ -53,38 +53,41 @@ def _map_sleigh_to_state(
     offset: int,
     size: int,
 ) -> RegMapping | None:
-    # Handle X86 flags abstract offsets (512-540)
+    # 1. Handle X86 flags abstract offsets (512-540)
     if 'X86' in arch.upper() and 512 <= offset < 560:
         bit_idx = offset - 512
         flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
+        requested_flag = flag_names.get(bit_idx)
 
-        # 1. Prioritize explicit flag targets if requested (e.g., 'ZF' directly)
+        # Prioritize explicit 1-bit flag register if it exists in state_format
         for sf_reg in state_format:
-            if sf_reg.name.upper() == flag_names.get(bit_idx):
+            if sf_reg.name.upper() == requested_flag:
                 return RegMapping(sf_reg.name, 0, 0)
 
-        # 2. Fallback to mapping into the parent EFLAGS register
+        # Fallback to the parent EFLAGS bit
         for sf_reg in state_format:
             if 'FLAGS' in sf_reg.name.upper():
                 return RegMapping(sf_reg.name, bit_idx, bit_idx)
 
+    # 2. Robust Register/Alias matching
     best_match = None
     for sf_reg in state_format:
         s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
         if not s_r:
             continue
 
-        # Check if the requested register falls within this state_format register
+        # Check for overlap
         if s_r.offset <= offset and (offset + size) <= (s_r.offset + s_r.size):
             rel_byte = offset - s_r.offset
             bit_start = rel_byte * 8
             bit_end = min(bit_start + (size * 8) - 1, sf_reg.bits - 1)
             mapping = RegMapping(sf_reg.name, bit_start, bit_end)
 
+            # PERFECT MATCH: If names match exactly (e.g. EAX == EAX), return immediately
             if s_r.offset == offset and s_r.size == size:
                 return mapping
 
-            if not best_match or s_r.size > best_match[1]:
+            if not best_match or s_r.size < best_match[1]:  # Prefer smallest encompassing reg
                 best_match = (mapping, s_r.size)
 
     return best_match[0] if best_match else None
@@ -453,47 +456,72 @@ def generate_taint_assignments(  # noqa: C901
     assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
 
 
+def build_polarized_reg(name: str, slices: list[tuple[int, int, int]], replica_id: int) -> Expr:
+    # We construct the full register value by stitching slices
+    combined_expr = None
+    for s_start, s_end, p in slices:
+        V_in = TaintOperand(name, s_start, s_end, is_taint=False)
+        T_in = TaintOperand(name, s_start, s_end, is_taint=True)
+
+        # Determine polarization based on p and replica
+        # Rep 1: High if p=1, Low if p=-1
+        # Rep 2: Low if p=1, High if p=-1
+        is_high = (replica_id == 1 and p == 1) or (replica_id == 2 and p == -1)
+
+        if is_high:
+            polarized = BinaryExpr(Op.OR, V_in, T_in)
+        else:
+            polarized = BinaryExpr(Op.AND, V_in, UnaryExpr(Op.NOT, T_in))
+
+        combined_expr = polarized if combined_expr is None else BinaryExpr(Op.OR, combined_expr, polarized)
+    if combined_expr is None:
+        raise ValueError(f'No slices found for register {name}')
+    return combined_expr
+
+
 def process_dependencies(
     deps: dict[RegMapping | MemMapping, int],
 ) -> tuple[list[Expr], list[str], dict[str, Expr], dict[str, Expr]]:
+    """
+    Groups dependencies by architectural source and constructs polarized
+    replica inputs, correctly stitching split bit-slices (like SLESS MSB).
+    """
     dependencies: list[Expr] = []
     dependency_names: list[str] = []
+
+    # Group mappings by their architectural name to handle split slices
+    reg_groups: dict[str, list[tuple[int, int, int]]] = {}
+    mem_groups: dict[str, list[MemMapping]] = {}
+
+    for dep_map, p in deps.items():
+        if isinstance(dep_map, MemMapping):
+            key = f'MEM_{dep_map.addr_reg.name}'
+            mem_groups.setdefault(key, []).append(dep_map)
+        else:
+            reg_groups.setdefault(dep_map.name, []).append((dep_map.bit_start, dep_map.bit_end, p))
+            # Track unique taints for the Assignment dependencies list
+            dependencies.append(TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=True))
+            dependency_names.append(dep_map.name)
+
     cell_inputs_rep1: dict[str, Expr] = {}
     cell_inputs_rep2: dict[str, Expr] = {}
 
-    for dep_map, p in deps.items():
-        T_in: Expr
-        V_in: Expr
-        if isinstance(dep_map, MemMapping):
-            addr_expr = TaintOperand(
-                dep_map.addr_reg.name,
-                dep_map.addr_reg.bit_start,
-                dep_map.addr_reg.bit_end,
-                is_taint=False,
-            )
-            T_in = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=True)
-            V_in = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
-            dep_name = f'MEM_{dep_map.addr_reg.name}'
-        else:
-            T_in = TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=True)
-            V_in = TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=False)
-            dep_name = dep_map.name
+    for name, slices in reg_groups.items():
 
-        dependencies.append(T_in)
-        dependency_names.append(dep_name)
-        v_and_not_t = BinaryExpr(Op.AND, V_in, UnaryExpr(Op.NOT, T_in))
+        cell_inputs_rep1[name] = build_polarized_reg(name, slices, 1)
+        cell_inputs_rep2[name] = build_polarized_reg(name, slices, 2)
 
-        if p == 1:
-            rep1_expr = BinaryExpr(Op.OR, V_in, T_in)
-            rep2_expr = v_and_not_t
-        else:
-            rep1_expr = v_and_not_t
-            rep2_expr = BinaryExpr(Op.OR, V_in, T_in)
+    # Note: Memory handling remains simple for now as we don't split memory bit-ranges
+    for name, mem_list in mem_groups.items():
+        m = mem_list[0]
+        addr = TaintOperand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, is_taint=False)
+        T_mem = MemoryOperand(addr, m.size_bytes, is_taint=True)
+        V_mem = MemoryOperand(addr, m.size_bytes, is_taint=False)
 
-            # In Cell inputs we just use the name if it is disjoint, but here multiple pieces of same reg could be used
-            # We assume disjoint parent registers mapping for cell formulas simplification
-        cell_inputs_rep1[dep_name] = rep1_expr
-        cell_inputs_rep2[dep_name] = rep2_expr
+        # Memory defaults to p=1 for now
+        cell_inputs_rep1[name] = BinaryExpr(Op.OR, V_mem, T_mem)
+        cell_inputs_rep2[name] = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
+
     return dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2
 
 
