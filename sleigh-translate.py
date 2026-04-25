@@ -36,10 +36,25 @@ def translate_instruction(arch_string: str, instruction_bytes: bytes, base_addre
 
 
 if __name__ == '__main__':
+    arm64arch = 'AARCH64:LE:64:v8A'
+    for arm64_inst in [
+        bytes.fromhex('007C1053'),
+        bytes.fromhex('000040F9'),
+        bytes.fromhex('0000018B'),
+        bytes.fromhex('000001CB'),
+    ]:
+        translate_instruction(arm64arch, arm64_inst)
+
+        print('\n' + '=' * 50 + '\n')
+
     # Example 1: AMD64 'add rax, rbx' -> 48 01 d8
     # Architecture strings format: processor:endian:size:variant
     amd64_arch = 'x86:LE:64:default'
     for amd64_inst in [
+        b'\x48\x91',
+        b'\x91',
+        b'\x48\x29\xd8',
+        b'\x29\xd8',
         b'\xd3\xe0',
         b'\x39\xd8',
         bytes.fromhex('d3e0'),
@@ -54,5 +69,5 @@ if __name__ == '__main__':
 
     # Example 2: x86 (32-bit) 'push ebp' -> 55
     x86_arch = 'x86:LE:32:default'
-    for x86_inst in [b'\x0f\xc8', bytes.fromhex('6621d8')]:
+    for x86_inst in [b'\x0f\xc8', bytes.fromhex('6621d8'), b'\x91']:
         translate_instruction(x86_arch, x86_inst)
