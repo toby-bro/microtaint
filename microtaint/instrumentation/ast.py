@@ -8,13 +8,14 @@ from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture, Register
 
 
-def _build_machine_state(input_dict: dict[str, int]) -> MachineState:
+def _build_machine_state(input_dict: dict[str, int], context: EvalContext) -> MachineState:
     regs: dict[str, int] = {}
     mem: dict[int, int] = {}
     for name, val in input_dict.items():
         if name.startswith('MEM_'):
-            parts = name.split('_')
-            addr = int(parts[1], 16)
+            # Dynamically resolve the pointer address from the current evaluation context
+            reg_name = name[4:]
+            addr = context.input_values.get(reg_name, 0)
             mem[addr] = val
         else:
             regs[name] = val
@@ -247,7 +248,7 @@ class InstructionCellExpr(Expr):
             evaluated_inputs[name] = expr.evaluate(context)
 
         # 2. Build the state
-        m_state = _build_machine_state(evaluated_inputs)
+        m_state = _build_machine_state(evaluated_inputs, context)
 
         # 3. Evaluate the instruction concretely ONCE
         # (The simulator's evaluate_concrete already handles the bit slicing via out_bit_start/end)
