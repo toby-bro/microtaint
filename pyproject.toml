@@ -182,7 +182,7 @@ omit = [
 exclude = [".gitignore", ".github/"]
 
 [tool.hatch.build.targets.wheel]
-exclude = [".gitignore", ".github/"]
+packages = ["microtaint"]
 
 [tool.hatch.version]
 source = "vcs"
