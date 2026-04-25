@@ -466,7 +466,7 @@ def build_polarized_reg(name: str, slices: list[tuple[int, int, int]], replica_i
         # Determine polarization based on p and replica
         # Rep 1: High if p=1, Low if p=-1
         # Rep 2: Low if p=1, High if p=-1
-        is_high = (replica_id == 1 and p == 1) or (replica_id == 2 and p == -1)
+        is_high = (replica_id == 1 and p == 1) or (replica_id == 2 and p <= 0)
 
         if is_high:
             polarized = BinaryExpr(Op.OR, V_in, T_in)
