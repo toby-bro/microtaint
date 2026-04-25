@@ -46,7 +46,7 @@ class EvalTarget:
     mapping: RegMapping | MemMapping
 
 
-def _map_sleigh_to_state(
+def _map_sleigh_to_state(  # noqa: C901
     ctx: Context,
     arch: str,
     state_format: list[Register],
@@ -304,7 +304,7 @@ def generate_taint_assignments(  # noqa: C901
         shift_op = next((op for op in core_ops if op.opcode.name in TRANSLATABLE_OPCODES), None)
 
         # Recursive helper to unwind SLEIGH's `unique` micro-registers
-        def trace_origins(vn: Varnode, visited: set[int] | None = None) -> set[str]:
+        def trace_origins(vn: Varnode, visited: set[int] | None = None) -> set[str]:  # noqa: C901
             if visited is None:
                 visited = set()
             origins: set[str] = set()
@@ -349,7 +349,7 @@ def generate_taint_assignments(  # noqa: C901
         if not offset_names:
             offset_names = {name for name in dependency_names if name not in (out_name, primary_input_name)}
 
-        offset_taints = [dep for dep, name in zip(dependencies, dependency_names) if name in offset_names]
+        offset_taints = [dep for dep, name in zip(dependencies, dependency_names, strict=True) if name in offset_names]
 
         # If any originating source for the shift offset is tainted, avalanche the output!
         if offset_taints:
