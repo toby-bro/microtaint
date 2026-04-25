@@ -70,7 +70,7 @@ def _map_sleigh_to_state(  # noqa: C901
                 return RegMapping(sf_reg.name, bit_idx, bit_idx)
 
     # ARM64 Flags mapping mapping alias
-    arm_aliases: dict[str, str] = {'N': 'nf', 'Z': 'zf', 'C': 'cf', 'V': 'vf'}
+    arm_aliases: dict[str, str] = {'N': 'ng', 'Z': 'zr', 'C': 'cy', 'V': 'ov'}
 
     # 2. Robust Register/Alias matching
     best_match = None
@@ -78,7 +78,8 @@ def _map_sleigh_to_state(  # noqa: C901
         s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
 
         if not s_r and 'ARM' in arch.upper() and sf_reg.name in arm_aliases:
-            s_r = ctx.registers.get(arm_aliases[sf_reg.name])
+            alias = arm_aliases[sf_reg.name]
+            s_r = ctx.registers.get(alias) or ctx.registers.get(alias.upper())
 
         if not s_r:
             continue
@@ -118,13 +119,14 @@ def _map_sleigh_to_state_all(
                 mappings.append(RegMapping(sf_reg.name, 0, 0))
         return mappings
 
-    arm_aliases: dict[str, str] = {'N': 'nf', 'Z': 'zf', 'C': 'cf', 'V': 'vf'}
+    arm_aliases: dict[str, str] = {'N': 'ng', 'Z': 'zr', 'C': 'cy', 'V': 'ov'}
 
     for sf_reg in state_format:
         s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
 
         if not s_r and 'ARM' in arch.upper() and sf_reg.name in arm_aliases:
-            s_r = ctx.registers.get(arm_aliases[sf_reg.name])
+            alias = arm_aliases[sf_reg.name]
+            s_r = ctx.registers.get(alias) or ctx.registers.get(alias.upper())
 
         if not s_r:
             continue
@@ -144,9 +146,9 @@ def _map_sleigh_to_state_all(
 def apply_sless_msb_split(
     deps: dict[RegMapping | MemMapping, int],
     slice_ops: list[PcodeOp],
-    ctx: Context,
-    arch: Architecture,
-    state_format: list[Register],
+    _ctx: Context,
+    _arch: Architecture,
+    _state_format: list[Register],
 ) -> dict[RegMapping | MemMapping, int]:
     """
     Isolates the MSB for Signed Comparisons (INT_SLESS, INT_SLESSEQUAL) and
@@ -162,13 +164,11 @@ def apply_sless_msb_split(
 
     # Identify the exact architectural bit that represents the MSB of the operands
     for op in sless_ops:
-        for vn in (op.inputs[0], op.inputs[1]):
-            if vn.space.name == 'register':
-                m = _map_sleigh_to_state(ctx, arch, state_format, vn.offset, vn.size)
-                if m:
-                    # Calculate the MSB offset (Size in bytes * 8 - 1)
-                    msb_offset_in_reg = m.bit_start + (vn.size * 8) - 1
-                    msb_mappings.append((m.name, msb_offset_in_reg))
+        size = op.inputs[0].size
+        msb_offset = (size * 8) - 1
+        for dep_map in deps.keys():
+            if isinstance(dep_map, RegMapping) and dep_map.bit_start <= msb_offset <= dep_map.bit_end:
+                msb_mappings.append((dep_map.name, msb_offset))
 
     # Apply the split to the dependencies
     for dep_map, p in deps.items():
@@ -422,19 +422,7 @@ def generate_taint_assignments(  # noqa: C901
             expr = diff_expr
 
     elif cat == InstructionCategory.MAPPED:
-        # Since the heuristic guarantees exactly ONE dynamic dependency,
-        # the taint output is simply the instruction itself applied to the input taint.
-
-        # We use rep1_expr from cell_inputs_rep1 because we want to pass the
-        # actual Taint vector directly through the instruction's formula.
-        expr = InstructionCellExpr(
-            arch,
-            bytestring.hex(),
-            out_name,
-            out_bit_start,
-            out_bit_end,
-            {dependency_names[0]: dependencies[0]},  # Apply instruction directly to the Taint
-        )
+        expr = make_differential()
 
     elif cat == InstructionCategory.ORABLE:
         core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
@@ -485,8 +473,10 @@ def build_polarized_reg(name: str, slices: list[tuple[int, int, int]], replica_i
             polarized = BinaryExpr(Op.OR, V_in, T_in)
         else:
             polarized = BinaryExpr(Op.AND, V_in, UnaryExpr(Op.NOT, T_in))
-
-        combined_expr = polarized if combined_expr is None else BinaryExpr(Op.OR, combined_expr, polarized)
+        shifted_polarized = BinaryExpr(Op.LEFT, polarized, Constant(s_start, 8))
+        combined_expr = (
+            shifted_polarized if combined_expr is None else BinaryExpr(Op.OR, combined_expr, shifted_polarized)
+        )
     if combined_expr is None:
         raise ValueError(f'No slices found for register {name}')
     return combined_expr
@@ -554,23 +544,39 @@ def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOpera
     return out_target, out_name, out_bit_start, out_bit_end
 
 
-def extract_dependencies(
+def extract_dependencies(  # noqa: C901
     arch: Architecture,
     state_format: list[Register],
     ctx: Context,
     _out_vn: Varnode,
-    _slice_ops: list[PcodeOp],
+    slice_ops: list[PcodeOp],
     polarities: dict[str, int],
     all_ops: list[PcodeOp],
 ) -> dict[RegMapping | MemMapping, int]:
     deps: dict[RegMapping | MemMapping, int] = {}
+
+    def resolve_ptr(vn: Varnode, visited: set[int] | None = None) -> RegMapping | None:
+        """Recursively unwraps temporary `unique` varnodes back to architectural registers."""
+        if visited is None:
+            visited = set()
+        if vn.space.name == 'register':
+            return _map_sleigh_to_state(ctx, arch, state_format, vn.offset, vn.size)
+        if vn.space.name == 'unique' and vn.offset not in visited:
+            visited.add(vn.offset)
+            for o in slice_ops:
+                if o.output and o.output.offset == vn.offset:
+                    for i in o.inputs:
+                        res = resolve_ptr(i, visited)
+                        if res:
+                            return res
+        return None
 
     # FIX: Scan ALL ops to completely bypass buggy slicer truncation.
     # Instruction taint is atomic, so any read register contributes to the final state.
     for op in all_ops:
         if op.opcode.name == 'LOAD':
             ptr_vn = op.inputs[1]
-            mapped_addr = _map_sleigh_to_state(ctx, arch, state_format, ptr_vn.offset, ptr_vn.size)
+            mapped_addr = resolve_ptr(ptr_vn)
             if mapped_addr:
                 deps[MemMapping(ptr_vn.offset, op.output.size if op.output else 8, mapped_addr)] = 1
 

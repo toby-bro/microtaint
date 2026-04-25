@@ -13,9 +13,12 @@ def _build_machine_state(input_dict: dict[str, int], context: EvalContext) -> Ma
     mem: dict[int, int] = {}
     for name, val in input_dict.items():
         if name.startswith('MEM_'):
-            # Dynamically resolve the pointer address from the current evaluation context
-            reg_name = name[4:]
-            addr = context.input_values.get(reg_name, 0)
+            # Robust lookup: handle names like MEM_X0 or MEM_0x1000
+            ptr_part = name[4:]
+            if ptr_part.startswith('0x'):
+                addr = int(ptr_part, 16)
+            else:
+                addr = context.input_values.get(ptr_part, 0)
             mem[addr] = val
         else:
             regs[name] = val
@@ -195,7 +198,7 @@ class LogicCircuit:
         return '\n'.join(str(a) for a in self.assignments)
 
     def evaluate(self, context: EvalContext) -> dict[str, int]:
-        output_taint: dict[str, int] = {}
+        output_taint: dict[str, int] = context.input_taint.copy()
         for assignment in self.assignments:
             if assignment.expression is not None:
                 val = assignment.expression.evaluate(context)
@@ -212,13 +215,18 @@ class LogicCircuit:
                 address = assignment.target.address_expr.evaluate(context)
                 target_name = f'MEM_{hex(address)}_{assignment.target.size}'
                 bit_start = 0
+                bit_end = assignment.target.size * 8 - 1
             else:
                 target_name = assignment.target.name
                 bit_start = assignment.target.bit_start
+                bit_end = assignment.target.bit_end
 
-            # Shift value up to correct position and combine
-            val = val << bit_start
-            output_taint[target_name] = output_taint.get(target_name, 0) | val
+            # Apply taint slice correctly to overwrite ONLY the targeted bits
+            mask = ((1 << (bit_end - bit_start + 1)) - 1) << bit_start
+            val = (val << bit_start) & mask
+
+            current = output_taint.get(target_name, 0)
+            output_taint[target_name] = (current & ~mask) | val
 
         return output_taint
 
