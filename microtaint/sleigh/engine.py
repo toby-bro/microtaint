@@ -534,6 +534,8 @@ def process_dependencies(
         # Memory defaults to p=1 for now
         cell_inputs_rep1[name] = BinaryExpr(Op.OR, V_mem, T_mem)
         cell_inputs_rep2[name] = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
+        dependencies.append(T_mem)
+        dependency_names.append(name)
 
     return dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2
 
@@ -570,7 +572,7 @@ def extract_dependencies(
             ptr_vn = op.inputs[1]
             mapped_addr = _map_sleigh_to_state(ctx, arch, state_format, ptr_vn.offset, ptr_vn.size)
             if mapped_addr:
-                deps[MemMapping(ptr_vn.offset, ptr_vn.size, mapped_addr)] = 1
+                deps[MemMapping(ptr_vn.offset, op.output.size if op.output else 8, mapped_addr)] = 1
 
         for vn in op.inputs:
             if vn.space.name == 'register':
