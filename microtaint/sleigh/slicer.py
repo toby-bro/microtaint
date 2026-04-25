@@ -33,14 +33,10 @@ def slice_backward(
             # This operation contributes to our slice
             slice_ops.append(op)
 
-            # If LOAD, do not track its inputs (the address), because it's a data value load
-            if op.opcode.name == 'LOAD':
-                # Except if we strictly want pointer taint... but standard info flow usually separates them
-                pass
-            else:
-                for inp in op.inputs:
-                    if inp.space.name != 'const':
-                        worklist.add(get_varnode_id(inp))
+            # Track all inputs, including LOAD memory pointers to map memory dependencies
+            for inp in op.inputs:
+                if inp.space.name != 'const':
+                    worklist.add(get_varnode_id(inp))
 
     # Return operations in their original execution (forward) order
     return list(reversed(slice_ops))
