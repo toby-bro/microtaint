@@ -29,51 +29,110 @@ _ARCH_MAP = {
     Architecture.ARM64: (UC_ARCH_ARM64, UC_MODE_ARM),
 }
 
-_UC_REGS = {
+_UC_REGS: dict[Architecture, dict[str, int]] = {
     Architecture.X86: {
         'EAX': uc_x86_const.UC_X86_REG_EAX,
+        'AX': uc_x86_const.UC_X86_REG_AX,
+        'AL': uc_x86_const.UC_X86_REG_AL,
+        'AH': uc_x86_const.UC_X86_REG_AH,
         'EBX': uc_x86_const.UC_X86_REG_EBX,
+        'BX': uc_x86_const.UC_X86_REG_BX,
+        'BL': uc_x86_const.UC_X86_REG_BL,
+        'BH': uc_x86_const.UC_X86_REG_BH,
         'ECX': uc_x86_const.UC_X86_REG_ECX,
+        'CX': uc_x86_const.UC_X86_REG_CX,
+        'CL': uc_x86_const.UC_X86_REG_CL,
+        'CH': uc_x86_const.UC_X86_REG_CH,
         'EDX': uc_x86_const.UC_X86_REG_EDX,
+        'DX': uc_x86_const.UC_X86_REG_DX,
+        'DL': uc_x86_const.UC_X86_REG_DL,
+        'DH': uc_x86_const.UC_X86_REG_DH,
         'ESI': uc_x86_const.UC_X86_REG_ESI,
+        'SI': uc_x86_const.UC_X86_REG_SI,
         'EDI': uc_x86_const.UC_X86_REG_EDI,
+        'DI': uc_x86_const.UC_X86_REG_DI,
         'EBP': uc_x86_const.UC_X86_REG_EBP,
+        'BP': uc_x86_const.UC_X86_REG_BP,
         'ESP': uc_x86_const.UC_X86_REG_ESP,
+        'SP': uc_x86_const.UC_X86_REG_SP,
         'EIP': uc_x86_const.UC_X86_REG_EIP,
         'EFLAGS': uc_x86_const.UC_X86_REG_EFLAGS,
     },
     Architecture.AMD64: {
         'RAX': uc_x86_const.UC_X86_REG_RAX,
+        'EAX': uc_x86_const.UC_X86_REG_EAX,
+        'AX': uc_x86_const.UC_X86_REG_AX,
+        'AL': uc_x86_const.UC_X86_REG_AL,
+        'AH': uc_x86_const.UC_X86_REG_AH,
         'RBX': uc_x86_const.UC_X86_REG_RBX,
+        'EBX': uc_x86_const.UC_X86_REG_EBX,
+        'BX': uc_x86_const.UC_X86_REG_BX,
+        'BL': uc_x86_const.UC_X86_REG_BL,
+        'BH': uc_x86_const.UC_X86_REG_BH,
         'RCX': uc_x86_const.UC_X86_REG_RCX,
+        'ECX': uc_x86_const.UC_X86_REG_ECX,
+        'CX': uc_x86_const.UC_X86_REG_CX,
+        'CL': uc_x86_const.UC_X86_REG_CL,
+        'CH': uc_x86_const.UC_X86_REG_CH,
         'RDX': uc_x86_const.UC_X86_REG_RDX,
+        'EDX': uc_x86_const.UC_X86_REG_EDX,
+        'DX': uc_x86_const.UC_X86_REG_DX,
+        'DL': uc_x86_const.UC_X86_REG_DL,
+        'DH': uc_x86_const.UC_X86_REG_DH,
         'RSI': uc_x86_const.UC_X86_REG_RSI,
+        'ESI': uc_x86_const.UC_X86_REG_ESI,
+        'SI': uc_x86_const.UC_X86_REG_SI,
+        'SIL': uc_x86_const.UC_X86_REG_SIL,
         'RDI': uc_x86_const.UC_X86_REG_RDI,
+        'EDI': uc_x86_const.UC_X86_REG_EDI,
+        'DI': uc_x86_const.UC_X86_REG_DI,
+        'DIL': uc_x86_const.UC_X86_REG_DIL,
         'RBP': uc_x86_const.UC_X86_REG_RBP,
+        'EBP': uc_x86_const.UC_X86_REG_EBP,
+        'BP': uc_x86_const.UC_X86_REG_BP,
+        'BPL': uc_x86_const.UC_X86_REG_BPL,
         'RSP': uc_x86_const.UC_X86_REG_RSP,
+        'ESP': uc_x86_const.UC_X86_REG_ESP,
+        'SP': uc_x86_const.UC_X86_REG_SP,
+        'SPL': uc_x86_const.UC_X86_REG_SPL,
         'RIP': uc_x86_const.UC_X86_REG_RIP,
         'R8': uc_x86_const.UC_X86_REG_R8,
+        'R8D': uc_x86_const.UC_X86_REG_R8D,
+        'R8W': uc_x86_const.UC_X86_REG_R8W,
+        'R8B': uc_x86_const.UC_X86_REG_R8B,
         'R9': uc_x86_const.UC_X86_REG_R9,
+        'R9D': uc_x86_const.UC_X86_REG_R9D,
+        'R9W': uc_x86_const.UC_X86_REG_R9W,
+        'R9B': uc_x86_const.UC_X86_REG_R9B,
         'R10': uc_x86_const.UC_X86_REG_R10,
+        'R10D': uc_x86_const.UC_X86_REG_R10D,
+        'R10W': uc_x86_const.UC_X86_REG_R10W,
+        'R10B': uc_x86_const.UC_X86_REG_R10B,
         'R11': uc_x86_const.UC_X86_REG_R11,
+        'R11D': uc_x86_const.UC_X86_REG_R11D,
+        'R11W': uc_x86_const.UC_X86_REG_R11W,
+        'R11B': uc_x86_const.UC_X86_REG_R11B,
         'R12': uc_x86_const.UC_X86_REG_R12,
+        'R12D': uc_x86_const.UC_X86_REG_R12D,
+        'R12W': uc_x86_const.UC_X86_REG_R12W,
+        'R12B': uc_x86_const.UC_X86_REG_R12B,
         'R13': uc_x86_const.UC_X86_REG_R13,
+        'R13D': uc_x86_const.UC_X86_REG_R13D,
+        'R13W': uc_x86_const.UC_X86_REG_R13W,
+        'R13B': uc_x86_const.UC_X86_REG_R13B,
         'R14': uc_x86_const.UC_X86_REG_R14,
+        'R14D': uc_x86_const.UC_X86_REG_R14D,
+        'R14W': uc_x86_const.UC_X86_REG_R14W,
+        'R14B': uc_x86_const.UC_X86_REG_R14B,
         'R15': uc_x86_const.UC_X86_REG_R15,
+        'R15D': uc_x86_const.UC_X86_REG_R15D,
+        'R15W': uc_x86_const.UC_X86_REG_R15W,
+        'R15B': uc_x86_const.UC_X86_REG_R15B,
         'EFLAGS': uc_x86_const.UC_X86_REG_EFLAGS,
     },
     Architecture.ARM64: {
-        'X0': uc_arm64_const.UC_ARM64_REG_X0,
-        'X1': uc_arm64_const.UC_ARM64_REG_X1,
-        'X2': uc_arm64_const.UC_ARM64_REG_X2,
-        'X3': uc_arm64_const.UC_ARM64_REG_X3,
-        'X4': uc_arm64_const.UC_ARM64_REG_X4,
-        'X5': uc_arm64_const.UC_ARM64_REG_X5,
-        'X6': uc_arm64_const.UC_ARM64_REG_X6,
-        'X7': uc_arm64_const.UC_ARM64_REG_X7,
-        'X8': uc_arm64_const.UC_ARM64_REG_X8,
-        'X29': uc_arm64_const.UC_ARM64_REG_X29,
-        'X30': uc_arm64_const.UC_ARM64_REG_X30,
+        **{f'X{i}': getattr(uc_arm64_const, f'UC_ARM64_REG_X{i}') for i in range(31)},
+        **{f'W{i}': getattr(uc_arm64_const, f'UC_ARM64_REG_W{i}') for i in range(31)},
         'SP': uc_arm64_const.UC_ARM64_REG_SP,
         'PC': uc_arm64_const.UC_ARM64_REG_PC,
         'NZCV': uc_arm64_const.UC_ARM64_REG_NZCV,
@@ -125,11 +184,10 @@ class CellSimulator:
         except uc_py3.UcError as e:
             return e.errno == UC_ERR_MAP
 
-    def _get_uc_reg(self, reg_name: str) -> int:
+    def _get_uc_reg(self, reg_name: str) -> int | None:
         mapping = _UC_REGS.get(self.arch, {})
-        if reg_name not in mapping:
-            raise ValueError(f'Register {reg_name} not mapped for {self.arch}')
-        return mapping[reg_name]
+        # FIX 2: Safely return None instead of crashing Python on temporary/mock registers
+        return mapping.get(reg_name)
 
     def _read_reg(self, reg_name: str) -> int:  # noqa: C901
         if reg_name.startswith('MEM_'):
@@ -179,6 +237,8 @@ class CellSimulator:
                     return (nzcv >> 31) & 1
 
         uc_reg = self._get_uc_reg(reg_name)
+        if uc_reg is None:
+            return 0
         return int(self.uc.reg_read(uc_reg))
 
     def _execute(
@@ -278,7 +338,8 @@ class CellSimulator:
                 continue
 
             uc_reg = self._get_uc_reg(reg_name)
-            self.uc.reg_write(uc_reg, val)  # pyright: ignore[reportUnknownMemberType]
+            if uc_reg is not None:
+                self.uc.reg_write(uc_reg, val)  # pyright: ignore[reportUnknownMemberType]
 
         self.load_memory_state(state, mem_sizes)
 
@@ -289,7 +350,8 @@ class CellSimulator:
         for reg_name in defined_registers:
             try:
                 uc_reg = self._get_uc_reg(reg_name)
-                self.uc.reg_write(uc_reg, 0)  # pyright: ignore[reportUnknownMemberType]
+                if uc_reg is not None:
+                    self.uc.reg_write(uc_reg, 0)  # pyright: ignore[reportUnknownMemberType]
             except (ValueError, KeyError):
                 pass  # Register not available in this architecture
 
