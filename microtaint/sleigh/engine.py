@@ -69,10 +69,17 @@ def _map_sleigh_to_state(
             if 'FLAGS' in sf_reg.name.upper():
                 return RegMapping(sf_reg.name, bit_idx, bit_idx)
 
+    # ARM64 Flags mapping mapping alias
+    arm_aliases: dict[str, str] = {'N': 'nf', 'Z': 'zf', 'C': 'cf', 'V': 'vf'}
+
     # 2. Robust Register/Alias matching
     best_match = None
     for sf_reg in state_format:
         s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
+
+        if not s_r and 'ARM' in arch.upper() and sf_reg.name in arm_aliases:
+            s_r = ctx.registers.get(arm_aliases[sf_reg.name])
+
         if not s_r:
             continue
 
@@ -111,8 +118,14 @@ def _map_sleigh_to_state_all(
                 mappings.append(RegMapping(sf_reg.name, 0, 0))
         return mappings
 
+    arm_aliases: dict[str, str] = {'N': 'nf', 'Z': 'zf', 'C': 'cf', 'V': 'vf'}
+
     for sf_reg in state_format:
         s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
+
+        if not s_r and 'ARM' in arch.upper() and sf_reg.name in arm_aliases:
+            s_r = ctx.registers.get(arm_aliases[sf_reg.name])
+
         if not s_r:
             continue
 
