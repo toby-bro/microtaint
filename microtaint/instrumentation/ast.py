@@ -34,14 +34,14 @@ class Op(str, Enum):
     LEFT = 'LEFT'
 
 
-@dataclass
+@dataclass(slots=True)
 class EvalContext:
     input_taint: dict[str, int]
     input_values: dict[str, int]
     simulator: CellSimulator | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class Expr:
     """Base class for AST expressions."""
 
@@ -49,7 +49,7 @@ class Expr:
         raise NotImplementedError('Must implement evaluate in subclasses')
 
 
-@dataclass
+@dataclass(slots=True)
 class AvalancheExpr(Expr):
     """Evaluates to a full bitmask of 1s based on size if the inner expression is non-zero, else 0."""
 
@@ -66,7 +66,7 @@ class AvalancheExpr(Expr):
         return 0
 
 
-@dataclass
+@dataclass(slots=True)
 class TaintOperand(Expr):
     """Represents a taint value operand (e.g. the taint status of EAX) or a concrete value operand."""
 
@@ -89,7 +89,7 @@ class TaintOperand(Expr):
         return (val >> self.bit_start) & mask
 
 
-@dataclass
+@dataclass(slots=True)
 class MemoryOperand(Expr):
     """Represents a memory operand (dynamically resolved at concrete execution time)."""
 
@@ -108,7 +108,7 @@ class MemoryOperand(Expr):
         return state.get(mem_name, 0)
 
 
-@dataclass
+@dataclass(slots=True)
 class Constant(Expr):
     """A constant boolean or integer value."""
 
@@ -122,7 +122,7 @@ class Constant(Expr):
         return self.value
 
 
-@dataclass
+@dataclass(slots=True)
 class UnaryExpr(Expr):
     """A unary operator application."""
 
@@ -139,7 +139,7 @@ class UnaryExpr(Expr):
         raise NotImplementedError(f'Unsupported unary op {self.op}')
 
 
-@dataclass
+@dataclass(slots=True)
 class BinaryExpr(Expr):
     """A binary operator application."""
 
@@ -164,7 +164,7 @@ class BinaryExpr(Expr):
         raise NotImplementedError(f'Unsupported binary op {self.op}')
 
 
-@dataclass
+@dataclass(slots=True)
 class TaintAssignment:
     """Represents assigning a logic block of taint variables to a target"""
 
@@ -183,7 +183,7 @@ class TaintAssignment:
         return f'{self.target} = {expr}'
 
 
-@dataclass
+@dataclass(slots=True)
 class LogicCircuit:
     """Represents the final circuit computing the taint output for an instruction."""
 
@@ -229,7 +229,7 @@ class LogicCircuit:
         return output_taint
 
 
-@dataclass
+@dataclass(slots=True)
 class InstructionCellExpr(Expr):
     """Represents evaluating the instruction itself as a logic cell."""
 
