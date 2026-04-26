@@ -10,7 +10,7 @@ class Architecture(StrEnum):
     AMD64 = 'AMD64'
 
 
-@dataclass
+@dataclass(slots=True)
 class Register:
     name: str
     bits: int
