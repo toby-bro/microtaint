@@ -11,6 +11,20 @@ AVALANCHE_OPCODES: set[str] = {
     'INT_REM',
     'INT_SREM',
     'POPCOUNT',
+    'LZCOUNT',
+    'FLOAT_ADD',
+    'FLOAT_SUB',
+    'FLOAT_MULT',
+    'FLOAT_DIV',
+    'FLOAT_ABS',
+    'FLOAT_SQRT',
+    'FLOAT_CEIL',
+    'FLOAT_FLOOR',
+    'FLOAT_ROUND',
+    'FLOAT_TRUNC',
+    'FLOAT_NEG',
+    'FLOAT_INT2FLOAT',
+    'FLOAT_FLOAT2FLOAT',
 }
 
 TRANSLATABLE_OPCODES: set[str] = {
@@ -23,11 +37,18 @@ TRANSPORTABLE_OPCODES: set[str] = {
     'INT_ADD',
     'INT_SUB',
     'INT_2COMP',
+    'PTRADD',
+    'PTRSUB',
 }
 
 COND_TRANSPORTABLE_OPCODES: set[str] = {
     'INT_EQUAL',
     'INT_NOTEQUAL',
+    'FLOAT_EQUAL',
+    'FLOAT_NOTEQUAL',
+    'FLOAT_LESS',
+    'FLOAT_LESSEQUAL',
+    'FLOAT_NAN',
 }
 
 MONOTONIC_OPCODES: set[str] = {
@@ -41,6 +62,9 @@ MONOTONIC_OPCODES: set[str] = {
     'INT_AND',
     'INT_OR',
     'INT_NEGATE',
+    'BOOL_AND',
+    'BOOL_OR',
+    'BOOL_NEGATE',
 }
 
 ROUTING_OPCODES: set[str] = {
@@ -52,13 +76,18 @@ ROUTING_OPCODES: set[str] = {
     'INT_SEXT',
     'SUBPIECE',
     'PIECE',
+    'EXTRACT',
+    'INSERT',
     'LOAD',
     'INT_AND',
     'INT_OR',
+    'BOOL_AND',
+    'BOOL_OR',
 }
 
 ORABLE_OPCODES: set[str] = {
     'INT_XOR',
+    'BOOL_XOR',
 }
 
 MAPPED_OPCODES: set[str] = {
@@ -66,7 +95,32 @@ MAPPED_OPCODES: set[str] = {
     'STORE',
 }
 
-EXTENSION_OPCODES = {'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'PIECE', 'COPY'}
+EXTENSION_OPCODES: set[str] = {
+    'INT_ZEXT',
+    'INT_SEXT',
+    'SUBPIECE',
+    'PIECE',
+    'COPY',
+    'EXTRACT',
+    'INSERT',
+}
+
+IGNORED_OPCODES: set[str] = {
+    'BRANCH',
+    'BRANCHIND',
+    'CBRANCH',
+    'CALL',
+    'CALLIND',
+    'CALLOTHER',
+    'RETURN',
+    'IMARK',
+    'INDIRECT',
+    'MULTIEQUAL',
+    'CPOOLREF',
+    'NEW',
+    'CAST',
+    'SEGMENTOP',
+}
 
 
 def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:
@@ -82,7 +136,7 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:
         if op.opcode.name not in ROUTING_OPCODES:
             return False
 
-        if op.opcode.name in {'INT_AND', 'INT_OR'}:
+        if op.opcode.name in {'INT_AND', 'INT_OR', 'BOOL_AND', 'BOOL_OR'}:
             has_and_or = True
         if op.opcode.name in {'INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT'}:
             has_shift = True
@@ -112,9 +166,12 @@ def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa
     if is_mapped_permutation(slice_ops):
         return InstructionCategory.MAPPED
 
-    core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
+    # Safely filter out ignored and extension operations from the core evaluation
+    core_ops = [
+        op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES and op.opcode.name not in IGNORED_OPCODES
+    ]
 
-    # If all operations were just simple routing/copies (e.g., pure mov chains)
+    # If all operations were just simple routing, copies, or ignored metadata
     if not core_ops:
         return InstructionCategory.MAPPED
 
@@ -143,7 +200,7 @@ def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa
         if op.opcode.name in ORABLE_OPCODES:
             return InstructionCategory.ORABLE
 
-    # 3. Fallback for pure memory operations that weren't caught by the heuristic
+    # Fallback for pure memory operations that weren't caught by the heuristic
     for op in core_ops:
         if op.opcode.name in MAPPED_OPCODES:
             return InstructionCategory.MAPPED
