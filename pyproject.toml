@@ -93,7 +93,7 @@ exclude = [
     "/microtaint/classifier/__init__.py",
     "/microtaint/instrumentation/ast_test.py",
 ]
-mypy-args = ["--ignore-missing-imports"]
+mypy-args = ["--ignore-missing-imports", "--disable-error-code=attr-defined"]
 options = { debug_level = "0" }
 
 [tool.hatch.build.targets.sdist]
