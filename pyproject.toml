@@ -45,6 +45,9 @@ dev = [
 [tool.uv.sources]
 pypcode = { git = "https://github.com/angr/pypcode.git", branch = "master" }
 
+[tool.setuptools]
+packages = ["microtaint"]
+
 # ---------------------------------------------------------------------------
 # Cython compilation via hatch-cython
 # ---------------------------------------------------------------------------
