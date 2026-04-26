@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 
@@ -43,12 +42,11 @@ class EvalContext:
 
 
 @dataclass
-class Expr(ABC):
+class Expr:
     """Base class for AST expressions."""
 
-    @abstractmethod
     def evaluate(self, context: EvalContext) -> int:
-        pass
+        raise NotImplementedError('Must implement evaluate in subclasses')
 
 
 @dataclass
