@@ -189,24 +189,23 @@ class CellSimulator:
         # FIX 2: Safely return None instead of crashing Python on temporary/mock registers
         return mapping.get(reg_name)
 
+    def _read_mem(self, addr: int, size: int) -> int:
+        # Ensure memory page is mapped before reading
+        page_addr = addr & ~0xFFF
+        try:
+            self.uc.mem_map(page_addr, 4096)
+        except uc_py3.UcError:
+            pass  # Already mapped
+
+        mem_data = self.uc.mem_read(addr, size)
+        return int.from_bytes(mem_data, 'little')
+
     def _read_reg(self, reg_name: str) -> int:  # noqa: C901
         if reg_name.startswith('MEM_'):
             parts = reg_name.split('_')
             addr = int(parts[1], 16)
             size = int(parts[2])
-
-            # Ensure memory page is mapped before reading
-            page_addr = addr & ~0xFFF
-            try:
-                self.uc.mem_map(page_addr, 4096)
-            except uc_py3.UcError:
-                logger.warning(
-                    f'Failed to map memory at {page_addr:#x} during register read. Address may already be mapped.',
-                )
-                # Already mapped
-
-            mem_data = self.uc.mem_read(addr, size)
-            return int.from_bytes(mem_data, 'little')
+            return self._read_mem(addr, size)
 
         # X86 / AMD64 EFLAGS extraction
         if self.arch in (Architecture.X86, Architecture.AMD64):
@@ -409,9 +408,16 @@ class CellSimulator:
         """
         # 1. Resolve target format cleanly
         is_reg_slice = False
+        is_mem_target = False
+        mem_addr = 0
+        mem_size = 0
+
         if isinstance(target_reg, tuple):
             if target_reg[0] == 'MEM':
-                target_reg_str = f'MEM_{target_reg[1]:x}_{target_reg[2]}'
+                is_mem_target = True
+                mem_addr = target_reg[1]
+                mem_size = target_reg[2]
+                target_reg_str = ''
             else:
                 # Handle register slice tuple safely: e.g., ('CF', 0, 7)
                 target_reg_str = target_reg[0]
@@ -449,10 +455,10 @@ class CellSimulator:
 
         # 5. Execute using the typed MachineState structures directly
         self._execute(bytestring, state_or, mem_sizes)
-        res_or = self._read_reg(target_reg_str)
+        res_or = self._read_mem(mem_addr, mem_size) if is_mem_target else self._read_reg(target_reg_str)
 
         self._execute(bytestring, state_and, mem_sizes)
-        res_and = self._read_reg(target_reg_str)
+        res_and = self._read_mem(mem_addr, mem_size) if is_mem_target else self._read_reg(target_reg_str)
 
         raw_diff = res_or ^ res_and
 
