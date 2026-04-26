@@ -108,5 +108,8 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+microtaint/**/*.c
+*.json
+
 output/
 stubs/

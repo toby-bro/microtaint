@@ -1,0 +1,122 @@
+from enum import Enum
+
+from microtaint.simulator import CellSimulator, MachineState
+from microtaint.types import Architecture, Register
+
+def _build_machine_state(input_dict: dict[str, int], context: EvalContext) -> MachineState: ...
+
+class Op(str, Enum):
+    AND = 'AND'
+    OR = 'OR'
+    XOR = 'XOR'
+    NOT = 'NOT'
+    LEFT = 'LEFT'
+
+class EvalContext:
+    input_taint: dict[str, int]
+    input_values: dict[str, int]
+    simulator: CellSimulator | None
+
+    def __init__(
+        self,
+        input_taint: dict[str, int],
+        input_values: dict[str, int],
+        simulator: CellSimulator | None = ...,
+    ) -> None: ...
+
+class Expr:
+    def evaluate(self, context: EvalContext) -> int: ...
+
+class AvalancheExpr(Expr):
+    expr: Expr
+    size_bits: int
+
+    def __init__(self, expr: Expr, size_bits: int) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
+class TaintOperand(Expr):
+    name: str
+    bit_start: int
+    bit_end: int
+    is_taint: bool
+
+    def __init__(self, name: str, bit_start: int, bit_end: int, is_taint: bool = ...) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
+class MemoryOperand(Expr):
+    address_expr: Expr
+    size: int
+    is_taint: bool
+
+    def __init__(self, address_expr: Expr, size: int, is_taint: bool = ...) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
+class Constant(Expr):
+    value: int
+    size: int
+
+    def __init__(self, value: int, size: int) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
+class UnaryExpr(Expr):
+    op: Op
+    expr: Expr
+
+    def __init__(self, op: Op, expr: Expr) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
+class BinaryExpr(Expr):
+    op: Op
+    lhs: Expr
+    rhs: Expr
+
+    def __init__(self, op: Op, lhs: Expr, rhs: Expr) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
+class TaintAssignment:
+    target: TaintOperand | MemoryOperand
+    dependencies: list[Expr]
+    expression: Expr | None
+    expression_str: str
+
+    def __init__(
+        self,
+        target: TaintOperand | MemoryOperand,
+        dependencies: list[Expr],
+        expression: Expr | None = ...,
+        expression_str: str = ...,
+    ) -> None: ...
+
+class LogicCircuit:
+    assignments: list[TaintAssignment]
+    architecture: Architecture
+    instruction: str
+    state_format: list[Register]
+
+    def __init__(
+        self,
+        assignments: list[TaintAssignment],
+        architecture: Architecture,
+        instruction: str,
+        state_format: list[Register],
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> dict[str, int]: ...
+
+class InstructionCellExpr(Expr):
+    architecture: Architecture
+    instruction: str
+    out_reg: str
+    out_bit_start: int
+    out_bit_end: int
+    inputs: dict[str, Expr]
+
+    def __init__(
+        self,
+        architecture: Architecture,
+        instruction: str,
+        out_reg: str,
+        out_bit_start: int,
+        out_bit_end: int,
+        inputs: dict[str, Expr],
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...

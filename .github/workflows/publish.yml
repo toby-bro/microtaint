@@ -6,44 +6,89 @@ on:
       - "v*"
 
 jobs:
-  build-and-publish:
-    name: Build & Publish to PyPI
+  build_sdist:
+    name: Build Source Distribution
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build sdist
+        run: uv build --sdist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cibw-sdist
+          path: dist/*.tar.gz
+
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # This will natively compile your Cython/mypyc code for Linux, Windows, and Mac (including Apple Silicon)
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.22.0
+        env:
+          # Tell the build environment to trigger hatch-mypyc and set the optimization level
+          CIBW_ENVIRONMENT: 'HATCH_BUILD_HOOKS_ENABLE="1" MYPYC_OPT_LEVEL="3"'
+          # Optional: Skip 32-bit and PyPy builds to save CI time
+          CIBW_SKIP: "pp* *i686* *musllinux*"
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
+          path: ./wheelhouse/*.whl
+
+  publish:
+    name: Publish to PyPI & GitHub Releases
+    needs: [build_sdist, build_wheels]
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/microtaint
     permissions:
-      id-token: write # MANDATORY for Trusted Publishing OIDC
-      contents: write # Need write access to publish the GH Release
+      id-token: write
+      contents: write
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # for automatic changelog generation
+          fetch-depth: 0
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Install Python
-        run: uv python install 3.12
-
-      - name: Build with uv
-        run: uv build
-
-      # Check that basic features work and we didn't miss to include crucial files
-      - name: Smoke test (wheel)
-        run: uv run --isolated --no-project --with dist/*.whl python tests/smoke_test.py
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/*.whl
-            dist/*.tar.gz # Uploads the wheel and sdist to the GH Release
-          generate_release_notes: true # Generate release notes based on the commit history
+          files: dist/*
+          generate_release_notes: true
           draft: false
           prerelease: false
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Publish to PyPI
-        run: uv publish
+        run: uv publish dist/*

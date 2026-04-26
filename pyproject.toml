@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling", "hatch-vcs", "hatch-cython"]
 build-backend = "hatchling.build"
 
 [project]
@@ -15,7 +15,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)",
     "Operating System :: OS Independent",
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -31,8 +30,12 @@ Issues = "https://github.com/toby-bro/microtaint/issues"
 [dependency-groups]
 dev = [
     "black>=26.3.1",
+    "cython>=3.2.4",
+    "hatch-cython>=0.6.0",
+    "hatch-mypyc>=0.16.0",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
+    "pytest-benchmark>=5.2.3",
     "pytest-cov>=7.1.0",
     "pytest-mock>=3.15.1",
     "ruff>=0.15.8",
@@ -41,6 +44,63 @@ dev = [
 
 [tool.uv.sources]
 pypcode = { git = "https://github.com/angr/pypcode.git", branch = "master" }
+
+# ---------------------------------------------------------------------------
+# Cython compilation via hatch-cython
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel.hooks.cython]
+dependencies = ["hatch-cython"]
+
+[tool.hatch.build.targets.wheel.hooks.cython.options]
+compile_py = false
+
+[tool.hatch.build.targets.wheel.hooks.cython.options.directives]
+language_level = "3"
+boundscheck = false
+wraparound = false
+
+# ---------------------------------------------------------------------------
+# mypyc compilation via hatch-mypyc
+#
+# Disabled by default so plain `uv sync` / `pip install -e .` stays fast.
+#
+# To install with compilation:
+#   HATCH_BUILD_HOOKS_ENABLE=1 pip install -e .
+#   HATCH_BUILD_HOOKS_ENABLE=1 uv sync
+#
+# To build a compiled wheel:
+#   HATCH_BUILD_HOOKS_ENABLE=1 MYPYC_OPT_LEVEL=3 hatch build
+#
+# Why simulator.py and lifter.py are excluded:
+#   simulator.py — hot path is inside Unicorn's C extension; benchmarks show
+#                  no gain from compiling the thin Python wrapper around it.
+#   lifter.py    — tiny Context-cache module; benchmarks confirmed identical
+#                  performance with or without it compiled.
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel.hooks.mypyc]
+enable-by-default = false
+dependencies = ["hatch-mypyc>=0.16.0", "mypy>=1.19.1"]
+require-runtime-dependencies = true
+exclude = [
+    "/microtaint/simulator.py",
+    "/microtaint/sleigh/lifter.py",
+    "/microtaint/__init__.py",
+    "/microtaint/sleigh/__init__.py",
+    "/microtaint/instrumentation/__init__.py",
+    "/microtaint/classifier/__init__.py",
+    "/microtaint/instrumentation/ast_test.py",
+]
+mypy-args = ["--ignore-missing-imports"]
+options = { debug_level = "0" }
+
+[tool.hatch.build.targets.sdist]
+exclude = [".gitignore", ".github/"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["microtaint"]
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.ruff]
 exclude = [".venv", "__pycache__", "pyproject.toml"]
@@ -53,75 +113,41 @@ unfixable = ["F841"]
 ignore = ["UP015", "S311", "S101", "INP001", "S501"]
 task-tags = ["TODO"]
 select = [
-    ## Here are all available rules
-    # https://beta.ruff.rs/docs/rules/
-    # Please, comment or uncomment lines but do not remove them
-
-    "F",   # Pyflakes                          https://beta.ruff.rs/docs/rules/#pyflakes-f
-    "E",   # pycodestyle - Error               https://beta.ruff.rs/docs/rules/#error-e
-    "W",   # pycodestyle - Warning             https://beta.ruff.rs/docs/rules/#warning-w
-    "C90", # mccabe                            https://beta.ruff.rs/docs/rules/#mccabe-c90
-    "I",   # isort                             https://beta.ruff.rs/docs/rules/#isort-i
-    # "N",          # pep8-naming                   x   https://beta.ruff.rs/docs/rules/#pep8-naming-n
-    # "D",          # pydocstyle                    x   https://beta.ruff.rs/docs/rules/#pydocstyle-d
-    # "UP",         # pyupgrade                     x   https://beta.ruff.rs/docs/rules/#pyupgrade-up
-    "YTT", # flake8-2020                       https://beta.ruff.rs/docs/rules/#flake8-2020-ytt
-    # "ANN",        # flake8-annotations                https://beta.ruff.rs/docs/rules/#flake8-annotations-ann
-    "S", # flake8-bandit                     https://beta.ruff.rs/docs/rules/#flake8-bandit-s
-    # "BLE",        # flake8-blind-except               https://beta.ruff.rs/docs/rules/#flake8-blind-except-ble
-    # "FBT",        # flake8-boolean-trap               https://beta.ruff.rs/docs/rules/#flake8-boolean-trap-fbt
-    "B", # flake8-bugbear                    https://beta.ruff.rs/docs/rules/#flake8-bugbear-b
-    # "A",          # flake8-builtins              x    https://beta.ruff.rs/docs/rules/#flake8-builtins-a
-    "COM", # flake8-commas                     https://beta.ruff.rs/docs/rules/#flake8-commas-com
-    "C4",  # flake8-comprehensions             https://beta.ruff.rs/docs/rules/#flake8-comprehensions-c4
-    # "DTZ",        # flake8-datetimez                  https://beta.ruff.rs/docs/rules/#flake8-datetimez-dtz
-    # "T10",        # flake8-debugger                   https://beta.ruff.rs/docs/rules/#flake8-debugger-t10
-    # "DJ",         # flake8-django                     https://beta.ruff.rs/docs/rules/#flake8-django-dj
-    # "EM",         # flake8-errmsg                     https://beta.ruff.rs/docs/rules/#flake8-errmsg-em
-    # "EXE",        # flake8-executable                 https://beta.ruff.rs/docs/rules/#flake8-executable-exe
-    "ISC", # flake8-implicit-str-concat        https://beta.ruff.rs/docs/rules/#flake8-implicit-str-concat-isc
-    "ICN", # flake8-import-conventions         https://beta.ruff.rs/docs/rules/#flake8-import-conventions-icn
-    # "G",          # flake8-logging-format             https://beta.ruff.rs/docs/rules/#flake8-logging-format-g
-    "INP", # flake8-no-pep420                  https://beta.ruff.rs/docs/rules/#flake8-no-pep420-inp
-    "PIE", # flake8-pie                        https://beta.ruff.rs/docs/rules/#flake8-pie-pie
-    # "T20", # flake8-print                      https://beta.ruff.rs/docs/rules/#flake8-print-t20
-    "PYI", # flake8-pyi                        https://beta.ruff.rs/docs/rules/#flake8-pyi-pyi
-    "PT",  # flake8-pytest-style               https://beta.ruff.rs/docs/rules/#flake8-pytest-style-pt
-    "Q",   # flake8-quotes                     https://beta.ruff.rs/docs/rules/#flake8-quotes-q
-    "RSE", # flake8-raise                      https://beta.ruff.rs/docs/rules/#flake8-raise-rse
-    "RET", # flake8-return                     https://beta.ruff.rs/docs/rules/#flake8-return-ret
-    # "SLF",        # flake8-self                       https://beta.ruff.rs/docs/rules/#flake8-self-slf
-    # "SIM",        # flake8-simplify              x    https://beta.ruff.rs/docs/rules/#flake8-simplify-sim
-    "TID", # flake8-tidy-imports               https://beta.ruff.rs/docs/rules/#flake8-tidy-imports-tid
-    # "TCH",        # flake8-type-checking              https://beta.ruff.rs/docs/rules/#flake8-type-checking-tch
-    "ARG", # flake8-unused-arguments           https://beta.ruff.rs/docs/rules/#flake8-unused-arguments-arg
-    # "PTH",        # flake8-use-pathlib           x    https://beta.ruff.rs/docs/rules/#flake8-use-pathlib-pth
-    # "ERA",        # eradicate                         https://beta.ruff.rs/docs/rules/#eradicate-era
-    # "PD",         # pandas-vet                        https://beta.ruff.rs/docs/rules/#pandas-vet-pd
-    "PGH", # pygrep-hooks                      https://beta.ruff.rs/docs/rules/#pygrep-hooks-pgh
-    # "PL",         # Pylint                       x    https://beta.ruff.rs/docs/rules/#pylint-pl
-    "PLC", # Pylint - Convention               https://beta.ruff.rs/docs/rules/#convention-plc
-    "PLE", # Pylint - Error                    https://beta.ruff.rs/docs/rules/#error-ple
-    # "PLR",        # Pylint - Refactor            x    https://beta.ruff.rs/docs/rules/#refactor-plr
-    "PLW", # Pylint - Warning                  https://beta.ruff.rs/docs/rules/#warning-plw
-    # "TRY",        # tryceratops                  x    https://beta.ruff.rs/docs/rules/#tryceratops-try
-    "NPY", # NumPy-specific rules              https://beta.ruff.rs/docs/rules/#numpy-specific-rules-npy
-    "RUF", # Ruff-specific rules               https://beta.ruff.rs/docs/rules/#ruff-specific-rules-ruf
-    # "TD002", # flake8-missing-todo-author               https://beta.ruff.rs/docs/rules/#flake8-todos-td
-    "TD004", # flake8-missing-todo-colon                https://beta.ruff.rs/docs/rules/#flake8-todos-td
-    "TD005", # flake8-missing-todo-description              https://beta.ruff.rs/docs/rules/#flake8-todos-td
-    "TD007", # flake8-missing-space-after-todo-colon        https://beta.ruff.rs/docs/rules/#flake8-todos-td
+    "F",     # Pyflakes                          https://beta.ruff.rs/docs/rules/#pyflakes-f
+    "E",     # pycodestyle - Error               https://beta.ruff.rs/docs/rules/#error-e
+    "W",     # pycodestyle - Warning             https://beta.ruff.rs/docs/rules/#warning-w
+    "C90",   # mccabe                            https://beta.ruff.rs/docs/rules/#mccabe-c90
+    "I",     # isort                             https://beta.ruff.rs/docs/rules/#isort-i
+    "YTT",   # flake8-2020                       https://beta.ruff.rs/docs/rules/#flake8-2020-ytt
+    "S",     # flake8-bandit                     https://beta.ruff.rs/docs/rules/#flake8-bandit-s
+    "B",     # flake8-bugbear                    https://beta.ruff.rs/docs/rules/#flake8-bugbear-b
+    "COM",   # flake8-commas                     https://beta.ruff.rs/docs/rules/#flake8-commas-com
+    "C4",    # flake8-comprehensions             https://beta.ruff.rs/docs/rules/#flake8-comprehensions-c4
+    "ISC",   # flake8-implicit-str-concat        https://beta.ruff.rs/docs/rules/#flake8-implicit-str-concat-isc
+    "ICN",   # flake8-import-conventions         https://beta.ruff.rs/docs/rules/#flake8-import-conventions-icn
+    "INP",   # flake8-no-pep420                  https://beta.ruff.rs/docs/rules/#flake8-no-pep420-inp
+    "PIE",   # flake8-pie                        https://beta.ruff.rs/docs/rules/#flake8-pie-pie
+    "PYI",   # flake8-pyi                        https://beta.ruff.rs/docs/rules/#flake8-pyi-pyi
+    "PT",    # flake8-pytest-style               https://beta.ruff.rs/docs/rules/#flake8-pytest-style-pt
+    "Q",     # flake8-quotes                     https://beta.ruff.rs/docs/rules/#flake8-quotes-q
+    "RSE",   # flake8-raise                      https://beta.ruff.rs/docs/rules/#flake8-raise-rse
+    "RET",   # flake8-return                     https://beta.ruff.rs/docs/rules/#flake8-return-ret
+    "TID",   # flake8-tidy-imports               https://beta.ruff.rs/docs/rules/#flake8-tidy-imports-tid
+    "ARG",   # flake8-unused-arguments           https://beta.ruff.rs/docs/rules/#flake8-unused-arguments-arg
+    "PGH",   # pygrep-hooks                      https://beta.ruff.rs/docs/rules/#pygrep-hooks-pgh
+    "PLC",   # Pylint - Convention               https://beta.ruff.rs/docs/rules/#convention-plc
+    "PLE",   # Pylint - Error                    https://beta.ruff.rs/docs/rules/#error-ple
+    "PLW",   # Pylint - Warning                  https://beta.ruff.rs/docs/rules/#warning-plw
+    "NPY",   # NumPy-specific rules              https://beta.ruff.rs/docs/rules/#numpy-specific-rules-npy
+    "RUF",   # Ruff-specific rules               https://beta.ruff.rs/docs/rules/#ruff-specific-rules-ruf
+    "TD004", # flake8-missing-todo-colon
+    "TD005", # flake8-missing-todo-description
+    "TD007", # flake8-missing-space-after-todo-colon
 ]
-
 
 [tool.ruff.lint.per-file-ignores]
-"__init__.py" = [
-    "F401", # Module imported but unused
-    "F403", # 'from module import *' used; unable to detect undefined names
-]
-"*/test/*" = [
-    "INP001", # is part of an implicit namespace package, missing __init__.py
-]
+"__init__.py" = ["F401", "F403"]
+"*/test/*" = ["INP001"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -162,6 +188,11 @@ namespace_packages = true
 pretty = true
 exclude = [".venv/", ".git/", "__pycache__/", "output/", "peekaboo/", "tools/"]
 
+# pypcode and unicorn are C extensions with no bundled stubs
+[[tool.mypy.overrides]]
+module = ["pypcode", "pypcode.*", "unicorn", "unicorn.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 filterwarnings = ["ignore::DeprecationWarning:multiprocessing.popen_fork"]
 addopts = "--cov=microtaint --cov-report=xml --cov-report=term-missing"
@@ -177,12 +208,3 @@ omit = [
     "*/stubs/*",
     "demo.py",
 ]
-
-[tool.hatch.build.targets.sdist]
-exclude = [".gitignore", ".github/"]
-
-[tool.hatch.build.targets.wheel]
-packages = ["microtaint"]
-
-[tool.hatch.version]
-source = "vcs"
