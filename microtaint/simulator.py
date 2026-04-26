@@ -11,7 +11,6 @@ from unicorn import (
     UC_ARCH_ARM64,
     UC_ARCH_X86,
     UC_ERR_FETCH_UNMAPPED,
-    UC_ERR_MAP,
     UC_HOOK_MEM_UNMAPPED,
     UC_MEM_FETCH_UNMAPPED,
     UC_MODE_32,
@@ -159,10 +158,23 @@ class CellSimulator:
         uc_arch, uc_mode = _ARCH_MAP[arch]
         self.uc = uc_py3.Uc(uc_arch, uc_mode)
 
+        # Performance optimizations
+        self._mapped_pages: set[int] = set()
+        self._dirtied_memory: set[int] = set()
+
         self.CODE_ADDR = 0x400000  # Use high address to avoid conflicts with test data
         self.uc.mem_map(self.CODE_ADDR, 4096)
+        self._mapped_pages.add(self.CODE_ADDR)
+
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._hook_mem_unmapped)  # pyright: ignore[reportUnknownMemberType]
-        self.memory_addrs: set[int] = set()  # Track memory addresses used
+
+        # Initialize all CPU registers natively to zero to create the pristine context snapshot
+        for reg_name in _UC_REGS.get(self.arch, {}).keys():
+            uc_reg = self._get_uc_reg(reg_name)
+            if uc_reg is not None:
+                self.uc.reg_write(uc_reg, 0)  # pyright: ignore[reportUnknownMemberType]
+
+        self._pristine_context = self.uc.context_save()
 
     def _hook_mem_unmapped(
         self,
@@ -177,25 +189,21 @@ class CellSimulator:
             return False  # Do not map on instruction fetch unmapped
 
         page_addr = address & ~0xFFF
-        # Map a single page, avoiding exceptions if already mapped
-        try:
+        if page_addr not in self._mapped_pages:
             uc.mem_map(page_addr, 4096)
+            self._mapped_pages.add(page_addr)
             return True
-        except uc_py3.UcError as e:
-            return e.errno == UC_ERR_MAP
+        return False
 
     def _get_uc_reg(self, reg_name: str) -> int | None:
         mapping = _UC_REGS.get(self.arch, {})
-        # FIX 2: Safely return None instead of crashing Python on temporary/mock registers
         return mapping.get(reg_name)
 
     def _read_mem(self, addr: int, size: int) -> int:
-        # Ensure memory page is mapped before reading
         page_addr = addr & ~0xFFF
-        try:
+        if page_addr not in self._mapped_pages:
             self.uc.mem_map(page_addr, 4096)
-        except uc_py3.UcError:
-            pass  # Already mapped
+            self._mapped_pages.add(page_addr)
 
         mem_data = self.uc.mem_read(addr, size)
         return int.from_bytes(mem_data, 'little')
@@ -252,7 +260,6 @@ class CellSimulator:
         self.clear_memory_and_registers()
         self.setup_registers_and_memory(state, mem_sizes)
 
-        # Set the Program Counter to the address of the code
         match self.arch:
             case Architecture.X86:
                 pc_reg = uc_x86_const.UC_X86_REG_EIP
@@ -269,9 +276,7 @@ class CellSimulator:
         try:
             self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
         except uc_py3.UcError as e:
-            # If a branch (CALL, JMP, RET) occurs, the PC jumps outside our mapped boundary.
-            # Unicorn attempts to fetch the next instruction and throws UC_ERR_FETCH_UNMAPPED.
-            # The branch successfully executed, so this is safe to ignore.
+            # Safe to ignore fetch unmapped occurring post execution branches
             if e.errno == UC_ERR_FETCH_UNMAPPED:
                 pass
             else:
@@ -279,7 +284,6 @@ class CellSimulator:
 
     def setup_registers_and_memory(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:  # noqa: C901
         for reg_name, val in state.regs.items():
-            # Legacy fallback for MEM tuples
             if reg_name.startswith('MEM_'):
                 logger.warning(
                     f'Legacy MEM register format detected: {reg_name}. Consider using tuple format for clarity.',
@@ -288,20 +292,18 @@ class CellSimulator:
                 addr = int(parts[1], 16)
                 size = int(parts[2])
 
-                self.memory_addrs.add(addr)
                 page_addr = addr & ~0xFFF
-                try:
+                if page_addr not in self._mapped_pages:
                     self.uc.mem_map(page_addr, 4096)
-                except uc_py3.UcError:
-                    logger.warning(
-                        f'Failed to map memory at {page_addr:#x} during state setup. Address may already be mapped.',
-                    )
+                    self._mapped_pages.add(page_addr)
 
                 try:
                     self.uc.mem_write(addr, val.to_bytes(size, 'little'))
                 except ValueError:
                     mask = (1 << (size * 8)) - 1
                     self.uc.mem_write(addr, (val & mask).to_bytes(size, 'little'))
+
+                self._dirtied_memory.add(addr)
                 continue
 
             # Flag writing logic for x86/AMD64
@@ -343,23 +345,14 @@ class CellSimulator:
         self.load_memory_state(state, mem_sizes)
 
     def clear_memory_and_registers(self) -> None:
-        # Clear all registers to zero first to avoid state leakage
-        defined_registers = _UC_REGS.get(self.arch, {}).keys()
+        # Instantly reset all CPU registers natively in C
+        self.uc.context_restore(self._pristine_context)
 
-        for reg_name in defined_registers:
-            try:
-                uc_reg = self._get_uc_reg(reg_name)
-                if uc_reg is not None:
-                    self.uc.reg_write(uc_reg, 0)  # pyright: ignore[reportUnknownMemberType]
-            except (ValueError, KeyError):
-                pass  # Register not available in this architecture
+        # Clear ONLY the memory addresses that were written to during the last state setup
+        for addr in self._dirtied_memory:
+            self.uc.mem_write(addr, b'\x00' * 8)
 
-        # Clear known memory addresses to zero
-        for addr in self.memory_addrs:
-            try:
-                self.uc.mem_write(addr, b'\x00' * 8)
-            except uc_py3.UcError:
-                logger.warning(f'Failed to clear memory at {addr:#x} during state setup. Address may not be mapped.')
+        self._dirtied_memory.clear()
 
     def load_memory_state(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:
         for addr, mem_val in state.mem.items():
@@ -368,18 +361,12 @@ class CellSimulator:
             elif mem_val == 0:
                 size = 8  # Default to 8 bytes for zero
             else:
-                # Infer size, but ensure minimum of 8 bytes for large addresses
                 size = max(8, (mem_val.bit_length() + 7) // 8)
 
-            self.memory_addrs.add(addr)
             page_addr = addr & ~0xFFF
-
-            try:
+            if page_addr not in self._mapped_pages:
                 self.uc.mem_map(page_addr, 4096)
-            except uc_py3.UcError:
-                logger.warning(
-                    f'Failed to map memory at {page_addr:#x} during state setup. Address may already be mapped.',
-                )
+                self._mapped_pages.add(page_addr)
 
             try:
                 self.uc.mem_write(addr, mem_val.to_bytes(size, 'little'))
@@ -387,10 +374,9 @@ class CellSimulator:
                 mask = (1 << (size * 8)) - 1
                 self.uc.mem_write(addr, (mem_val & mask).to_bytes(size, 'little'))
 
+            self._dirtied_memory.add(addr)
+
     def evaluate_concrete(self, cell: Any, v_state: MachineState) -> int:
-        """
-        Tests concrete evaluation natively without taint tracking.
-        """
         self._execute(bytes.fromhex(cell.instruction), v_state)
         val = self._read_reg(cell.out_reg)
         mask = (1 << (cell.out_bit_end - cell.out_bit_start + 1)) - 1
@@ -403,9 +389,6 @@ class CellSimulator:
         v_state: MachineState,
         t_state: MachineState,
     ) -> int:
-        """
-        Computes exactly the cell logic: C_instr(V | T) ^ C_instr(V & ~T)
-        """
         # 1. Resolve target format cleanly
         is_reg_slice = False
         is_mem_target = False
@@ -419,7 +402,6 @@ class CellSimulator:
                 mem_size = target_reg[2]
                 target_reg_str = ''
             else:
-                # Handle register slice tuple safely: e.g., ('CF', 0, 7)
                 target_reg_str = target_reg[0]
                 is_reg_slice = True
         else:
@@ -447,7 +429,6 @@ class CellSimulator:
             state_or.mem[addr] = v_val | t_val
             state_and.mem[addr] = v_val & ~t_val
 
-            # Determine size from v_val
             if v_val == 0:
                 mem_sizes[addr] = 8
             else:
