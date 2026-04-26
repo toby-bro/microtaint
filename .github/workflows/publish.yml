@@ -42,7 +42,7 @@ jobs:
           fetch-depth: 0
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.22.0
+        uses: pypa/cibuildwheel@v3.4.1
         env:
           # Tell the build environment to trigger hatch-mypyc and set the optimization level
           CIBW_ENVIRONMENT: 'HATCH_BUILD_HOOKS_ENABLE="1" MYPYC_OPT_LEVEL="3"'
