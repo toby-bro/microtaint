@@ -26,121 +26,102 @@ from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RegMapping:
     name: str
     bit_start: int
     bit_end: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MemMapping:
     offset: int
     size_bytes: int
     addr_reg: RegMapping
 
 
-@dataclass
+@dataclass(slots=True)
 class EvalTarget:
     varnode: Varnode
     mapping: RegMapping | MemMapping
 
 
-def _map_sleigh_to_state(  # noqa: C901
-    ctx: Context,
-    arch: str,
-    state_format: list[Register],
-    offset: int,
-    size: int,
-) -> RegMapping | None:
-    # 1. Handle X86 flags abstract offsets (512-540)
-    if 'X86' in arch.upper() and 512 <= offset < 560:
-        bit_idx = offset - 512
-        flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
-        requested_flag = flag_names.get(bit_idx)
+class StateMapper:
+    def __init__(self, ctx: Context, arch: str, state_format: list[Register]):
+        self.ctx = ctx
+        self.arch = arch
+        self.state_format = state_format
+        self.arm_aliases: dict[str, str] = {'N': 'ng', 'Z': 'zr', 'C': 'cy', 'V': 'ov'}
+        self.is_x86 = 'X86' in arch.upper()
+        self.is_arm = 'ARM' in arch.upper()
 
-        # Prioritize explicit 1-bit flag register if it exists in state_format
+        # Pre-resolve ctx registers to avoid dict lookups in the hot path
+        self.sf_resolved: list[tuple[Register, Varnode]] = []
         for sf_reg in state_format:
-            if sf_reg.name.upper() == requested_flag:
-                return RegMapping(sf_reg.name, 0, 0)
+            s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
+            if not s_r and self.is_arm and sf_reg.name in self.arm_aliases:
+                alias = self.arm_aliases[sf_reg.name]
+                s_r = ctx.registers.get(alias) or ctx.registers.get(alias.upper())
 
-        # Fallback to the parent EFLAGS bit
-        for sf_reg in state_format:
-            if 'FLAGS' in sf_reg.name.upper():
-                return RegMapping(sf_reg.name, bit_idx, bit_idx)
+            if s_r:
+                self.sf_resolved.append((sf_reg, s_r))
 
-    # ARM64 Flags mapping mapping alias
-    arm_aliases: dict[str, str] = {'N': 'ng', 'Z': 'zr', 'C': 'cy', 'V': 'ov'}
+    def map_to_state(self, offset: int, size: int) -> RegMapping | None:
+        if self.is_x86 and 512 <= offset < 560:
+            bit_idx = offset - 512
+            flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
+            requested_flag = flag_names.get(bit_idx)
 
-    # 2. Robust Register/Alias matching
-    best_match = None
-    for sf_reg in state_format:
-        s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
+            for sf_reg in self.state_format:
+                if requested_flag and sf_reg.name.upper() == requested_flag:
+                    return RegMapping(sf_reg.name, 0, 0)
 
-        if not s_r and 'ARM' in arch.upper() and sf_reg.name in arm_aliases:
-            alias = arm_aliases[sf_reg.name]
-            s_r = ctx.registers.get(alias) or ctx.registers.get(alias.upper())
+            for sf_reg in self.state_format:
+                if 'FLAGS' in sf_reg.name.upper():
+                    return RegMapping(sf_reg.name, bit_idx, bit_idx)
 
-        if not s_r:
-            continue
+        best_match = None
+        end_offset = offset + size
+        for sf_reg, s_r in self.sf_resolved:
+            if s_r.offset <= offset and end_offset <= (s_r.offset + s_r.size):
+                rel_byte = offset - s_r.offset
+                bit_start = rel_byte * 8
+                bit_end = min(bit_start + (size * 8) - 1, sf_reg.bits - 1)
+                mapping = RegMapping(sf_reg.name, bit_start, bit_end)
 
-        # Check for overlap
-        if s_r.offset <= offset and (offset + size) <= (s_r.offset + s_r.size):
-            rel_byte = offset - s_r.offset
-            bit_start = rel_byte * 8
-            bit_end = min(bit_start + (size * 8) - 1, sf_reg.bits - 1)
-            mapping = RegMapping(sf_reg.name, bit_start, bit_end)
+                if s_r.offset == offset and s_r.size == size:
+                    return mapping
 
-            # PERFECT MATCH: If names match exactly (e.g. EAX == EAX), return immediately
-            if s_r.offset == offset and s_r.size == size:
-                return mapping
+                if not best_match or s_r.size < best_match[1]:
+                    best_match = (mapping, s_r.size)
 
-            if not best_match or s_r.size < best_match[1]:  # Prefer smallest encompassing reg
-                best_match = (mapping, s_r.size)
+        return best_match[0] if best_match else None
 
-    return best_match[0] if best_match else None
+    def map_to_state_all(self, offset: int, size: int) -> list[RegMapping]:
+        mappings: list[RegMapping] = []
+        if self.is_x86 and 512 <= offset < 560:
+            bit_idx = offset - 512
+            flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
+            req_flag = flag_names.get(bit_idx)
+            for sf_reg in self.state_format:
+                if 'FLAGS' in sf_reg.name.upper():
+                    mappings.append(RegMapping(sf_reg.name, bit_idx, bit_idx))
+                elif req_flag and sf_reg.name.upper() == req_flag:
+                    mappings.append(RegMapping(sf_reg.name, 0, 0))
+            return mappings
 
+        end_offset = offset + size
+        for sf_reg, s_r in self.sf_resolved:
+            overlap_start = max(s_r.offset, offset)
+            overlap_end = min(s_r.offset + s_r.size, end_offset)
 
-def _map_sleigh_to_state_all(
-    ctx: Context,
-    arch: str,
-    state_format: list[Register],
-    offset: int,
-    size: int,
-) -> list[RegMapping]:
-    mappings: list[RegMapping] = []
-    if 'X86' in arch.upper() and 512 <= offset < 560:
-        bit_idx = offset - 512
-        flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
-        for sf_reg in state_format:
-            if 'FLAGS' in sf_reg.name.upper():
-                mappings.append(RegMapping(sf_reg.name, bit_idx, bit_idx))
-            elif sf_reg.name.upper() == flag_names.get(bit_idx):
-                mappings.append(RegMapping(sf_reg.name, 0, 0))
+            if overlap_start < overlap_end:
+                rel_byte = overlap_start - s_r.offset
+                bit_start = rel_byte * 8
+                bit_end = min(bit_start + ((overlap_end - overlap_start) * 8) - 1, sf_reg.bits - 1)
+                mappings.append(RegMapping(sf_reg.name, bit_start, bit_end))
+
         return mappings
-
-    arm_aliases: dict[str, str] = {'N': 'ng', 'Z': 'zr', 'C': 'cy', 'V': 'ov'}
-
-    for sf_reg in state_format:
-        s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
-
-        if not s_r and 'ARM' in arch.upper() and sf_reg.name in arm_aliases:
-            alias = arm_aliases[sf_reg.name]
-            s_r = ctx.registers.get(alias) or ctx.registers.get(alias.upper())
-
-        if not s_r:
-            continue
-
-        overlap_start = max(s_r.offset, offset)
-        overlap_end = min(s_r.offset + s_r.size, offset + size)
-
-        if overlap_start < overlap_end:
-            rel_byte = overlap_start - s_r.offset
-            bit_start = rel_byte * 8
-            bit_end = min(bit_start + ((overlap_end - overlap_start) * 8) - 1, sf_reg.bits - 1)
-            mappings.append(RegMapping(sf_reg.name, bit_start, bit_end))
-
-    return mappings
 
 
 def apply_sless_msb_split(
@@ -218,13 +199,15 @@ def generate_static_rule(
 
     unique_outputs = {get_varnode_id(out): out for out in outputs}.values()
 
+    mapper = StateMapper(ctx, arch, state_format)
+
     targets_to_evaluate, assignments = map_outputs_to_targets(
         arch,
         state_format,
-        ctx,
         translation,
         store_ops,
         unique_outputs,
+        mapper,
     )
 
     for target in targets_to_evaluate:
@@ -235,7 +218,7 @@ def generate_static_rule(
         polarities = compute_polarity(slice_ops)
 
         # FIX: Pass translation.ops down to completely bypass slicer truncation
-        deps = extract_dependencies(arch, state_format, ctx, out_vn, slice_ops, polarities, translation.ops)
+        deps = extract_dependencies(out_vn, slice_ops, polarities, translation.ops, mapper)
         deps = apply_sless_msb_split(deps, slice_ops, ctx, arch, state_format)
 
         out_target, out_name, out_bit_start, out_bit_end = generate_output_target(mapping)
@@ -250,8 +233,7 @@ def generate_static_rule(
             out_name,
             out_bit_start,
             out_bit_end,
-            ctx,
-            state_format,
+            mapper,
         )
 
     return LogicCircuit(
@@ -272,8 +254,7 @@ def generate_taint_assignments(  # noqa: C901
     out_name: str,
     out_bit_start: int,
     out_bit_end: int,
-    ctx: Context,
-    state_format: list[Register],
+    mapper: StateMapper,
 ) -> None:
     dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(deps)
 
@@ -310,7 +291,7 @@ def generate_taint_assignments(  # noqa: C901
             origins: set[str] = set()
 
             if vn.space.name == 'register':
-                m = _map_sleigh_to_state(ctx, arch, state_format, vn.offset, vn.size)
+                m = mapper.map_to_state(vn.offset, vn.size)
                 if m:
                     origins.add(m.name)
             elif vn.space.name == 'unique':
@@ -324,7 +305,7 @@ def generate_taint_assignments(  # noqa: C901
                         if op.opcode.name == 'LOAD':
                             # If the shift offset came from memory
                             ptr_vn = op.inputs[1]
-                            m = _map_sleigh_to_state(ctx, arch, state_format, ptr_vn.offset, ptr_vn.size)
+                            m = mapper.map_to_state(ptr_vn.offset, ptr_vn.size)
                             if m:
                                 origins.add(f'MEM_{m.name}')
                         else:
@@ -342,7 +323,7 @@ def generate_taint_assignments(  # noqa: C901
         # Exclude the primary data source from the fallback avalanche to avoid false positives
         primary_input_name = None
         if shift_op and shift_op.inputs[0].space.name == 'register':
-            m = _map_sleigh_to_state(ctx, arch, state_format, shift_op.inputs[0].offset, shift_op.inputs[0].size)
+            m = mapper.map_to_state(shift_op.inputs[0].offset, shift_op.inputs[0].size)
             if m:
                 primary_input_name = m.name
 
@@ -545,13 +526,11 @@ def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOpera
 
 
 def extract_dependencies(  # noqa: C901
-    arch: Architecture,
-    state_format: list[Register],
-    ctx: Context,
     _out_vn: Varnode,
     slice_ops: list[PcodeOp],
     polarities: dict[str, int],
     all_ops: list[PcodeOp],
+    mapper: StateMapper,
 ) -> dict[RegMapping | MemMapping, int]:
     deps: dict[RegMapping | MemMapping, int] = {}
 
@@ -560,7 +539,7 @@ def extract_dependencies(  # noqa: C901
         if visited is None:
             visited = set()
         if vn.space.name == 'register':
-            return _map_sleigh_to_state(ctx, arch, state_format, vn.offset, vn.size)
+            return mapper.map_to_state(vn.offset, vn.size)
         if vn.space.name == 'unique' and vn.offset not in visited:
             visited.add(vn.offset)
             for o in slice_ops:
@@ -582,7 +561,7 @@ def extract_dependencies(  # noqa: C901
 
         for vn in op.inputs:
             if vn.space.name == 'register':
-                mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, vn.offset, vn.size)
+                mapped_dep = mapper.map_to_state(vn.offset, vn.size)
                 if mapped_dep and mapped_dep not in deps:
                     deps[mapped_dep] = 1  # Default to positive polarity
 
@@ -590,7 +569,7 @@ def extract_dependencies(  # noqa: C901
     for vn_id, p in polarities.items():
         parts = vn_id.split(':')
         if len(parts) == 3 and parts[0] == 'register':
-            mapped_dep = _map_sleigh_to_state(ctx, arch, state_format, int(parts[1]), int(parts[2]))
+            mapped_dep = mapper.map_to_state(int(parts[1]), int(parts[2]))
             if mapped_dep:
                 deps[mapped_dep] = p
 
@@ -600,16 +579,16 @@ def extract_dependencies(  # noqa: C901
 def map_outputs_to_targets(
     arch: Architecture,
     state_format: list[Register],
-    ctx: Context,
     translation: Translation,
     store_ops: list[PcodeOp],
     unique_outputs: Iterable[Varnode],
+    mapper: StateMapper,
 ) -> tuple[list[EvalTarget], list[TaintAssignment]]:
     targets_to_evaluate: list[EvalTarget] = []
     mem_targets: list[tuple[Varnode, Varnode, int]] = []
 
     for out_vn in unique_outputs:
-        mapped_outs = _map_sleigh_to_state_all(ctx, arch, state_format, out_vn.offset, out_vn.size)
+        mapped_outs = mapper.map_to_state_all(out_vn.offset, out_vn.size)
         for mapped_out in mapped_outs:
             targets_to_evaluate.append(EvalTarget(out_vn, mapped_out))
 
@@ -636,7 +615,7 @@ def map_outputs_to_targets(
 
     # Map mem targets explicitly
     for val_vn, ptr_vn, size in mem_targets:
-        mapped_addr = _map_sleigh_to_state(ctx, arch, state_format, ptr_vn.offset, ptr_vn.size)
+        mapped_addr = mapper.map_to_state(ptr_vn.offset, ptr_vn.size)
         if mapped_addr:
             mem_map = MemMapping(ptr_vn.offset, size, mapped_addr)
             targets_to_evaluate.append(EvalTarget(val_vn, mem_map))
