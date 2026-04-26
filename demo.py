@@ -5,11 +5,11 @@ Showcases the power of bit-precise CellIFT AST generation and execution.
 
 from __future__ import annotations
 
-import pypcode
+from pypcode import Context, PcodeOp, Translation
 
 from microtaint.instrumentation.ast import EvalContext, MemoryOperand
 from microtaint.simulator import CellSimulator
-from microtaint.sleigh.engine import _map_sleigh_to_state, generate_static_rule
+from microtaint.sleigh.engine import StateMapper, generate_static_rule
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
@@ -24,15 +24,17 @@ def print_header(title: str) -> None:
 def extract_assignment_slices(
     arch: Architecture,
     state_format: list[Register],
-    ctx: pypcode.Context,
-    translation: pypcode.Translation,
+    ctx: Context,
+    translation: Translation,
     out_name: str,
     matched_ops: list[str],
-    op: pypcode.PcodeOp,
+    op: PcodeOp,
 ) -> None:
     """Helper function to print the backward P-Code slice for a given target."""
+    mapper = StateMapper(ctx, str(arch.value), state_format)
+
     if op.output and op.output.space.name == 'register':
-        mapped = _map_sleigh_to_state(ctx, arch.name, state_format, op.output.offset, op.output.size)
+        mapped = mapper.map_to_state(op.output.offset, op.output.size)
 
         if mapped and mapped.name == out_name:
             s_ops = slice_backward(translation.ops, op.output)
@@ -40,7 +42,7 @@ def extract_assignment_slices(
                 inps: list[str] = []
                 for inp in s_op.inputs:
                     if inp.space.name == 'register':
-                        r_map = _map_sleigh_to_state(ctx, arch.name, state_format, inp.offset, inp.size)
+                        r_map = mapper.map_to_state(inp.offset, inp.size)
                         inps.append(r_map.name if r_map else get_varnode_id(inp))
                     elif inp.space.name == 'const':
                         inps.append(hex(inp.offset))
@@ -50,13 +52,7 @@ def extract_assignment_slices(
                 out = ''
                 if s_op.output:
                     if s_op.output.space.name == 'register':
-                        r_map = _map_sleigh_to_state(
-                            ctx,
-                            arch.name,
-                            state_format,
-                            s_op.output.offset,
-                            s_op.output.size,
-                        )
+                        r_map = mapper.map_to_state(s_op.output.offset, s_op.output.size)
                         out = r_map.name if r_map else get_varnode_id(s_op.output)
                     else:
                         out = get_varnode_id(s_op.output)
@@ -71,7 +67,7 @@ def main() -> None:
     print('\nWelcome to Microtaint: Bit-Precise Taint Propagation')
     arch = Architecture.AMD64
     simulator = CellSimulator(arch)
-    ctx = get_context(arch)
+    ctx = get_context(arch.value)
 
     # Standard 64-bit registers + 1-bit flags
     state_format = [
