@@ -25,6 +25,24 @@ from microtaint.sleigh.polarity import compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
 
+_CONST_CACHE: dict[int, Constant] = {}
+
+
+def _get_zero_constant(size: int) -> Constant:
+    if size not in _CONST_CACHE:
+        _CONST_CACHE[size] = Constant(0, size)
+    return _CONST_CACHE[size]
+
+
+_OPERAND_CACHE: dict[tuple[str, int, int, bool], TaintOperand] = {}
+
+
+def _get_taint_operand(name: str, bit_start: int, bit_end: int, is_taint: bool) -> TaintOperand:
+    key = (name, bit_start, bit_end, is_taint)
+    if key not in _OPERAND_CACHE:
+        _OPERAND_CACHE[key] = TaintOperand(name, bit_start, bit_end, is_taint=is_taint)
+    return _OPERAND_CACHE[key]
+
 
 @dataclass(frozen=True, slots=True)
 class RegMapping:
@@ -40,7 +58,7 @@ class MemMapping:
     addr_reg: RegMapping
 
 
-@dataclass(slots=True)
+@dataclass
 class EvalTarget:
     varnode: Varnode
     mapping: RegMapping | MemMapping
@@ -259,7 +277,7 @@ def generate_taint_assignments(  # noqa: C901
     dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(deps)
 
     if not dependencies:
-        expr: Expr = Constant(0, out_bit_end - out_bit_start + 1)
+        expr: Expr = _get_zero_constant(out_bit_end - out_bit_start + 1)
         if out_name in ('EIP', 'RIP', 'PC'):
             expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
         assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expr))
@@ -357,16 +375,16 @@ def generate_taint_assignments(  # noqa: C901
         # 2. Construct (V_in \wedge ~T_union) for all inputs
         for dep_map in deps.keys():
             if isinstance(dep_map, MemMapping):
-                addr_expr = TaintOperand(
+                addr_expr = _get_taint_operand(
                     dep_map.addr_reg.name,
                     dep_map.addr_reg.bit_start,
                     dep_map.addr_reg.bit_end,
-                    is_taint=False,
+                    False,
                 )
                 V_in: Expr = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
                 dep_name = f'MEM_{dep_map.addr_reg.name}'
             else:
-                V_in = TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=False)
+                V_in = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, False)
                 dep_name = dep_map.name
 
             masked_V = BinaryExpr(Op.AND, V_in, UnaryExpr(Op.NOT, T_union))
@@ -418,13 +436,13 @@ def generate_taint_assignments(  # noqa: C901
                 is_zeroing_idiom = True
 
         if is_zeroing_idiom:
-            expr = Constant(0, out_bit_end - out_bit_start + 1)
+            expr = _get_zero_constant(out_bit_end - out_bit_start + 1)
         elif dependencies:
             expr = dependencies[0]
             for dep in dependencies[1:]:
                 expr = BinaryExpr(Op.OR, expr, dep)
         else:
-            expr = Constant(0, out_bit_end - out_bit_start + 1)
+            expr = _get_zero_constant(out_bit_end - out_bit_start + 1)
 
     elif cat == InstructionCategory.MONOTONIC:
         expr = make_differential()
@@ -442,8 +460,8 @@ def build_polarized_reg(name: str, slices: list[tuple[int, int, int]], replica_i
     # We construct the full register value by stitching slices
     combined_expr = None
     for s_start, s_end, p in slices:
-        V_in = TaintOperand(name, s_start, s_end, is_taint=False)
-        T_in = TaintOperand(name, s_start, s_end, is_taint=True)
+        V_in = _get_taint_operand(name, s_start, s_end, False)
+        T_in = _get_taint_operand(name, s_start, s_end, True)
 
         # Determine polarization based on p and replica
         # Rep 1: High if p=1, Low if p=-1
@@ -484,7 +502,7 @@ def process_dependencies(
         else:
             reg_groups.setdefault(dep_map.name, []).append((dep_map.bit_start, dep_map.bit_end, p))
             # Track unique taints for the Assignment dependencies list
-            dependencies.append(TaintOperand(dep_map.name, dep_map.bit_start, dep_map.bit_end, is_taint=True))
+            dependencies.append(_get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True))
             dependency_names.append(dep_map.name)
 
     cell_inputs_rep1: dict[str, Expr] = {}
@@ -498,7 +516,7 @@ def process_dependencies(
     # Note: Memory handling remains simple for now as we don't split memory bit-ranges
     for name, mem_list in mem_groups.items():
         m = mem_list[0]
-        addr = TaintOperand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, is_taint=False)
+        addr = _get_taint_operand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, False)
         T_mem = MemoryOperand(addr, m.size_bytes, is_taint=True)
         V_mem = MemoryOperand(addr, m.size_bytes, is_taint=False)
 
@@ -514,12 +532,12 @@ def process_dependencies(
 def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOperand | MemoryOperand, str, int, int]:
     out_target: TaintOperand | MemoryOperand
     if isinstance(mapping, MemMapping):
-        addr_expr = TaintOperand(mapping.addr_reg.name, 0, 63, is_taint=False)  # Quick hack: 64-bit addr
+        addr_expr = _get_taint_operand(mapping.addr_reg.name, 0, 63, False)  # Quick hack: 64-bit addr
         out_target = MemoryOperand(addr_expr, mapping.size_bytes, is_taint=True)
         out_name = f'MEM_{mapping.addr_reg.name}'
         out_bit_start, out_bit_end = 0, (mapping.size_bytes * 8) - 1
     else:
-        out_target = TaintOperand(mapping.name, mapping.bit_start, mapping.bit_end, is_taint=True)
+        out_target = _get_taint_operand(mapping.name, mapping.bit_start, mapping.bit_end, True)
         out_name = mapping.name
         out_bit_start, out_bit_end = mapping.bit_start, mapping.bit_end
     return out_target, out_name, out_bit_start, out_bit_end
