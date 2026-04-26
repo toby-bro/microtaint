@@ -52,6 +52,8 @@ jobs:
           CIBW_ENVIRONMENT: 'HATCH_BUILD_HOOKS_ENABLE="1" MYPYC_OPT_LEVEL="3"'
           # Optional: Skip 32-bit and PyPy builds to save CI time
           CIBW_SKIP: "pp* *i686* *musllinux*"
+          CIBW_BEFORE_BUILD: >
+            python -c "import pathlib, shutil; shutil.rmtree('build', ignore_errors=True); [p.unlink() for ext in ('*.so', '*.pyd', '*.c', '*.o') for p in pathlib.Path('microtaint').rglob(ext)]"
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
