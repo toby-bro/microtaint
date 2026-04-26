@@ -174,6 +174,16 @@ class CellSimulator:
             if uc_reg is not None:
                 self.uc.reg_write(uc_reg, 0)  # pyright: ignore[reportUnknownMemberType]
 
+        # --- Establish a valid Stack Base ---
+        # Prevents UC_ERR_MAP underflows on implicit stack instructions (PUSH/POP/CALL/RET)
+        stack_base = 0x80000000
+        if self.arch == Architecture.X86:
+            self.uc.reg_write(uc_x86_const.UC_X86_REG_ESP, stack_base)  # pyright: ignore[reportUnknownMemberType]
+        elif self.arch == Architecture.AMD64:
+            self.uc.reg_write(uc_x86_const.UC_X86_REG_RSP, stack_base)  # pyright: ignore[reportUnknownMemberType]
+        elif self.arch == Architecture.ARM64:
+            self.uc.reg_write(uc_arm64_const.UC_ARM64_REG_SP, stack_base)  # pyright: ignore[reportUnknownMemberType]
+
         self._pristine_context = self.uc.context_save()
 
     def _hook_mem_unmapped(
@@ -211,8 +221,16 @@ class CellSimulator:
     def _read_reg(self, reg_name: str) -> int:  # noqa: C901
         if reg_name.startswith('MEM_'):
             parts = reg_name.split('_')
-            addr = int(parts[1], 16)
-            size = int(parts[2])
+
+            try:
+                # Attempt to parse as a static hexadecimal address
+                addr = int(parts[1], 16)
+            except ValueError:
+                # If parsing fails, it's a dynamic pointer (like 'RSP').
+                # Read the actual register to resolve the current memory address!
+                addr = self._read_reg(parts[1])
+
+            size = int(parts[2]) if len(parts) > 2 else 8
             return self._read_mem(addr, size)
 
         # X86 / AMD64 EFLAGS extraction
@@ -284,13 +302,26 @@ class CellSimulator:
 
     def setup_registers_and_memory(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:  # noqa: C901
         for reg_name, val in state.regs.items():
+
+            # Prevent Stack Underflow
+            if reg_name in ('RSP', 'ESP', 'SP') and val == 0:
+                val = 0x80000000  # noqa: PLW2901
+
             if reg_name.startswith('MEM_'):
                 logger.warning(
                     f'Legacy MEM register format detected: {reg_name}. Consider using tuple format for clarity.',
                 )
                 parts = reg_name.split('_')
-                addr = int(parts[1], 16)
-                size = int(parts[2])
+
+                try:
+                    addr = int(parts[1], 16)
+                except ValueError:
+                    # Dynamically resolve the pointer address from the current state
+                    addr = state.regs.get(parts[1], 0)
+                    if addr == 0 and parts[1] in ('RSP', 'ESP', 'SP'):
+                        addr = 0x80000000  # Fallback to our safe stack base
+
+                size = int(parts[2]) if len(parts) > 2 else 8
 
                 page_addr = addr & ~0xFFF
                 if page_addr not in self._mapped_pages:
