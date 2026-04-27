@@ -323,10 +323,17 @@ class CellSimulator:
 
                 size = int(parts[2]) if len(parts) > 2 else 8
 
+                # Map the starting page
                 page_addr = addr & ~0xFFF
                 if page_addr not in self._mapped_pages:
                     self.uc.mem_map(page_addr, 4096)
                     self._mapped_pages.add(page_addr)
+
+                # Map the ending page in case of a cross-boundary write
+                end_page_addr = (addr + size - 1) & ~0xFFF
+                if end_page_addr != page_addr and end_page_addr not in self._mapped_pages:
+                    self.uc.mem_map(end_page_addr, 4096)
+                    self._mapped_pages.add(end_page_addr)
 
                 try:
                     self.uc.mem_write(addr, val.to_bytes(size, 'little'))
@@ -394,10 +401,17 @@ class CellSimulator:
             else:
                 size = max(8, (mem_val.bit_length() + 7) // 8)
 
+            # Map the starting page
             page_addr = addr & ~0xFFF
             if page_addr not in self._mapped_pages:
                 self.uc.mem_map(page_addr, 4096)
                 self._mapped_pages.add(page_addr)
+
+            # Map the ending page in case of a cross-boundary write
+            end_page_addr = (addr + size - 1) & ~0xFFF
+            if end_page_addr != page_addr and end_page_addr not in self._mapped_pages:
+                self.uc.mem_map(end_page_addr, 4096)
+                self._mapped_pages.add(end_page_addr)
 
             try:
                 self.uc.mem_write(addr, mem_val.to_bytes(size, 'little'))
@@ -408,7 +422,13 @@ class CellSimulator:
             self._dirtied_memory.add(addr)
 
     def evaluate_concrete(self, cell: Any, v_state: MachineState) -> int:
-        self._execute(bytes.fromhex(cell.instruction), v_state)
+        try:
+            self._execute(bytes.fromhex(cell.instruction), v_state)
+        except Exception as e:
+            # Zero performance drop on the hot path, but saves your life debugging
+            logger.error(f'[!] Microtaint Unicorn crash on instruction (hex): {cell.instruction}. Exception: {e}')
+            raise
+
         val = self._read_reg(cell.out_reg)
         mask = (1 << (cell.out_bit_end - cell.out_bit_start + 1)) - 1
         return int((val >> cell.out_bit_start) & mask)

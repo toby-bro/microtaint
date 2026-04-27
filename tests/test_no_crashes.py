@@ -1,7 +1,7 @@
 import pytest
 
 from microtaint.instrumentation.ast import EvalContext
-from microtaint.simulator import CellSimulator
+from microtaint.simulator import CellSimulator, MachineState
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, Register
 
@@ -145,3 +145,18 @@ def test_implicit_stack_memory_operations_do_not_crash() -> None:
     # Furthermore, because RAX was pushed and then popped into RBX,
     # the taint must have successfully transferred between the registers.
     assert out.get('RBX', 0) == 0xFFFFFFFFFFFFFFFF, 'Taint failed to propagate through the stack'
+
+
+def test_simulator_page_crossing_unmapped_write() -> None:
+    """
+    Proves that unaligned memory writes spanning two pages cause UcError
+    if only the base page is mapped.
+    """
+    sim = CellSimulator(Architecture.X86)
+
+    # 0x1FFE + 4 bytes crosses into the 0x2000 page
+    # (Bytes written to 0x1FFE, 0x1FFF, 0x2000, 0x2001)
+    state = MachineState(mem={0x1FFE: 0x11223344})
+
+    sim.load_memory_state(state, mem_sizes={0x1FFE: 4})
+    # no more crash

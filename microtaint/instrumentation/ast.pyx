@@ -15,7 +15,7 @@ def _build_machine_state(dict input_dict, EvalContext context):
         if name.startswith('MEM_'):
             ptr_part = name[4:]
             if ptr_part.startswith('0x'):
-                addr = int(ptr_part, 16)
+                addr = int(ptr_part.split('_')[0], 16)
             else:
                 addr = context.input_values.get(ptr_part, 0)
             mem[addr] = val
