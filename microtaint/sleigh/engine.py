@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -201,15 +202,18 @@ def apply_sless_msb_split(
     return new_deps
 
 
-def generate_static_rule(
+@functools.lru_cache(maxsize=16384)
+def _cached_generate_static_rule(
     arch: Architecture,
     bytestring: bytes,
-    state_format: list[Register],
+    state_format_tuple: tuple[tuple[str, int], ...],
 ) -> LogicCircuit:
     """
-    Statically analyzes an instruction using SLEIGH and generates
-    the inferred logic circuit with D-vectors.
+    The cached heavy-lifting engine. Takes a hashable tuple representing the
+    architectural registers and executes the SLEIGH lifting and AST generation.
     """
+    state_format = [Register(name=name, bits=bits) for name, bits in state_format_tuple]
+
     ctx = get_context(arch)
     translation = ctx.translate(bytestring, 0x1000)
 
@@ -235,7 +239,6 @@ def generate_static_rule(
         slice_ops = slice_backward(translation.ops, out_vn)
         polarities = compute_polarity(slice_ops)
 
-        # FIX: Pass translation.ops down to completely bypass slicer truncation
         deps = extract_dependencies(out_vn, slice_ops, polarities, translation.ops, mapper)
         deps = apply_sless_msb_split(deps, slice_ops, ctx, arch, state_format)
 
@@ -260,6 +263,21 @@ def generate_static_rule(
         instruction=bytestring.hex(),
         state_format=state_format,
     )
+
+
+def generate_static_rule(
+    arch: Architecture,
+    bytestring: bytes,
+    state_format: list[Register],
+) -> LogicCircuit:
+    """
+    Public API. Converts the unhashable list to a hashable tuple
+    and checks the LRU cache before lifting.
+    """
+    # Extract register names and bits into an immutable tuple to act as the cache key
+    reg_names_tuple = tuple((reg.name, reg.bits) for reg in state_format)
+
+    return _cached_generate_static_rule(arch, bytestring, reg_names_tuple)
 
 
 def generate_taint_assignments(  # noqa: C901
