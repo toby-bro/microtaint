@@ -1,7 +1,7 @@
 from enum import Enum
 
 from microtaint.simulator import CellSimulator, MachineState
-from microtaint.types import Architecture, Register
+from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 def _build_machine_state(input_dict: dict[str, int], context: EvalContext) -> MachineState: ...
 
@@ -16,12 +16,14 @@ class EvalContext:
     input_taint: dict[str, int]
     input_values: dict[str, int]
     simulator: CellSimulator | None
+    implicit_policy: ImplicitTaintPolicy
 
     def __init__(
         self,
         input_taint: dict[str, int],
         input_values: dict[str, int],
         simulator: CellSimulator | None = ...,
+        implicit_policy: ImplicitTaintPolicy = ...,
     ) -> None: ...
 
 class Expr:

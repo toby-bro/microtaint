@@ -36,11 +36,25 @@ cdef class EvalContext:
     cdef public dict input_taint
     cdef public dict input_values
     cdef public object simulator
+    cdef public object implicit_policy
 
-    def __init__(self, dict input_taint, dict input_values, object simulator=None):
+    def __init__(
+        self, 
+        dict input_taint, 
+        dict input_values, 
+        object simulator=None,
+        object implicit_policy=None
+    ):
         self.input_taint = input_taint
         self.input_values = input_values
         self.simulator = simulator
+        
+        # Default to IGNORE to preserve existing behavior
+        if implicit_policy is None:
+            from microtaint.types import ImplicitTaintPolicy
+            self.implicit_policy = ImplicitTaintPolicy.IGNORE
+        else:
+            self.implicit_policy = implicit_policy
 
 
 cdef class Expr:
@@ -230,6 +244,7 @@ cdef class LogicCircuit:
         for i in range(num_assignments):
             assignment = <TaintAssignment>self.assignments[i]
             
+            # 1. Evaluate the expression or fallback to default OR dependencies
             if assignment.expression is not None:
                 val = assignment.expression.evaluate(context)
             elif assignment.expression_str:
@@ -239,7 +254,8 @@ cdef class LogicCircuit:
                 for dep in assignment.dependencies:
                     val |= dep.evaluate(context)
 
-            if isinstance(assignment.target, MemoryOperand):
+            # 2. Determine bounds (Memory vs Register)
+            if hasattr(assignment.target, 'address_expr'):
                 address = assignment.target.address_expr.evaluate(context)
                 target_name = f'MEM_{hex(address)}_{assignment.target.size}'
                 bit_start = 0
@@ -249,12 +265,42 @@ cdef class LogicCircuit:
                 bit_start = assignment.target.bit_start
                 bit_end = assignment.target.bit_end
 
-            # FIX: <object>1 prevents 32-bit overflow crashes when bit-shifting
+            # 3. Apply bit-precise masking to preserve partial registers
+            # <object>1 prevents 32-bit overflow crashes when bit-shifting in Cython
             mask = ((<object>1 << (bit_end - bit_start + 1)) - 1) << bit_start
             val = (val << bit_start) & mask
 
             current = output_taint.get(target_name, 0)
             output_taint[target_name] = (current & ~mask) | val
+
+        # --- THE IMPLICIT TAINT INTERCEPTOR ---
+        cdef str pc_reg = None
+        for pc in ('RIP', 'EIP', 'PC'):
+            if pc in output_taint and output_taint[pc] != 0:
+                pc_reg = pc
+                break
+
+        if pc_reg is not None:
+            from microtaint.types import ImplicitTaintPolicy, ImplicitTaintError
+            
+            if context.implicit_policy == ImplicitTaintPolicy.WARN:
+                print(
+                    f"[Microtaint] Implicit Taint Detected! "
+                    f"Control flow ({pc_reg}) depends on tainted data at instruction: {self.instruction}"
+                )
+            
+            elif context.implicit_policy == ImplicitTaintPolicy.STOP:
+                raise ImplicitTaintError(
+                    f"\n[!] FATAL: Implicit Taint Detected\n"
+                    f"    Instruction (Hex): {self.instruction}\n"
+                    f"    Tainted Register : {pc_reg}\n"
+                    f"    Taint Mask       : {hex(output_taint[pc_reg])}\n"
+                    f"    Reason: The execution of this branch is governed by a tainted condition."
+                )
+            
+            # SAFETY NET: Always drop the PC taint before returning to the user!
+            # If we allow RIP to remain tainted, it will cause Taint Explosion.
+            del output_taint[pc_reg]
 
         return output_taint
 

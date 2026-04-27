@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 
 
 class Architecture(StrEnum):
@@ -14,3 +14,13 @@ class Architecture(StrEnum):
 class Register:
     name: str
     bits: int
+
+
+class ImplicitTaintPolicy(IntEnum):
+    IGNORE = 0
+    WARN = 1
+    STOP = 2
+
+
+class ImplicitTaintError(Exception):
+    """Raised when an implicit taint dependency is detected and policy is STOP."""
