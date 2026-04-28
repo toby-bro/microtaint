@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from microtaint.classifier.categories import InstructionCategory
+from microtaint.instrumentation.ast import MemoryOperand
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.sleigh.lifter import get_context
 from microtaint.types import Architecture, Register
@@ -89,11 +90,8 @@ def test_load_memory(x86_registers: list[Register]) -> None:
     assert len(rax_assignments) == 1
     assignment = rax_assignments[0]
 
-    # Get names from dependencies that have a .name attribute (TaintOperand)
-    deps = [dep.name for dep in assignment.dependencies if hasattr(dep, 'name')]
-    assert 'RBX' in deps  # It needs the address
-    # Should also have a MemoryOperand dependency
-    assert any(type(dep).__name__ == 'MemoryOperand' for dep in assignment.dependencies)
+    assert isinstance(assignment.dependencies[0], MemoryOperand)
+    assert assignment.dependencies[0].address_expr.name == 'RBX'
 
 
 def test_push_register(x86_registers: list[Register]) -> None:
@@ -102,16 +100,13 @@ def test_push_register(x86_registers: list[Register]) -> None:
     byte_string = b'\x50'
 
     rule = generate_static_rule(arch, byte_string, x86_registers)
-
-    # PUSH writes to memory, so we look for memory targets instead of RSP register targets
-    rsp_assignments = [a for a in rule.assignments if hasattr(a.target, 'name') and a.target.name == 'RSP']
-    if rsp_assignments:
-        assignment = rsp_assignments[0]
-        deps = [dep.name for dep in assignment.dependencies if hasattr(dep, 'name')]
-        assert 'RSP' in deps
-    # PUSH also creates a memory store assignment
-    mem_assignments = [a for a in rule.assignments if type(a.target).__name__ == 'MemoryOperand']
-    assert len(mem_assignments) >= 1, 'PUSH should create memory store'
+    assert len(rule.assignments) == 2, 'PUSH should create two assignments: one for RSP update and one for memory store'
+    assert any(
+        isinstance(a.target, MemoryOperand) for a in rule.assignments
+    ), 'One assignment should target memory for the store'
+    assert any(
+        a.target.name == 'RSP' for a in rule.assignments if hasattr(a.target, 'name')
+    ), 'One assignment should target RSP for the stack pointer update'
 
 
 def test_mul_register(x86_registers: list[Register]) -> None:

@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = ["pypcode>=3.3.3", "qiling>=1.4.6", "unicorn>=2.1.4"]
 
+[project.scripts]
+microtaint = "microtaint.emulator.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/toby-bro/microtaint"
 Repository = "https://github.com/toby-bro/microtaint"
@@ -92,7 +95,11 @@ exclude = [
     "/microtaint/instrumentation/__init__.py",
     "/microtaint/classifier/__init__.py",
     "/microtaint/instrumentation/ast_test.py",
-    "/microtaint/emulator/*",
+    "/microtaint/emulator/cli.py",
+    "/microtaint/emulator/wrapper.py",
+    "/microtaint/emulator/shadow.py",
+    "/microtaint/emulator/heap.py",
+    "/microtaint/emulator/reporter.py",
 ]
 mypy-args = ["--ignore-missing-imports", "--disable-error-code=attr-defined"]
 options = { debug_level = "0" }

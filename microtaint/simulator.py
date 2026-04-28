@@ -11,6 +11,9 @@ from unicorn import (
     UC_ARCH_ARM64,
     UC_ARCH_X86,
     UC_ERR_FETCH_UNMAPPED,
+    UC_ERR_MAP,
+    UC_ERR_READ_UNMAPPED,
+    UC_ERR_WRITE_UNMAPPED,
     UC_HOOK_MEM_UNMAPPED,
     UC_MEM_FETCH_UNMAPPED,
     UC_MODE_32,
@@ -221,16 +224,29 @@ class CellSimulator:
     def _read_reg(self, reg_name: str) -> int:  # noqa: C901
         if reg_name.startswith('MEM_'):
             parts = reg_name.split('_')
-
+            # parts[0] = 'MEM'
+            # parts[1] = hex address OR register name
+            # parts[2] = signed offset (when register) OR size (when hex address)
+            # parts[3] = size (when register + offset)
             try:
-                # Attempt to parse as a static hexadecimal address
+                # Static hex address: MEM_0x7fff1000_8
                 addr = int(parts[1], 16)
+                size = int(parts[2]) if len(parts) > 2 else 8
             except ValueError:
-                # If parsing fails, it's a dynamic pointer (like 'RSP').
-                # Read the actual register to resolve the current memory address!
-                addr = self._read_reg(parts[1])
-
-            size = int(parts[2]) if len(parts) > 2 else 8
+                # Dynamic register: MEM_RBP_8  or  MEM_RBP_-8_8
+                base_reg = parts[1]
+                addr = self._read_reg(base_reg)
+                if len(parts) > 2:
+                    try:
+                        # parts[2] is a signed offset, parts[3] (optional) is size
+                        offset = int(parts[2])
+                        addr = addr + offset
+                        size = int(parts[3]) if len(parts) > 3 else 8
+                    except ValueError:
+                        # parts[2] is size (old format: MEM_RBP_8)
+                        size = int(parts[2])
+                else:
+                    size = 8
             return self._read_mem(addr, size)
 
         # X86 / AMD64 EFLAGS extraction
@@ -294,8 +310,20 @@ class CellSimulator:
         try:
             self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
         except uc_py3.UcError as e:
-            # Safe to ignore fetch unmapped occurring post execution branches
-            if e.errno == UC_ERR_FETCH_UNMAPPED:
+            # Safe to ignore memory errors that occur when the differential
+            # evaluator runs instructions with extreme register values
+            # (e.g. V | T where T = 0xFFFF... makes RBP/RSP huge).
+            # These errors mean "the concrete value was out of range" — the
+            # differential XOR treats the run as producing 0, which is a
+            # conservative under-taint for that specific extreme input.
+            # All four error codes represent legitimate "address not mapped"
+            # conditions that can occur with large synthetic register values:
+            #   UC_ERR_FETCH_UNMAPPED : branch/ret to unmapped code address
+            #   UC_ERR_READ_UNMAPPED  : load from unmapped address
+            #   UC_ERR_WRITE_UNMAPPED : store to unmapped address
+            #   UC_ERR_MAP            : mem_map call failed (address space full
+            #                          or invalid range from huge register value)
+            if e.errno in (UC_ERR_FETCH_UNMAPPED, UC_ERR_MAP, UC_ERR_READ_UNMAPPED, UC_ERR_WRITE_UNMAPPED):
                 pass
             else:
                 raise

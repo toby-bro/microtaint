@@ -22,46 +22,38 @@ def compile_c_code(source_code: str) -> str:
 
 
 def run_wrapper(binary_path: str, stdin_data: bytes, check_bof: bool, check_uaf: bool, check_sc: bool) -> list[str]:
+    from io import StringIO
+
     from microtaint.sleigh.engine import _cached_generate_static_rule
 
     _cached_generate_static_rule.cache_clear()
 
-    fd, path = tempfile.mkstemp()
-    os.write(fd, stdin_data)
-    os.close(fd)
-
-    import subprocess
-
-    result = subprocess.run(['objdump', '-d', binary_path], capture_output=True, text=True)
-    print(result.stdout)
-
     from qiling.extensions import pipe
 
-    ql = Qiling([binary_path], '/', verbose=QL_VERBOSE.OFF)  # No path arg needed anymore
+    ql = Qiling([binary_path], '/', verbose=QL_VERBOSE.OFF)
     ql.os.stdin = pipe.SimpleInStream(0)
     ql.os.stdin.write(stdin_data)
 
-    import logging
-    from io import StringIO
+    # Capture reporter output in a StringIO so tests can assert on finding labels
+    from microtaint.emulator.reporter import Reporter
 
-    log_stream = StringIO()
-    handler = logging.StreamHandler(log_stream)
-    logger = logging.getLogger('microtaint.emulator.wrapper')
-    logger.setLevel(logging.ERROR)
-    logger.addHandler(handler)
+    report_stream = StringIO()
+    reporter = Reporter(json_mode=False, stream=report_stream)
 
-    # No pipe.SimpleInStream — setup_stdin in the binary opens 'path' and dup2s it to fd=0
-    # via Qiling's fd table, which is what sys_read(0,...) actually reads from
-
-    wrapper = MicrotaintWrapper(ql, check_bof=check_bof, check_uaf=check_uaf, check_sc=check_sc)
+    wrapper = MicrotaintWrapper(
+        ql,
+        check_bof=check_bof,
+        check_uaf=check_uaf,
+        check_sc=check_sc,
+        reporter=reporter,
+    )
     try:
         ql.run()
     except Exception:
         pass
 
-    logger.removeHandler(handler)
-    os.unlink(path)
-    return log_stream.getvalue().splitlines()
+    reporter.finalize()
+    return report_stream.getvalue().splitlines()
 
 
 # Baremetal syscall definitions for our test environment
@@ -117,7 +109,7 @@ def test_detects_buffer_overflow() -> None:
     payload = b'A' * 32
 
     logs = run_wrapper(binary, payload, check_bof=True, check_uaf=False, check_sc=False)
-    assert any('Buffer Overflow hijacked RIP' in line for line in logs)
+    assert any('[BOF]' in line or 'buffer_overflow' in line for line in logs)
 
 
 def test_detects_side_channel() -> None:
@@ -140,7 +132,7 @@ def test_detects_side_channel() -> None:
     payload = b'X0000000'
 
     logs = run_wrapper(binary, payload, check_bof=False, check_uaf=False, check_sc=True)
-    assert any('CRYPTO SIDE-CHANNEL DETECTED' in line for line in logs)
+    assert any('[SC]' in line or 'side_channel' in line for line in logs)
 
 
 def test_detects_use_after_free() -> None:
@@ -170,4 +162,4 @@ def test_detects_use_after_free() -> None:
     )
     binary = compile_c_code(source)
     logs = run_wrapper(binary, b'', check_bof=False, check_uaf=True, check_sc=False)
-    assert any('UAF DETECTED' in line for line in logs)
+    assert any('[UAF]' in line or 'use_after_free' in line for line in logs)

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from microtaint.instrumentation.ast import MemoryOperand
+from microtaint.instrumentation.ast import MemoryOperand, TaintOperand
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, Register
@@ -52,40 +52,19 @@ class TestMemoryLoad:
 
         rule = generate_static_rule(arch, bytestring, x86_64_registers)
 
-        # Should have assignment for RAX
-        rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
-        assert len(rax_assignments) == 1, 'Should have one RAX assignment'
+        assert len(rule.assignments) == 1, 'Should have one assignment for LOAD'
 
-        assignment = rax_assignments[0]
+        assignment = rule.assignments[0]
+        assert isinstance(assignment.target, TaintOperand), 'LOAD target should be a TaintOperand'
+        assert assignment.target.name == 'RAX', 'Assignment target should be RAX'
 
-        # Dependencies should include RDI (address) and memory read
-        dep_names = [dep.name if hasattr(dep, 'name') else str(type(dep).__name__) for dep in assignment.dependencies]
-
-        # Must depend on RDI (the address register)
-        assert 'RDI' in dep_names, f'Should depend on RDI (address), got {dep_names}'
-
-        # Should have a MemoryOperand dependency
-        has_mem_dep = any('Memory' in str(type(dep).__name__) for dep in assignment.dependencies)
-        assert has_mem_dep, 'Should have memory operand dependency'
-
-    def test_load_generates_rdi_and_memory_deps(self, x86_64_registers: list[Register]) -> None:
-        """Verify LOAD creates both address register and memory dependencies."""
-        arch = Architecture.AMD64
-        # mov rax, [rdi]
-        bytestring = b'\x48\x8b\x07'
-
-        rule = generate_static_rule(arch, bytestring, x86_64_registers)
-
-        rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
-        assert len(rax_assignments) == 1
-
-        # Should have RDI dependency
-        has_rdi = any(hasattr(dep, 'name') and dep.name == 'RDI' for dep in rax_assignments[0].dependencies)
-        assert has_rdi, 'Should depend on RDI'
-
-        # Should have MemoryOperand dependency
-        has_mem = any(isinstance(dep, MemoryOperand) for dep in rax_assignments[0].dependencies)
-        assert has_mem, 'Should have MemoryOperand dependency'
+        assert len(assignment.dependencies) == 1, 'LOAD should have one dependency on memory operand'
+        assert isinstance(assignment.dependencies[0], MemoryOperand), 'Dependency should be a MemoryOperand'
+        assert isinstance(
+            assignment.dependencies[0].address_expr,
+            TaintOperand,
+        ), 'Memory operand should have an address expression that is a TaintOperand'
+        assert assignment.dependencies[0].address_expr.name == 'RDI', 'Memory operand should depend on RDI for address'
 
     def test_load_partial_tainted_low_byte(self) -> None:
         """LOAD with only low byte tainted in memory - SKIPPED (no simulator)."""
