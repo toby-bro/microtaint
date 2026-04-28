@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from pypcode import Context, PcodeOp, Translation, Varnode
 
@@ -384,7 +384,7 @@ def generate_taint_assignments(  # noqa: C901
                 target=out_target,
                 dependencies=value_dependencies,
                 expression=expr,
-            )
+            ),
         )
         return
 
@@ -580,6 +580,8 @@ def generate_taint_assignments(  # noqa: C901
 
         if has_const_operand and len(dep_set.value_deps) == 1:
             dep_map = next(iter(dep_set.value_deps.keys()))
+            if TYPE_CHECKING:
+                assert imm_val is not None
 
             if isinstance(dep_map, RegMapping):
                 V_masked = cell_inputs_rep2[dep_map.name]
@@ -628,7 +630,7 @@ def generate_taint_assignments(  # noqa: C901
                 expr = BinaryExpr(Op.AND, C_eval, T_any)
 
             else:
-                expr = T_any
+                raise RuntimeError('Unexpected dependency type in COND_TRANSPORTABLE with const operand')
 
         else:
             masked_inputs: dict[str, Expr] = {}
@@ -640,7 +642,7 @@ def generate_taint_assignments(  # noqa: C901
                         dep_map.addr_reg.bit_end,
                         False,
                     )
-                    addr_expr: Expr = (
+                    addr_expr = (
                         BinaryExpr(Op.ADD, addr_base, Constant(dep_map.addr_const_offset, 8))
                         if dep_map.addr_const_offset != 0
                         else addr_base

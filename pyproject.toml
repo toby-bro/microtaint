@@ -201,7 +201,7 @@ exclude = [".venv/", ".git/", "__pycache__/", "output/", "peekaboo/", "tools/"]
 
 # pypcode and unicorn are C extensions with no bundled stubs
 [[tool.mypy.overrides]]
-module = ["pypcode", "pypcode.*", "unicorn", "unicorn.*"]
+module = ["pypcode", "pypcode.*", "unicorn", "unicorn.*", "qiling", "qiling.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -1,5 +1,6 @@
 import pytest
 
+from microtaint.instrumentation.ast import Expr
 from microtaint.simulator import CellSimulator
 from microtaint.types import Register
 
@@ -113,40 +114,6 @@ def test_shadow_memory_cross_page_write_read() -> None:
 
 
 def test_movzbl_rbp_offset_taint_propagation(amd64_registers: list[Register]) -> None:
-    """
-    movzbl -0x8(%rbp), %eax  (0f b6 45 f8)
-    RBP = 0x80000000de38
-    Taint at RBP-8 = 0x80000000de30, 1 byte
-    EAX must come out tainted.
-    """
-    from microtaint.emulator.shadow import BitPreciseShadowMemory
-    from microtaint.instrumentation.ast import EvalContext
-    from microtaint.sleigh.engine import generate_static_rule
-    from microtaint.types import Architecture
-
-    shadow = BitPreciseShadowMemory()
-    rbp = 0x80000000DE38
-    taint_addr = rbp - 8  # 0x80000000de30
-
-    shadow.write_mask(taint_addr, 0xFF, 1)
-
-    bytestring = bytes.fromhex('0fb64508')  # movzbl -0x8(%rbp), %eax
-    circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-
-    ctx = EvalContext(
-        input_taint={},
-        input_values={'RBP': rbp},
-        shadow_memory=shadow,
-        simulator=CellSimulator(Architecture.AMD64),  # needed otherwise ast.pyx exits
-    )
-
-    out = circuit.evaluate(ctx)
-    assert (
-        out.get('RAX', 0) != 0
-    ), f"EAX should be tainted after loading from tainted memory at RBP-8, got {hex(out.get('RAX', 0))}"
-
-
-def test_movzbl_rbp_offset_taint_propagation(amd64_registers: list[Register]) -> None:
     from microtaint.emulator.shadow import BitPreciseShadowMemory
     from microtaint.instrumentation.ast import EvalContext
     from microtaint.sleigh.engine import generate_static_rule
@@ -187,7 +154,7 @@ def test_movzbl_rbp_offset_taint_propagation(amd64_registers: list[Register]) ->
         # If it's a memory operand in the expression tree, trace it
         from microtaint.instrumentation.ast import BinaryExpr, MemoryOperand, TaintOperand
 
-        def trace_expr(expr, depth=0):
+        def trace_expr(expr: Expr, depth: int = 0) -> None:
             indent = '    ' * depth
             if isinstance(expr, MemoryOperand):
                 addr = expr.address_expr.evaluate(ctx)

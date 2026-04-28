@@ -14,12 +14,14 @@ Covers:
  10. pop rbp from tainted memory
 """
 
+# mypy: disable-error-code="index"
+
 from __future__ import annotations
 
 import pytest
 
 from microtaint.emulator.shadow import BitPreciseShadowMemory
-from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.ast import EvalContext, Expr
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
@@ -69,13 +71,13 @@ def sim() -> CellSimulator:
 
 def _eval(
     hex_bytes: str,
-    reg_taint: dict,
-    reg_values: dict,
+    reg_taint: dict[str, int],
+    reg_values: dict[str, int],
     shadow: BitPreciseShadowMemory,
     sim: CellSimulator,
     *,
     print_circuit: bool = True,
-) -> dict:
+) -> dict[str, int]:
     """
     Evaluate a circuit and return the full output_state dict.
     Always prints the circuit assignments for diagnostic clarity.
@@ -112,7 +114,7 @@ def _eval(
     return result
 
 
-def _mem_keys(output_state: dict) -> dict[str, int]:
+def _mem_keys(output_state: dict[str, int]) -> dict[str, int]:
     return {k: v for k, v in output_state.items() if k.startswith('MEM_')}
 
 
@@ -176,9 +178,9 @@ class TestMemKeyFormat:
             )
             addr, size = parsed
             print(f'  Parsed {key!r} → addr={hex(addr)}, size={size}')
-            assert addr == RBP_VAL - 8, (
-                f'Parsed address {hex(addr)} != expected {hex(RBP_VAL - 8)}. ' f'Offset -8 was lost in the key.'
-            )
+            assert (
+                addr == RBP_VAL - 8
+            ), f'Parsed address {hex(addr)} != expected {hex(RBP_VAL - 8)}. Offset -8 was lost in the key.'
 
     def test_push_rbp_mem_key_is_hex_address(self, sim: CellSimulator) -> None:
         """
@@ -198,14 +200,14 @@ class TestMemKeyFormat:
         expected_addr = STACK - 8
         for key in mem:
             parsed = _parse_mem_key(key)
-            assert parsed is not None, (
-                f'push rbp MEM_ key {key!r} not parseable. ' f'Wrapper cannot update shadow → stale taint persists.'
-            )
+            assert (
+                parsed is not None
+            ), f'push rbp MEM_ key {key!r} not parseable. Wrapper cannot update shadow → stale taint persists.'
             addr, size = parsed
             print(f'  Parsed {key!r} → addr={hex(addr)}, size={size}')
-            assert addr == expected_addr, (
-                f'push rbp wrote to {hex(addr)}, expected {hex(expected_addr)} (RSP-8). ' f'Address offset lost.'
-            )
+            assert (
+                addr == expected_addr
+            ), f'push rbp wrote to {hex(addr)}, expected {hex(expected_addr)} (RSP-8). Address offset lost.'
 
     def test_call_mem_key_is_hex_address(self, sim: CellSimulator) -> None:
         """
@@ -558,9 +560,9 @@ class TestRetBOFDetection:
         rip_taint = output.get('RIP', 0)
         print(f'\n[RET] tainted shadow → RIP taint = {hex(rip_taint)}')
 
-        assert rip_taint != 0, (
-            'ret with tainted shadow[RSP] produced RIP taint = 0. ' 'Real BOF not detected — taint lost at ret.'
-        )
+        assert (
+            rip_taint != 0
+        ), 'ret with tainted shadow[RSP] produced RIP taint = 0. Real BOF not detected — taint lost at ret.'
 
     def test_ret_partially_tainted_shadow(self, sim: CellSimulator) -> None:
         """
@@ -600,7 +602,7 @@ class TestRetBOFDetection:
         )
         assert rip_assignment is not None, 'No RIP assignment in ret circuit.'
 
-        def has_memory_operand(expr) -> bool:
+        def has_memory_operand(expr: Expr) -> bool:
             if isinstance(expr, MemoryOperand):
                 return True
             if isinstance(expr, (AvalancheExpr,)):
@@ -610,7 +612,7 @@ class TestRetBOFDetection:
             return False
 
         print(f'  RIP expression: {rip_assignment.expression}')
-        assert has_memory_operand(rip_assignment.expression), (
+        assert has_memory_operand(rip_assignment.expression), (  # type: ignore[arg-type]
             'ret RIP assignment does not contain a MemoryOperand. '
             'The load-like path was not taken — RIP taint reads from differential '
             'instead of shadow memory. Shadow taint will be ignored.'
@@ -651,9 +653,9 @@ class TestLeaveInstruction:
         rsp_taint = output.get('RSP', 0)
         print(f'\n[LEAVE] tainted RBP → RSP taint = {hex(rsp_taint)}')
 
-        assert rsp_taint != 0, (
-            'leave with tainted RBP produced no RSP taint. ' 'mov rsp, rbp must propagate T_RBP → T_RSP.'
-        )
+        assert (
+            rsp_taint != 0
+        ), 'leave with tainted RBP produced no RSP taint. mov rsp, rbp must propagate T_RBP → T_RSP.'
 
     def test_leave_pop_from_tainted_shadow_taints_rbp(self, sim: CellSimulator) -> None:
         """
@@ -770,7 +772,7 @@ class TestFullStackSequence:
         if overflow_bytes > 0:
             print(
                 f'  shadow[buf_start + {buf_size_bytes}..] (saved_rbp region) = '
-                f'{hex(shadow.read_mask(saved_rbp_addr, 8))}'
+                f'{hex(shadow.read_mask(saved_rbp_addr, 8))}',
             )
 
         return rsp_at_ret, shadow
@@ -810,9 +812,9 @@ class TestFullStackSequence:
 
         output = _eval('c3', {}, {'RSP': rsp_at_ret}, shadow, sim)
         rip_taint = output.get('RIP', 0)
-        assert rip_taint != 0, (
-            'Unsafe read: ret produced RIP taint = 0 despite tainted shadow[saved_RIP]. ' 'BOF not detected.'
-        )
+        assert (
+            rip_taint != 0
+        ), 'Unsafe read: ret produced RIP taint = 0 despite tainted shadow[saved_RIP]. BOF not detected.'
 
     def test_exact_boundary_safe(self, sim: CellSimulator) -> None:
         """
@@ -1044,5 +1046,5 @@ class TestSimulatorMemKeyParsing:
             if parsed is None:
                 continue
             addr, size = parsed
-            assert addr != STACK, f'mov [rsp+8], rax wrote to {hex(addr)} = RSP, not RSP+8. ' f'+8 offset dropped.'
+            assert addr != STACK, f'mov [rsp+8], rax wrote to {hex(addr)} = RSP, not RSP+8. +8 offset dropped.'
             assert addr == STACK + 8, f'mov [rsp+8], rax wrote to {hex(addr)}, expected {hex(STACK+8)}.'

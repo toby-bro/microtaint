@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from qiling import Qiling
 from qiling.const import QL_INTERCEPT
@@ -133,15 +134,15 @@ class MicrotaintWrapper:
 
         return n
 
-    def _stub_unimplemented_syscall(self, ql: Qiling, *args) -> None:
+    def _stub_unimplemented_syscall(self, ql: Qiling, *_args: Any) -> None:
         ql.arch.regs.write('RAX', 0xFFFFFFFFFFFFFFDA)  # -38 = ENOSYS
 
-    def _munmap_hook(self, ql: Qiling, addr: int, length: int, *args) -> None:
+    def _munmap_hook(self, _ql: Qiling, addr: int, length: int, *_args: Any) -> None:
         if length > 0:
             self.shadow_mem.poison(addr, length)
             logger.debug(f'Poisoned freed mmap region at 0x{addr:x} ({length}B)')
 
-    def _mem_write_clear_hook(self, ql: Qiling, access: int, address: int, size: int, value: int) -> None:
+    def _mem_write_clear_hook(self, ql: Qiling, _access: int, address: int, size: int, _value: int) -> None:
         """
         Fires after every concrete memory write (Unicorn UC_HOOK_MEM_WRITE).
 

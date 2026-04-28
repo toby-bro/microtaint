@@ -14,6 +14,9 @@ Unit tests for Reporter and the _split_argv / _resolve_rootfs helpers run
 in-process because they have no Qiling dependency.
 """
 
+# mypy: disable-error-code="attr-defined,index,operator,no-any-return"
+# ruff: noqa: RUF059
+
 from __future__ import annotations
 
 import io
@@ -23,8 +26,14 @@ import platform
 import subprocess
 import sys
 import tempfile
+from typing import Generator
 
 import pytest
+
+from microtaint.emulator.cli import _resolve_rootfs, _split_argv
+from microtaint.emulator.heap import HeapTracker
+from microtaint.emulator.reporter import Finding, FindingKind, Reporter
+from microtaint.emulator.shadow import BitPreciseShadowMemory
 
 # ---------------------------------------------------------------------------
 # Module-level skip: compilation tests only work on Linux
@@ -159,7 +168,7 @@ def compile_c(source: str, extra_flags: list[str] | None = None) -> str:
     ]
     if extra_flags:
         cmd.extend(extra_flags)
-    result = subprocess.run(cmd, input=source.encode(), capture_output=True)
+    result = subprocess.run(cmd, input=source.encode(), capture_output=True, check=True)  # noqa: S603
     if result.returncode != 0:
         raise RuntimeError(
             f'gcc failed:\n{result.stderr.decode()}',
@@ -181,7 +190,7 @@ def run_cli(
     payload: bytes = b'',
     binary_args: list[str] | None = None,
     timeout: int = 60,
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """
     Run the microtaint CLI as a subprocess.
 
@@ -195,17 +204,18 @@ def run_cli(
         cmd = CLI + flags + ['--input', payload_path, '--quiet', '--', binary]
         if binary_args:
             cmd.extend(binary_args)
-        return subprocess.run(
+        return subprocess.run(  # noqa: S603
             cmd,
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,  # don't raise on nonzero exit; we want to capture that
         )
     finally:
         os.unlink(payload_path)
 
 
-def _extract_json(result: subprocess.CompletedProcess) -> dict:
+def _extract_json(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
     """
     Extract the JSON object from result.stdout, tolerating any stray debug
     lines (e.g. 'DEBUG RET: ...', '[DBG] ...') that engine.py or wrapper.py
@@ -267,15 +277,13 @@ def _extract_json(result: subprocess.CompletedProcess) -> dict:
 class TestReporter:
     """Pure-Python unit tests for the Reporter class."""
 
-    def _make(self, json_mode: bool = False) -> tuple:
-        from microtaint.emulator.reporter import Reporter
+    def _make(self, json_mode: bool = False) -> tuple['Reporter', io.StringIO]:
 
         stream = io.StringIO()
         r = Reporter(json_mode=json_mode, stream=stream)
         return r, stream
 
     def test_bof_adds_finding(self) -> None:
-        from microtaint.emulator.reporter import FindingKind
 
         r, _ = self._make()
         r.bof(0xDEAD, instruction='ret')
@@ -285,7 +293,6 @@ class TestReporter:
         assert r.findings[0].instruction == 'ret'
 
     def test_uaf_adds_finding(self) -> None:
-        from microtaint.emulator.reporter import FindingKind
 
         r, _ = self._make()
         r.uaf(0xCAFE, size=8)
@@ -294,7 +301,6 @@ class TestReporter:
         assert r.findings[0].extra['access_size'] == 8
 
     def test_side_channel_adds_finding(self) -> None:
-        from microtaint.emulator.reporter import FindingKind
 
         r, _ = self._make()
         r.side_channel(0x1234, instruction='je 0x5678', taint_mask=0xFF)
@@ -303,7 +309,6 @@ class TestReporter:
         assert r.findings[0].extra['taint_mask'] == '0xff'
 
     def test_taint_source_stdin(self) -> None:
-        from microtaint.emulator.reporter import FindingKind
 
         r, _ = self._make()
         r.taint_source(0xBEEF, size=32, fd=0)
@@ -359,7 +364,6 @@ class TestReporter:
         assert 'use_after_free' in kinds
 
     def test_json_finding_to_dict_includes_address_as_hex(self) -> None:
-        from microtaint.emulator.reporter import Finding, FindingKind
 
         f = Finding(kind=FindingKind.BOF, address=0xDEADBEEF, description='test')
         d = f.to_dict()
@@ -367,7 +371,6 @@ class TestReporter:
         assert d['kind'] == 'buffer_overflow'
 
     def test_json_finding_omits_empty_instruction(self) -> None:
-        from microtaint.emulator.reporter import Finding, FindingKind
 
         f = Finding(kind=FindingKind.UAF, address=0x1, description='test')
         d = f.to_dict()
@@ -391,15 +394,13 @@ class TestReporter:
         assert 'No findings' in stream.getvalue()
 
     def test_colour_disabled_on_non_tty(self) -> None:
-        from microtaint.emulator.reporter import Reporter
 
         # StringIO is not a tty, so colour should be off
         stream = io.StringIO()
         r = Reporter(json_mode=False, stream=stream)
-        assert not r._colour
+        assert not r._colour  # pyright: ignore[reportPrivateUsage]
 
     def test_add_delegates_to_print_finding_in_human_mode(self) -> None:
-        from microtaint.emulator.reporter import Finding, FindingKind
 
         r, stream = self._make(json_mode=False)
         r.add(Finding(kind=FindingKind.SIDE_CHANNEL, address=0x999, description='sc test'))
@@ -413,41 +414,29 @@ class TestReporter:
 
 class TestCLIHelpers:
     def test_split_argv_with_separator(self) -> None:
-        from microtaint.emulator.cli import _split_argv
-
         our, target = _split_argv(['--check-bof', '--', './binary', 'arg1'])
         assert our == ['--check-bof']
         assert target == ['./binary', 'arg1']
 
     def test_split_argv_no_separator(self) -> None:
-        from microtaint.emulator.cli import _split_argv
-
         our, target = _split_argv(['--check-bof', './binary'])
         assert our == ['--check-bof', './binary']
         assert target == []
 
     def test_split_argv_empty_target(self) -> None:
-        from microtaint.emulator.cli import _split_argv
-
         our, target = _split_argv(['--check-all', '--'])
         assert our == ['--check-all']
         assert target == []
 
     def test_split_argv_preserves_binary_args(self) -> None:
-        from microtaint.emulator.cli import _split_argv
-
         our, target = _split_argv(['--json', '--', './bin', '-v', '--flag'])
         assert target == ['./bin', '-v', '--flag']
 
     def test_resolve_rootfs_explicit_path(self) -> None:
-        from microtaint.emulator.cli import _resolve_rootfs
-
         assert _resolve_rootfs('/custom/rootfs', quiet=True) == '/custom/rootfs'
 
     @pytest.mark.skipif(platform.system() != 'Linux', reason='Linux only')
     def test_resolve_rootfs_defaults_to_slash_on_linux(self) -> None:
-        from microtaint.emulator.cli import _resolve_rootfs
-
         assert _resolve_rootfs(None, quiet=True) == '/'
 
 
@@ -462,11 +451,8 @@ class TestHeapTracker:
     We mock the ql object so that _arg() and _ret_reg() return controlled values.
     """
 
-    def _make_tracker(self):
-        from unittest.mock import MagicMock
-
-        from microtaint.emulator.heap import HeapTracker
-        from microtaint.emulator.shadow import BitPreciseShadowMemory
+    def _make_tracker(self) -> tuple[HeapTracker, BitPreciseShadowMemory]:
+        from unittest.mock import MagicMock  # noqa: PLC0415
 
         shadow = BitPreciseShadowMemory()
         ql = MagicMock()
@@ -573,7 +559,7 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         path = compile_c(self.SOURCE)
         yield path
         os.unlink(path)
@@ -682,7 +668,7 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         path = compile_c(self.SOURCE)
         yield path
         os.unlink(path)
@@ -746,7 +732,7 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         path = compile_c(self.SOURCE)
         yield path
         os.unlink(path)
@@ -793,7 +779,7 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         path = compile_c(self.SOURCE)
         yield path
         os.unlink(path)
@@ -834,7 +820,7 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         path = compile_c(self.SOURCE)
         yield path
         os.unlink(path)
@@ -895,7 +881,7 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def bof_binary(self) -> str:
+    def bof_binary(self) -> Generator[str, None, None]:
         path = compile_c(self.SOURCE_BOF)
         yield path
         os.unlink(path)
@@ -966,7 +952,7 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         path = compile_c(self.SOURCE)
         yield path
         os.unlink(path)
@@ -998,7 +984,7 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         path = compile_c(self.SOURCE)
         yield path
         os.unlink(path)
@@ -1099,7 +1085,7 @@ int main(void) {
 """
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         path = compile_c_libc(self.SOURCE)
         yield path
         os.unlink(path)
@@ -1167,7 +1153,7 @@ int main(void) {
 """
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         path = compile_c_libc(self.SOURCE)
         yield path
         os.unlink(path)
@@ -1217,7 +1203,7 @@ int main(void) {
 """
 
     @pytest.fixture(scope='class')
-    def binary(self) -> str:
+    def binary(self) -> Generator[str, None, None]:
         try:
             path = compile_c_libc(self.SOURCE, extra_flags=['-static'])
         except RuntimeError as e:
@@ -1232,7 +1218,10 @@ int main(void) {
         We only check that the process terminates and produces valid JSON.
         """
         result = run_cli(
-            binary, ['--check-bof', '--json'], payload=b'A' * 64, timeout=120
+            binary,
+            ['--check-bof', '--json'],
+            payload=b'A' * 64,
+            timeout=120,
         )  # extra time — static binary is slow
         # Must terminate and produce parseable JSON
         assert result.returncode in (0, 1)

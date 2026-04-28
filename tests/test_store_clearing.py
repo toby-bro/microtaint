@@ -70,11 +70,11 @@ def sim() -> CellSimulator:
 
 def _eval(
     hex_bytes: str,
-    reg_taint: dict,
-    reg_values: dict,
+    reg_taint: dict[str, int],
+    reg_values: dict[str, int],
     shadow: BitPreciseShadowMemory,
     sim: CellSimulator,
-) -> dict:
+) -> dict[str, int]:
     """Run circuit.evaluate() and return the full output_state dict."""
     bs = bytes.fromhex(hex_bytes)
     circuit = generate_static_rule(Architecture.AMD64, bs, X64)
@@ -90,7 +90,7 @@ def _eval(
     return circuit.evaluate(ctx)
 
 
-def _mem_keys(output_state: dict) -> dict[str, int]:
+def _mem_keys(output_state: dict[str, int]) -> dict[str, int]:
     """Return only MEM_ keys from output_state."""
     return {k: v for k, v in output_state.items() if k.startswith('MEM_')}
 
@@ -227,9 +227,9 @@ class TestCallInstruction:
         output = _eval('c3', {}, {'RSP': STACK}, shadow, sim)
 
         rip_taint = output.get('RIP', 0)
-        assert rip_taint == 0, (
-            f'ret with clean shadow[RSP] tainted RIP with {hex(rip_taint)}. ' 'This is a false-positive BOF.'
-        )
+        assert (
+            rip_taint == 0
+        ), f'ret with clean shadow[RSP] tainted RIP with {hex(rip_taint)}. This is a false-positive BOF.'
 
     def test_ret_with_tainted_slot_does_taint_rip(self, sim: CellSimulator) -> None:
         """

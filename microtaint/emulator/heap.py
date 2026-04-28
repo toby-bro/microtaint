@@ -1,7 +1,9 @@
 # ruff: noqa: ARG002
+# mypy: disable-error-code="no-any-return"
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 from qiling import Qiling
 
@@ -41,7 +43,7 @@ class HeapTracker:
         try:
             self.ql.os.set_api(
                 'malloc',
-                self._malloc_onenter,
+                self._malloc_enter,
                 self.ql.os.CALL_INTERCEPT if hasattr(self.ql.os, 'CALL_INTERCEPT') else None,
             )
         except Exception:
@@ -61,7 +63,7 @@ class HeapTracker:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _try_hook(self, sym: str, on_enter, on_exit) -> None:
+    def _try_hook(self, sym: str, on_enter: Callable[[Qiling], None], on_exit: Callable[[Qiling], None] | None) -> None:
         try:
             from qiling.const import QL_INTERCEPT
 
@@ -97,7 +99,7 @@ class HeapTracker:
             arch = 'AMD64'
 
         if 'AMD64' in arch:
-            regs = ('RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9')
+            regs: tuple[str, ...] = ('RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9')
             if n < len(regs):
                 return self.ql.arch.regs.read(regs[n])
             # stack args: RSP + 8*(n - len(regs) + 1)
