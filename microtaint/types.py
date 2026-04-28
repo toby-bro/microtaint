@@ -20,6 +20,7 @@ class ImplicitTaintPolicy(IntEnum):
     IGNORE = 0
     WARN = 1
     STOP = 2
+    KEEP = 3
 
 
 class ImplicitTaintError(Exception):

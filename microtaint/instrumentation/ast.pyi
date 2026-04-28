@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Any, Callable
 
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
@@ -11,12 +12,16 @@ class Op(str, Enum):
     XOR = 'XOR'
     NOT = 'NOT'
     LEFT = 'LEFT'
+    ADD = 'ADD'  # Only for memory offset calculations, not for taint logic
+    SUB = 'SUB'  # Only for memory offset calculations, not for taint logic
 
 class EvalContext:
     input_taint: dict[str, int]
     input_values: dict[str, int]
     simulator: CellSimulator | None
     implicit_policy: ImplicitTaintPolicy
+    shadow_memory: Any | None
+    mem_reader: Callable[[int, int], int] | None
 
     def __init__(
         self,
@@ -24,6 +29,8 @@ class EvalContext:
         input_values: dict[str, int],
         simulator: CellSimulator | None = ...,
         implicit_policy: ImplicitTaintPolicy = ...,
+        shadow_memory: Any | None = ...,
+        mem_reader: Callable[[int, int], int] | None = ...,
     ) -> None: ...
 
 class Expr:
