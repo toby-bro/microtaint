@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 import pytest
 
 from microtaint.instrumentation.ast import EvalContext

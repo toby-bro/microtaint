@@ -54,10 +54,14 @@ def _build_parser() -> argparse.ArgumentParser:
     checks.add_argument('--check-bof', action='store_true', help='Detect buffer overflows (tainted RIP)')
     checks.add_argument('--check-uaf', action='store_true', help='Detect use-after-free (poisoned memory access)')
     checks.add_argument(
-        '--check-sc', action='store_true', help='Detect side-channels via implicit taint (tainted branch conditions)'
+        '--check-sc',
+        action='store_true',
+        help='Detect side-channels via implicit taint (tainted branch conditions)',
     )
     checks.add_argument(
-        '--check-aiw', action='store_true', help='Detect arbitrary indexed writes (STORE to a tainted pointer)'
+        '--check-aiw',
+        action='store_true',
+        help='Detect arbitrary indexed writes (STORE to a tainted pointer)',
     )
     checks.add_argument('--check-all', action='store_true', help='Enable all detection modes')
 
@@ -118,12 +122,12 @@ def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_rootfs(rootfs: str | None, quiet: bool) -> str:
+def _resolve_rootfs(rootfs: str | None, quiet: bool) -> str:  # noqa: ARG001
     if rootfs:
         return rootfs
     if platform.system() == 'Linux':
         return '/'
-    msg = '[!] Non-Linux host detected. ' 'Provide a Linux sysroot via --rootfs PATH to emulate ELF binaries.'
+    msg = '[!] Non-Linux host detected. Provide a Linux sysroot via --rootfs PATH to emulate ELF binaries.'
     print(msg, file=sys.stderr)
     sys.exit(1)
 
@@ -167,10 +171,9 @@ class InteractiveStream:
 
         # Interactive: prompt on stderr so it appears alongside program output
         try:
-            import sys as _sys
 
-            print('[INPUT] >>> ', end='', flush=True, file=_sys.stderr)
-            line = _sys.stdin.readline()
+            print('[INPUT] >>> ', end='', flush=True, file=sys.stderr)
+            line = sys.stdin.readline()
             if not line:  # EOF (Ctrl-D)
                 return b''
             return line.encode() if isinstance(line, str) else line
@@ -221,7 +224,7 @@ def _make_stdin_stream(input_file: str | None, quiet: bool) -> tuple[Interactive
 # ---------------------------------------------------------------------------
 
 
-def _configure_logging(quiet: bool, json_mode: bool) -> None:
+def _configure_logging(quiet: bool, _json_mode: bool) -> None:
     """
     Route microtaint's own logger to stderr at ERROR level so findings
     always appear. Suppress everything else when --quiet is set.
@@ -261,7 +264,7 @@ def main() -> None:  # noqa: C901
     # Must have at least one check enabled
     if not (args.check_bof or args.check_uaf or args.check_sc or args.check_aiw):
         parser.error(
-            'Specify at least one detection mode: --check-bof, --check-uaf, --check-sc, --check-aiw, or --check-all'
+            'Specify at least one detection mode: --check-bof, --check-uaf, --check-sc, --check-aiw, or --check-all',
         )
 
     # Must have a binary
@@ -269,7 +272,7 @@ def main() -> None:  # noqa: C901
         # Accept legacy positional form: microtaint FLAGS binary [binary_args]
         # (i.e. the user forgot the --)
         if args.binary:
-            target_argv = [args.binary] + list(args.binary_args)
+            target_argv = [args.binary, *list(args.binary_args)]
         else:
             parser.error('No target binary specified. Use: microtaint [FLAGS] -- /path/to/binary [args]')
 
@@ -280,7 +283,7 @@ def main() -> None:  # noqa: C901
         print(f'[!] Binary not found: {binary!r}', file=sys.stderr)
         sys.exit(2)
 
-    _configure_logging(quiet=args.quiet, json_mode=args.json)
+    _configure_logging(quiet=args.quiet, _json_mode=args.json)
 
     rootfs = _resolve_rootfs(args.rootfs, quiet=args.quiet)
 
@@ -303,10 +306,10 @@ def main() -> None:  # noqa: C901
         print(f'[*] Target: {binary} {" ".join(binary_args)}', file=sys.stderr)
 
     # Prepare stdin data before creating Qiling so we can wire it up immediately.
-    stdin_stream, stdin_data = _make_stdin_stream(args.input, quiet=args.quiet)
+    stdin_stream, _stdin_data = _make_stdin_stream(args.input, quiet=args.quiet)
 
-    verbosity = QL_VERBOSE.OFF if args.quiet else QL_VERBOSE.OFF  # always off; findings via reporter
-    ql = Qiling([binary] + binary_args, rootfs, verbose=verbosity)
+    verbosity = QL_VERBOSE.OFF
+    ql = Qiling([binary, *binary_args], rootfs, verbose=verbosity)
     ql.os.stdin = stdin_stream
 
     wrapper = MicrotaintWrapper(

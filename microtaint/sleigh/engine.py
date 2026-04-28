@@ -105,8 +105,8 @@ class DependencySet:
     machinery that needs the combined view.
     """
 
-    value_deps: dict[RegMapping | MemMapping, int] = field(default_factory=dict)
-    addr_deps: dict[RegMapping, int] = field(default_factory=dict)
+    value_deps: dict[RegMapping | MemMapping, int] = field(default_factory=dict[RegMapping | MemMapping, int])
+    addr_deps: dict[RegMapping, int] = field(default_factory=dict[RegMapping, int])
 
     @property
     def all_deps(self) -> dict[RegMapping | MemMapping, int]:
@@ -193,6 +193,114 @@ class StateMapper:
                 mappings.append(RegMapping(sf_reg.name, bit_start, bit_end))
 
         return mappings
+
+
+def resolve_ptr_with_offset(  # noqa: C901
+    vn: Varnode,
+    all_ops: list[PcodeOp],
+    mapper: StateMapper,
+    stop_op_index: int | None = None,
+) -> tuple[RegMapping | None, int]:
+    """
+    Resolves a pointer varnode to (base_register_mapping, signed_const_offset).
+
+    Args:
+        vn: The pointer Varnode to resolve.
+        all_ops: All PcodeOps for the current instruction translation.
+        mapper: StateMapper to resolve registers.
+        stop_op_index: Optional limit to stop tracing register definitions.
+                       Crucial for preventing post-access register states (like
+                       stack pops) from polluting the pointer resolution.
+    """
+    visited_unique: set[int] = set()
+    visited_reg: set[int] = set()
+
+    limit_index = stop_op_index if stop_op_index is not None else len(all_ops)
+
+    def _resolve(current_vn: Varnode) -> tuple[RegMapping | None, int]:  # noqa: C901
+        if current_vn.space.name == 'const':
+            val = current_vn.offset
+            # Handle 64-bit negative offsets
+            if val >= (1 << 63):
+                val -= 1 << 64
+            return None, val
+
+        if current_vn.space.name == 'register':
+            reg_off = current_vn.offset
+            if reg_off in visited_reg:
+                return mapper.map_to_state(current_vn.offset, current_vn.size), 0
+
+            visited_reg.add(reg_off)
+
+            for i, op in enumerate(all_ops):
+                if i >= limit_index:
+                    break
+                if op.opcode.name in ('STORE', 'CALL', 'CALLIND', 'BRANCH', 'BRANCHIND', 'CBRANCH', 'RETURN'):
+                    continue
+
+                if (
+                    op.output is not None
+                    and op.output.space.name == 'register'
+                    and op.output.offset == reg_off
+                    and op.output.size == current_vn.size
+                ):
+                    if op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
+                        res = _resolve(op.inputs[0])
+                        visited_reg.discard(reg_off)
+                        return res
+                    if op.opcode.name in ('INT_ADD', 'PTRADD'):
+                        lreg, loff = _resolve(op.inputs[0])
+                        rreg, roff = _resolve(op.inputs[1])
+                        visited_reg.discard(reg_off)
+                        if lreg is not None:
+                            return lreg, loff + roff
+                        if rreg is not None:
+                            return rreg, roff + loff
+                    elif op.opcode.name == 'INT_SUB':
+                        lreg, loff = _resolve(op.inputs[0])
+                        _, roff = _resolve(op.inputs[1])
+                        visited_reg.discard(reg_off)
+                        if lreg is not None:
+                            return lreg, loff - roff
+                    # Any other defining op: value is computed, use direct mapping.
+                    break
+
+            visited_reg.discard(reg_off)
+            return mapper.map_to_state(current_vn.offset, current_vn.size), 0
+
+        if current_vn.space.name == 'unique':
+            key = current_vn.offset
+            if key in visited_unique:
+                return None, 0
+            visited_unique.add(key)
+
+            for op in all_ops:
+                if op.output is not None and op.output.space.name == 'unique' and op.output.offset == key:
+                    if op.opcode.name in ('INT_ADD', 'PTRADD'):
+                        lreg, loff = _resolve(op.inputs[0])
+                        rreg, roff = _resolve(op.inputs[1])
+                        if lreg is not None:
+                            return lreg, loff + roff
+                        if rreg is not None:
+                            return rreg, roff + loff
+                    elif op.opcode.name == 'INT_SUB':
+                        lreg, loff = _resolve(op.inputs[0])
+                        _, roff = _resolve(op.inputs[1])
+                        if lreg is not None:
+                            return lreg, loff - roff
+                    elif op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
+                        return _resolve(op.inputs[0])
+                    else:
+                        for inp in op.inputs:
+                            r, o = _resolve(inp)
+                            if r is not None:
+                                return r, o
+                    break
+
+            return None, 0
+        return None, 0
+
+    return _resolve(vn)
 
 
 def apply_sless_msb_split(
@@ -428,7 +536,6 @@ def generate_taint_assignments(  # noqa: C901
     # is_load_like branch.  Note: for LOAD outputs, the pointer register is
     # in addr_deps (not value_deps), so pointer_taint_exprs from value_deps
     # will be empty.  The avalanche is built separately from addr_deps below.
-    pointer_reg_names: set[str] = {m.name for m in dep_set.addr_deps}
 
     # Expressions for the pointer avalanche — built from addr_deps, NOT value_deps.
     # This is the correct source: addr_deps holds registers used as memory addresses.
@@ -444,7 +551,9 @@ def generate_taint_assignments(  # noqa: C901
     _STACK_POINTER_NAMES: frozenset[str] = frozenset({'RSP', 'ESP', 'SP'})
 
     non_stack_addr_taint_exprs: list[Expr] = [
-        expr for expr, reg in zip(addr_dep_taint_exprs, dep_set.addr_deps) if reg.name not in _STACK_POINTER_NAMES
+        expr
+        for expr, reg in zip(addr_dep_taint_exprs, dep_set.addr_deps, strict=False)
+        if reg.name not in _STACK_POINTER_NAMES
     ]
     has_tainted_non_stack_pointer = bool(non_stack_addr_taint_exprs)
 
@@ -600,7 +709,7 @@ def generate_taint_assignments(  # noqa: C901
                 )
                 expr = BinaryExpr(Op.AND, C_eval, T_any)
 
-            elif isinstance(dep_map, MemMapping):
+            elif isinstance(dep_map, MemMapping):  # pyright: ignore[reportUnnecessaryIsInstance]
                 addr_base = _get_taint_operand(
                     dep_map.addr_reg.name,
                     dep_map.addr_reg.bit_start,
@@ -805,8 +914,8 @@ def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOpera
 
 
 def extract_dependencies(  # noqa: C901
-    out_vn: Varnode,
-    slice_ops: list[PcodeOp],
+    _out_vn: Varnode,
+    _slice_ops: list[PcodeOp],
     polarities: dict[str, int],
     all_ops: list[PcodeOp],
     mapper: StateMapper,
@@ -868,107 +977,11 @@ def extract_dependencies(  # noqa: C901
         elif op.opcode.name == 'STORE':
             _collect_ptr_offsets(op.inputs[1])
 
-    # Cycle guards for resolve_ptr_with_offset — shared across recursive calls.
-    _rpwo_visited_unique: set[int] = set()
-    _rpwo_visited_reg: set[int] = set()
-
-    def resolve_ptr_with_offset(vn: Varnode) -> tuple[RegMapping | None, int]:
-        """
-        Resolve a pointer varnode to (base_register_mapping, signed_const_offset).
-
-        Handles three cases in order:
-          const  → (None, signed_value)
-          register → trace through any intra-instruction definition of that
-                     register (e.g. 'leave': RSP = COPY RBP, so LOAD [RSP]
-                     resolves to RBP, not RSP).  Cycle-guarded to handle
-                     self-referential assignments like RSP = RSP - 8.
-          unique → walk the defining op arithmetically to extract base + offset.
-        """
-        if vn.space.name == 'const':
-            val = vn.offset
-            if val >= (1 << 63):
-                val -= 1 << 64
-            return None, val
-
-        if vn.space.name == 'register':
-            reg_off = vn.offset
-            if reg_off in _rpwo_visited_reg:
-                return mapper.map_to_state(vn.offset, vn.size), 0
-            _rpwo_visited_reg.add(reg_off)
-
-            # Only trace through a register's intra-instruction definition if
-            # that definition appears BEFORE the LOAD op that uses this register
-            # as a pointer.  Definitions that come after the LOAD (e.g. ret's
-            # RSP = RSP + 8 which follows RIP = LOAD [RSP]) must not be traced —
-            # the LOAD sees the pre-update register value.
-            load_op_index = next(
-                (i for i, op in enumerate(all_ops) if op.opcode.name == 'LOAD' and op.inputs[1].space.name != 'const'),
-                len(all_ops),
-            )
-            for i, op in enumerate(all_ops):
-                if i >= load_op_index:
-                    break
-                if op.opcode.name in ('STORE', 'CALL', 'CALLIND', 'BRANCH', 'BRANCHIND', 'CBRANCH', 'RETURN'):
-                    continue
-                if (
-                    op.output is not None
-                    and op.output.space.name == 'register'
-                    and op.output.offset == reg_off
-                    and op.output.size == vn.size
-                ):
-                    if op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
-                        result = resolve_ptr_with_offset(op.inputs[0])
-                        _rpwo_visited_reg.discard(reg_off)
-                        return result
-                    if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                        lreg, loff = resolve_ptr_with_offset(op.inputs[0])
-                        rreg, roff = resolve_ptr_with_offset(op.inputs[1])
-                        _rpwo_visited_reg.discard(reg_off)
-                        if lreg is not None:
-                            return lreg, loff + roff
-                        if rreg is not None:
-                            return rreg, roff + loff
-                    elif op.opcode.name == 'INT_SUB':
-                        lreg, loff = resolve_ptr_with_offset(op.inputs[0])
-                        _, roff = resolve_ptr_with_offset(op.inputs[1])
-                        _rpwo_visited_reg.discard(reg_off)
-                        if lreg is not None:
-                            return lreg, loff - roff
-                    # Any other defining op: value is computed, use direct mapping.
-                    break
-
-            _rpwo_visited_reg.discard(reg_off)
-            return mapper.map_to_state(vn.offset, vn.size), 0
-
-        if vn.space.name == 'unique':
-            key = vn.offset
-            if key in _rpwo_visited_unique:
-                return None, 0
-            _rpwo_visited_unique.add(key)
-            for op in all_ops:
-                if op.output and op.output.space.name == 'unique' and op.output.offset == key:
-                    if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                        lhs_reg, lhs_off = resolve_ptr_with_offset(op.inputs[0])
-                        rhs_reg, rhs_off = resolve_ptr_with_offset(op.inputs[1])
-                        if lhs_reg is not None:
-                            return lhs_reg, lhs_off + rhs_off
-                        if rhs_reg is not None:
-                            return rhs_reg, rhs_off + lhs_off
-                    elif op.opcode.name == 'INT_SUB':
-                        lhs_reg, lhs_off = resolve_ptr_with_offset(op.inputs[0])
-                        _, rhs_off = resolve_ptr_with_offset(op.inputs[1])
-                        if lhs_reg is not None:
-                            return lhs_reg, lhs_off - rhs_off
-                    elif op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
-                        return resolve_ptr_with_offset(op.inputs[0])
-                    else:
-                        for inp in op.inputs:
-                            reg, off = resolve_ptr_with_offset(inp)
-                            if reg is not None:
-                                return reg, off
-                    break
-
-        return None, 0
+    # Pre-calculate this ONCE instead of inside the resolution loop
+    load_op_index = next(
+        (i for i, op in enumerate(all_ops) if op.opcode.name == 'LOAD' and op.inputs[1].space.name != 'const'),
+        len(all_ops),
+    )
 
     for op in all_ops:
         if op.opcode.name == 'RETURN':
@@ -976,7 +989,7 @@ def extract_dependencies(  # noqa: C901
 
         if op.opcode.name == 'LOAD':
             ptr_vn = op.inputs[1]
-            mapped_addr, const_offset = resolve_ptr_with_offset(ptr_vn)
+            mapped_addr, const_offset = resolve_ptr_with_offset(ptr_vn, all_ops, mapper, stop_op_index=load_op_index)
             if mapped_addr:
                 mem_map = MemMapping(
                     ptr_vn.offset,
@@ -1017,94 +1030,6 @@ def extract_dependencies(  # noqa: C901
     return DependencySet(value_deps=value_deps, addr_deps=addr_deps)
 
 
-def _resolve_store_ptr(
-    ptr_vn: Varnode,
-    all_ops: list[PcodeOp],
-    mapper: StateMapper,
-) -> tuple[RegMapping | None, int]:
-    visited_unique: set[int] = set()
-    visited_reg: set[int] = set()
-
-    def _resolve(vn: Varnode) -> tuple[RegMapping | None, int]:
-        if vn.space.name == 'const':
-            val = vn.offset
-            if val >= (1 << 63):
-                val -= 1 << 64
-            return None, val
-
-        if vn.space.name == 'register':
-            if vn.offset in visited_reg:
-                reg_map = mapper.map_to_state(vn.offset, vn.size)
-                return reg_map, 0
-
-            visited_reg.add(vn.offset)
-
-            for op in all_ops:
-                if op.opcode.name in ('STORE', 'CALL', 'CALLIND', 'BRANCH', 'BRANCHIND', 'CBRANCH', 'RETURN'):
-                    continue
-                if (
-                    op.output is not None
-                    and op.output.space.name == 'register'
-                    and op.output.offset == vn.offset
-                    and op.output.size == vn.size
-                ):
-                    if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                        lreg, loff = _resolve(op.inputs[0])
-                        rreg, roff = _resolve(op.inputs[1])
-                        visited_reg.discard(vn.offset)
-                        if lreg is not None:
-                            return lreg, loff + roff
-                        if rreg is not None:
-                            return rreg, roff + loff
-                    elif op.opcode.name == 'INT_SUB':
-                        lreg, loff = _resolve(op.inputs[0])
-                        _, roff = _resolve(op.inputs[1])
-                        visited_reg.discard(vn.offset)
-                        if lreg is not None:
-                            return lreg, loff - roff
-                    elif op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
-                        result = _resolve(op.inputs[0])
-                        visited_reg.discard(vn.offset)
-                        return result
-                    break
-
-            visited_reg.discard(vn.offset)
-            reg_map = mapper.map_to_state(vn.offset, vn.size)
-            return reg_map, 0
-
-        if vn.space.name == 'unique':
-            key = vn.offset
-            if key in visited_unique:
-                return None, 0
-            visited_unique.add(key)
-            for op in all_ops:
-                if op.output is not None and op.output.space.name == 'unique' and op.output.offset == vn.offset:
-                    if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                        lreg, loff = _resolve(op.inputs[0])
-                        rreg, roff = _resolve(op.inputs[1])
-                        if lreg is not None:
-                            return lreg, loff + roff
-                        if rreg is not None:
-                            return rreg, roff + loff
-                    elif op.opcode.name == 'INT_SUB':
-                        lreg, loff = _resolve(op.inputs[0])
-                        _, roff = _resolve(op.inputs[1])
-                        if lreg is not None:
-                            return lreg, loff - roff
-                    elif op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
-                        return _resolve(op.inputs[0])
-                    else:
-                        for inp in op.inputs:
-                            r, o = _resolve(inp)
-                            if r is not None:
-                                return r, o
-                    break
-
-        return None, 0
-
-    return _resolve(ptr_vn)
-
-
 def map_outputs_to_targets(
     arch: Architecture,
     state_format: list[Register],
@@ -1143,7 +1068,7 @@ def map_outputs_to_targets(
     assignments: list[TaintAssignment] = []
 
     for val_vn, ptr_vn, size in mem_targets:
-        base_reg, const_offset = _resolve_store_ptr(ptr_vn, translation.ops, mapper)
+        base_reg, const_offset = resolve_ptr_with_offset(ptr_vn, translation.ops, mapper)
         if base_reg is None:
             continue
         mem_map = MemMapping(ptr_vn.offset, size, base_reg, const_offset)

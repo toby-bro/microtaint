@@ -1,3 +1,4 @@
+# ruff: noqa: S110, F841, PLC0415
 import os
 import platform
 import subprocess
@@ -17,7 +18,7 @@ def compile_c_code(source_code: str) -> str:
     os.close(fd)
     # -nostdlib removes ALL glibc overhead and crashes
     cmd = ['gcc', '-nostdlib', '-O0', '-fno-stack-protector', '-o', path, '-x', 'c', '-']
-    subprocess.run(cmd, input=source_code.encode(), check=True)
+    subprocess.run(cmd, input=source_code.encode(), check=True)  # noqa: S603
     return path
 
 
@@ -120,7 +121,7 @@ def test_detects_side_channel() -> None:
         setup_stdin();
         char key[8];
         sys_read(0, key, 8);
-        
+
         if (key[0] == 'X') {
             sys_exit(1);
         }
@@ -158,7 +159,7 @@ def test_detects_use_after_free() -> None:
         ptr[0] = 'A'; // UAF Access
         sys_exit(0);
     }
-    """
+    """  # noqa: E501
     )
     binary = compile_c_code(source)
     logs = run_wrapper(binary, b'', check_bof=False, check_uaf=True, check_sc=False)

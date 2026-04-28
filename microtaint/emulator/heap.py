@@ -6,6 +6,7 @@ import logging
 from typing import Callable
 
 from qiling import Qiling
+from qiling.const import QL_INTERCEPT
 
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 
@@ -46,8 +47,8 @@ class HeapTracker:
                 self._malloc_enter,
                 self.ql.os.CALL_INTERCEPT if hasattr(self.ql.os, 'CALL_INTERCEPT') else None,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f'[HeapTracker] Could not hook malloc: {e}')
 
         # Preferred approach: intercept via set_api for libc symbols.
         # Falls back gracefully if the symbol isn't found (static binary, musl, etc.)
@@ -65,7 +66,6 @@ class HeapTracker:
 
     def _try_hook(self, sym: str, on_enter: Callable[[Qiling], None], on_exit: Callable[[Qiling], None] | None) -> None:
         try:
-            from qiling.const import QL_INTERCEPT
 
             self.ql.os.set_api(sym, on_enter, QL_INTERCEPT.ENTER)
             if on_exit is not None:

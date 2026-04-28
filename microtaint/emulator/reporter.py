@@ -94,7 +94,7 @@ class Reporter:
                 address=address,
                 description=f'Buffer overflow: tainted data hijacked control flow at {hex(address)}',
                 instruction=instruction,
-            )
+            ),
         )
 
     def uaf(self, address: int, size: int = 0) -> None:
@@ -104,7 +104,7 @@ class Reporter:
                 address=address,
                 description=f'Use-after-free: access to poisoned (freed) memory at {hex(address)}',
                 extra={'access_size': size} if size else {},
-            )
+            ),
         )
 
     def side_channel(self, address: int, instruction: str = '', taint_mask: int = 0) -> None:
@@ -115,7 +115,7 @@ class Reporter:
                 description=f'Potential crypto side-channel: branch at {hex(address)} depends on tainted data',
                 instruction=instruction,
                 extra={'taint_mask': hex(taint_mask)} if taint_mask else {},
-            )
+            ),
         )
 
     def taint_source(self, address: int, size: int, fd: int = 0) -> None:
@@ -126,7 +126,7 @@ class Reporter:
                 address=address,
                 description=f'Taint introduced: {size} bytes from {source} at {hex(address)}',
                 extra={'size': size, 'source': source},
-            )
+            ),
         )
 
     def aiw(self, address: int, pointer_taint: int, instruction: str = '') -> None:
@@ -138,7 +138,7 @@ class Reporter:
                 description=f'Arbitrary write: tainted pointer used as store destination at {hex(address)}',
                 instruction=instruction,
                 extra={'pointer_taint': hex(pointer_taint)},
-            )
+            ),
         )
 
     # ------------------------------------------------------------------

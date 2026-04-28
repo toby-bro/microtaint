@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 import pytest
 
 from microtaint.instrumentation.ast import Expr
@@ -160,7 +161,7 @@ def test_movzbl_rbp_offset_taint_propagation(amd64_registers: list[Register]) ->
                 addr = expr.address_expr.evaluate(ctx)
                 taint_val = shadow.read_mask(addr, expr.size) if expr.is_taint else None
                 print(
-                    f"{indent}MemoryOperand(addr={hex(addr)}, size={expr.size}, is_taint={expr.is_taint}) => taint={hex(taint_val) if taint_val is not None else 'N/A'}",
+                    f"{indent}MemoryOperand(addr={hex(addr)}, size={expr.size}, is_taint={expr.is_taint}) => taint={hex(taint_val) if taint_val is not None else 'N/A'}",  # noqa: E501
                 )
             elif isinstance(expr, TaintOperand):
                 val = expr.evaluate(ctx)

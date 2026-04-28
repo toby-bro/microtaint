@@ -173,7 +173,7 @@ class MicrotaintWrapper:
                 if address + i not in self._last_tainted_writes:
                     self.shadow_mem.clear(address + i, 1)
 
-    def _mem_access_hook(self, ql: Qiling, access: int, address: int, size: int, value: int) -> None:
+    def _mem_access_hook(self, ql: Qiling, _access: int, address: int, size: int, _value: int) -> None:
         """UAF detection on memory reads (separate from the write hook)."""
         if self.check_uaf and self.shadow_mem.is_poisoned(address, size):
             self.reporter.uaf(address, size)
@@ -194,8 +194,9 @@ class MicrotaintWrapper:
         for reg in X64_FORMAT:
             try:
                 vals[reg.name] = self.ql.arch.regs.read(reg.name)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f'Error reading register {reg.name}: {e}')
+                vals[reg.name] = 0
         return vals
 
     def _is_main_binary(self, address: int) -> bool:
@@ -245,7 +246,7 @@ class MicrotaintWrapper:
     # Core instruction evaluator
     # ------------------------------------------------------------------
 
-    def _instruction_evaluator(self, ql: Qiling, address: int, size: int) -> None:
+    def _instruction_evaluator(self, ql: Qiling, address: int, size: int) -> None:  # noqa: C901
         if not self._is_main_binary(address):
             return
 
@@ -353,8 +354,8 @@ class MicrotaintWrapper:
                         if part.startswith('0x'):
                             taint_mask = int(part, 16)
                             break
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f'Error parsing taint mask from exception message: {e}')
                 self.reporter.side_channel(address, instruction=asm_str, taint_mask=taint_mask)
                 ql.emu_stop()
             else:

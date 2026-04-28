@@ -14,6 +14,7 @@ Covers:
  10. pop rbp from tainted memory
 """
 
+# ruff: noqa: B007, RUF059, F841, ARG002, PLC0415, ARG005
 # mypy: disable-error-code="index"
 
 from __future__ import annotations
@@ -829,7 +830,7 @@ class TestFullStackSequence:
             f'No overflow occurred — saved_RIP must be clean.'
         )
 
-    def test_one_byte_overflow_detected(self, sim: CellSimulator) -> None:
+    def test_one_byte_overflow_detected(self) -> None:
         """
         buf[16], read 17 bytes: one byte into saved_RBP region.
         saved_RBP gets tainted but saved_RIP may not — depends on exact layout.
@@ -1041,10 +1042,10 @@ class TestSimulatorMemKeyParsing:
         mem = _mem_keys(output)
         print(f'\n[ADDR CHECK] mov [rsp+8], rax MEM_ keys: {mem}')
 
-        for key, val in mem.items():
+        for key, _val in mem.items():
             parsed = _parse_mem_key(key)
             if parsed is None:
                 continue
-            addr, size = parsed
+            addr, _size = parsed
             assert addr != STACK, f'mov [rsp+8], rax wrote to {hex(addr)} = RSP, not RSP+8. +8 offset dropped.'
             assert addr == STACK + 8, f'mov [rsp+8], rax wrote to {hex(addr)}, expected {hex(STACK+8)}.'

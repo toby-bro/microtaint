@@ -15,7 +15,7 @@ in-process because they have no Qiling dependency.
 """
 
 # mypy: disable-error-code="attr-defined,index,operator,no-any-return"
-# ruff: noqa: RUF059
+# ruff: noqa: RUF059, ARG002, PLC0415, F841
 
 from __future__ import annotations
 
@@ -452,7 +452,7 @@ class TestHeapTracker:
     """
 
     def _make_tracker(self) -> tuple[HeapTracker, BitPreciseShadowMemory]:
-        from unittest.mock import MagicMock  # noqa: PLC0415
+        from unittest.mock import MagicMock
 
         shadow = BitPreciseShadowMemory()
         ql = MagicMock()
@@ -828,11 +828,12 @@ void _start(void) {
     def test_input_file_flag_feeds_taint(self, binary: str) -> None:
         payload_path = write_payload(b'B' * 48)
         try:
-            result = subprocess.run(
-                CLI + ['--check-bof', '--json', '--input', payload_path, '--quiet', '--', binary],
+            result = subprocess.run(  # noqa: S603
+                [*CLI, '--check-bof', '--json', '--input', payload_path, '--quiet', '--', binary],
                 capture_output=True,
                 text=True,
                 timeout=60,
+                check=False,  # we expect a nonzero exit code, so don't raise
             )
             assert result.returncode == 1
             doc = _extract_json(result)
@@ -841,22 +842,24 @@ void _start(void) {
             os.unlink(payload_path)
 
     def test_missing_binary_exits_nonzero(self) -> None:
-        result = subprocess.run(
-            CLI + ['--check-bof', '--', '/nonexistent/binary'],
+        result = subprocess.run(  # noqa: S603
+            [*CLI, '--check-bof', '--', '/nonexistent/binary'],
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,  # we expect a nonzero exit code, so don't raise
         )
         assert result.returncode != 0
         assert 'not found' in result.stderr.lower() or 'no such' in result.stderr.lower()
 
     def test_no_check_flag_exits_nonzero(self, binary: str) -> None:
         """Calling with no detection mode must produce a usage error."""
-        result = subprocess.run(
-            CLI + ['--', binary],
+        result = subprocess.run(  # noqa: S603
+            [*CLI, '--', binary],
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,  # we expect a nonzero exit code, so don't raise
         )
         assert result.returncode != 0
 
@@ -1054,7 +1057,7 @@ def compile_c_libc(source: str, extra_flags: list[str] | None = None) -> str:
     ]
     if extra_flags:
         cmd.extend(extra_flags)
-    result = subprocess.run(cmd, input=source.encode(), capture_output=True)
+    result = subprocess.run(cmd, input=source.encode(), capture_output=True, check=True)  # noqa: S603
     if result.returncode != 0:
         raise RuntimeError(f'gcc failed:\n{result.stderr.decode()}')
     return path
