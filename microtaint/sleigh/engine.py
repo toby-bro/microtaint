@@ -57,6 +57,7 @@ class MemMapping:
     offset: int
     size_bytes: int
     addr_reg: RegMapping
+    addr_const_offset: int = 0
 
 
 @dataclass
@@ -303,12 +304,93 @@ def generate_taint_assignments(  # noqa: C901
 
     cat = determine_category(slice_ops)
 
+    # --- LOAD POINTER TAINT DETECTION ---
+    # Find which RegMappings are used as *pointers* in LOAD ops (not as data sources).
+    # We resolve through `unique` temporaries to reach the architectural register.
+    load_ops = [op for op in slice_ops if op.opcode.name == 'LOAD']
+
+    def _resolve_ptr_to_reg(vn: Varnode, visited: set[int] | None = None) -> RegMapping | None:
+        if visited is None:
+            visited = set()
+        if vn.space.name == 'register':
+            return mapper.map_to_state(vn.offset, vn.size)
+        if vn.space.name == 'unique' and vn.offset not in visited:
+            visited.add(vn.offset)
+            for op in slice_ops:
+                if op.output and op.output.space.name == 'unique' and op.output.offset == vn.offset:
+                    for inp in op.inputs:
+                        res = _resolve_ptr_to_reg(inp, visited)
+                        if res:
+                            return res
+        return None
+
+    pointer_reg_names: set[str] = set()
+    for load_op in load_ops:
+        mapped_ptr = _resolve_ptr_to_reg(load_op.inputs[1])
+        if mapped_ptr:
+            pointer_reg_names.add(mapped_ptr.name)
+
+    # Separate dependencies into: pointer registers, memory content, and plain data registers
+    pointer_taint_exprs: list[Expr] = []
+    mem_taint_exprs: list[Expr] = []
+
+    for dep_expr, dep_name in zip(dependencies, dependency_names):
+        if dep_name.startswith('MEM_'):
+            mem_taint_exprs.append(dep_expr)
+        elif dep_name in pointer_reg_names:
+            pointer_taint_exprs.append(dep_expr)
+
+    has_tainted_pointer = bool(pointer_taint_exprs)
+
+    # --- LOAD-LIKE DETECTION ---
+    # We only bypass the differential and go direct-taint when:
+    # 1. The category is MAPPED (pure data movement, no arithmetic)
+    # 2. AND the LOAD output actually feeds our specific output (not a sibling output in the same insn)
+    is_load_like = False
+    if load_ops and cat == InstructionCategory.MAPPED:
+        for load_op in load_ops:
+            if load_op.output is None:
+                continue
+            if load_op.output.space.name == 'unique':
+                # LOAD feeds a temp which flows into out_name — this is a pure MOV [ptr] -> reg
+                is_load_like = True
+                break
+            if load_op.output.space.name == 'register':
+                mapped_load_out = mapper.map_to_state(load_op.output.offset, load_op.output.size)
+                if mapped_load_out and mapped_load_out.name == out_name:
+                    is_load_like = True
+                    break
+
     def make_differential() -> Expr:
         C1_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep1)
         C2_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep2)
         return BinaryExpr(Op.XOR, C1_cell, C2_cell)
 
-    if cat == InstructionCategory.AVALANCHE:
+    # --- LOAD-LIKE: bypass differential, work directly on taint ---
+    # For pure memory loads (MOV RAX, [RBX]), the taint of the output is:
+    #   - If pointer is tainted: AVALANCHE(T_ptr) | T_MEM[V_ptr]
+    #     (we don't know what address we're reading from)
+    #   - If pointer is clean:   T_MEM[V_ptr]
+    #     (just transport memory taint directly)
+    # Note: the tainted-pointer avalanche is ALSO applied to non-MAPPED categories
+    # (e.g. ADD RAX, [RBX]) further below, after the category dispatch.
+    if is_load_like:
+        mem_taint: Expr | None = None
+        if mem_taint_exprs:
+            mem_taint = mem_taint_exprs[0]
+            for t in mem_taint_exprs[1:]:
+                mem_taint = BinaryExpr(Op.OR, mem_taint, t)
+
+        if has_tainted_pointer:
+            ptr_combined = pointer_taint_exprs[0]
+            for t in pointer_taint_exprs[1:]:
+                ptr_combined = BinaryExpr(Op.OR, ptr_combined, t)
+            avalanche_ptr = AvalancheExpr(ptr_combined, out_bit_end - out_bit_start + 1)
+            expr = BinaryExpr(Op.OR, avalanche_ptr, mem_taint) if mem_taint is not None else avalanche_ptr
+        else:
+            expr = mem_taint if mem_taint is not None else _get_zero_constant(out_bit_end - out_bit_start + 1)
+
+    elif cat == InstructionCategory.AVALANCHE:
         expr = dependencies[0]
         for dep in dependencies[1:]:
             expr = BinaryExpr(Op.OR, expr, dep)
@@ -380,49 +462,118 @@ def generate_taint_assignments(  # noqa: C901
             expr = diff_expr
 
     elif cat == InstructionCategory.COND_TRANSPORTABLE:
-        # Implements precise Conditional Transportability from the CELLIFT paper:
-        # Y^t = C(A \wedge T_AB, B \wedge T_AB) \wedge \bigvee I^t
-        # Where T_AB is the mask of bits NOT tainted in ANY input.
-
-        # 1. Create T_union (A^t \vee B^t)
         T_union = dependencies[0]
         for dep in dependencies[1:]:
             T_union = BinaryExpr(Op.OR, T_union, dep)
 
-        masked_inputs: dict[str, Expr] = {}
-        # 2. Construct (V_in \wedge ~T_union) for all inputs
-        for dep_map in deps.keys():
-            if isinstance(dep_map, MemMapping):
-                addr_expr = _get_taint_operand(
+        T_any = AvalancheExpr(T_union, out_bit_end - out_bit_start + 1)
+
+        # Detect constant operand in INT_SUB (where 0x58 lives for cmp al, 0x58)
+        # INT_EQUAL always compares against const:0, so we look at INT_SUB instead
+        imm_val = None
+        for op in slice_ops:
+            if op.opcode.name == 'INT_SUB':
+                for vn in op.inputs:
+                    if vn.space.name == 'const' and vn.offset != 0:
+                        raw = vn.offset
+                        size_bits = vn.size * 8
+                        if size_bits > 0 and raw >= (1 << (size_bits - 1)):
+                            raw -= 1 << size_bits
+                        imm_val = raw
+                        break
+            if imm_val is not None:
+                break
+
+        has_const_operand = imm_val is not None
+
+        if has_const_operand and len(deps) == 1:
+            dep_map = next(iter(deps.keys()))
+
+            if isinstance(dep_map, RegMapping):
+                # cell_inputs_rep2 has {dep_map.name: V & ~T} — correct naming
+                # We correct it to (V & ~T) | (imm & T) so that:
+                # cmp(corrected, imm) == 0 iff (V & ~T) == (imm & ~T)
+                # i.e., the untainted bits of the register match those of the constant
+                V_masked = cell_inputs_rep2[dep_map.name]
+                T_in = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
+                size = dep_map.bit_end - dep_map.bit_start + 1
+                imm_expr = Constant(imm_val, size)
+                imm_masked = BinaryExpr(Op.AND, imm_expr, T_in)
+                corrected = BinaryExpr(Op.OR, V_masked, imm_masked)
+                C_eval = InstructionCellExpr(
+                    arch,
+                    bytestring.hex(),
+                    out_name,
+                    out_bit_start,
+                    out_bit_end,
+                    {dep_map.name: corrected},
+                )
+                expr = BinaryExpr(Op.AND, C_eval, T_any)
+
+            elif isinstance(dep_map, MemMapping):
+                addr_base = _get_taint_operand(
                     dep_map.addr_reg.name,
                     dep_map.addr_reg.bit_start,
                     dep_map.addr_reg.bit_end,
                     False,
                 )
-                V_in: Expr = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
+                addr_expr: Expr = (
+                    BinaryExpr(Op.ADD, addr_base, Constant(dep_map.addr_const_offset, 8))
+                    if dep_map.addr_const_offset != 0
+                    else addr_base
+                )
+                T_mem = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=True)
+                V_mem = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
+                imm_expr = Constant(imm_val, dep_map.size_bytes * 8)
+                V_masked = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
+                imm_masked = BinaryExpr(Op.AND, imm_expr, T_mem)
+                corrected = BinaryExpr(Op.OR, V_masked, imm_masked)
                 dep_name = f'MEM_{dep_map.addr_reg.name}'
+                C_eval = InstructionCellExpr(
+                    arch,
+                    bytestring.hex(),
+                    out_name,
+                    out_bit_start,
+                    out_bit_end,
+                    {dep_name: corrected},
+                )
+                expr = BinaryExpr(Op.AND, C_eval, T_any)
+
             else:
-                V_in = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, False)
-                dep_name = dep_map.name
+                expr = T_any
 
-            masked_V = BinaryExpr(Op.AND, V_in, UnaryExpr(Op.NOT, T_union))
-            masked_inputs[dep_name] = masked_V
+        else:
+            # reg vs reg: build (V & ~T_union) for each dep explicitly
+            masked_inputs: dict[str, Expr] = {}
+            for dep_map in deps.keys():
+                if isinstance(dep_map, MemMapping):
+                    addr_base = _get_taint_operand(
+                        dep_map.addr_reg.name,
+                        dep_map.addr_reg.bit_start,
+                        dep_map.addr_reg.bit_end,
+                        False,
+                    )
+                    addr_expr: Expr = (
+                        BinaryExpr(Op.ADD, addr_base, Constant(dep_map.addr_const_offset, 8))
+                        if dep_map.addr_const_offset != 0
+                        else addr_base
+                    )
+                    V_in: Expr = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
+                    dep_name = f'MEM_{dep_map.addr_reg.name}'
+                else:
+                    V_in = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, False)
+                    dep_name = dep_map.name
+                masked_inputs[dep_name] = BinaryExpr(Op.AND, V_in, UnaryExpr(Op.NOT, T_union))
 
-        # 3. Evaluate the cell using the masked values: C(A \wedge T_AB, B \wedge T_AB)
-        C_eval = InstructionCellExpr(
-            arch,
-            bytestring.hex(),
-            out_name,
-            out_bit_start,
-            out_bit_end,
-            masked_inputs,
-        )
-
-        # 4. Avalanche T_union to 1-bit to represent \bigvee I^t (Is ANY bit tainted?)
-        T_any = AvalancheExpr(T_union, out_bit_end - out_bit_start + 1)
-
-        # 5. Final Boolean AND
-        expr = BinaryExpr(Op.AND, C_eval, T_any)
+            C_eval = InstructionCellExpr(
+                arch,
+                bytestring.hex(),
+                out_name,
+                out_bit_start,
+                out_bit_end,
+                masked_inputs,
+            )
+            expr = BinaryExpr(Op.AND, C_eval, T_any)
 
     elif cat == InstructionCategory.TRANSPORTABLE:
         diff_expr = make_differential()
@@ -439,6 +590,7 @@ def generate_taint_assignments(  # noqa: C901
             expr = diff_expr
 
     elif cat == InstructionCategory.MAPPED:
+        # Pure register permutation (BSWAP, bit-extract, etc.) — use differential
         expr = make_differential()
 
     elif cat == InstructionCategory.ORABLE:
@@ -468,8 +620,24 @@ def generate_taint_assignments(  # noqa: C901
     else:
         raise ValueError(f'Unsupported instruction category: {cat}')
 
+    # For ANY instruction containing a LOAD (including ADD RAX, [RBX], CMP, etc.),
+    # if the pointer register is tainted we OR in the avalanche unconditionally.
+    # This handles the non-MAPPED cases like TRANSPORTABLE (ADD/SUB with memory operand).
+    if not is_load_like and has_tainted_pointer:
+        ptr_combined = pointer_taint_exprs[0]
+        for t in pointer_taint_exprs[1:]:
+            ptr_combined = BinaryExpr(Op.OR, ptr_combined, t)
+        avalanche_ptr = AvalancheExpr(ptr_combined, out_bit_end - out_bit_start + 1)
+        expr = BinaryExpr(Op.OR, expr, avalanche_ptr)
+
     if out_name in ('EIP', 'RIP', 'PC'):
         expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
+        print(f'DEBUG RET: cat={cat}, load_ops={[op.opcode.name for op in load_ops]}')
+        print(f'DEBUG RET: is_load_like={is_load_like}')
+        print(f'DEBUG RET: pointer_reg_names={pointer_reg_names}')
+        print(f'DEBUG RET: dependency_names={dependency_names}')
+        print(f'DEBUG RET: pointer_taint_exprs={pointer_taint_exprs}')
+        print(f'DEBUG RET: mem_taint_exprs={mem_taint_exprs}')
 
     assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
 
@@ -534,11 +702,16 @@ def process_dependencies(
     # Note: Memory handling remains simple for now as we don't split memory bit-ranges
     for name, mem_list in mem_groups.items():
         m = mem_list[0]
-        addr = _get_taint_operand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, False)
-        T_mem = MemoryOperand(addr, m.size_bytes, is_taint=True)
-        V_mem = MemoryOperand(addr, m.size_bytes, is_taint=False)
+        addr_base = _get_taint_operand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, False)
 
-        # Memory defaults to p=1 for now
+        if m.addr_const_offset != 0:
+            addr_expr: Expr = BinaryExpr(Op.ADD, addr_base, Constant(m.addr_const_offset, 8))
+        else:
+            addr_expr = addr_base
+
+        T_mem = MemoryOperand(addr_expr, m.size_bytes, is_taint=True)
+        V_mem = MemoryOperand(addr_expr, m.size_bytes, is_taint=False)
+
         cell_inputs_rep1[name] = BinaryExpr(Op.OR, V_mem, T_mem)
         cell_inputs_rep2[name] = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
         dependencies.append(T_mem)
@@ -570,38 +743,67 @@ def extract_dependencies(  # noqa: C901
 ) -> dict[RegMapping | MemMapping, int]:
     deps: dict[RegMapping | MemMapping, int] = {}
 
-    def resolve_ptr(vn: Varnode, visited: set[int] | None = None) -> RegMapping | None:
-        """Recursively unwraps temporary `unique` varnodes back to architectural registers."""
+    def resolve_ptr_with_offset(
+        vn: Varnode,
+        visited: set[int] | None = None,
+    ) -> tuple[RegMapping | None, int]:
+        """Recursively unwraps unique varnodes back to (base_register, constant_offset)."""
         if visited is None:
             visited = set()
         if vn.space.name == 'register':
-            return mapper.map_to_state(vn.offset, vn.size)
+            return mapper.map_to_state(vn.offset, vn.size), 0
+        if vn.space.name == 'const':
+            # Treat as signed 64-bit to handle negative offsets like 0xfffffffffffffff8
+            val = vn.offset
+            if val >= (1 << 63):
+                val -= 1 << 64
+            return None, val
         if vn.space.name == 'unique' and vn.offset not in visited:
             visited.add(vn.offset)
-            for o in slice_ops:
-                if o.output and o.output.offset == vn.offset:
-                    for i in o.inputs:
-                        res = resolve_ptr(i, visited)
-                        if res:
-                            return res
-        return None
+            for op in slice_ops:
+                if op.output and op.output.space.name == 'unique' and op.output.offset == vn.offset:
+                    if op.opcode.name in ('INT_ADD', 'PTRADD'):
+                        lhs_reg, lhs_off = resolve_ptr_with_offset(op.inputs[0], visited)
+                        rhs_reg, rhs_off = resolve_ptr_with_offset(op.inputs[1], visited)
+                        if lhs_reg is not None:
+                            return lhs_reg, lhs_off + rhs_off
+                        if rhs_reg is not None:
+                            return rhs_reg, rhs_off + lhs_off
+                    elif op.opcode.name == 'INT_SUB':
+                        lhs_reg, lhs_off = resolve_ptr_with_offset(op.inputs[0], visited)
+                        _, rhs_off = resolve_ptr_with_offset(op.inputs[1], visited)
+                        if lhs_reg is not None:
+                            return lhs_reg, lhs_off - rhs_off
+                    else:
+                        for inp in op.inputs:
+                            reg, off = resolve_ptr_with_offset(inp, visited)
+                            if reg is not None:
+                                return reg, off
+        return None, 0
 
-    # FIX: Scan ALL ops to completely bypass buggy slicer truncation.
-    # Instruction taint is atomic, so any read register contributes to the final state.
     for op in all_ops:
+        if op.opcode.name == 'RETURN':
+            continue
+
         if op.opcode.name == 'LOAD':
             ptr_vn = op.inputs[1]
-            mapped_addr = resolve_ptr(ptr_vn)
+            mapped_addr, const_offset = resolve_ptr_with_offset(ptr_vn)
             if mapped_addr:
-                deps[MemMapping(ptr_vn.offset, op.output.size if op.output else 8, mapped_addr)] = 1
+                deps[
+                    MemMapping(
+                        ptr_vn.offset,
+                        op.output.size if op.output else 8,
+                        mapped_addr,
+                        const_offset,
+                    )
+                ] = 1
 
         for vn in op.inputs:
             if vn.space.name == 'register':
                 mapped_dep = mapper.map_to_state(vn.offset, vn.size)
                 if mapped_dep and mapped_dep not in deps:
-                    deps[mapped_dep] = 1  # Default to positive polarity
+                    deps[mapped_dep] = 1
 
-        # 3. Override with exact, mathematically computed polarities where available
     for vn_id, p in polarities.items():
         parts = vn_id.split(':')
         if len(parts) == 3 and parts[0] == 'register':

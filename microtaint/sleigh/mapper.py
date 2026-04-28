@@ -105,7 +105,7 @@ EXTENSION_OPCODES: set[str] = {
     'INSERT',
 }
 
-IGNORED_OPCODES: set[str] = {
+CONTROL_FLOW_OPCODES: set[str] = {
     'BRANCH',
     'BRANCHIND',
     'CBRANCH',
@@ -113,6 +113,10 @@ IGNORED_OPCODES: set[str] = {
     'CALLIND',
     'CALLOTHER',
     'RETURN',
+}
+
+IGNORED_OPCODES: set[str] = {
+    *CONTROL_FLOW_OPCODES,
     'IMARK',
     'INDIRECT',
     'MULTIEQUAL',
