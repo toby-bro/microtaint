@@ -3,7 +3,7 @@ import pytest
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
-from microtaint.types import Architecture, Register
+from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 # --- Fixtures ---
 
@@ -605,3 +605,97 @@ def test_arm64_sub_sets_negative(arm64_simulator: CellSimulator, arm64_registers
         simulator=arm64_simulator,
     )
     assert extract_flag(circuit.evaluate(ctx), 'N') == 1
+
+
+def test_ret_propagates_taint_to_rip(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
+    bytestring = bytes.fromhex('C3')  # RET
+    circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
+
+    # We need a concrete stack pointer to resolve the memory read
+    stack_ptr = 0x80000000
+
+    ctx = EvalContext(
+        input_values={
+            'RSP': stack_ptr,
+        },
+        input_taint={
+            'RSP': 0,
+            f'MEM_{hex(stack_ptr)}_8': 0xFFFFFFFFFFFFFFFF,  # Taint the memory where the return address lives
+        },
+        simulator=simulator,
+        implicit_policy=ImplicitTaintPolicy.KEEP,
+    )
+
+    output = circuit.evaluate(ctx)
+
+    assert (
+        output.get('RIP', 0) == 0xFFFFFFFFFFFFFFFF
+    ), f"Expected RIP to be fully tainted, got {hex(output.get('RIP', 0))}"
+
+
+def test_cond_transportable_cmp_with_immediate(amd64_registers: list[Register]) -> None:
+    """
+    cmp al, 0x58  (3c 58)
+    Tests equality comparison against a constant immediate.
+
+    Key insight: when a register is compared against a constant,
+    the tainted bits of the register could take the value of the constant,
+    so if the constant falls within the tainted range, the flag is uncertain.
+    """
+    from microtaint.instrumentation.ast import EvalContext
+    from microtaint.simulator import CellSimulator
+    from microtaint.sleigh.engine import generate_static_rule
+    from microtaint.types import Architecture
+
+    sim = CellSimulator(Architecture.AMD64)
+    bytestring = bytes.fromhex('3c58')  # cmp al, 0x58
+    circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
+
+    # Case 1: AL is fully tainted, value happens to equal the constant.
+    # The constant 0x58 is reachable → ZF must be tainted.
+    ctx = EvalContext(
+        input_values={'RAX': 0x58},
+        input_taint={'RAX': 0xFF},
+        simulator=sim,
+    )
+    out = circuit.evaluate(ctx)
+    assert out.get('ZF', 0) == 1, 'ZF should be tainted: fully tainted AL could equal 0x58'
+
+    # Case 2: AL is fully tainted, value does NOT equal constant.
+    # But since AL is fully tainted, 0x58 is still reachable → ZF must be tainted.
+    ctx2 = EvalContext(
+        input_values={'RAX': 0x00},
+        input_taint={'RAX': 0xFF},
+        simulator=sim,
+    )
+    out2 = circuit.evaluate(ctx2)
+    assert out2.get('ZF', 0) == 1, 'ZF should be tainted: fully tainted AL can reach 0x58'
+
+    # Case 3: Only bit 0 of AL is tainted, AL=0x10.
+    # Tainted AL can be 0x10 or 0x11 — neither equals 0x58 → ZF NOT tainted.
+    ctx3 = EvalContext(
+        input_values={'RAX': 0x10},
+        input_taint={'RAX': 0x01},
+        simulator=sim,
+    )
+    out3 = circuit.evaluate(ctx3)
+    assert out3.get('ZF', 0) == 0, 'ZF should NOT be tainted: tainted bit cannot make AL reach 0x58'
+
+    # Case 4: Bits 0-5 tainted, AL=0x58.
+    # AL can range 0x58..0x5F and 0x40..0x7F etc — 0x58 is reachable → ZF tainted.
+    ctx4 = EvalContext(
+        input_values={'RAX': 0x58},
+        input_taint={'RAX': 0x3F},
+        simulator=sim,
+    )
+    out4 = circuit.evaluate(ctx4)
+    assert out4.get('ZF', 0) == 1, 'ZF should be tainted: 0x58 is reachable with tainted lower 6 bits'
+
+    # Case 5: No taint → no taint on output.
+    ctx5 = EvalContext(
+        input_values={'RAX': 0x58},
+        input_taint={},
+        simulator=sim,
+    )
+    out5 = circuit.evaluate(ctx5)
+    assert out5.get('ZF', 0) == 0, 'ZF should NOT be tainted: no input taint'
