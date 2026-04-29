@@ -267,6 +267,7 @@ cdef class DecodedOps:
     cdef public int    n_ops
     cdef public bint   has_fallback
     cdef public object input_reg_offsets  # set of SP_REGISTER input offsets
+    cdef public object _uc_arrays         # cached (ids_arr,vals_arr,ptrs_arr,names,needs_eflags)
 
 
 def _predecode_ops(arch, bytestring):

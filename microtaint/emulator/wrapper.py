@@ -177,51 +177,81 @@ _SLEIGH_OFFSET_TO_UC: dict[int, tuple[str, int, bool]] = {
 }
 
 
+# Cache of pre-built ctypes arrays per unique offset-set.
+# Key: frozenset of Sleigh byte offsets (== DecodedOps.input_reg_offsets).
+# Value: (ids_arr, vals_arr, ptrs_arr, uc_names, needs_eflags)
+# Built once per unique instruction type, reused on every subsequent call.
+_OFFSETS_CACHE: dict = {}
+
+
+def _build_offsets_arrays(offsets):
+    """Build and cache ctypes arrays. Uses id() fast-path on the hot path."""
+    oid = id(offsets)
+    cached = _OFFSETS_CACHE.get(oid)
+    if cached is not None:
+        return cached
+    key = frozenset(offsets)
+    cached = _OFFSETS_CACHE.get(key)
+    if cached is not None:
+        _OFFSETS_CACHE[oid] = cached
+        return cached
+
+    uc_names: list[str] = []
+    uc_ids: list[int] = []
+    needs_eflags = False
+    seen_ids: set[int] = set()
+
+    for off in offsets:
+        entry = _SLEIGH_OFFSET_TO_UC.get(off)
+        if entry is None:
+            continue
+        uc_name, uc_id, is_flag = entry
+        if uc_id in seen_ids:
+            continue
+        seen_ids.add(uc_id)
+        uc_names.append(uc_name)
+        uc_ids.append(uc_id)
+        if is_flag:
+            needs_eflags = True
+
+    n = len(uc_ids)
+    if n == 0:
+        result = (None, None, None, [], False)
+        _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
+        return result
+
+    ids_arr = (ctypes.c_int * n)(*uc_ids)
+    vals_arr = (ctypes.c_uint64 * n)()
+    ptrs_arr = (ctypes.c_void_p * n)(*[ctypes.addressof(vals_arr) + i * 8 for i in range(n)])
+
+    result = (ids_arr, vals_arr, ptrs_arr, uc_names, needs_eflags)
+    _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
+    return result
+
+
 def _read_regs_by_offsets(uch: object, offsets: object) -> dict[str, int]:
-    """Read only the Unicorn registers needed for the given pcode input offsets.
+    """Build arrays from offsets and read. Used only when _uc_arrays not yet cached."""
+    return _exec_regs_from_arrays(uch, _build_offsets_arrays(offsets))
 
-    `offsets` is DecodedOps.input_reg_offsets — the set of Sleigh register-space
-    byte offsets read as SP_REGISTER inputs by this instruction's decoded pcode.
 
-    Typical savings vs full 18-register read:
-      ADD RAX,RCX  → reads RAX + RCX + EFLAGS = 3 regs  (was 18)
-      MOV RAX,[RCX]→ reads RCX = 1 reg
-      JL           → reads EFLAGS = 1 reg
+def _exec_regs_from_arrays(uch: object, arrays: object) -> dict[str, int]:
+    """Execute a single targeted uc_reg_read_batch using pre-built cached arrays.
+
+    Hot path: one C call + one dict comprehension. Zero allocation.
+    arrays = (ids_arr, vals_arr, ptrs_arr, uc_names, needs_eflags)
     """
     try:
-        uc_names: list[str] = []
-        uc_ids: list[int] = []
-        needs_eflags = False
-        seen_ids: set[int] = set()
+        ids_arr, vals_arr, ptrs_arr, uc_names, needs_eflags = arrays
 
-        for off in offsets:
-            entry = _SLEIGH_OFFSET_TO_UC.get(off)
-            if entry is None:
-                continue
-            uc_name, uc_id, is_flag = entry
-            if uc_id in seen_ids:
-                continue
-            seen_ids.add(uc_id)
-            uc_names.append(uc_name)
-            uc_ids.append(uc_id)
-            if is_flag:
-                needs_eflags = True
-
-        n = len(uc_ids)
-        if n == 0:
+        if ids_arr is None:
             return {}
 
-        ids_arr = (ctypes.c_int * n)(*uc_ids)
-        vals_arr = (ctypes.c_uint64 * n)()
-        ptrs_arr = (ctypes.c_void_p * n)(*[ctypes.addressof(vals_arr) + i * 8 for i in range(n)])
-
+        n = len(uc_names)
         err = _uc_reg_read_batch(uch, ids_arr, ptrs_arr, n)
         if err != 0:
             return _read_regs_ctypes(uch, _ALL_REG_NAMES)
 
-        result: dict[str, int] = {}
-        for i, name in enumerate(uc_names):
-            result[name] = int(vals_arr[i])
+        result: dict[str, int] = {uc_names[i]: int(vals_arr[i]) for i in range(n)}
 
         if needs_eflags:
             eflags = result.get('EFLAGS', 0)
@@ -656,11 +686,13 @@ class MicrotaintWrapper:
         # input_reg_offsets = exact Sleigh byte offsets of SP_REGISTER pcode inputs.
         try:
             _decoded = _get_decoded(self.arch, instruction_bytes)
-            _offsets = _decoded.input_reg_offsets
-            if _offsets and len(_offsets) <= 10:
-                self._pre_regs = _read_regs_by_offsets(uch, _offsets)
-            else:
-                self._pre_regs = self._get_live_registers(uch)
+            # Use _uc_arrays cached directly on the DecodedOps object:
+            # one cdef field access (~5ns) vs frozenset() hash (~4µs).
+            _uc_arrs = _decoded._uc_arrays
+            if _uc_arrs is None:
+                _uc_arrs = _build_offsets_arrays(_decoded.input_reg_offsets)
+                _decoded._uc_arrays = _uc_arrs
+            self._pre_regs = _exec_regs_from_arrays(uch, _uc_arrs)
         except Exception:
             self._pre_regs = self._get_live_registers(uch)
         self._pre_taint = dict(self.register_taint)
