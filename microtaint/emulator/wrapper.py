@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from microtaint.emulator.shadow import BitPreciseShadowMemory
 from qiling import Qiling
 from qiling.const import QL_INTERCEPT
 
 from microtaint.emulator.reporter import Reporter
-from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
@@ -65,6 +65,9 @@ class MicrotaintWrapper:
 
         self.register_taint: dict[str, int] = {}
         self._main_bounds: list[tuple[int, int]] = []
+        # Pre-instruction snapshots — populated by _pre_instruction hook
+        self._pre_regs: dict[str, int] = {}
+        self._pre_taint: dict[str, int] = {}
         # Tracks addresses written with nonzero taint by the most recent circuit
         # evaluation. The mem_write hook uses this to avoid clearing taint that
         # the circuit intentionally set for this instruction.
@@ -75,6 +78,22 @@ class MicrotaintWrapper:
     # ------------------------------------------------------------------
     # Syscall hooks
     # ------------------------------------------------------------------
+
+    def _taint_bytes(self, address: int, n: int) -> None:
+        """
+        Mark n bytes starting at address as fully tainted.
+        Writes in 8-byte chunks to avoid uint64_t overflow in shadow.pyx
+        (mask = (1 << (n*8)) - 1 overflows for n > 8).
+        """
+        FULL_MASK = 0xFFFFFFFFFFFFFFFF
+        written = 0
+        while written + 8 <= n:
+            self.shadow_mem.write_mask(address + written, FULL_MASK, 8)
+            written += 8
+        if written < n:
+            remainder = n - written
+            remainder_mask = (1 << (remainder * 8)) - 1
+            self.shadow_mem.write_mask(address + written, remainder_mask, remainder)
 
     def _setup_hooks(self) -> None:
         self.ql.os.set_syscall(0, self._sys_read_hook, QL_INTERCEPT.CALL)
@@ -100,6 +119,7 @@ class MicrotaintWrapper:
             self.ql.os.set_syscall(11, self._munmap_hook, QL_INTERCEPT.ENTER)
             self.ql.hook_mem_read(self._mem_access_hook)
 
+        self.ql.hook_code(self._pre_instruction)
         self.ql.hook_code(self._instruction_evaluator)
 
     def _sys_read_hook(self, ql: Qiling, fd: int, buf: int, count: int) -> int:
@@ -111,6 +131,10 @@ class MicrotaintWrapper:
                 data = b''
             if data:
                 ql.mem.write(buf, data)
+                # ADD THESE 4 LINES TO TAINT FILE READS:
+                n = len(data)
+                self._taint_bytes(buf, n)
+                self.reporter.taint_source(buf, n, fd=fd)
             return len(data) if data else -9
 
         try:
@@ -127,8 +151,7 @@ class MicrotaintWrapper:
         ql.mem.write(buf, data)
 
         # Byte-precise taint: one bit per byte in the mask
-        mask = (1 << (n * 8)) - 1
-        self.shadow_mem.write_mask(buf, mask, n)
+        self._taint_bytes(buf, n)
         self.reporter.taint_source(buf, n, fd=0)
         logger.debug(f'Tainted {n} bytes at 0x{buf:x} from stdin')
 
@@ -190,13 +213,44 @@ class MicrotaintWrapper:
             return 0
 
     def _get_live_registers(self) -> dict[str, int]:
+        # Read only canonical 64-bit parents — sub-registers are redundant
+        # since EvalContext normalizes to parents anyway.
+        # EFLAGS is read once; CF/ZF/SF/OF/PF extracted by bit shift (5 fewer reads).
+        _CANONICAL = [
+            'RAX',
+            'RBX',
+            'RCX',
+            'RDX',
+            'RSI',
+            'RDI',
+            'RBP',
+            'RSP',
+            'R8',
+            'R9',
+            'R10',
+            'R11',
+            'R12',
+            'R13',
+            'R14',
+            'R15',
+            'RIP',
+            'EFLAGS',
+        ]
         vals: dict[str, int] = {}
-        for reg in X64_FORMAT:
+        arch_regs = self.ql.arch.regs
+        for name in _CANONICAL:
             try:
-                vals[reg.name] = self.ql.arch.regs.read(reg.name)
+                vals[name] = arch_regs.read(name)
             except Exception as e:
-                logger.debug(f'Error reading register {reg.name}: {e}')
-                vals[reg.name] = 0
+                logger.debug(f'Error reading register {name}: {e}')
+                vals[name] = 0
+        # Unpack flags from EFLAGS — no extra reads
+        eflags = vals.get('EFLAGS', 0)
+        vals['CF'] = (eflags >> 0) & 1
+        vals['PF'] = (eflags >> 2) & 1
+        vals['ZF'] = (eflags >> 6) & 1
+        vals['SF'] = (eflags >> 7) & 1
+        vals['OF'] = (eflags >> 11) & 1
         return vals
 
     def _is_main_binary(self, address: int) -> bool:
@@ -246,6 +300,13 @@ class MicrotaintWrapper:
     # Core instruction evaluator
     # ------------------------------------------------------------------
 
+    def _pre_instruction(self, ql: Qiling, address: int, size: int) -> None:
+        """Snapshot register state BEFORE execution for correct pre/post semantics."""
+        if not self._is_main_binary(address):
+            return
+        self._pre_regs = self._get_live_registers()
+        self._pre_taint = dict(self.register_taint)
+
     def _instruction_evaluator(self, ql: Qiling, address: int, size: int) -> None:  # noqa: C901
         if not self._is_main_binary(address):
             return
@@ -256,8 +317,8 @@ class MicrotaintWrapper:
         policy = ImplicitTaintPolicy.STOP if (self.check_sc or self.check_bof) else ImplicitTaintPolicy.IGNORE
 
         ctx = EvalContext(
-            input_taint=self.register_taint,
-            input_values=self._get_live_registers(),
+            input_taint=self._pre_taint,
+            input_values=self._pre_regs,
             simulator=self.sim,
             implicit_policy=policy,
             shadow_memory=self.shadow_mem,

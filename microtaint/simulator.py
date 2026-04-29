@@ -188,6 +188,57 @@ class CellSimulator:
             self.uc.reg_write(uc_arm64_const.UC_ARM64_REG_SP, stack_base)  # pyright: ignore[reportUnknownMemberType]
 
         self._pristine_context = self.uc.context_save()
+        # Bytestring cache — skip redundant mem_write when code hasn't changed
+        self._last_bytestring: bytes = b''
+
+        # Pre-compute canonical batch register list for this arch (write path only)
+        # Excludes sub-registers and flags — those are handled separately below.
+        self._batch_reg_pairs: list[tuple[int, str]] = []
+        _batch_names = {
+            Architecture.AMD64: [
+                'RAX',
+                'RBX',
+                'RCX',
+                'RDX',
+                'RSI',
+                'RDI',
+                'RBP',
+                'RSP',
+                'R8',
+                'R9',
+                'R10',
+                'R11',
+                'R12',
+                'R13',
+                'R14',
+                'R15',
+                'RIP',
+                'EFLAGS',
+            ],
+            Architecture.X86: [
+                'EAX',
+                'EBX',
+                'ECX',
+                'EDX',
+                'ESI',
+                'EDI',
+                'EBP',
+                'ESP',
+                'EIP',
+                'EFLAGS',
+            ],
+            Architecture.ARM64: [
+                *[f'X{i}' for i in range(31)],
+                'SP',
+                'PC',
+                'NZCV',
+            ],
+        }.get(arch, [])
+        reg_map = _UC_REGS.get(arch, {})
+        for name in _batch_names:
+            uc_id = reg_map.get(name)
+            if uc_id is not None:
+                self._batch_reg_pairs.append((uc_id, name))
 
     def _hook_mem_unmapped(
         self,
@@ -305,7 +356,9 @@ class CellSimulator:
                 raise ValueError(f'Unsupported architecture: {self.arch}')
 
         self.uc.reg_write(pc_reg, self.CODE_ADDR)  # pyright: ignore[reportUnknownMemberType]
-        self.uc.mem_write(self.CODE_ADDR, bytestring)
+        if bytestring != self._last_bytestring:
+            self.uc.mem_write(self.CODE_ADDR, bytestring)
+            self._last_bytestring = bytestring
 
         try:
             self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
@@ -329,6 +382,7 @@ class CellSimulator:
                 raise
 
     def setup_registers_and_memory(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:  # noqa: C901
+        self._pending_reg_writes: dict[int, int] = {}
         for reg_name, val in state.regs.items():
 
             # Prevent Stack Underflow
@@ -406,7 +460,18 @@ class CellSimulator:
 
             uc_reg = self._get_uc_reg(reg_name)
             if uc_reg is not None:
-                self.uc.reg_write(uc_reg, val)  # pyright: ignore[reportUnknownMemberType]
+                self._pending_reg_writes[uc_reg] = val
+
+        # Flush all pending register writes in one batch call
+        if self._pending_reg_writes:
+            reg_data = list(self._pending_reg_writes.items())
+            try:
+                self.uc.reg_write_batch(reg_data)  # pyright: ignore[reportUnknownMemberType]
+            except AttributeError:
+                # Fallback for unicorn builds without reg_write_batch
+                for uc_id, v in reg_data:
+                    self.uc.reg_write(uc_id, v)  # pyright: ignore[reportUnknownMemberType]
+            self._pending_reg_writes.clear()
 
         self.load_memory_state(state, mem_sizes)
 
