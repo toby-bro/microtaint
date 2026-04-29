@@ -61,9 +61,8 @@ _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X
 # ---------------------------------------------------------------------------
 _uclib = _uu.uclib
 import unicorn
-import unicorn as _unicorn_mod
 
-_UC_HOOK_MEM_WRITE_UNMAPPED = _unicorn_mod.UC_HOOK_MEM_WRITE_UNMAPPED
+_UC_HOOK_MEM_WRITE_UNMAPPED = unicorn.UC_HOOK_MEM_WRITE_UNMAPPED
 _uc_reg_read = _uclib.uc_reg_read
 _uc_reg_read.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
 _uc_reg_read.restype = ctypes.c_int
@@ -298,6 +297,7 @@ class MicrotaintWrapper:
         self._uc_handle: object = None  # set properly in _setup_hooks
         self._any_taint: bool = False  # set True on first _taint_bytes call
         self._mem_write_hook_registered: bool = False  # set True when hook registered
+        self._instr_hook_registered: bool = False  # set True when instr hook registered
 
         self._setup_hooks()
 
@@ -313,9 +313,22 @@ class MicrotaintWrapper:
         """
         if not self._any_taint:
             self._any_taint = True
+            # Register instruction hook now that taint exists.
+            # Before this point, Unicorn ran without any instruction hook —
+            # saving ~6 µs * N_untainted_instructions in Unicorn's C overhead.
+            if not self._instr_hook_registered:
+                if self._main_single:
+                    self.ql.uc.hook_add(
+                        unicorn.UC_HOOK_CODE,
+                        self._instruction_evaluator_raw,
+                        begin=self._main_base,
+                        end=self._main_end,
+                    )
+                else:
+                    self.ql.hook_code(self._instruction_evaluator)
+                self._instr_hook_registered = True
             if not self._mem_write_hook_registered:
                 # Register _mem_write_clear_hook now that taint exists.
-                # Doing this lazily avoids 1.5M hook dispatches before taint injection.
                 self.ql.hook_mem_write(self._mem_write_clear_hook)
                 self._mem_write_hook_registered = True
         FULL_MASK = 0xFFFFFFFFFFFFFFFF
@@ -361,17 +374,12 @@ class MicrotaintWrapper:
             self._main_end = end
             self._main_single = True
             self._main_bounds = [(begin, end)]
-            # Register directly on Unicorn (bypasses Qiling's hook dispatch chain).
-            # Saves ~12 µs/instruction vs ql.hook_code.
-            self.ql.uc.hook_add(
-                unicorn.UC_HOOK_CODE,
-                self._instruction_evaluator_raw,
-                begin=begin,
-                end=end,
-            )
-        else:
-            # Fallback: use Qiling wrapper (no range info available yet)
-            self.ql.hook_code(self._instruction_evaluator)
+        # Do NOT register the instruction hook here.
+        # It is registered lazily in _taint_bytes when the first taint is injected.
+        # Unicorn runs 5M+ instructions before taint injection — registering early
+        # costs ~6 µs/instruction in Unicorn's C→Python overhead even for early-exit.
+        # Deferred registration: ~0 cost before taint, normal cost after.
+        self._instr_hook_registered: bool = False
 
     def _sys_read_hook(self, ql: Qiling, fd: int, buf: int, count: int) -> int:
         if fd != 0 or count <= 0:
@@ -412,7 +420,13 @@ class MicrotaintWrapper:
             logger.debug(f'Poisoned freed mmap region at 0x{addr:x} ({length}B)')
 
     def _uaf_unmapped_write_hook(
-        self, uc: object, access: int, address: int, size: int, value: int, user_data: object
+        self,
+        uc: object,
+        access: int,
+        address: int,
+        size: int,
+        value: int,
+        user_data: object,
     ) -> bool:
         """Fires when code writes to UNMAPPED memory (UC_HOOK_MEM_WRITE_UNMAPPED).
 
