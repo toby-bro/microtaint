@@ -704,6 +704,15 @@ cdef void _execute_decoded(
 # Register map cache
 # ---------------------------------------------------------------------------
 
+# Architecture-specific aliases: state_format name → Sleigh register name.
+# Used when the state_format uses a friendly name (e.g. 'Z') but the Sleigh
+# spec uses a different name for the same register (e.g. 'ZR' in ARM64).
+# Must match the aliases in engine.py StateMapper.arm_aliases.
+_ARCH_REG_ALIASES: dict[str, dict[str, str]] = {
+    'ARM64': {'N': 'NG', 'Z': 'ZR', 'C': 'CY', 'V': 'OV'},
+}
+
+
 @functools.lru_cache(maxsize=8)
 def _build_reg_maps(arch):
     ctx = get_context(arch)
@@ -712,6 +721,17 @@ def _build_reg_maps(arch):
         key = name.upper()
         offsets[key] = vn.offset
         sizes[key]   = vn.size
+    # Add friendly aliases so _read_output can resolve state_format names
+    # that differ from the raw Sleigh register names (e.g. ARM64 'Z' → 'ZR').
+    arch_str = str(arch).upper()
+    arch_str = arch_str.split('.')[len(arch_str.split('.')) - 1]  # e.g. 'ARM64' from Architecture.ARM64
+    for alias_str in ('ARM64', 'AMD64', 'X86'):
+        if alias_str in arch_str:
+            for friendly, sleigh in _ARCH_REG_ALIASES.get(alias_str, {}).items():
+                if sleigh in offsets and friendly not in offsets:
+                    offsets[friendly] = offsets[sleigh]
+                    sizes[friendly]   = sizes[sleigh]
+            break
     return offsets, sizes
 
 
@@ -744,8 +764,9 @@ cdef class PCodeCellEvaluator:
         cdef object   name, val, off_obj, sz_obj
         cdef str      key, body
         cdef long     off
+        cdef uint64_t addr_u64
         cdef int      sz, size, sep
-        cdef uint64_t v, addr
+        cdef uint64_t v
 
         frame.clear()
         for name, val in inputs.items():
@@ -757,9 +778,9 @@ cdef class PCodeCellEvaluator:
                 sep  = body.rfind('_')
                 if sep >= 0:
                     try:
-                        addr = int(body[:sep], 16)
+                        addr_u64 = int(body[:sep], 16)
                         size = int(body[sep + 1:])
-                        frame._write_mem(addr, v, size)
+                        frame._write_mem(addr_u64, v, size)
                     except (ValueError, OverflowError):
                         pass
             else:
@@ -776,8 +797,9 @@ cdef class PCodeCellEvaluator:
         cdef object   off_obj, sz_obj
         cdef str      key, body
         cdef long     off
+        cdef uint64_t addr_u64
         cdef int      sz, size, sep, width
-        cdef uint64_t val, mask, addr
+        cdef uint64_t val, mask
 
         width = bit_end - bit_start + 1
 
@@ -786,9 +808,9 @@ cdef class PCodeCellEvaluator:
             sep  = body.rfind('_')
             if sep >= 0:
                 try:
-                    addr = int(body[:sep], 16)
+                    addr_u64 = int(body[:sep], 16)
                     size = int(body[sep + 1:])
-                    val  = frame._read_mem(addr, size)
+                    val  = frame._read_mem(addr_u64, size)
                     if width >= 64:
                         return val >> bit_start
                     mask = (<uint64_t>1 << width) - 1
