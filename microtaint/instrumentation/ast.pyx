@@ -34,6 +34,28 @@ class Op(str, Enum):
     ADD = 'ADD'  # Only for memory offset calculations, not for taint logic
     SUB = 'SUB'  # Only for memory offset calculations, not for taint logic
 
+# Integer opcode constants for fast C-level dispatch in BinaryExpr/UnaryExpr.
+# Enum.__eq__ involves Python object machinery; int comparison is ~10x faster.
+cdef int _OP_AND   = 0
+cdef int _OP_OR    = 1
+cdef int _OP_XOR   = 2
+cdef int _OP_LEFT  = 3
+cdef int _OP_ADD   = 4
+cdef int _OP_SUB   = 5
+cdef int _OP_NOT   = 6
+
+# Mapping from Op enum to int at module init (done once)
+_OP_MAP: dict = {}
+
+def _init_op_map():
+    global _OP_MAP
+    _OP_MAP = {
+        Op.AND: _OP_AND, Op.OR: _OP_OR, Op.XOR: _OP_XOR,
+        Op.LEFT: _OP_LEFT, Op.ADD: _OP_ADD, Op.SUB: _OP_SUB,
+        Op.NOT: _OP_NOT,
+    }
+_init_op_map()
+
 # Canonical parent register per architecture
 _ARCH_PARENT_REGS: dict[str, dict[str, tuple[str, int]]] = {
     # arch_str -> {child_name: (parent_name, bit_start_in_parent)}
@@ -139,6 +161,7 @@ cdef class EvalContext:
     cdef public object implicit_policy
     cdef public object shadow_memory
     cdef public object mem_reader
+    cdef public str arch_str  # cached once, avoids str(simulator.arch) per TaintOperand miss
 
     def __init__(
         self,
@@ -165,6 +188,8 @@ cdef class EvalContext:
         arch_str = 'AMD64'
         if simulator is not None:
             arch_str = str(simulator.arch)
+
+        self.arch_str = arch_str  # cache for TaintOperand fast path
 
         # Normalize: always store taint/values under the canonical parent register
         self.input_taint = _normalize_register_dict(input_taint, arch_str)
@@ -271,11 +296,9 @@ cdef class TaintOperand(Expr):
 
         if val is None:
             # State is normalized to parents, so if name not found,
-            # it must be a child — look up its parent
-            arch_str = 'AMD64'
-            if context.simulator is not None:
-                arch_str = str(context.simulator.arch)
-            parent_map = _ARCH_PARENT_REGS.get(arch_str, {})
+            # it must be a child — look up its parent.
+            # arch_str is pre-cached on context — no str(simulator.arch) overhead.
+            parent_map = _ARCH_PARENT_REGS.get(context.arch_str, {})
             if self.name in parent_map:
                 parent_name, bit_start_in_parent = parent_map[self.name]
                 parent_val = state.get(parent_name, None)
@@ -341,10 +364,12 @@ cdef class Constant(Expr):
 
 cdef class UnaryExpr(Expr):
     cdef public object op
+    cdef int _op_int
     cdef public Expr expr
 
     def __init__(self, object op, Expr expr):
         self.op = op
+        self._op_int = _OP_MAP.get(op, -1)
         self.expr = expr
 
     def __str__(self):
@@ -355,18 +380,20 @@ cdef class UnaryExpr(Expr):
 
     cpdef object evaluate(self, EvalContext context):
         cdef object val = self.expr.evaluate(context)
-        if self.op == Op.NOT:
+        if self._op_int == _OP_NOT:
             return ~val
         raise NotImplementedError(f'Unsupported unary op {self.op}')
 
 
 cdef class BinaryExpr(Expr):
     cdef public object op
+    cdef int _op_int  # fast int dispatch
     cdef public Expr lhs
     cdef public Expr rhs
 
     def __init__(self, object op, Expr lhs, Expr rhs):
         self.op = op
+        self._op_int = _OP_MAP.get(op, -1)
         self.lhs = lhs
         self.rhs = rhs
 
@@ -379,19 +406,13 @@ cdef class BinaryExpr(Expr):
     cpdef object evaluate(self, EvalContext context):
         cdef object left = self.lhs.evaluate(context)
         cdef object right = self.rhs.evaluate(context)
-        
-        if self.op == Op.AND:
-            return left & right
-        if self.op == Op.OR:
-            return left | right
-        if self.op == Op.XOR:
-            return left ^ right
-        if self.op == Op.LEFT:
-            return left << right
-        if self.op == Op.ADD:
-            return left + right
-        if self.op == Op.SUB:
-            return left - right
+        cdef int op = self._op_int
+        if op == _OP_AND:   return left & right
+        if op == _OP_OR:    return left | right
+        if op == _OP_XOR:   return left ^ right
+        if op == _OP_LEFT:  return left << right
+        if op == _OP_ADD:   return left + right
+        if op == _OP_SUB:   return left - right
         raise NotImplementedError(f'Unsupported binary op {self.op}')
 
 
@@ -400,12 +421,14 @@ cdef class TaintAssignment:
     cdef public list dependencies
     cdef public Expr expression
     cdef public str expression_str
+    cdef public bint is_mem_target  # pre-tagged: True if target has address_expr
 
     def __init__(self, object target, list dependencies, Expr expression=None, str expression_str=''):
         self.target = target
         self.dependencies = dependencies
         self.expression = expression
         self.expression_str = expression_str
+        self.is_mem_target = hasattr(target, 'address_expr')
 
     def __str__(self):
         cdef str expr_str
@@ -426,12 +449,19 @@ cdef class LogicCircuit:
     cdef public object architecture
     cdef public str instruction
     cdef public list state_format
+    cdef public str _pc_target  # pre-computed: 'RIP'/'EIP'/'PC' or None
 
     def __init__(self, list assignments, object architecture, str instruction, list state_format):
         self.assignments = assignments
         self.architecture = architecture
         self.instruction = instruction
         self.state_format = state_format
+        # Pre-compute which PC register (if any) is a target — checked every evaluate()
+        self._pc_target = None
+        for _a in assignments:
+            if not _a.is_mem_target and _a.target.name in ('RIP', 'EIP', 'PC'):
+                self._pc_target = _a.target.name
+                break
 
     def __str__(self):
         return '\n'.join(str(a) for a in self.assignments)
@@ -466,8 +496,8 @@ cdef class LogicCircuit:
                 for dep in assignment.dependencies:
                     val |= dep.evaluate(context)
 
-            # 2. Determine bounds (Memory vs Register)
-            if hasattr(assignment.target, 'address_expr'):
+            # 2. Determine bounds (Memory vs Register) — pre-tagged at construction
+            if assignment.is_mem_target:
                 address = assignment.target.address_expr.evaluate(context)
                 target_name = f'MEM_{hex(address)}_{assignment.target.size}'
                 bit_start = 0
@@ -486,11 +516,10 @@ cdef class LogicCircuit:
             output_taint[target_name] = (current & ~mask) | val
 
         # --- THE IMPLICIT TAINT INTERCEPTOR ---
+        # _pc_target is pre-computed at circuit build time — no per-call iteration.
         cdef str pc_reg = None
-        for pc in ('RIP', 'EIP', 'PC'):
-            if pc in output_taint and output_taint[pc] != 0:
-                pc_reg = pc
-                break
+        if self._pc_target is not None and output_taint.get(self._pc_target, 0) != 0:
+            pc_reg = self._pc_target
 
         if pc_reg is not None:
             from microtaint.types import ImplicitTaintPolicy, ImplicitTaintError
@@ -542,33 +571,13 @@ cdef class InstructionCellExpr(Expr):
 
     cpdef object evaluate(self, EvalContext context):
         assert context.simulator is not None, 'Simulator instance required'
-
-        # All cdef declarations must be at the top of the Cython function scope.
+        
         cdef dict evaluated_inputs = {}
-        cdef dict full_inputs
         cdef str name
         cdef Expr expr
-
+        
         for name, expr in self.inputs.items():
             evaluated_inputs[name] = expr.evaluate(context)
 
-        # --- P-code native path (use_unicorn=False) ---
-        # evaluated_inputs contains the taint-polarised registers (V|T or V&~T).
-        # But pcode needs the CONCRETE values of ALL operand registers — not just the
-        # tainted ones. For CMP X0,X1 with only X0 tainted, X1 is absent from
-        # evaluated_inputs, so the pcode frame would read X1=0 instead of X1=5.
-        # Fix: start from the full concrete snapshot (input_values) then overlay
-        # the polarised taint inputs so the differential is computed correctly.
-        if not context.simulator.use_unicorn:
-            from microtaint.instrumentation.cell import PCodeFallbackNeeded
-            full_inputs = dict(context.input_values)  # concrete values for ALL regs
-            full_inputs.update(evaluated_inputs)       # taint-polarised inputs take precedence
-            try:
-                return context.simulator._pcode.evaluate_concrete(self, full_inputs)
-            except PCodeFallbackNeeded:
-                context.simulator._pcode.fallback_calls += 1
-                # Fall through to Unicorn path below
-
-        # --- Unicorn path (default, or pcode fallback) ---
         m_state = _build_machine_state(evaluated_inputs, context)
         return context.simulator.evaluate_concrete(self, m_state)
