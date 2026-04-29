@@ -168,13 +168,12 @@ class CellSimulator:
             raise ValueError(f'Architecture {arch} is not supported by CellSimulator.')
         self.arch = arch
         self.use_unicorn = use_unicorn
+        self._pcode: Any = None
+        self._pcode_fallback_exc: Any = None
 
-        # P-code native evaluator — instantiated only when use_unicorn=False.
-        # Kept as None on the default path so there is zero import cost.
-        self._pcode: PCodeCellEvaluator | None = None
-        if not use_unicorn:
-            self._pcode = _get_pcode_evaluator_class()(arch)
-
+        # Initialise Unicorn FIRST.  pypcode (called inside _get_pcode_evaluator_class)
+        # invokes GHIDRA's native runtime which can interfere with Unicorn's allocator
+        # if called before uc_open().  Always bring Unicorn up first.
         uc_arch, uc_mode = _ARCH_MAP[arch]
         self.uc = uc_py3.Uc(uc_arch, uc_mode)
 
@@ -205,6 +204,15 @@ class CellSimulator:
             self.uc.reg_write(uc_arm64_const.UC_ARM64_REG_SP, stack_base)  # pyright: ignore[reportUnknownMemberType]
 
         self._pristine_context = self.uc.context_save()
+
+        # P-code native evaluator — created after Unicorn is fully initialised.
+        # pypcode's GHIDRA runtime must not start before uc_open() completes.
+        if not use_unicorn:
+            self._pcode = _get_pcode_evaluator_class()(arch)
+            # Cache the fallback exception class — avoids per-call import in hot path.
+            from microtaint.instrumentation.cell import PCodeFallbackNeeded as _exc  # noqa: PLC0415
+
+            self._pcode_fallback_exc = _exc
 
         # Cache PC register ID — avoids a match statement on every _execute call
         if arch == Architecture.X86:
@@ -539,19 +547,13 @@ class CellSimulator:
 
     def evaluate_concrete(self, cell: Any, v_state: MachineState) -> int:
         # --- P-code native path (use_unicorn=False) ---
-        # Flatten MachineState into the dict[str, int] the pcode evaluator expects.
-        # Memory entries become 'MEM_<hex_addr>_<size>' keys.
+        # Pass MachineState dicts directly to the pcode evaluator —
+        # no flat-dict copy, no 'MEM_<hex>_<size>' key construction per call.
         if not self.use_unicorn:
             assert self._pcode is not None
-            flat: dict[str, int] = dict(v_state.regs)
-            for addr, val in v_state.mem.items():
-                size = max(1, (val.bit_length() + 7) // 8) if val else 8
-                flat[f'MEM_{hex(addr)}_{size}'] = val
-            from microtaint.instrumentation.cell import PCodeFallbackNeeded  # noqa: PLC0415
-
             try:
-                return self._pcode.evaluate_concrete(cell, flat)
-            except PCodeFallbackNeeded:
+                return self._pcode.evaluate_concrete_state(cell, v_state.regs, v_state.mem)
+            except self._pcode_fallback_exc:
                 self._pcode.fallback_calls += 1
                 # Fall through to Unicorn below
 
@@ -566,7 +568,7 @@ class CellSimulator:
         mask = (1 << (cell.out_bit_end - cell.out_bit_start + 1)) - 1
         return int((val >> cell.out_bit_start) & mask)
 
-    def evaluate_cell_differential(  # noqa: C901
+    def evaluate_cell_differential(
         self,
         bytestring: bytes,
         target_reg: str | tuple[str, int, int],

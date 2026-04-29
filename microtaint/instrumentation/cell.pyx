@@ -1009,6 +1009,46 @@ cdef class PCodeCellEvaluator:
                     sz     = <int>sz_obj if sz_obj is not None else 8
                     frame._write_reg(off, sz, _mask64(v, sz))
 
+    cdef void _load_state(self, _PCodeFrame frame, dict regs, dict mem):
+        """
+        Load a frame directly from MachineState's `regs` and `mem` dicts.
+
+        Avoids the (regs + MEM_<hex>_<size> string-keyed flat dict) round-trip
+        that simulator.py's `evaluate_concrete` would otherwise build per call.
+        Saves a dict copy and the MEM_ key parsing for every cell evaluation.
+        """
+        frame._arch = str(self.arch)  # for CBRANCH PC lookup
+        cdef object   name, val, off_obj, sz_obj, addr, mval
+        cdef str      key
+        cdef long     off
+        cdef uint64_t v, mv
+        cdef int      sz, size
+
+        frame.clear()
+        # --- Registers ---
+        for name, val in regs.items():
+            v = <uint64_t>(val & 0xFFFFFFFFFFFFFFFF)
+            key     = (<str>name).upper()
+            off_obj = self._offsets.get(key)
+            if off_obj is not None:
+                off    = <long>off_obj
+                sz_obj = self._sizes.get(key)
+                sz     = <int>sz_obj if sz_obj is not None else 8
+                frame._write_reg(off, sz, _mask64(v, sz))
+
+        # --- Memory ---
+        # mem is keyed by integer address; size derived from bit_length, like
+        # simulator.py used to do when building the flat dict.
+        for addr, mval in mem.items():
+            mv = <uint64_t>(mval & 0xFFFFFFFFFFFFFFFF)
+            if mval:
+                size = ((<int>mval.bit_length()) + 7) // 8
+                if size < 1:
+                    size = 1
+            else:
+                size = 8
+            frame._write_mem(<uint64_t>addr, mv, size)
+
     cdef uint64_t _read_output(self, _PCodeFrame frame, str out_reg,
                                int bit_start, int bit_end):
         cdef object   off_obj, sz_obj
@@ -1065,6 +1105,21 @@ cdef class PCodeCellEvaluator:
         if decoded.has_fallback:
             raise PCodeFallbackNeeded('instruction requires Unicorn')
         self._load(frame, flat_inputs)
+        _execute_decoded(frame, decoded)
+        self.native_calls += 1
+        return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
+
+    def evaluate_concrete_state(self, cell, dict regs, dict mem):
+        """
+        Same as evaluate_concrete but takes MachineState's `regs` and `mem`
+        dicts directly — no flat-dict copy, no MEM_<hex>_<size> key building.
+        Hot path used by simulator.py for the use_unicorn=False configuration.
+        """
+        cdef _PCodeFrame frame = self._frame_a
+        decoded = _get_decoded(self.arch, bytes.fromhex(cell.instruction))
+        if decoded.has_fallback:
+            raise PCodeFallbackNeeded('instruction requires Unicorn')
+        self._load_state(frame, regs, mem)
         _execute_decoded(frame, decoded)
         self.native_calls += 1
         return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
