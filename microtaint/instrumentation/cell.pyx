@@ -264,10 +264,11 @@ ctypedef struct PCodeOp:
 cdef class DecodedOps:
     """Cached pre-decoded pcode ops in a C struct array — no Python tuple overhead."""
     cdef PCodeOp buf[MAX_PCODE_OPS]
-    cdef public int    n_ops
-    cdef public bint   has_fallback
-    cdef public object input_reg_offsets  # set of SP_REGISTER input offsets
-    cdef public object _uc_arrays         # cached (ids_arr,vals_arr,ptrs_arr,names,needs_eflags)
+    cdef public int       n_ops
+    cdef public bint      has_fallback
+    cdef public uint64_t  next_instr_addr  # 0x1000 + len(bytestring); used by CBRANCH to detect CMOVxx skip pattern
+    cdef public object    input_reg_offsets  # set of SP_REGISTER input offsets
+    cdef public object    _uc_arrays         # cached (ids_arr,vals_arr,ptrs_arr,names,needs_eflags)
 
 
 def _predecode_ops(arch, bytestring):
@@ -282,13 +283,18 @@ def _predecode_ops(arch, bytestring):
     cdef DecodedOps result = DecodedOps()
     result.n_ops = 0
     result.has_fallback = False
+    # Translation always uses base 0x1000; next x86 instruction is right after the bytes.
+    # CMOVxx CBRANCH targets exactly this address; a JL/JE targets a different address.
+    result.next_instr_addr = <uint64_t>(0x1000 + len(bytestring))
     result.input_reg_offsets = set()
     has_fallback = False
     # Compact unique-space mapping: raw offset → sequential index 0,1,2,...
     cdef dict uniq_map = {}
     cdef int  uniq_next = 0
     cdef PCodeOp* op_ptr
-    cdef int _ii, _cb_count, _cb_last, _has_bi
+    cdef int _ii, _oid, _cb_total
+    cdef bint _ok
+    cdef uint64_t _cb_dest
 
     for op in ops:
         oid    = _opcode_id(op.opcode.name)
@@ -357,19 +363,42 @@ def _predecode_ops(arch, bytestring):
             op_ptr.i2_sp = i2_sp; op_ptr.i2_off = i2_off; op_ptr.i2_sz = i2_sz
             result.n_ops += 1
 
-    # Simple conditional branches (JL, JE, …) have exactly ONE CBRANCH
-    # as the very last decoded op and no BRANCHIND/CALLIND.  We handle
-    # those natively by writing the PC in _execute_decoded, so no Unicorn
-    # fallback is needed.  Complex cases (BSF/BSR = multiple CBRANCHes;
-    # CMOVNZ = CBRANCH not last) keep has_fallback=True.
+    # Decide whether this instruction can run in the pcode evaluator without
+    # falling back to Unicorn.  Two pcode CBRANCH patterns are supported:
+    #
+    #   (a) JL / JE / JNE etc.   — exactly one CBRANCH, the last op,
+    #                              dest != next_instr_addr (real branch).
+    #                              _execute_decoded writes RIP = dest or dest+1.
+    #
+    #   (b) CMOVZ / CMOVNZ etc.  — CBRANCH (anywhere) with dest == next_instr_addr.
+    #                              _execute_decoded sets skip_remaining when the
+    #                              condition is true; subsequent ops become no-ops.
+    #
+    # Anything else stays has_fallback=True:
+    #   - BSF/BSR (BRANCH op + pcode-relative CBRANCH dests in CONST space)
+    #   - BRANCHIND/CALLIND (indirect control flow)
+    #   - CALLOTHER with output, FLOAT, UNKNOWN (already flagged earlier)
     if has_fallback:
-        _cb_count = 0; _cb_last = -1; _has_bi = 0
+        _ok = 1
+        _cb_total = 0
         for _ii in range(result.n_ops):
-            if result.buf[_ii].oid == OP_CBRANCH:
-                _cb_count += 1; _cb_last = _ii
-            elif result.buf[_ii].oid == OP_BRANCHIND or result.buf[_ii].oid == OP_CALLIND:
-                _has_bi = 1
-        if _cb_count == 1 and _cb_last == result.n_ops - 1 and not _has_bi:
+            _oid = result.buf[_ii].oid
+            if _oid == OP_BRANCH or _oid == OP_BRANCHIND or _oid == OP_CALLIND:
+                _ok = 0; break
+            if _oid == OP_CBRANCH:
+                _cb_total += 1
+                # CBRANCH dest must be in ram space (absolute x86 address).
+                # const-space dests are pcode-relative offsets (BSF/BSR pattern).
+                if result.buf[_ii].i0_sp != SP_RAM:
+                    _ok = 0; break
+                _cb_dest = <uint64_t>result.buf[_ii].i0_off
+                # Pattern (b): forward skip to end of cell — handled by skip_remaining.
+                if _cb_dest == result.next_instr_addr:
+                    continue
+                # Pattern (a): real branch — only valid if this is the last op.
+                if _ii != result.n_ops - 1:
+                    _ok = 0; break
+        if _ok and _cb_total >= 1:
             has_fallback = False
 
     for _ii in range(result.n_ops):
@@ -560,12 +589,14 @@ cdef void _execute_decoded(
     cdef unsigned long i1_off
     cdef int          i2_sp, i2_sz
     cdef unsigned long i2_off
-    cdef uint64_t  a, b, c, result, u_result
+    cdef uint64_t  a, b, c, result, u_result, dest, cond
     cdef int64_t   sa, sb, sresult
     cdef int       sz, bits, i
     cdef PCodeOp*  op
     cdef PCodeOp*  ops_base
     cdef int       n_ops
+    cdef bint      skip_remaining = 0   # set by an internal CBRANCH (CMOVxx skip)
+    cdef uint64_t  next_instr_addr = decoded.next_instr_addr
 
     # Hoist out of loop: one Python object access total, then pure C
     ops_base = decoded.buf
@@ -574,6 +605,12 @@ cdef void _execute_decoded(
     for i in range(n_ops):
         op = ops_base + i                    # pure C pointer arithmetic
         oid            = op.oid
+        # CMOVxx skip: an internal CBRANCH (dest == next x86 instruction)
+        # branched over the remaining ops in this cell.  Treat them as no-ops.
+        # IMARK is allowed through (it has no semantic effect, and pcode never
+        # contains another IMARK after the first).
+        if skip_remaining and oid != OP_IMARK:
+            continue
         o_sp           = op.o_sp
         o_off          = op.o_off
         o_sz           = op.o_sz
@@ -631,12 +668,25 @@ cdef void _execute_decoded(
                 frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz) << b)
         # ── Less frequent ops ────────────────────────────────────────
         elif oid == OP_CBRANCH:
-            cond   = frame.read_d(i1_sp, i1_off, i1_sz)
-            dest   = <uint64_t>i0_off  # branch target from ram varnode
-            result = dest if cond else dest + 1
-            pc_tup = _ARCH_PC.get(str(frame._arch))
-            if pc_tup is not None:
-                frame.write_d(SP_REGISTER, pc_tup[0], pc_tup[1], result)
+            cond = frame.read_d(i1_sp, i1_off, i1_sz)
+            dest = <uint64_t>i0_off  # branch target from ram varnode
+            if dest == next_instr_addr:
+                # Internal forward skip (CMOVxx pattern): if condition is true,
+                # branch over the rest of the cell — subsequent ops do nothing.
+                # No RIP write: control flow stays within this x86 instruction.
+                # Taint propagates through the destination register naturally
+                # via the C1/C2 differential: the two runs take different paths,
+                # producing different values and thus tainting the destination.
+                if cond:
+                    skip_remaining = 1
+            else:
+                # Real conditional branch (JL/JE/JNE pattern): write RIP to a
+                # value that differs between taken/not-taken so the C1/C2
+                # differential detects tainted control flow as RIP taint.
+                result = dest if cond else dest + 1
+                pc_tup = _ARCH_PC.get(str(frame._arch))
+                if pc_tup is not None:
+                    frame.write_d(SP_REGISTER, pc_tup[0], pc_tup[1], result)
         elif oid == OP_BRANCHIND or oid == OP_CALLIND:
             raise PCodeFallbackNeeded('Control-flow opcode')
         elif oid == OP_CALLOTHER:
