@@ -726,8 +726,8 @@ def _build_reg_maps(arch):
         sizes[key]   = vn.size
     # Add friendly aliases so _read_output can resolve state_format names
     # that differ from the raw Sleigh register names (e.g. ARM64 'Z' → 'ZR').
-    arch_str = str(arch).upper()
-    arch_str = arch_str.split('.')[len(arch_str.split('.')) - 1]  # e.g. 'ARM64' from Architecture.ARM64
+    _arch_parts = str(arch).upper().split('.')
+    arch_str = _arch_parts[len(_arch_parts) - 1]  # e.g. 'ARM64' from Architecture.ARM64
     for alias_str in ('ARM64', 'AMD64', 'X86'):
         if alias_str in arch_str:
             for friendly, sleigh in _ARCH_REG_ALIASES.get(alias_str, {}).items():

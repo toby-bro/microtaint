@@ -582,8 +582,7 @@ class MicrotaintWrapper:
             mem_writes: list[tuple[int, int, int]] = []  # (addr, size, val)
 
             for key, val in output_state.items():
-                if key.startswith('MEM_'):
-                    # Inline _parse_mem_key to avoid method call overhead (40k calls).
+                if key[:4] == 'MEM_':
                     _body = key[4:]
                     _last = _body.rfind('_')
                     if _last < 0:
