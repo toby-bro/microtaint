@@ -18,15 +18,19 @@ Structure
 ---------
 1.  AMD64 instruction corpus  (~80 instructions across all major categories)
 2.  Correctness tests          — assert that unicorn_output == pcode_output for
-                                 every instruction × every taint scenario
+                                 every instruction x every taint scenario
 3.  Single-instruction benchmarks — throughput for one instruction, 100 rounds
 4.  Sequential-trace benchmarks   — throughput for the full corpus in order,
                                     simulating a real taint-analysis trace
 """
 
+# mypy: disable-error-code="type-arg,no-any-return"
+# ruff: noqa: ARG001
+
 from __future__ import annotations
 
 import itertools
+import os
 from typing import Any
 
 import pytest
@@ -944,7 +948,7 @@ def prebuilt_circuits() -> dict[str, Any]:
     there is exactly one circuit per unique instruction.
     """
     circuits: dict[str, Any] = {}
-    for mnemonic, hex_bytes, _, _, _, _, _ in CORPUS:
+    for _mnemonic, hex_bytes, _, _, _, _, _ in CORPUS:
         key = hex_bytes
         if key not in circuits:
             circuits[key] = generate_static_rule(
@@ -1007,7 +1011,7 @@ def _get(output: dict, key: str) -> int:
 
 
 @pytest.mark.parametrize(
-    'mnemonic,hex_bytes,input_values,input_taint,check_reg,expected_taint,description',
+    ('mnemonic', 'hex_bytes', 'input_values', 'input_taint', 'check_reg', 'expected_taint', 'description'),
     CORPUS,
     ids=CORPUS_IDS,
 )
@@ -1024,7 +1028,7 @@ def test_pcode_matches_unicorn(
     description: str,
 ) -> None:
     """
-    For every instruction × scenario, assert that the P-code backend
+    For every instruction x scenario, assert that the P-code backend
     produces the same taint output as the Unicorn backend.
 
     This is the primary correctness gate: if pcode != unicorn the test fails,
@@ -1070,9 +1074,9 @@ def test_pcode_matches_unicorn(
 
 
 @pytest.mark.parametrize(
-    'mnemonic,hex_bytes,input_values,input_taint,check_reg,expected_taint,description',
+    ('mnemonic', 'hex_bytes', 'input_values', 'input_taint', 'check_reg', 'expected_taint', 'description'),
     [(m, h, iv, it, cr, et, d) for m, h, iv, it, cr, et, d in CORPUS if et is not None],
-    ids=[cid for cid, (_, _, _, _, _, et, _) in zip(CORPUS_IDS, CORPUS) if et is not None],
+    ids=[cid for cid, (_, _, _, _, _, et, _) in zip(CORPUS_IDS, CORPUS, strict=False) if et is not None],
 )
 def test_expected_taint_unicorn(
     sim_unicorn: CellSimulator,
@@ -1095,9 +1099,9 @@ def test_expected_taint_unicorn(
 
 
 @pytest.mark.parametrize(
-    'mnemonic,hex_bytes,input_values,input_taint,check_reg,expected_taint,description',
+    ('mnemonic', 'hex_bytes', 'input_values', 'input_taint', 'check_reg', 'expected_taint', 'description'),
     [(m, h, iv, it, cr, et, d) for m, h, iv, it, cr, et, d in CORPUS if et is not None],
-    ids=[cid for cid, (_, _, _, _, _, et, _) in zip(CORPUS_IDS, CORPUS) if et is not None],
+    ids=[cid for cid, (_, _, _, _, _, et, _) in zip(CORPUS_IDS, CORPUS, strict=False) if et is not None],
 )
 def test_expected_taint_pcode(
     sim_pcode: CellSimulator,
@@ -1136,7 +1140,7 @@ TAINT_SCENARIOS: list[dict] = [
 
 
 @pytest.mark.parametrize(
-    'hex_bytes,taint',
+    ('hex_bytes', 'taint'),
     list(
         itertools.product(
             # Only register-only instructions (no memory operands in input) for the sweep
@@ -1240,7 +1244,7 @@ BENCH_SINGLE: list[tuple[str, str, dict, dict]] = [
 
 
 @pytest.mark.parametrize(
-    'mnemonic,hex_bytes,input_values,input_taint',
+    ('mnemonic', 'hex_bytes', 'input_values', 'input_taint'),
     BENCH_SINGLE,
     ids=[m for m, _, _, _ in BENCH_SINGLE],
 )
@@ -1270,7 +1274,7 @@ def test_bench_single_unicorn(
 
 
 @pytest.mark.parametrize(
-    'mnemonic,hex_bytes,input_values,input_taint',
+    ('mnemonic', 'hex_bytes', 'input_values', 'input_taint'),
     BENCH_SINGLE,
     ids=[m for m, _, _, _ in BENCH_SINGLE],
 )
@@ -1352,7 +1356,7 @@ def test_bench_trace_pcode(
 
 # ===========================================================================
 # PART 6 — Repeated single-instruction hot-path benchmark
-#           (simulates the tightest loop: one hot instruction 10 000×)
+#           (simulates the tightest loop: one hot instruction 10 000x)
 # ===========================================================================
 
 _HOT_HEX = '4801D8'  # ADD RAX,RBX — most common arithmetic pattern
@@ -1567,7 +1571,7 @@ def test_diagnostic_print_all_diffs(
     any_diff = False
     lines = []
 
-    for mnemonic, hex_bytes, input_values, input_taint, check_reg, _, description in CORPUS:
+    for mnemonic, hex_bytes, input_values, input_taint, _check_reg, _, description in CORPUS:
         circuit = prebuilt_circuits[hex_bytes]
         try:
             out_u = _run(sim_unicorn, circuit, input_values, input_taint)
@@ -1597,7 +1601,7 @@ def test_diagnostic_print_all_diffs(
         if any_diff:
             print('\n\n=== BACKEND COMPARISON DIAGNOSTIC ===')
             print(output)
-            print(f"\n*** {sum(1 for l in lines if l.startswith('[DIFF]'))} entries differ ***")
+            print(f"\n*** {sum(1 for lll in lines if lll.startswith('[DIFF]'))} entries differ ***")
 
     # Always pass — this is a diagnostic tool only.
     assert not any_diff, 'Backends differ on one or more entries.  Run with -s to see details.'
@@ -1655,18 +1659,21 @@ def test_diagnostic_pcode_register_map(
         'R15',
     ]
 
-    with capsys.disabled():
-        print('\n\n=== PCODE REGISTER OFFSET MAP ===')
-        print(f"  {'Name':<12} {'Offset':>10}  {'Size':>6}")
-        print(f"  {'-'*12} {'-'*10}  {'-'*6}")
-        for name in interesting:
-            off = offsets.get(name, 'MISSING')
-            size = sizes.get(name, 'MISSING')
-            print(f'  {name:<12} {off!s:>10}  {size!s:>6}')
+    if os.getenv('SHOW_PCODE_MAP', '0') == '1':
+        with capsys.disabled():
+            print('\n\n=== PCODE REGISTER OFFSET MAP ===')
+            print(f"  {'Name':<12} {'Offset':>10}  {'Size':>6}")
+            print(f"  {'-'*12} {'-'*10}  {'-'*6}")
+            for name in interesting:
+                off = offsets.get(name, 'MISSING')
+                size = sizes.get(name, 'MISSING')
+                print(f'  {name:<12} {off!s:>10}  {size!s:>6}')
 
-        print('\n  All flag-related entries:')
-        for name, off in sorted(offsets.items()):
-            if any(f in name for f in ['CF', 'PF', 'ZF', 'SF', 'OF', 'FLAGS', 'cf', 'pf', 'zf', 'sf', 'of', 'flags']):
-                print(f"  {name:<12} offset={off}  size={sizes.get(name,'?')}")
+            print('\n  All flag-related entries:')
+            for name, off in sorted(offsets.items()):
+                if any(
+                    f in name for f in ['CF', 'PF', 'ZF', 'SF', 'OF', 'FLAGS', 'cf', 'pf', 'zf', 'sf', 'of', 'flags']
+                ):
+                    print(f"  {name:<12} offset={off}  size={sizes.get(name,'?')}")
 
     assert True

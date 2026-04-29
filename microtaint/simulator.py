@@ -163,7 +163,7 @@ class CellSimulator:
     on V | T and V & ~T, computing the precise logical XOR differential.
     """
 
-    def __init__(self, arch: Architecture, use_unicorn: bool = False) -> None:
+    def __init__(self, arch: Architecture, use_unicorn: bool = False) -> None:  # noqa: C901
         if arch not in _ARCH_MAP:
             raise ValueError(f'Architecture {arch} is not supported by CellSimulator.')
         self.arch = arch
@@ -171,7 +171,7 @@ class CellSimulator:
 
         # P-code native evaluator — instantiated only when use_unicorn=False.
         # Kept as None on the default path so there is zero import cost.
-        self._pcode: Any = None
+        self._pcode: PCodeCellEvaluator | None = None
         if not use_unicorn:
             self._pcode = _get_pcode_evaluator_class()(arch)
 
@@ -566,7 +566,7 @@ class CellSimulator:
         mask = (1 << (cell.out_bit_end - cell.out_bit_start + 1)) - 1
         return int((val >> cell.out_bit_start) & mask)
 
-    def evaluate_cell_differential(
+    def evaluate_cell_differential(  # noqa: C901
         self,
         bytestring: bytes,
         target_reg: str | tuple[str, int, int],
