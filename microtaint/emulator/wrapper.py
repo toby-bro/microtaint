@@ -578,7 +578,8 @@ class MicrotaintWrapper:
             # _last_tainted_writes, and collect MEM_ entries for AIW check.
             if self._last_tainted_writes:
                 self._last_tainted_writes.clear()
-            self.register_taint.clear()
+            if self.register_taint:
+                self.register_taint.clear()
             mem_writes: list[tuple[int, int, int]] = []  # (addr, size, val)
 
             for key, val in output_state.items():
@@ -602,7 +603,7 @@ class MicrotaintWrapper:
                 elif val > 0:
                     self.register_taint[key] = val
 
-            if self.check_aiw and ctx.input_taint and mem_writes:
+            if self.check_aiw and self.register_taint and mem_writes:
                 live_regs = ctx.input_values
                 for mem_addr, _, _ in mem_writes:
                     for reg_name, reg_taint in ctx.input_taint.items():

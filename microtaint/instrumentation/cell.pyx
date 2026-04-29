@@ -253,8 +253,10 @@ def _predecode_ops(arch, bytestring):
         ins    = op.inputs
 
         # Check for fallback conditions
-        if oid == OP_CBRANCH or oid == OP_BRANCHIND or oid == OP_CALLIND:
+        if oid == OP_BRANCHIND or oid == OP_CALLIND:
             has_fallback = True
+        elif oid == OP_CBRANCH:
+            has_fallback = True  # may be cleared after full decode
         elif oid == OP_CALLOTHER and out is not None:
             has_fallback = True
         elif oid == OP_FLOAT_ANY or oid == OP_TRUNC_FLOAT:
@@ -291,6 +293,18 @@ def _predecode_ops(arch, bytestring):
                            i1_sp, i1_off, i1_sz,
                            i2_sp, i2_off, i2_sz))
 
+    # Simple conditional branches (JL, JE, …) have exactly ONE CBRANCH
+    # as the very last decoded op and no BRANCHIND/CALLIND.  We handle
+    # those natively by writing the PC in _execute_decoded, so no Unicorn
+    # fallback is needed.  Complex cases (BSF/BSR = multiple CBRANCHes;
+    # CMOVNZ = CBRANCH not last) keep has_fallback=True.
+    if has_fallback:
+        _cb_indices = [i for i, t in enumerate(decoded) if t[0] == OP_CBRANCH]
+        if (len(_cb_indices) == 1 and
+                _cb_indices[0] == len(decoded) - 1 and
+                not any(t[0] in (OP_BRANCHIND, OP_CALLIND) for t in decoded)):
+            has_fallback = False
+
     return decoded, has_fallback
 
 
@@ -308,12 +322,14 @@ cdef class _PCodeFrame:
     cdef public dict uniq
     cdef public dict mem
     cdef public dict reg_sizes
+    cdef public object _arch  # set by _load for CBRANCH PC lookup
 
     def __init__(self):
         self.regs      = {}
         self.uniq      = {}
         self.mem       = {}
         self.reg_sizes = {}
+        self._arch     = None
 
     cdef inline void _write_reg(self, long off, int sz, uint64_t val) noexcept:
         cdef uint64_t masked = _mask64(val, sz)
@@ -429,7 +445,18 @@ cdef void _execute_decoded(
             pass
         elif oid == OP_UNIMPLEMENTED or oid == OP_SEGMENT or oid == OP_CPOOLREF or oid == OP_NEW or oid == OP_INSERT or oid == OP_EXTRACT:
             pass
-        elif oid == OP_CBRANCH or oid == OP_BRANCHIND or oid == OP_CALLIND:
+        elif oid == OP_CBRANCH:
+            # Write PC = dest (branch taken) or dest+1 (not taken).
+            # The two values are always distinct, so the C1/C2 differential
+            # produces non-zero T_RIP when the condition is tainted —
+            # which triggers ImplicitTaintError for SC/BOF detection.
+            cond   = frame.read_d(i1_sp, i1_off, i1_sz)
+            dest   = <uint64_t>i0_off  # branch target from ram varnode
+            result = dest if cond else dest + 1
+            pc_tup = _ARCH_PC.get(str(frame._arch))
+            if pc_tup is not None:
+                frame.write_d(SP_REGISTER, pc_tup[0], pc_tup[1], result)
+        elif oid == OP_BRANCHIND or oid == OP_CALLIND:
             raise PCodeFallbackNeeded('Control-flow opcode')
         elif oid == OP_CALLOTHER:
             if callother_out:
@@ -716,6 +743,10 @@ _ARCH_REG_ALIASES: dict[str, dict[str, str]] = {
 }
 
 
+# PC register offset per arch — populated by _build_reg_maps on first call.
+_ARCH_PC: dict = {}  # arch_str -> (reg_offset: long, reg_size: int)
+
+
 @functools.lru_cache(maxsize=8)
 def _build_reg_maps(arch):
     ctx = get_context(arch)
@@ -735,6 +766,12 @@ def _build_reg_maps(arch):
                     offsets[friendly] = offsets[sleigh]
                     sizes[friendly]   = sizes[sleigh]
             break
+    arch_key = str(arch)
+    for _pc_name in ('RIP', 'EIP', 'PC'):
+        if _pc_name in offsets:
+            _ARCH_PC[arch_key] = (offsets[_pc_name], sizes[_pc_name])
+            break
+
     return offsets, sizes
 
 
@@ -764,6 +801,7 @@ cdef class PCodeCellEvaluator:
         self.fallback_calls = 0
 
     cdef void _load(self, _PCodeFrame frame, dict inputs):
+        frame._arch = str(self.arch)  # for CBRANCH PC lookup
         cdef object   name, val, off_obj, sz_obj
         cdef str      key, body
         cdef long     off
