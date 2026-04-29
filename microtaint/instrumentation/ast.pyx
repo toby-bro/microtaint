@@ -542,7 +542,9 @@ cdef class InstructionCellExpr(Expr):
     cpdef object evaluate(self, EvalContext context):
         assert context.simulator is not None, 'Simulator instance required'
 
+        # All cdef declarations must be at the top of the Cython function scope.
         cdef dict evaluated_inputs = {}
+        cdef dict full_inputs
         cdef str name
         cdef Expr expr
 
@@ -550,16 +552,18 @@ cdef class InstructionCellExpr(Expr):
             evaluated_inputs[name] = expr.evaluate(context)
 
         # --- P-code native path (use_unicorn=False) ---
-        # InstructionCellExpr is always called as one half of a BinaryExpr(XOR, C1, C2)
-        # in the engine's make_differential().  C1 holds the rep1 (V|T) inputs and
-        # C2 holds the rep2 (V&~T) inputs.  By the time evaluate() is called here,
-        # self.inputs has already been fully evaluated into a flat dict of concrete
-        # integer values — exactly the flat_inputs that PCodeCellEvaluator.evaluate_concrete
-        # expects.  We simply run one concrete execution and return the output slice.
+        # evaluated_inputs contains the taint-polarised registers (V|T or V&~T).
+        # But pcode needs the CONCRETE values of ALL operand registers — not just the
+        # tainted ones. For CMP X0,X1 with only X0 tainted, X1 is absent from
+        # evaluated_inputs, so the pcode frame would read X1=0 instead of X1=5.
+        # Fix: start from the full concrete snapshot (input_values) then overlay
+        # the polarised taint inputs so the differential is computed correctly.
         if not context.simulator.use_unicorn:
             from microtaint.instrumentation.cell import PCodeFallbackNeeded
+            full_inputs = dict(context.input_values)  # concrete values for ALL regs
+            full_inputs.update(evaluated_inputs)       # taint-polarised inputs take precedence
             try:
-                return context.simulator._pcode.evaluate_concrete(self, evaluated_inputs)
+                return context.simulator._pcode.evaluate_concrete(self, full_inputs)
             except PCodeFallbackNeeded:
                 context.simulator._pcode.fallback_calls += 1
                 # Fall through to Unicorn path below

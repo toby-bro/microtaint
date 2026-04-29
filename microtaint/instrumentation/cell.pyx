@@ -413,10 +413,9 @@ cdef void _execute_decoded(
     cdef unsigned long i1_off
     cdef int          i2_sp, i2_sz
     cdef unsigned long i2_off
-    cdef uint64_t  a, b, c, result
+    cdef uint64_t  a, b, c, result, u_result
     cdef int64_t   sa, sb, sresult
     cdef int       sz, bits
-    cdef int64_t   lim
     cdef object    tup
 
     for tup in decoded_ops:
@@ -600,23 +599,27 @@ cdef void _execute_decoded(
 
         elif oid == OP_INT_SCARRY:
             if o_sp != NO_OUT_SPACE:
-                sz      = i0_sz
-                sa      = _signed64(frame.read_d(i0_sp, i0_off, i0_sz), sz)
-                sb      = _signed64(frame.read_d(i1_sp, i1_off, i1_sz), sz)
-                sresult = sa + sb
-                lim     = <int64_t>1 << (sz * 8 - 1)
+                sz       = i0_sz
+                sa       = _signed64(frame.read_d(i0_sp, i0_off, i0_sz), sz)
+                sb       = _signed64(frame.read_d(i1_sp, i1_off, i1_sz), sz)
+                # Unsigned add then re-sign: avoids C signed overflow UB.
+                u_result = (<uint64_t>sa + <uint64_t>sb)
+                sresult  = _signed64(u_result, sz)
+                # Overflow: both inputs same sign, result has different sign.
                 frame.write_d(o_sp, o_off, o_sz,
-                    1 if sresult < -lim or sresult >= lim else 0)
+                    1 if ((sa < 0) == (sb < 0)) and ((sa < 0) != (sresult < 0)) else 0)
 
         elif oid == OP_INT_SBORROW:
             if o_sp != NO_OUT_SPACE:
-                sz      = i0_sz
-                sa      = _signed64(frame.read_d(i0_sp, i0_off, i0_sz), sz)
-                sb      = _signed64(frame.read_d(i1_sp, i1_off, i1_sz), sz)
-                sresult = sa - sb
-                lim     = <int64_t>1 << (sz * 8 - 1)
+                sz       = i0_sz
+                sa       = _signed64(frame.read_d(i0_sp, i0_off, i0_sz), sz)
+                sb       = _signed64(frame.read_d(i1_sp, i1_off, i1_sz), sz)
+                # Unsigned sub then re-sign: avoids C signed overflow UB.
+                u_result = (<uint64_t>sa - <uint64_t>sb)
+                sresult  = _signed64(u_result, sz)
+                # Overflow: inputs have different signs, result sign differs from dividend.
                 frame.write_d(o_sp, o_off, o_sz,
-                    1 if sresult < -lim or sresult >= lim else 0)
+                    1 if ((sa < 0) != (sb < 0)) and ((sa < 0) != (sresult < 0)) else 0)
 
         elif oid == OP_INT_ZEXT:
             if o_sp != NO_OUT_SPACE:
@@ -827,6 +830,16 @@ cdef class PCodeCellEvaluator:
         sz_obj = self._sizes.get(key)
         sz     = <int>sz_obj if sz_obj is not None else 8
         val    = frame._read_reg(off, sz)
+        # x86 EFLAGS (offset 640, size 4) is never written directly by pcode —
+        # the Sleigh spec writes individual flag registers (CF@512, ZF@518, etc.).
+        # Reconstruct EFLAGS from those when the direct read returns 0.
+        if val == 0 and off == 640 and sz == 4:
+            val = (frame._read_reg(512, 1)       |   # CF  bit 0
+                   (frame._read_reg(514, 1) << 2) |   # PF  bit 2
+                   (frame._read_reg(518, 1) << 6) |   # ZF  bit 6
+                   (frame._read_reg(519, 1) << 7) |   # SF  bit 7
+                   (frame._read_reg(522, 1) << 10)|   # DF  bit 10
+                   (frame._read_reg(523, 1) << 11))   # OF  bit 11
         if width >= 64:
             return val >> bit_start
         mask   = (<uint64_t>1 << width) - 1
