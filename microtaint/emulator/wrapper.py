@@ -60,6 +60,9 @@ _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X
 # We grab it once at import time so there's zero attribute lookup per call.
 # ---------------------------------------------------------------------------
 _uclib = _uu.uclib
+import unicorn as _unicorn_mod
+
+_UC_HOOK_MEM_WRITE_UNMAPPED = _unicorn_mod.UC_HOOK_MEM_WRITE_UNMAPPED
 _uc_reg_read = _uclib.uc_reg_read
 _uc_reg_read.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
 _uc_reg_read.restype = ctypes.c_int
@@ -293,6 +296,7 @@ class MicrotaintWrapper:
         self._policy = ImplicitTaintPolicy.STOP if (check_sc or check_bof) else ImplicitTaintPolicy.IGNORE
         self._uc_handle: object = None  # set properly in _setup_hooks
         self._any_taint: bool = False  # set True on first _taint_bytes call
+        self._mem_write_hook_registered: bool = False  # set True when hook registered
 
         self._setup_hooks()
 
@@ -306,7 +310,13 @@ class MicrotaintWrapper:
         Writes in 8-byte chunks to avoid uint64_t overflow in shadow.pyx
         (mask = (1 << (n*8)) - 1 overflows for n > 8).
         """
-        self._any_taint = True
+        if not self._any_taint:
+            self._any_taint = True
+            if not self._mem_write_hook_registered:
+                # Register _mem_write_clear_hook now that taint exists.
+                # Doing this lazily avoids 1.5M hook dispatches before taint injection.
+                self.ql.hook_mem_write(self._mem_write_clear_hook)
+                self._mem_write_hook_registered = True
         FULL_MASK = 0xFFFFFFFFFFFFFFFF
         written = 0
         while written + 8 <= n:
@@ -325,13 +335,34 @@ class MicrotaintWrapper:
         self.ql.os.set_syscall(0, self._sys_read_hook, QL_INTERCEPT.CALL)
         self.ql.os.set_syscall(334, self._stub_unimplemented_syscall, QL_INTERCEPT.ENTER)
 
-        self.ql.hook_mem_write(self._mem_write_clear_hook)
-
         if self.check_uaf:
+            # UAF detection requires _mem_write_clear_hook from the start —
+            # writes to poisoned (munmap'd) memory must be intercepted even before
+            # any taint is injected (UAF tests pass payload=b'').
+            self.ql.hook_mem_write(self._mem_write_clear_hook)
+            self._mem_write_hook_registered = True
             self.ql.os.set_syscall(11, self._munmap_hook, QL_INTERCEPT.ENTER)
             self.ql.hook_mem_read(self._mem_access_hook)
+            # Also catch writes to fully UNMAPPED pages (mmap→munmap→write pattern).
+            # UC_HOOK_MEM_WRITE_UNMAPPED fires before Qiling's crash handler.
+            self.ql.uc.hook_add(_UC_HOOK_MEM_WRITE_UNMAPPED, self._uaf_unmapped_write_hook)
+        else:
+            # For non-UAF modes, defer _mem_write_clear_hook until taint exists.
+            # This skips 1.5M hook dispatches before the first read() call.
+            self._mem_write_hook_registered = False
 
-        self.ql.hook_code(self._instruction_evaluator)
+        # Register the instruction hook with a C-level address range filter.
+        # Unicorn filters instructions in C before any Python is called —
+        # eliminates the entire Qiling hook dispatch overhead for libc/loader instructions.
+        begin, end = self._get_main_binary_range()
+        if begin and end:
+            self._main_base = begin
+            self._main_end = end
+            self._main_single = True
+            self._main_bounds = [(begin, end)]
+            self.ql.hook_code(self._instruction_evaluator, begin=begin, end=end)
+        else:
+            self.ql.hook_code(self._instruction_evaluator)
 
     def _sys_read_hook(self, ql: Qiling, fd: int, buf: int, count: int) -> int:
         if fd != 0 or count <= 0:
@@ -370,6 +401,19 @@ class MicrotaintWrapper:
         if length > 0:
             self.shadow_mem.poison(addr, length)
             logger.debug(f'Poisoned freed mmap region at 0x{addr:x} ({length}B)')
+
+    def _uaf_unmapped_write_hook(
+        self, uc: object, access: int, address: int, size: int, value: int, user_data: object
+    ) -> bool:
+        """Fires when code writes to UNMAPPED memory (UC_HOOK_MEM_WRITE_UNMAPPED).
+
+        Catches the mmap→munmap→write UAF pattern where the page is fully unmapped.
+        Returns False so Unicorn terminates the emulation run.
+        """
+        if self.shadow_mem.is_poisoned(address, size):
+            self.reporter.uaf(address, size)
+        self.ql.emu_stop()
+        return False
 
     def _mem_write_clear_hook(self, ql: Qiling, _access: int, address: int, size: int, _value: int) -> None:
         if self.check_uaf and self.shadow_mem.is_poisoned(address, size):
@@ -431,6 +475,16 @@ class MicrotaintWrapper:
             vals[flag] = (eflags >> bit) & 1
         return vals  # return all — caller uses what it needs
 
+    def _get_main_binary_range(self) -> tuple[int, int]:
+        """Return (base, end) of the main binary, or (0, 0) if unavailable."""
+        try:
+            if hasattr(self.ql.loader, 'images') and len(self.ql.loader.images) > 0:
+                img = self.ql.loader.images[0]
+                return img.base, img.end
+        except Exception:
+            pass
+        return 0, 0
+
     def _is_main_binary(self, address: int) -> bool:
         if not self._main_bounds:
             if hasattr(self.ql.loader, 'images') and len(self.ql.loader.images) > 0:
@@ -474,16 +528,14 @@ class MicrotaintWrapper:
     # ------------------------------------------------------------------
 
     def _instruction_evaluator(self, ql: Qiling, address: int, size: int) -> None:  # noqa: C901
-        # Taint check first — cheapest exit (2 dict bool lookups, ~0.5 µs).
-        # Eliminates ALL per-instruction work before the first read() taint injection.
+        # Taint check: skip all work when no taint has been injected yet.
+        # When hook_code is registered with a range, Unicorn's C filter already
+        # ensures address is within the main binary — no redundant bounds check needed.
         if not self.register_taint and not self._any_taint:
             return
 
-        # Bounds check second — only runs when taint is active.
-        if self._main_single:
-            if not (self._main_base <= address < self._main_end):
-                return
-        elif not self._is_main_binary(address):
+        # Bounds check only needed when hook is NOT range-filtered (fallback path).
+        if not self._main_single and not self._is_main_binary(address):
             return
 
         uch = self._uc_handle
