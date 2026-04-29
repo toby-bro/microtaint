@@ -339,13 +339,13 @@ cdef class _PCodeFrame:
                     return _mask64(uv >> (byte_off * 8), sz)
         return 0
 
-    cdef inline void _write_mem(self, int addr, uint64_t val, int size) noexcept:
+    cdef inline void _write_mem(self, uint64_t addr, uint64_t val, int size) noexcept:
         cdef int i
         val = _mask64(val, size)
         for i in range(size):
             self.mem[addr + i] = (val >> (i * 8)) & 0xFF
 
-    cdef inline uint64_t _read_mem(self, int addr, int size) noexcept:
+    cdef inline uint64_t _read_mem(self, uint64_t addr, int size) noexcept:
         cdef uint64_t result = 0
         cdef int i
         cdef object b
@@ -447,11 +447,11 @@ cdef void _execute_decoded(
         elif oid == OP_LOAD:
             if o_sp != NO_OUT_SPACE:
                 a = frame.read_d(i1_sp, i1_off, i1_sz)
-                frame.write_d(o_sp, o_off, o_sz, frame._read_mem(<int>a, o_sz))
+                frame.write_d(o_sp, o_off, o_sz, frame._read_mem(a, o_sz))
 
         elif oid == OP_STORE:
             a = frame.read_d(i1_sp, i1_off, i1_sz)
-            frame._write_mem(<int>a, frame.read_d(i2_sp, i2_off, i2_sz), i2_sz)
+            frame._write_mem(a, frame.read_d(i2_sp, i2_off, i2_sz), i2_sz)
 
         elif oid == OP_MULTIEQUAL or oid == OP_INDIRECT:
             if o_sp != NO_OUT_SPACE and n_ins > 0:
@@ -744,8 +744,8 @@ cdef class PCodeCellEvaluator:
         cdef object   name, val, off_obj, sz_obj
         cdef str      key, body
         cdef long     off
-        cdef int      sz, addr, size, sep
-        cdef uint64_t v
+        cdef int      sz, size, sep
+        cdef uint64_t v, addr
 
         frame.clear()
         for name, val in inputs.items():
@@ -776,8 +776,8 @@ cdef class PCodeCellEvaluator:
         cdef object   off_obj, sz_obj
         cdef str      key, body
         cdef long     off
-        cdef int      sz, addr, size, sep, width
-        cdef uint64_t val, mask
+        cdef int      sz, size, sep, width
+        cdef uint64_t val, mask, addr
 
         width = bit_end - bit_start + 1
 
