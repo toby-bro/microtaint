@@ -53,9 +53,9 @@ _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X
 #
 # Unicorn exposes uc_reg_read(uc_handle, reg_id, *value) as a C function.
 # Calling it directly via ctypes bypasses the entire Python binding stack:
-#   _select_reg_class → genexpr → __seq_tuple → next() → __get_reg_read_arg
-# which accounts for ~18µs per register in the Python binding.
-# Direct ctypes cost: ~1µs per register.
+#   _select_reg_class -> genexpr -> __seq_tuple -> next() -> __get_reg_read_arg
+# which accounts for ~18us per register in the Python binding.
+# Direct ctypes cost: ~1us per register.
 #
 # uclib is the module-level CDLL already loaded by the unicorn package.
 # We grab it once at import time so there's zero attribute lookup per call.
@@ -73,7 +73,7 @@ _uc_reg_read_batch = _uclib.uc_reg_read_batch
 _uc_reg_read_batch.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
 _uc_reg_read_batch.restype = ctypes.c_int
 
-# uc_mem_read: bypass Qiling's mem.read stack (~10 µs) with direct C call (~2 µs).
+# uc_mem_read: bypass Qiling's mem.read stack (~10 us) with direct C call (~2 us).
 _uc_mem_read = _uclib.uc_mem_read
 _uc_mem_read.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_size_t]
 _uc_mem_read.restype = ctypes.c_int
@@ -89,7 +89,7 @@ _MEM_PTRS: dict[int, object] = {
     8: ctypes.cast(_MEM_BUF, ctypes.POINTER(ctypes.c_uint64)),
 }
 
-# Complete name→UC_X86_REG_* mapping for AMD64 (superset of what we need)
+# Complete name->UC_X86_REG_* mapping for AMD64 (superset of what we need)
 _AMD64_REG_ID: dict[str, int] = {
     'RAX': _uc_x86_const.UC_X86_REG_RAX,
     'RBX': _uc_x86_const.UC_X86_REG_RBX,
@@ -144,7 +144,7 @@ _EFLAGS_BITS = {
     'OF': 11,
 }
 
-# Sleigh register-space byte offset → (uc_reg_name, uc_reg_id, needs_eflags_unpack)
+# Sleigh register-space byte offset -> (uc_reg_name, uc_reg_id, needs_eflags_unpack)
 # Covers all GP registers + RIP + flag offsets for AMD64/x86-64.
 # Used by _read_regs_by_offsets to translate pcode input_reg_offsets to UC reads.
 _SLEIGH_OFFSET_TO_UC: dict[int, tuple[str, int, bool]] = {
@@ -216,7 +216,7 @@ def _build_offsets_arrays(offsets):
 
     n = len(uc_ids)
     if n == 0:
-        result = (None, None, None, [], False)
+        result = (None, None, None, 0, [], False)
         _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
         return result
 
@@ -224,7 +224,8 @@ def _build_offsets_arrays(offsets):
     vals_arr = (ctypes.c_uint64 * n)()
     ptrs_arr = (ctypes.c_void_p * n)(*[ctypes.addressof(vals_arr) + i * 8 for i in range(n)])
 
-    result = (ids_arr, vals_arr, ptrs_arr, uc_names, needs_eflags)
+    # Store n = len(uc_names) in the tuple to avoid len() on the hot path
+    result = (ids_arr, vals_arr, ptrs_arr, len(uc_names), uc_names, needs_eflags)
     _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
     return result
 
@@ -238,15 +239,14 @@ def _exec_regs_from_arrays(uch: object, arrays: object) -> dict[str, int]:
     """Execute a single targeted uc_reg_read_batch using pre-built cached arrays.
 
     Hot path: one C call + one dict comprehension. Zero allocation.
-    arrays = (ids_arr, vals_arr, ptrs_arr, uc_names, needs_eflags)
+    arrays = (ids_arr, vals_arr, ptrs_arr, n, uc_names, needs_eflags)
     """
     try:
-        ids_arr, vals_arr, ptrs_arr, uc_names, needs_eflags = arrays
+        ids_arr, vals_arr, ptrs_arr, n, uc_names, needs_eflags = arrays
 
         if ids_arr is None:
             return {}
 
-        n = len(uc_names)
         err = _uc_reg_read_batch(uch, ids_arr, ptrs_arr, n)
         if err != 0:
             return _read_regs_ctypes(uch, _ALL_REG_NAMES)
@@ -295,7 +295,7 @@ _PTRS_ARR = (ctypes.c_void_p * _N_REGS)(*[ctypes.addressof(_VALS_ARR) + i * 8 fo
 
 def _read_regs_ctypes(uch: ctypes.c_void_p, _names_unused: list[str]) -> dict[str, int]:
     """
-    Read all 18 AMD64 registers in one uc_reg_read_batch C call (~1.3 µs total).
+    Read all 18 AMD64 registers in one uc_reg_read_batch C call (~1.3 us total).
     Falls back gracefully on any error.
     """
     try:
@@ -435,7 +435,7 @@ class MicrotaintWrapper:
             self._any_taint = True
             # Register instruction hook now that taint exists.
             # Before this point, Unicorn ran without any instruction hook —
-            # saving ~6 µs * N_untainted_instructions in Unicorn's C overhead.
+            # saving ~6 us x N_untainted_instructions in Unicorn's C overhead.
             if not self._instr_hook_registered:
                 if self._main_single:
                     self.ql.uc.hook_add(
@@ -477,7 +477,7 @@ class MicrotaintWrapper:
             self._mem_write_hook_registered = True
             self.ql.os.set_syscall(11, self._munmap_hook, QL_INTERCEPT.ENTER)
             self.ql.hook_mem_read(self._mem_access_hook)
-            # Also catch writes to fully UNMAPPED pages (mmap→munmap→write pattern).
+            # Also catch writes to fully UNMAPPED pages (mmap->munmap->write pattern).
             # UC_HOOK_MEM_WRITE_UNMAPPED fires before Qiling's crash handler.
             self.ql.uc.hook_add(_UC_HOOK_MEM_WRITE_UNMAPPED, self._uaf_unmapped_write_hook)
         else:
@@ -497,7 +497,7 @@ class MicrotaintWrapper:
         # Do NOT register the instruction hook here.
         # It is registered lazily in _taint_bytes when the first taint is injected.
         # Unicorn runs 5M+ instructions before taint injection — registering early
-        # costs ~6 µs/instruction in Unicorn's C→Python overhead even for early-exit.
+        # costs ~6 us/instruction in Unicorn's C->Python overhead even for early-exit.
         # Deferred registration: ~0 cost before taint, normal cost after.
         self._instr_hook_registered: bool = False
 
@@ -540,17 +540,11 @@ class MicrotaintWrapper:
             logger.debug(f'Poisoned freed mmap region at 0x{addr:x} ({length}B)')
 
     def _uaf_unmapped_write_hook(
-        self,
-        uc: object,
-        access: int,
-        address: int,
-        size: int,
-        value: int,
-        user_data: object,
+        self, uc: object, access: int, address: int, size: int, value: int, user_data: object
     ) -> bool:
         """Fires when code writes to UNMAPPED memory (UC_HOOK_MEM_WRITE_UNMAPPED).
 
-        Catches the mmap→munmap→write UAF pattern where the page is fully unmapped.
+        Catches the mmap->munmap->write UAF pattern where the page is fully unmapped.
         Returns False so Unicorn terminates the emulation run.
         """
         if self.shadow_mem.is_poisoned(address, size):
@@ -671,7 +665,7 @@ class MicrotaintWrapper:
     # ------------------------------------------------------------------
 
     def _instruction_evaluator_raw(self, uc: object, address: int, size: int, user_data: object) -> None:  # noqa: C901
-        """Direct Unicorn hook — bypasses Qiling's Python dispatch chain (~12 µs/instr saved)."""
+        """Direct Unicorn hook — bypasses Qiling's Python dispatch chain (~12 us/instr saved)."""
         if not self.register_taint and not self._any_taint:
             return
         uch = self._uc_handle
@@ -686,13 +680,20 @@ class MicrotaintWrapper:
         # input_reg_offsets = exact Sleigh byte offsets of SP_REGISTER pcode inputs.
         try:
             _decoded = _get_decoded(self.arch, instruction_bytes)
-            # Use _uc_arrays cached directly on the DecodedOps object:
-            # one cdef field access (~5ns) vs frozenset() hash (~4µs).
             _uc_arrs = _decoded._uc_arrays
             if _uc_arrs is None:
                 _uc_arrs = _build_offsets_arrays(_decoded.input_reg_offsets)
                 _decoded._uc_arrays = _uc_arrs
-            self._pre_regs = _exec_regs_from_arrays(uch, _uc_arrs)
+            # Inlined _exec_regs_from_arrays — eliminates function call overhead
+            _ids, _vals, _ptrs, _n, _names, _need_ef = _uc_arrs
+            if _ids is None:
+                self._pre_regs = {}
+            else:
+                _uc_reg_read_batch(uch, _ids, _ptrs, _n)
+                self._pre_regs = {_names[_i]: int(_vals[_i]) for _i in range(_n)}
+                if _need_ef:
+                    _ef = self._pre_regs.get('EFLAGS', 0)
+                    self._pre_regs.update({_f: (_ef >> _b) & 1 for _f, _b in _EFLAGS_BITS.items()})
         except Exception:
             self._pre_regs = self._get_live_registers(uch)
         self._pre_taint = dict(self.register_taint)
@@ -719,6 +720,7 @@ class MicrotaintWrapper:
 
             for key, val in output_state.items():
                 if key[:4] == 'MEM_':
+                    # key[:4]=='MEM_' is ~2x faster than str.startswith for this hot loop.
                     _body = key[4:]
                     _last = _body.rfind('_')
                     if _last < 0:
