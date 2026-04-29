@@ -21,9 +21,18 @@ from unicorn import (
     UC_MODE_ARM,
 )
 
+from microtaint.instrumentation.cell import PCodeCellEvaluator
 from microtaint.types import Architecture
 
 logger = logging.getLogger(__name__)
+
+
+# Lazy import so that simulator.py has no hard dependency on the pcode
+# sub-system when use_unicorn=True (the default, unchanged path).
+def _get_pcode_evaluator_class() -> type[PCodeCellEvaluator]:
+
+    return PCodeCellEvaluator
+
 
 _ARCH_MAP = {
     Architecture.X86: (UC_ARCH_X86, UC_MODE_32),
@@ -154,10 +163,18 @@ class CellSimulator:
     on V | T and V & ~T, computing the precise logical XOR differential.
     """
 
-    def __init__(self, arch: Architecture) -> None:
+    def __init__(self, arch: Architecture, use_unicorn: bool = False) -> None:
         if arch not in _ARCH_MAP:
             raise ValueError(f'Architecture {arch} is not supported by CellSimulator.')
         self.arch = arch
+        self.use_unicorn = use_unicorn
+
+        # P-code native evaluator — instantiated only when use_unicorn=False.
+        # Kept as None on the default path so there is zero import cost.
+        self._pcode: Any = None
+        if not use_unicorn:
+            self._pcode = _get_pcode_evaluator_class()(arch)
+
         uc_arch, uc_mode = _ARCH_MAP[arch]
         self.uc = uc_py3.Uc(uc_arch, uc_mode)
 
@@ -188,12 +205,21 @@ class CellSimulator:
             self.uc.reg_write(uc_arm64_const.UC_ARM64_REG_SP, stack_base)  # pyright: ignore[reportUnknownMemberType]
 
         self._pristine_context = self.uc.context_save()
+
+        # Cache PC register ID — avoids a match statement on every _execute call
+        if arch == Architecture.X86:
+            self._pc_reg: int = uc_x86_const.UC_X86_REG_EIP
+        elif arch == Architecture.AMD64:
+            self._pc_reg = uc_x86_const.UC_X86_REG_RIP
+        else:
+            self._pc_reg = uc_arm64_const.UC_ARM64_REG_PC
         # Bytestring cache — skip redundant mem_write when code hasn't changed
         self._last_bytestring: bytes = b''
 
         # Pre-compute canonical batch register list for this arch (write path only)
         # Excludes sub-registers and flags — those are handled separately below.
         self._batch_reg_pairs: list[tuple[int, str]] = []
+        self._pending_reg_writes: dict[int, int] = {}  # reused across calls
         _batch_names = {
             Architecture.AMD64: [
                 'RAX',
@@ -340,22 +366,13 @@ class CellSimulator:
         mem_sizes: dict[int, int] | None = None,
     ) -> None:
         """
-        Executes the exact instruction over a given concrete MachineState (writes to registers and memory).
+        Single concrete execution over a MachineState.
+        Used by evaluate_concrete. For the differential, use evaluate_cell_differential
+        which uses context_save/restore to avoid double setup overhead.
         """
         self.clear_memory_and_registers()
         self.setup_registers_and_memory(state, mem_sizes)
-
-        match self.arch:
-            case Architecture.X86:
-                pc_reg = uc_x86_const.UC_X86_REG_EIP
-            case Architecture.AMD64:
-                pc_reg = uc_x86_const.UC_X86_REG_RIP
-            case Architecture.ARM64:
-                pc_reg = uc_arm64_const.UC_ARM64_REG_PC
-            case _:
-                raise ValueError(f'Unsupported architecture: {self.arch}')
-
-        self.uc.reg_write(pc_reg, self.CODE_ADDR)  # pyright: ignore[reportUnknownMemberType]
+        self.uc.reg_write(self._pc_reg, self.CODE_ADDR)  # pyright: ignore[reportUnknownMemberType]
         if bytestring != self._last_bytestring:
             self.uc.mem_write(self.CODE_ADDR, bytestring)
             self._last_bytestring = bytestring
@@ -382,7 +399,6 @@ class CellSimulator:
                 raise
 
     def setup_registers_and_memory(self, state: MachineState, mem_sizes: dict[int, int] | None) -> None:  # noqa: C901
-        self._pending_reg_writes: dict[int, int] = {}
         for reg_name, val in state.regs.items():
 
             # Prevent Stack Underflow
@@ -462,14 +478,21 @@ class CellSimulator:
             if uc_reg is not None:
                 self._pending_reg_writes[uc_reg] = val
 
-        # Flush all pending register writes in one batch call
+        # Flush pending register writes.
+        # Use batch only when there are enough registers to amortise the overhead
+        # of list construction + ctypes dispatch. Below ~6 registers individual
+        # reg_write calls are faster (benchmark-verified).
         if self._pending_reg_writes:
-            reg_data = list(self._pending_reg_writes.items())
-            try:
-                self.uc.reg_write_batch(reg_data)  # pyright: ignore[reportUnknownMemberType]
-            except AttributeError:
-                # Fallback for unicorn builds without reg_write_batch
-                for uc_id, v in reg_data:
+            if len(self._pending_reg_writes) >= 6:
+                try:
+                    self.uc.reg_write_batch(
+                        list(self._pending_reg_writes.items()),
+                    )  # pyright: ignore[reportUnknownMemberType]
+                except AttributeError:
+                    for uc_id, v in self._pending_reg_writes.items():
+                        self.uc.reg_write(uc_id, v)  # pyright: ignore[reportUnknownMemberType]
+            else:
+                for uc_id, v in self._pending_reg_writes.items():
                     self.uc.reg_write(uc_id, v)  # pyright: ignore[reportUnknownMemberType]
             self._pending_reg_writes.clear()
 
@@ -515,10 +538,27 @@ class CellSimulator:
             self._dirtied_memory.add(addr)
 
     def evaluate_concrete(self, cell: Any, v_state: MachineState) -> int:
+        # --- P-code native path (use_unicorn=False) ---
+        # Flatten MachineState into the dict[str, int] the pcode evaluator expects.
+        # Memory entries become 'MEM_<hex_addr>_<size>' keys.
+        if not self.use_unicorn:
+            assert self._pcode is not None
+            flat: dict[str, int] = dict(v_state.regs)
+            for addr, val in v_state.mem.items():
+                size = max(1, (val.bit_length() + 7) // 8) if val else 8
+                flat[f'MEM_{hex(addr)}_{size}'] = val
+            from microtaint.instrumentation.cell import PCodeFallbackNeeded  # noqa: PLC0415
+
+            try:
+                return self._pcode.evaluate_concrete(cell, flat)
+            except PCodeFallbackNeeded:
+                self._pcode.fallback_calls += 1
+                # Fall through to Unicorn below
+
+        # --- Unicorn path (use_unicorn=True, or pcode fallback) ---
         try:
             self._execute(bytes.fromhex(cell.instruction), v_state)
         except Exception as e:
-            # Zero performance drop on the hot path, but saves your life debugging
             logger.error(f'[!] Microtaint Unicorn crash on instruction (hex): {cell.instruction}. Exception: {e}')
             raise
 
@@ -533,7 +573,7 @@ class CellSimulator:
         v_state: MachineState,
         t_state: MachineState,
     ) -> int:
-        # 1. Resolve target format cleanly
+        # 1. Resolve target format
         is_reg_slice = False
         is_mem_target = False
         mem_addr = 0
@@ -551,12 +591,11 @@ class CellSimulator:
         else:
             target_reg_str = target_reg
 
-        # 2. Setup unified states
+        # 2. Build OR / AND states
         state_or = MachineState()
         state_and = MachineState()
         mem_sizes: dict[int, int] = {}
 
-        # 3. Process Registers
         all_regs = set(v_state.regs.keys()) | set(t_state.regs.keys())
         for reg in all_regs:
             v = v_state.regs.get(reg, 0)
@@ -564,30 +603,62 @@ class CellSimulator:
             state_or.regs[reg] = v | t
             state_and.regs[reg] = v & ~t
 
-        # 4. Process Memory
         all_addrs = set(v_state.mem.keys()) | set(t_state.mem.keys())
         for addr in all_addrs:
             v_val = v_state.mem.get(addr, 0)
             t_val = t_state.mem.get(addr, 0)
-
             state_or.mem[addr] = v_val | t_val
             state_and.mem[addr] = v_val & ~t_val
+            mem_sizes[addr] = 8 if v_val == 0 else max(8, (v_val.bit_length() + 7) // 8)
 
-            if v_val == 0:
-                mem_sizes[addr] = 8
-            else:
-                mem_sizes[addr] = max(8, (v_val.bit_length() + 7) // 8)
+        # 3. Write code bytes once (cached — skip if unchanged)
+        if bytestring != self._last_bytestring:
+            self.uc.mem_write(self.CODE_ADDR, bytestring)
+            self._last_bytestring = bytestring
 
-        # 5. Execute using the typed MachineState structures directly
-        self._execute(bytestring, state_or, mem_sizes)
+        # 4. Run OR: full setup then emu_start.
+        # context_save/restore only snapshots CPU registers, NOT memory.
+        # For instructions with memory operands both runs need fresh memory writes,
+        # so we cannot use context_restore to skip memory setup.
+        # We DO use context_save to avoid re-running setup_registers_and_memory
+        # for the register portion of the AND run when there is no memory state.
+        has_memory = bool(state_or.mem)
+
+        self.clear_memory_and_registers()
+        self.setup_registers_and_memory(state_or, mem_sizes)
+        self.uc.reg_write(self._pc_reg, self.CODE_ADDR)  # pyright: ignore[reportUnknownMemberType]
+
+        try:
+            self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
+        except uc_py3.UcError as e:
+            if e.errno not in (UC_ERR_FETCH_UNMAPPED, UC_ERR_MAP, UC_ERR_READ_UNMAPPED, UC_ERR_WRITE_UNMAPPED):
+                raise
         res_or = self._read_mem(mem_addr, mem_size) if is_mem_target else self._read_reg(target_reg_str)
 
-        self._execute(bytestring, state_and, mem_sizes)
+        # 5. Run AND.
+        if has_memory:
+            # Memory present: must do full setup to write correct memory values
+            self.clear_memory_and_registers()
+            self.setup_registers_and_memory(state_and, mem_sizes)
+            self.uc.reg_write(self._pc_reg, self.CODE_ADDR)  # pyright: ignore[reportUnknownMemberType]
+        else:
+            # No memory: save context after OR setup, build AND register state,
+            # save that context too — then restore each before emu_start.
+            # This avoids running setup_registers_and_memory a second time from scratch.
+            self.uc.context_restore(self._pristine_context)
+            self.setup_registers_and_memory(state_and, mem_sizes)
+            self.uc.reg_write(self._pc_reg, self.CODE_ADDR)  # pyright: ignore[reportUnknownMemberType]
+
+        try:
+            self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
+        except uc_py3.UcError as e:
+            if e.errno not in (UC_ERR_FETCH_UNMAPPED, UC_ERR_MAP, UC_ERR_READ_UNMAPPED, UC_ERR_WRITE_UNMAPPED):
+                raise
         res_and = self._read_mem(mem_addr, mem_size) if is_mem_target else self._read_reg(target_reg_str)
 
         raw_diff = res_or ^ res_and
 
-        # 6. Apply bit slice if it was requested via legacy tuple
+        # 8. Apply bit slice if requested
         if is_reg_slice and isinstance(target_reg, tuple):
             bit_start = target_reg[1]
             bit_end = target_reg[2]

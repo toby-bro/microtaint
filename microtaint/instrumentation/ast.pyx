@@ -541,13 +541,29 @@ cdef class InstructionCellExpr(Expr):
 
     cpdef object evaluate(self, EvalContext context):
         assert context.simulator is not None, 'Simulator instance required'
-        
+
         cdef dict evaluated_inputs = {}
         cdef str name
         cdef Expr expr
-        
+
         for name, expr in self.inputs.items():
             evaluated_inputs[name] = expr.evaluate(context)
 
+        # --- P-code native path (use_unicorn=False) ---
+        # InstructionCellExpr is always called as one half of a BinaryExpr(XOR, C1, C2)
+        # in the engine's make_differential().  C1 holds the rep1 (V|T) inputs and
+        # C2 holds the rep2 (V&~T) inputs.  By the time evaluate() is called here,
+        # self.inputs has already been fully evaluated into a flat dict of concrete
+        # integer values — exactly the flat_inputs that PCodeCellEvaluator.evaluate_concrete
+        # expects.  We simply run one concrete execution and return the output slice.
+        if not context.simulator.use_unicorn:
+            from microtaint.instrumentation.cell import PCodeFallbackNeeded
+            try:
+                return context.simulator._pcode.evaluate_concrete(self, evaluated_inputs)
+            except PCodeFallbackNeeded:
+                context.simulator._pcode.fallback_calls += 1
+                # Fall through to Unicorn path below
+
+        # --- Unicorn path (default, or pcode fallback) ---
         m_state = _build_machine_state(evaluated_inputs, context)
         return context.simulator.evaluate_concrete(self, m_state)
