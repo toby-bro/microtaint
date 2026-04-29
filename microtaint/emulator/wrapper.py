@@ -47,6 +47,44 @@ X64_FORMAT = [
 # via genexpr on every generate_static_rule call (was 2.26s in profiling).
 _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X64_FORMAT)
 
+# ---------------------------------------------------------------------------
+# ctypes shim for uc_reg_read
+#
+# Unicorn exposes uc_reg_read(uc_handle, reg_id, *value) as a C function.
+# Calling it directly via ctypes bypasses the entire Python binding stack:
+#   _select_reg_class → genexpr → __seq_tuple → next() → __get_reg_read_arg
+# which accounts for ~18µs per register in the Python binding.
+# Direct ctypes cost: ~1µs per register.
+#
+# uclib is the module-level CDLL already loaded by the unicorn package.
+# We grab it once at import time so there's zero attribute lookup per call.
+# ---------------------------------------------------------------------------
+_uclib = _uu.uclib
+_uc_reg_read = _uclib.uc_reg_read
+_uc_reg_read.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+_uc_reg_read.restype = ctypes.c_int
+
+# uc_reg_read_batch: one C call reads all N registers — ~18x faster than individual calls.
+_uc_reg_read_batch = _uclib.uc_reg_read_batch
+_uc_reg_read_batch.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+_uc_reg_read_batch.restype = ctypes.c_int
+
+# uc_mem_read: bypass Qiling's mem.read stack (~10 µs) with direct C call (~2 µs).
+_uc_mem_read = _uclib.uc_mem_read
+_uc_mem_read.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_size_t]
+_uc_mem_read.restype = ctypes.c_int
+
+# Pre-allocated C arrays — defined AFTER _ALL_REG_NAMES below.
+_MEM_BUF_SIZE = 64
+_MEM_BUF = (ctypes.c_uint8 * _MEM_BUF_SIZE)()
+# Pre-cast typed pointers into _MEM_BUF — direct C dereference, ~2.5x faster than struct.
+_MEM_PTRS: dict[int, object] = {
+    1: ctypes.cast(_MEM_BUF, ctypes.POINTER(ctypes.c_uint8)),
+    2: ctypes.cast(_MEM_BUF, ctypes.POINTER(ctypes.c_uint16)),
+    4: ctypes.cast(_MEM_BUF, ctypes.POINTER(ctypes.c_uint32)),
+    8: ctypes.cast(_MEM_BUF, ctypes.POINTER(ctypes.c_uint64)),
+}
+
 # Complete name→UC_X86_REG_* mapping for AMD64 (superset of what we need)
 _AMD64_REG_ID: dict[str, int] = {
     'RAX': _uc_x86_const.UC_X86_REG_RAX,
@@ -125,42 +163,11 @@ _ALL_REG_NAMES: list[str] = [
 ]
 _ALL_REG_IDS: list[int] = [_AMD64_REG_ID[n] for n in _ALL_REG_NAMES]
 
-# ---------------------------------------------------------------------------
-# ctypes shim for uc_reg_read
-#
-# Unicorn exposes uc_reg_read(uc_handle, reg_id, *value) as a C function.
-# Calling it directly via ctypes bypasses the entire Python binding stack:
-#   _select_reg_class → genexpr → __seq_tuple → next() → __get_reg_read_arg
-# which accounts for ~18µs per register in the Python binding.
-# Direct ctypes cost: ~1µs per register.
-#
-# uclib is the module-level CDLL already loaded by the unicorn package.
-# We grab it once at import time so there's zero attribute lookup per call.
-# ---------------------------------------------------------------------------
-_uclib = _uu.uclib
-_uc_reg_read = _uclib.uc_reg_read
-_uc_reg_read.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
-_uc_reg_read.restype = ctypes.c_int
-
-# uc_reg_read_batch: one C call reads all N registers — ~18x faster than individual calls.
-_uc_reg_read_batch = _uclib.uc_reg_read_batch
-_uc_reg_read_batch.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
-_uc_reg_read_batch.restype = ctypes.c_int
-
-# uc_mem_read: bypass Qiling's mem.read stack (~10 µs) with direct C call (~2 µs).
-_uc_mem_read = _uclib.uc_mem_read
-_uc_mem_read.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_size_t]
-_uc_mem_read.restype = ctypes.c_int
-
-# Pre-allocated C arrays for batch register reads — reused every snapshot, zero allocation.
+# Pre-allocated C arrays for uc_reg_read_batch — must come after _ALL_REG_NAMES.
 _N_REGS = len(_ALL_REG_NAMES)
 _IDS_ARR = (ctypes.c_int * _N_REGS)(*[_AMD64_REG_ID[n] for n in _ALL_REG_NAMES])
 _VALS_ARR = (ctypes.c_uint64 * _N_REGS)()
 _PTRS_ARR = (ctypes.c_void_p * _N_REGS)(*[ctypes.addressof(_VALS_ARR) + i * 8 for i in range(_N_REGS)])
-
-# Pre-allocated buffer for memory reads (up to 64 bytes).
-_MEM_BUF_SIZE = 64
-_MEM_BUF = (ctypes.c_uint8 * _MEM_BUF_SIZE)()
 
 
 def _read_regs_ctypes(uch: ctypes.c_void_p, _names_unused: list[str]) -> dict[str, int]:
@@ -282,17 +289,12 @@ class MicrotaintWrapper:
 
         # Unicorn C handle — resolved lazily on first instruction hook call
         # because ql.uc may not be valid at __init__ time.
-        self._uch: ctypes.c_void_p | None = None
         # Cache ImplicitTaintPolicy — computed once, used on every instruction.
         self._policy = ImplicitTaintPolicy.STOP if (check_sc or check_bof) else ImplicitTaintPolicy.IGNORE
+        self._uc_handle: object = None  # set properly in _setup_hooks
+        self._any_taint: bool = False  # set True on first _taint_bytes call
 
         self._setup_hooks()
-
-    def _get_uch(self) -> ctypes.c_void_p:
-        """Resolve (and cache) the raw Unicorn C engine handle."""
-        if self._uch is None:
-            self._uch = self.ql.uc._uch
-        return self._uch
 
     # ------------------------------------------------------------------
     # Syscall hooks
@@ -304,6 +306,7 @@ class MicrotaintWrapper:
         Writes in 8-byte chunks to avoid uint64_t overflow in shadow.pyx
         (mask = (1 << (n*8)) - 1 overflows for n > 8).
         """
+        self._any_taint = True
         FULL_MASK = 0xFFFFFFFFFFFFFFFF
         written = 0
         while written + 8 <= n:
@@ -315,6 +318,10 @@ class MicrotaintWrapper:
             self.shadow_mem.write_mask(address + written, remainder_mask, remainder)
 
     def _setup_hooks(self) -> None:
+        # Cache the raw Unicorn C handle once. ql.uc is a property that
+        # does work on every access — caching avoids 407k property calls.
+        self._uc_handle = self.ql.uc._uch
+
         self.ql.os.set_syscall(0, self._sys_read_hook, QL_INTERCEPT.CALL)
         self.ql.os.set_syscall(334, self._stub_unimplemented_syscall, QL_INTERCEPT.ENTER)
 
@@ -387,34 +394,22 @@ class MicrotaintWrapper:
     # ------------------------------------------------------------------
 
     def _read_live_memory(self, address: int, size: int) -> int:
-        """Read `size` bytes from Unicorn memory at `address` via direct ctypes call.
-
-        Bypasses Qiling's mem.read stack (property lookup → audit → ctypes buffer
-        allocation) at ~10 µs/call. Direct uc_mem_read costs ~2 µs.
-        """
+        """Read `size` bytes from Unicorn via uc_mem_read + typed ctypes pointer."""
         try:
-            if size <= _MEM_BUF_SIZE:
-                err = _uc_mem_read(self._get_uch(), address, _MEM_BUF, size)
-                if err == 0:
-                    return int.from_bytes(_MEM_BUF[:size], 'little')
+            err = _uc_mem_read(self._uc_handle, address, _MEM_BUF, size)
+            if err == 0:
+                ptr = _MEM_PTRS.get(size)
+                if ptr is not None:
+                    return ptr[0]
+                return int.from_bytes(_MEM_BUF[:size], 'little')
             return int.from_bytes(self.ql.mem.read(address, size), 'little')
         except Exception:
             return 0
 
-    def _get_live_registers(self) -> dict[str, int]:
-        """
-        Read all 18 AMD64 registers from Unicorn via direct ctypes calls.
-
-        Ctypes bypasses the Python binding's per-register dispatch overhead
-        (~1 µs/reg vs ~36 µs/reg), giving ~18 µs total vs ~651 µs originally.
-        Falls back to Python reg_read_batch if ctypes fails.
-
-        All registers are read unconditionally — selective reading caused
-        correctness regressions when the circuit needed registers not predicted
-        by the static walker.
-        """
+    def _get_live_registers(self, uch: object) -> dict[str, int]:
+        """Read all 18 AMD64 registers via uc_reg_read_batch, fall back to Python."""
         try:
-            return _read_regs_ctypes(self._get_uch(), _ALL_REG_NAMES)
+            return _read_regs_ctypes(uch, _ALL_REG_NAMES)
         except Exception:
             return self._get_live_registers_python()
 
@@ -479,17 +474,24 @@ class MicrotaintWrapper:
     # ------------------------------------------------------------------
 
     def _instruction_evaluator(self, ql: Qiling, address: int, size: int) -> None:  # noqa: C901
-        if not self._is_main_binary(address):
+        # Taint check first — cheapest exit (2 dict bool lookups, ~0.5 µs).
+        # Eliminates ALL per-instruction work before the first read() taint injection.
+        if not self.register_taint and not self._any_taint:
             return
 
-        # Fetch instruction bytes directly via uc_mem_read — bypasses Qiling's
-        # mem.read stack (property lookup + audit + create_string_buffer) at ~10 µs.
-        uch = self._get_uch()
+        # Bounds check second — only runs when taint is active.
+        if self._main_single:
+            if not (self._main_base <= address < self._main_end):
+                return
+        elif not self._is_main_binary(address):
+            return
+
+        uch = self._uc_handle
         err = _uc_mem_read(uch, address, _MEM_BUF, size)
         instruction_bytes = bytes(_MEM_BUF[:size]) if err == 0 else bytes(ql.mem.read(address, size))
         circuit = _cached_generate_static_rule(self.arch, instruction_bytes, _X64_FORMAT_KEY)
 
-        self._pre_regs = self._get_live_registers()
+        self._pre_regs = self._get_live_registers(uch)
         self._pre_taint = dict(self.register_taint)
 
         ctx = EvalContext(
@@ -506,16 +508,23 @@ class MicrotaintWrapper:
 
             # Single pass over output_state: update shadow_mem, register_taint,
             # _last_tainted_writes, and collect MEM_ entries for AIW check.
-            self._last_tainted_writes.clear()
+            if self._last_tainted_writes:
+                self._last_tainted_writes.clear()
             self.register_taint.clear()
             mem_writes: list[tuple[int, int, int]] = []  # (addr, size, val)
 
             for key, val in output_state.items():
                 if key.startswith('MEM_'):
-                    parsed = self._parse_mem_key(key)
-                    if parsed is None:
+                    # Inline _parse_mem_key to avoid method call overhead (40k calls).
+                    _body = key[4:]
+                    _last = _body.rfind('_')
+                    if _last < 0:
                         continue
-                    mem_addr, mem_size = parsed
+                    try:
+                        mem_addr = int(_body[:_last], 16)
+                        mem_size = int(_body[_last + 1 :])
+                    except ValueError:
+                        continue
                     self.shadow_mem.write_mask(mem_addr, val, mem_size)
                     if val:
                         for i in range(mem_size):
