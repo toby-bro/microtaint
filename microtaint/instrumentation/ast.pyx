@@ -444,12 +444,31 @@ cdef class TaintAssignment:
         return f"TaintAssignment(target={repr(self.target)}, expression={repr(self.expression)})"
 
 
+def _collect_taint_operand_names(expr, result_set):
+    """Recursively collect TaintOperand register names from an expression tree."""
+    if expr is None:
+        return
+    if isinstance(expr, TaintOperand):
+        if expr.name and not expr.name.startswith('MEM_'):
+            result_set.add(expr.name)
+    elif isinstance(expr, BinaryExpr):
+        _collect_taint_operand_names(expr.lhs, result_set)
+        _collect_taint_operand_names(expr.rhs, result_set)
+    elif isinstance(expr, UnaryExpr) or isinstance(expr, AvalancheExpr):
+        _collect_taint_operand_names(expr.expr, result_set)
+    elif isinstance(expr, InstructionCellExpr):
+        for _sub_expr in expr.inputs.values():
+            _collect_taint_operand_names(_sub_expr, result_set)
+
+
 cdef class LogicCircuit:
     cdef public list assignments
     cdef public object architecture
     cdef public str instruction
     cdef public list state_format
-    cdef public str _pc_target  # pre-computed: 'RIP'/'EIP'/'PC' or None
+    cdef public str _pc_target      # pre-computed: 'RIP'/'EIP'/'PC' or None
+    cdef public bint has_unicorn_cells  # True if any assignment uses InstructionCellExpr
+    cdef public object input_reg_names  # set of register names needed as value inputs
 
     def __init__(self, list assignments, object architecture, str instruction, list state_format):
         self.assignments = assignments
@@ -458,10 +477,15 @@ cdef class LogicCircuit:
         self.state_format = state_format
         # Pre-compute which PC register (if any) is a target — checked every evaluate()
         self._pc_target = None
+        self.has_unicorn_cells = False
+        self.input_reg_names = set()  # register names needed as VALUE inputs
         for _a in assignments:
             if not _a.is_mem_target and _a.target.name in ('RIP', 'EIP', 'PC'):
                 self._pc_target = _a.target.name
-                break
+            if isinstance(_a.expression, InstructionCellExpr):
+                self.has_unicorn_cells = True
+            # Collect TaintOperand register names (both taint + value operands)
+            _collect_taint_operand_names(_a.expression, self.input_reg_names)
 
     def __str__(self):
         return '\n'.join(str(a) for a in self.assignments)
@@ -470,7 +494,10 @@ cdef class LogicCircuit:
         return f"LogicCircuit(instr={self.instruction}, assignments_count={len(self.assignments)})"
 
     cpdef dict evaluate(self, EvalContext context):
+        # Cache frequently accessed context fields as C locals — avoids repeated
+        # Python property dispatch for each field access in the hot loop.
         cdef dict output_taint = context.input_taint.copy()
+        cdef object implicit_policy = context.implicit_policy
         cdef object val
         cdef object address
         cdef str target_name
@@ -508,7 +535,6 @@ cdef class LogicCircuit:
                 bit_end = assignment.target.bit_end
 
             # 3. Apply bit-precise masking to preserve partial registers
-            # <object>1 prevents 32-bit overflow crashes when bit-shifting in Cython
             mask = ((<object>1 << (bit_end - bit_start + 1)) - 1) << bit_start
             val = (val << bit_start) & mask
 
@@ -516,7 +542,6 @@ cdef class LogicCircuit:
             output_taint[target_name] = (current & ~mask) | val
 
         # --- THE IMPLICIT TAINT INTERCEPTOR ---
-        # _pc_target is pre-computed at circuit build time — no per-call iteration.
         cdef str pc_reg = None
         if self._pc_target is not None and output_taint.get(self._pc_target, 0) != 0:
             pc_reg = self._pc_target
@@ -524,13 +549,13 @@ cdef class LogicCircuit:
         if pc_reg is not None:
             from microtaint.types import ImplicitTaintPolicy, ImplicitTaintError
             
-            if context.implicit_policy == ImplicitTaintPolicy.WARN:
+            if implicit_policy == ImplicitTaintPolicy.WARN:
                 print(
                     f"[Microtaint] Implicit Taint Detected! "
                     f"Control flow ({pc_reg}) depends on tainted data at instruction: {self.instruction}"
                 )
             
-            elif context.implicit_policy == ImplicitTaintPolicy.STOP:
+            elif implicit_policy == ImplicitTaintPolicy.STOP:
                 raise ImplicitTaintError(
                     f"\n[!] FATAL: Implicit Taint Detected\n"
                     f"    Instruction (Hex): {self.instruction}\n"
@@ -539,8 +564,7 @@ cdef class LogicCircuit:
                     f"    Reason: The execution of this branch is governed by a tainted condition."
                 )
             
-            # SAFETY NET: Always drop the PC taint before returning to the user!
-            if context.implicit_policy != ImplicitTaintPolicy.KEEP:
+            if implicit_policy != ImplicitTaintPolicy.KEEP:
                 del output_taint[pc_reg]
 
         return output_taint
@@ -570,14 +594,13 @@ cdef class InstructionCellExpr(Expr):
         return f"InstructionCellExpr(instr={self.instruction}, out_reg='{self.out_reg}', inputs={repr(self.inputs)})"
 
     cpdef object evaluate(self, EvalContext context):
-        assert context.simulator is not None, 'Simulator instance required'
-        
         cdef dict evaluated_inputs = {}
         cdef str name
         cdef Expr expr
-        
+        cdef object sim = context.simulator  # cache — avoids repeated __get__ dispatch
+
         for name, expr in self.inputs.items():
             evaluated_inputs[name] = expr.evaluate(context)
 
         m_state = _build_machine_state(evaluated_inputs, context)
-        return context.simulator.evaluate_concrete(self, m_state)
+        return sim.evaluate_concrete(self, m_state)

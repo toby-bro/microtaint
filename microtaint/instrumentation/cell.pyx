@@ -1,10 +1,10 @@
 # cython: language_level=3
+# cython: profile=False
 # cython: boundscheck=False
 # cython: wraparound=False
 # cython: nonecheck=False
 # cython: infer_types=True
 # cython: cdivision=True
-# cython: profile=False
 """
 microtaint.instrumentation.cell  (Cython)
 ==========================================
@@ -235,18 +235,59 @@ cdef int _sp_id(object vn):
     return <int>s if s is not None else SP_OTHER
 
 
+
+# Covers all normal x86-64 Sleigh register offsets (0 … 1103).
+# Exotic registers (segment descriptors, BND, …) fall back to the dict.
+DEF REGS_ARR_SIZE = 1104
+
+# Max pcode ops per instruction (empirically: BT ~44, SHR ~38, typical ~16).
+DEF MAX_PCODE_OPS = 96
+
+ctypedef struct PCodeOp:
+    int           oid
+    int           o_sp
+    unsigned long o_off
+    int           o_sz
+    int           callother_out
+    int           n_ins
+    int           i0_sp
+    unsigned long i0_off
+    int           i0_sz
+    int           i1_sp
+    unsigned long i1_off
+    int           i1_sz
+    int           i2_sp
+    unsigned long i2_off
+    int           i2_sz
+
+
+cdef class DecodedOps:
+    """Cached pre-decoded pcode ops in a C struct array — no Python tuple overhead."""
+    cdef PCodeOp buf[MAX_PCODE_OPS]
+    cdef public int    n_ops
+    cdef public bint   has_fallback
+    cdef public object input_reg_offsets  # set of SP_REGISTER input offsets
+
+
 def _predecode_ops(arch, bytestring):
     """
-    Convert translation.ops to a list of compact int tuples.
-    Called once per unique (arch, bytestring) pair, result is cached.
-    Returns (decoded_ops, has_fallback) where has_fallback=True if any op
-    requires Unicorn (CBRANCH, CALLIND, BRANCHIND, CALLOTHER-with-output, float).
+    Translate bytestring into a DecodedOps C-struct buffer (cached by _get_decoded).
+    Returns a DecodedOps instance with has_fallback, n_ops, and the struct array filled.
+    All fields are C-typed — no Python tuples in the execution hot loop.
     """
     ctx         = get_context(arch)
     translation = ctx.translate(bytestring, 0x1000)
     ops         = translation.ops
-    decoded     = []
+    cdef DecodedOps result = DecodedOps()
+    result.n_ops = 0
+    result.has_fallback = False
+    result.input_reg_offsets = set()
     has_fallback = False
+    # Compact unique-space mapping: raw offset → sequential index 0,1,2,...
+    cdef dict uniq_map = {}
+    cdef int  uniq_next = 0
+    cdef PCodeOp* op_ptr
+    cdef int _ii, _cb_count, _cb_last, _has_bi
 
     for op in ops:
         oid    = _opcode_id(op.opcode.name)
@@ -270,29 +311,50 @@ def _predecode_ops(arch, bytestring):
             o_sp, o_off, o_sz = NO_OUT_SPACE, 0, 0
         else:
             o_sp, o_off, o_sz = _sp_id(out), out.offset, out.size
+            if o_sp == SP_UNIQUE:
+                if o_off not in uniq_map:
+                    uniq_map[o_off] = uniq_next; uniq_next += 1
+                o_off = uniq_map[o_off]
 
         # Encode inputs (up to 3)
         n = len(ins)
         if n >= 1:
             i0_sp, i0_off, i0_sz = _sp_id(ins[0]), ins[0].offset, ins[0].size
+            if i0_sp == SP_UNIQUE:
+                if i0_off not in uniq_map:
+                    uniq_map[i0_off] = uniq_next; uniq_next += 1
+                i0_off = uniq_map[i0_off]
         else:
             i0_sp, i0_off, i0_sz = 0, 0, 0
         if n >= 2:
             i1_sp, i1_off, i1_sz = _sp_id(ins[1]), ins[1].offset, ins[1].size
+            if i1_sp == SP_UNIQUE:
+                if i1_off not in uniq_map:
+                    uniq_map[i1_off] = uniq_next; uniq_next += 1
+                i1_off = uniq_map[i1_off]
         else:
             i1_sp, i1_off, i1_sz = 0, 0, 0
         if n >= 3:
             i2_sp, i2_off, i2_sz = _sp_id(ins[2]), ins[2].offset, ins[2].size
+            if i2_sp == SP_UNIQUE:
+                if i2_off not in uniq_map:
+                    uniq_map[i2_off] = uniq_next; uniq_next += 1
+                i2_off = uniq_map[i2_off]
         else:
             i2_sp, i2_off, i2_sz = 0, 0, 0
 
         # has_callother_output flag (needed to raise the right fallback)
         callother_out = 1 if (oid == OP_CALLOTHER and out is not None) else 0
 
-        decoded.append((oid, o_sp, o_off, o_sz, callother_out,
-                        n, i0_sp, i0_off, i0_sz,
-                           i1_sp, i1_off, i1_sz,
-                           i2_sp, i2_off, i2_sz))
+        if result.n_ops < MAX_PCODE_OPS:
+            op_ptr = &result.buf[result.n_ops]
+            op_ptr.oid = oid
+            op_ptr.o_sp = o_sp; op_ptr.o_off = o_off; op_ptr.o_sz = o_sz
+            op_ptr.callother_out = callother_out; op_ptr.n_ins = n
+            op_ptr.i0_sp = i0_sp; op_ptr.i0_off = i0_off; op_ptr.i0_sz = i0_sz
+            op_ptr.i1_sp = i1_sp; op_ptr.i1_off = i1_off; op_ptr.i1_sz = i1_sz
+            op_ptr.i2_sp = i2_sp; op_ptr.i2_off = i2_off; op_ptr.i2_sz = i2_sz
+            result.n_ops += 1
 
     # Simple conditional branches (JL, JE, …) have exactly ONE CBRANCH
     # as the very last decoded op and no BRANCHIND/CALLIND.  We handle
@@ -300,17 +362,30 @@ def _predecode_ops(arch, bytestring):
     # fallback is needed.  Complex cases (BSF/BSR = multiple CBRANCHes;
     # CMOVNZ = CBRANCH not last) keep has_fallback=True.
     if has_fallback:
-        _cb_indices = [i for i, t in enumerate(decoded) if t[0] == OP_CBRANCH]
-        if (len(_cb_indices) == 1 and
-                _cb_indices[0] == len(decoded) - 1 and
-                not any(t[0] in (OP_BRANCHIND, OP_CALLIND) for t in decoded)):
+        _cb_count = 0; _cb_last = -1; _has_bi = 0
+        for _ii in range(result.n_ops):
+            if result.buf[_ii].oid == OP_CBRANCH:
+                _cb_count += 1; _cb_last = _ii
+            elif result.buf[_ii].oid == OP_BRANCHIND or result.buf[_ii].oid == OP_CALLIND:
+                _has_bi = 1
+        if _cb_count == 1 and _cb_last == result.n_ops - 1 and not _has_bi:
             has_fallback = False
 
-    return decoded, has_fallback
+    for _ii in range(result.n_ops):
+        if result.buf[_ii].n_ins >= 1 and result.buf[_ii].i0_sp == SP_REGISTER:
+            result.input_reg_offsets.add(result.buf[_ii].i0_off)
+        if result.buf[_ii].n_ins >= 2 and result.buf[_ii].i1_sp == SP_REGISTER:
+            result.input_reg_offsets.add(result.buf[_ii].i1_off)
+        if result.buf[_ii].n_ins >= 3 and result.buf[_ii].i2_sp == SP_REGISTER:
+            result.input_reg_offsets.add(result.buf[_ii].i2_off)
+
+    result.has_fallback = has_fallback
+    return result
 
 
 @functools.lru_cache(maxsize=16384)
 def _get_decoded(arch, bytestring):
+    # Returns a DecodedOps object (C struct array, has_fallback, input_reg_offsets)
     return _predecode_ops(arch, bytestring)
 
 
@@ -318,21 +393,21 @@ def _get_decoded(arch, bytestring):
 # Frame  — Python-dict storage (identical semantics to cell.py)
 # ---------------------------------------------------------------------------
 
-# Covers all normal x86-64 Sleigh register offsets (0 … 1103).
-# Exotic registers (segment descriptors, BND, …) fall back to the dict.
-DEF REGS_ARR_SIZE = 1104
-
-
 cdef class _PCodeFrame:
     # Hot-path registers: C arrays, no boxing
     cdef uint64_t regs_arr[REGS_ARR_SIZE]
     cdef uint8_t  regs_sz [REGS_ARR_SIZE]
     cdef uint8_t  regs_set[REGS_ARR_SIZE]
+    # Dirty-slot tracker: only zero written slots in clear() instead of scanning all 1104
+    cdef int dirty[48]   # offsets of written regs_arr slots (48 > max flags+regs written)
+    cdef int dirty_count
+    # Compact unique-space array: indices 0..15 replacing the uniq dict
+    cdef uint64_t uniq_arr[32]
+    cdef uint8_t  uniq_set[32]  # which slots are written
     # Cold fallback for offsets >= REGS_ARR_SIZE
     cdef public dict regs
     cdef public dict reg_sizes
-    # Other spaces (unchanged)
-    cdef public dict uniq
+    # Fallback uniq dict (unused after compact-array migration, kept for safety)
     cdef public dict mem
     cdef public object _arch  # set by _load for CBRANCH PC lookup
 
@@ -340,18 +415,24 @@ cdef class _PCodeFrame:
         cdef int i
         for i in range(REGS_ARR_SIZE):
             self.regs_set[i] = 0
+        for i in range(32):
+            self.uniq_set[i] = 0
+        self.dirty_count = 0
         self.regs      = {}
         self.reg_sizes = {}
-        self.uniq      = {}
         self.mem       = {}
         self._arch     = None
 
     cdef inline void _write_reg(self, long off, int sz, uint64_t val) noexcept:
         cdef uint64_t masked = _mask64(val, sz)
         if off >= 0 and off < REGS_ARR_SIZE:
+            if not self.regs_set[off]:   # only record first write to each slot
+                self.regs_set[off] = 1
+                if self.dirty_count < 48:
+                    self.dirty[self.dirty_count] = <int>off
+                    self.dirty_count += 1
             self.regs_arr[off] = masked
             self.regs_sz [off] = <uint8_t>sz
-            self.regs_set[off] = 1
         else:
             self.regs[off]      = masked
             self.reg_sizes[off] = sz
@@ -410,14 +491,18 @@ cdef class _PCodeFrame:
 
     cdef inline void clear(self) noexcept:
         cdef int i
-        for i in range(REGS_ARR_SIZE):
-            if self.regs_set[i]:
-                self.regs_set[i] = 0
+        # Only zero the slots that were actually written (dirty list vs scanning all 1104)
+        for i in range(self.dirty_count):
+            self.regs_set[self.dirty[i]] = 0
+        self.dirty_count = 0
+        # Clear compact unique array
+        for i in range(32):
+            if self.uniq_set[i]:
+                self.uniq_set[i] = 0
         if self.regs:
             self.regs.clear()
         if self.reg_sizes:
             self.reg_sizes.clear()
-        self.uniq.clear()
         self.mem.clear()
 
     # ------------------------------------------------------------------
@@ -426,16 +511,15 @@ cdef class _PCodeFrame:
 
     cdef inline uint64_t read_d(self, int sp, unsigned long off, int sz) noexcept:
         """Read a varnode given pre-decoded (space_id, offset, size)."""
-        cdef object v
         if sp == SP_CONST:
             return _mask64(<uint64_t>off, sz)
         if sp == SP_REGISTER:
             return self._read_reg(off, sz)
         if sp == SP_UNIQUE:
-            v = self.uniq.get(off)
-            if v is None:
-                return 0
-            return _mask64(<uint64_t>(v & 0xFFFFFFFFFFFFFFFF), sz)
+            # off is now a compact index (0..31) — direct C array lookup, no dict
+            if off < 32 and self.uniq_set[off]:
+                return _mask64(self.uniq_arr[off], sz)
+            return 0
         if sp == SP_RAM:
             return self._read_mem(off, sz)
         return 0
@@ -446,7 +530,10 @@ cdef class _PCodeFrame:
         if sp == SP_REGISTER:
             self._write_reg(off, sz, val)
         elif sp == SP_UNIQUE:
-            self.uniq[off] = val
+            # off is a compact index (0..31) — direct C array write, no dict
+            if off < 32:
+                self.uniq_arr[off] = val
+                self.uniq_set[off] = 1
         elif sp == SP_RAM:
             self._write_mem(off, val, sz)
 
@@ -457,15 +544,15 @@ cdef class _PCodeFrame:
 
 cdef void _execute_decoded(
     _PCodeFrame frame,
-    list decoded_ops,
+    DecodedOps decoded,
 ) except *:
     """
-    Execute all pre-decoded ops on frame.
+    Execute all pre-decoded ops on frame using the C struct buffer.
+    No Python tuple unpacking — all field access is direct C struct reads.
     Raises PCodeFallbackNeeded if any op requires Unicorn.
-    All inner variables are C-typed — no Python object allocation.
     """
     cdef int          oid, o_sp, o_sz, callother_out, n_ins
-    cdef unsigned long o_off   # varnode offsets: can be unsigned 64-bit (CONST immediates)
+    cdef unsigned long o_off
     cdef int          i0_sp, i0_sz
     cdef unsigned long i0_off
     cdef int          i1_sp, i1_sz
@@ -474,25 +561,75 @@ cdef void _execute_decoded(
     cdef unsigned long i2_off
     cdef uint64_t  a, b, c, result, u_result
     cdef int64_t   sa, sb, sresult
-    cdef int       sz, bits
-    cdef object    tup
+    cdef int       sz, bits, i
+    cdef PCodeOp*  op
+    cdef PCodeOp*  ops_base
+    cdef int       n_ops
 
-    for tup in decoded_ops:
-        (oid, o_sp, o_off, o_sz, callother_out,
-         n_ins,
-         i0_sp, i0_off, i0_sz,
-         i1_sp, i1_off, i1_sz,
-         i2_sp, i2_off, i2_sz) = tup
+    # Hoist out of loop: one Python object access total, then pure C
+    ops_base = decoded.buf
+    n_ops    = decoded.n_ops
 
+    for i in range(n_ops):
+        op = ops_base + i                    # pure C pointer arithmetic
+        oid            = op.oid
+        o_sp           = op.o_sp
+        o_off          = op.o_off
+        o_sz           = op.o_sz
+        callother_out  = op.callother_out
+        n_ins          = op.n_ins
+        i0_sp          = op.i0_sp;  i0_off = op.i0_off;  i0_sz = op.i0_sz
+        i1_sp          = op.i1_sp;  i1_off = op.i1_off;  i1_sz = op.i1_sz
+        i2_sp          = op.i2_sp;  i2_off = op.i2_off;  i2_sz = op.i2_sz
+
+        # ── Hot path: most frequent pcode ops first ─────────────────
         if oid == OP_IMARK or oid == OP_BRANCH or oid == OP_RETURN or oid == OP_CALL:
             pass
-        elif oid == OP_UNIMPLEMENTED or oid == OP_SEGMENT or oid == OP_CPOOLREF or oid == OP_NEW or oid == OP_INSERT or oid == OP_EXTRACT:
-            pass
+        elif oid == OP_INT_XOR:
+            if o_sp != NO_OUT_SPACE:
+                frame.write_d(o_sp, o_off, o_sz,
+                    frame.read_d(i0_sp, i0_off, i0_sz) ^ frame.read_d(i1_sp, i1_off, i1_sz))
+        elif oid == OP_INT_AND:
+            if o_sp != NO_OUT_SPACE:
+                frame.write_d(o_sp, o_off, o_sz,
+                    frame.read_d(i0_sp, i0_off, i0_sz) & frame.read_d(i1_sp, i1_off, i1_sz))
+        elif oid == OP_INT_OR:
+            if o_sp != NO_OUT_SPACE:
+                frame.write_d(o_sp, o_off, o_sz,
+                    frame.read_d(i0_sp, i0_off, i0_sz) | frame.read_d(i1_sp, i1_off, i1_sz))
+        elif oid == OP_INT_ADD:
+            if o_sp != NO_OUT_SPACE:
+                frame.write_d(o_sp, o_off, o_sz,
+                    frame.read_d(i0_sp, i0_off, i0_sz) + frame.read_d(i1_sp, i1_off, i1_sz))
+        elif oid == OP_INT_SUB:
+            if o_sp != NO_OUT_SPACE:
+                frame.write_d(o_sp, o_off, o_sz,
+                    frame.read_d(i0_sp, i0_off, i0_sz) - frame.read_d(i1_sp, i1_off, i1_sz))
+        elif oid == OP_COPY or oid == OP_INT_ZEXT or oid == OP_INT_TRUNC or oid == OP_CAST:
+            if o_sp != NO_OUT_SPACE:
+                frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz))
+        elif oid == OP_INT_EQUAL:
+            if o_sp != NO_OUT_SPACE:
+                frame.write_d(o_sp, o_off, o_sz,
+                    1 if frame.read_d(i0_sp, i0_off, i0_sz) == frame.read_d(i1_sp, i1_off, i1_sz) else 0)
+        elif oid == OP_INT_NOTEQUAL:
+            if o_sp != NO_OUT_SPACE:
+                frame.write_d(o_sp, o_off, o_sz,
+                    0 if frame.read_d(i0_sp, i0_off, i0_sz) == frame.read_d(i1_sp, i1_off, i1_sz) else 1)
+        elif oid == OP_INT_LESS:
+            if o_sp != NO_OUT_SPACE:
+                frame.write_d(o_sp, o_off, o_sz,
+                    1 if frame.read_d(i0_sp, i0_off, i0_sz) < frame.read_d(i1_sp, i1_off, i1_sz) else 0)
+        elif oid == OP_INT_RIGHT:
+            if o_sp != NO_OUT_SPACE:
+                b = frame.read_d(i1_sp, i1_off, i1_sz) & 0x3F
+                frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz) >> b)
+        elif oid == OP_INT_LEFT:
+            if o_sp != NO_OUT_SPACE:
+                b = frame.read_d(i1_sp, i1_off, i1_sz) & 0x3F
+                frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz) << b)
+        # ── Less frequent ops ────────────────────────────────────────
         elif oid == OP_CBRANCH:
-            # Write PC = dest (branch taken) or dest+1 (not taken).
-            # The two values are always distinct, so the C1/C2 differential
-            # produces non-zero T_RIP when the condition is tainted —
-            # which triggers ImplicitTaintError for SC/BOF detection.
             cond   = frame.read_d(i1_sp, i1_off, i1_sz)
             dest   = <uint64_t>i0_off  # branch target from ram varnode
             result = dest if cond else dest + 1
@@ -508,10 +645,9 @@ cdef void _execute_decoded(
             raise PCodeFallbackNeeded('Float opcode')
         elif oid == OP_UNKNOWN:
             raise PCodeFallbackNeeded('Unknown opcode')
+        elif oid == OP_UNIMPLEMENTED or oid == OP_SEGMENT or oid == OP_CPOOLREF or oid == OP_NEW or oid == OP_INSERT or oid == OP_EXTRACT:
+            pass
 
-        elif oid == OP_COPY:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz))
 
         elif oid == OP_LOAD:
             if o_sp != NO_OUT_SPACE:
@@ -526,15 +662,6 @@ cdef void _execute_decoded(
             if o_sp != NO_OUT_SPACE and n_ins > 0:
                 frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz))
 
-        elif oid == OP_INT_ADD:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz,
-                    frame.read_d(i0_sp, i0_off, i0_sz) + frame.read_d(i1_sp, i1_off, i1_sz))
-
-        elif oid == OP_INT_SUB:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz,
-                    frame.read_d(i0_sp, i0_off, i0_sz) - frame.read_d(i1_sp, i1_off, i1_sz))
 
         elif oid == OP_INT_MULT:
             if o_sp != NO_OUT_SPACE:
@@ -586,32 +713,7 @@ cdef void _execute_decoded(
             if o_sp != NO_OUT_SPACE:
                 frame.write_d(o_sp, o_off, o_sz, ~frame.read_d(i0_sp, i0_off, i0_sz))
 
-        elif oid == OP_INT_AND:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz,
-                    frame.read_d(i0_sp, i0_off, i0_sz) & frame.read_d(i1_sp, i1_off, i1_sz))
 
-        elif oid == OP_INT_OR:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz,
-                    frame.read_d(i0_sp, i0_off, i0_sz) | frame.read_d(i1_sp, i1_off, i1_sz))
-
-        elif oid == OP_INT_XOR:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz,
-                    frame.read_d(i0_sp, i0_off, i0_sz) ^ frame.read_d(i1_sp, i1_off, i1_sz))
-
-        elif oid == OP_INT_LEFT:
-            if o_sp != NO_OUT_SPACE:
-                b = frame.read_d(i1_sp, i1_off, i1_sz) & 0x3F
-                frame.write_d(o_sp, o_off, o_sz,
-                    frame.read_d(i0_sp, i0_off, i0_sz) << b)
-
-        elif oid == OP_INT_RIGHT:
-            if o_sp != NO_OUT_SPACE:
-                b = frame.read_d(i1_sp, i1_off, i1_sz) & 0x3F
-                frame.write_d(o_sp, o_off, o_sz,
-                    frame.read_d(i0_sp, i0_off, i0_sz) >> b)
 
         elif oid == OP_INT_SRIGHT:
             if o_sp != NO_OUT_SPACE:
@@ -620,20 +722,6 @@ cdef void _execute_decoded(
                 b   = frame.read_d(i1_sp, i1_off, i1_sz) & 0x3F
                 frame.write_d(o_sp, o_off, o_sz, <uint64_t>(sa >> b))
 
-        elif oid == OP_INT_EQUAL:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz,
-                    1 if frame.read_d(i0_sp, i0_off, i0_sz) == frame.read_d(i1_sp, i1_off, i1_sz) else 0)
-
-        elif oid == OP_INT_NOTEQUAL:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz,
-                    0 if frame.read_d(i0_sp, i0_off, i0_sz) == frame.read_d(i1_sp, i1_off, i1_sz) else 1)
-
-        elif oid == OP_INT_LESS:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz,
-                    1 if frame.read_d(i0_sp, i0_off, i0_sz) < frame.read_d(i1_sp, i1_off, i1_sz) else 0)
 
         elif oid == OP_INT_LESSEQUAL:
             if o_sp != NO_OUT_SPACE:
@@ -691,9 +779,6 @@ cdef void _execute_decoded(
                 frame.write_d(o_sp, o_off, o_sz,
                     1 if ((sa < 0) != (sb < 0)) and ((sa < 0) != (sresult < 0)) else 0)
 
-        elif oid == OP_INT_ZEXT:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz))
 
         elif oid == OP_INT_SEXT:
             if o_sp != NO_OUT_SPACE:
@@ -701,9 +786,6 @@ cdef void _execute_decoded(
                 frame.write_d(o_sp, o_off, o_sz,
                     <uint64_t>_signed64(frame.read_d(i0_sp, i0_off, i0_sz), sz))
 
-        elif oid == OP_INT_TRUNC or oid == OP_CAST:
-            if o_sp != NO_OUT_SPACE:
-                frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz))
 
         elif oid == OP_POPCOUNT:
             if o_sp != NO_OUT_SPACE:
@@ -928,11 +1010,11 @@ cdef class PCodeCellEvaluator:
 
     def evaluate_concrete(self, cell, flat_inputs):
         cdef _PCodeFrame frame = self._frame_a
-        decoded_ops, has_fallback = _get_decoded(self.arch, bytes.fromhex(cell.instruction))
-        if has_fallback:
+        decoded = _get_decoded(self.arch, bytes.fromhex(cell.instruction))
+        if decoded.has_fallback:
             raise PCodeFallbackNeeded('instruction requires Unicorn')
         self._load(frame, flat_inputs)
-        _execute_decoded(frame, decoded_ops)
+        _execute_decoded(frame, decoded)
         self.native_calls += 1
         return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
 
@@ -940,14 +1022,14 @@ cdef class PCodeCellEvaluator:
         cdef _PCodeFrame fa = self._frame_a
         cdef _PCodeFrame fb = self._frame_b
         cdef uint64_t out_or, out_and
-        decoded_ops, has_fallback = _get_decoded(self.arch, bytes.fromhex(cell.instruction))
-        if has_fallback:
+        decoded = _get_decoded(self.arch, bytes.fromhex(cell.instruction))
+        if decoded.has_fallback:
             raise PCodeFallbackNeeded('instruction requires Unicorn')
         self._load(fa, or_inputs)
-        _execute_decoded(fa, decoded_ops)
+        _execute_decoded(fa, decoded)
         out_or = self._read_output(fa, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
         self._load(fb, and_inputs)
-        _execute_decoded(fb, decoded_ops)
+        _execute_decoded(fb, decoded)
         out_and = self._read_output(fb, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
         self.native_calls += 1
         return out_or ^ out_and

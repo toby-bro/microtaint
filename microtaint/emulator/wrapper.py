@@ -12,6 +12,7 @@ from qiling.const import QL_INTERCEPT
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.cell import _get_decoded
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import _cached_generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintError, ImplicitTaintPolicy, Register
@@ -142,6 +143,95 @@ _EFLAGS_BITS = {
     'DF': 10,
     'OF': 11,
 }
+
+# Sleigh register-space byte offset → (uc_reg_name, uc_reg_id, needs_eflags_unpack)
+# Covers all GP registers + RIP + flag offsets for AMD64/x86-64.
+# Used by _read_regs_by_offsets to translate pcode input_reg_offsets to UC reads.
+_SLEIGH_OFFSET_TO_UC: dict[int, tuple[str, int, bool]] = {
+    0: ('RAX', 35, False),
+    8: ('RCX', 38, False),
+    16: ('RDX', 40, False),
+    24: ('RBX', 37, False),
+    32: ('RSP', 44, False),
+    40: ('RBP', 36, False),
+    48: ('RSI', 43, False),
+    56: ('RDI', 39, False),
+    128: ('R8', 106, False),
+    136: ('R9', 107, False),
+    144: ('R10', 108, False),
+    152: ('R11', 109, False),
+    160: ('R12', 110, False),
+    168: ('R13', 111, False),
+    176: ('R14', 112, False),
+    184: ('R15', 113, False),
+    648: ('RIP', 41, False),
+    512: ('EFLAGS', 25, True),  # CF
+    514: ('EFLAGS', 25, True),  # PF
+    516: ('EFLAGS', 25, True),  # AF
+    518: ('EFLAGS', 25, True),  # ZF
+    519: ('EFLAGS', 25, True),  # SF
+    520: ('EFLAGS', 25, True),
+    521: ('EFLAGS', 25, True),
+    522: ('EFLAGS', 25, True),  # DF
+    523: ('EFLAGS', 25, True),  # OF
+}
+
+
+def _read_regs_by_offsets(uch: object, offsets: object) -> dict[str, int]:
+    """Read only the Unicorn registers needed for the given pcode input offsets.
+
+    `offsets` is DecodedOps.input_reg_offsets — the set of Sleigh register-space
+    byte offsets read as SP_REGISTER inputs by this instruction's decoded pcode.
+
+    Typical savings vs full 18-register read:
+      ADD RAX,RCX  → reads RAX + RCX + EFLAGS = 3 regs  (was 18)
+      MOV RAX,[RCX]→ reads RCX = 1 reg
+      JL           → reads EFLAGS = 1 reg
+    """
+    try:
+        uc_names: list[str] = []
+        uc_ids: list[int] = []
+        needs_eflags = False
+        seen_ids: set[int] = set()
+
+        for off in offsets:
+            entry = _SLEIGH_OFFSET_TO_UC.get(off)
+            if entry is None:
+                continue
+            uc_name, uc_id, is_flag = entry
+            if uc_id in seen_ids:
+                continue
+            seen_ids.add(uc_id)
+            uc_names.append(uc_name)
+            uc_ids.append(uc_id)
+            if is_flag:
+                needs_eflags = True
+
+        n = len(uc_ids)
+        if n == 0:
+            return {}
+
+        ids_arr = (ctypes.c_int * n)(*uc_ids)
+        vals_arr = (ctypes.c_uint64 * n)()
+        ptrs_arr = (ctypes.c_void_p * n)(*[ctypes.addressof(vals_arr) + i * 8 for i in range(n)])
+
+        err = _uc_reg_read_batch(uch, ids_arr, ptrs_arr, n)
+        if err != 0:
+            return _read_regs_ctypes(uch, _ALL_REG_NAMES)
+
+        result: dict[str, int] = {}
+        for i, name in enumerate(uc_names):
+            result[name] = int(vals_arr[i])
+
+        if needs_eflags:
+            eflags = result.get('EFLAGS', 0)
+            for flag, bit in _EFLAGS_BITS.items():
+                result[flag] = (eflags >> bit) & 1
+
+        return result
+    except Exception:
+        return _read_regs_ctypes(uch, _ALL_REG_NAMES)
+
 
 # Pre-built: all 18 "full" register names (for the AIW snapshot fallback)
 _ALL_REG_NAMES: list[str] = [
@@ -559,7 +649,20 @@ class MicrotaintWrapper:
         instruction_bytes = bytes(_MEM_BUF[:size]) if err == 0 else bytes(self.ql.mem.read(address, size))
         circuit = _cached_generate_static_rule(self.arch, instruction_bytes, _X64_FORMAT_KEY)
 
-        self._pre_regs = self._get_live_registers(uch)
+        # Read all live registers for the C1/C2 concrete execution in the pcode evaluator.
+        # _load() uses these to populate frame values for both pcode and Unicorn cell paths.
+        # Targeted register read: only fetch what this instruction's pcode needs.
+        # _get_decoded is lru_cache'd — O(1) dict lookup, no recomputation.
+        # input_reg_offsets = exact Sleigh byte offsets of SP_REGISTER pcode inputs.
+        try:
+            _decoded = _get_decoded(self.arch, instruction_bytes)
+            _offsets = _decoded.input_reg_offsets
+            if _offsets and len(_offsets) <= 10:
+                self._pre_regs = _read_regs_by_offsets(uch, _offsets)
+            else:
+                self._pre_regs = self._get_live_registers(uch)
+        except Exception:
+            self._pre_regs = self._get_live_registers(uch)
         self._pre_taint = dict(self.register_taint)
 
         ctx = EvalContext(
