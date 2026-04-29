@@ -4,6 +4,7 @@
 # cython: nonecheck=False
 # cython: infer_types=True
 # cython: cdivision=True
+# cython: profile=False
 """
 microtaint.instrumentation.cell  (Cython)
 ==========================================
@@ -32,7 +33,7 @@ Frame storage uses Python dicts (identical to cell.py) so the AH/BH
 sub-register fallback is preserved exactly.
 """
 
-from libc.stdint cimport uint64_t, int64_t
+from libc.stdint cimport uint64_t, int64_t, uint8_t
 
 import functools
 import logging
@@ -317,31 +318,67 @@ def _get_decoded(arch, bytestring):
 # Frame  — Python-dict storage (identical semantics to cell.py)
 # ---------------------------------------------------------------------------
 
+# Covers all normal x86-64 Sleigh register offsets (0 … 1103).
+# Exotic registers (segment descriptors, BND, …) fall back to the dict.
+DEF REGS_ARR_SIZE = 1104
+
+
 cdef class _PCodeFrame:
+    # Hot-path registers: C arrays, no boxing
+    cdef uint64_t regs_arr[REGS_ARR_SIZE]
+    cdef uint8_t  regs_sz [REGS_ARR_SIZE]
+    cdef uint8_t  regs_set[REGS_ARR_SIZE]
+    # Cold fallback for offsets >= REGS_ARR_SIZE
     cdef public dict regs
+    cdef public dict reg_sizes
+    # Other spaces (unchanged)
     cdef public dict uniq
     cdef public dict mem
-    cdef public dict reg_sizes
     cdef public object _arch  # set by _load for CBRANCH PC lookup
 
     def __init__(self):
+        cdef int i
+        for i in range(REGS_ARR_SIZE):
+            self.regs_set[i] = 0
         self.regs      = {}
+        self.reg_sizes = {}
         self.uniq      = {}
         self.mem       = {}
-        self.reg_sizes = {}
         self._arch     = None
 
     cdef inline void _write_reg(self, long off, int sz, uint64_t val) noexcept:
         cdef uint64_t masked = _mask64(val, sz)
-        self.regs[off]      = masked
-        self.reg_sizes[off] = sz
+        if off >= 0 and off < REGS_ARR_SIZE:
+            self.regs_arr[off] = masked
+            self.regs_sz [off] = <uint8_t>sz
+            self.regs_set[off] = 1
+        else:
+            self.regs[off]      = masked
+            self.reg_sizes[off] = sz
 
     cdef inline uint64_t _read_reg(self, long off, int sz) noexcept:
-        cdef object v = self.regs.get(off)
-        cdef long   k, byte_off
-        cdef int    k_sz
-        cdef object kv
+        cdef long     k, byte_off
+        cdef int      k_sz
+        cdef object   kv, v
         cdef uint64_t uv
+
+        if off >= 0 and off < REGS_ARR_SIZE:
+            if self.regs_set[off]:
+                return _mask64(self.regs_arr[off], sz)
+            # Sub-register overlap scan for C-array registers.
+            # e.g. reading AH (off=1, sz=1) after writing RAX (off=0, sz=8):
+            # regs_set[0]=1, regs_sz[0]=8, 0 <= 1 < 0+8 → extract byte 1.
+            # Search backwards up to 8 bytes (max register size).
+            k = off - 1
+            while k >= 0 and off - k <= 8:
+                if self.regs_set[k] and k + <long>self.regs_sz[k] > off:
+                    byte_off = off - k
+                    return _mask64(self.regs_arr[k] >> (byte_off * 8), sz)
+                k -= 1
+            return 0
+
+        # Cold path: dict fallback
+        v = self.regs.get(off)
         if v is not None:
             uv = <uint64_t>(v & 0xFFFFFFFFFFFFFFFF)
             return _mask64(uv, sz)
@@ -372,10 +409,16 @@ cdef class _PCodeFrame:
         return _mask64(result, size)
 
     cdef inline void clear(self) noexcept:
-        self.regs.clear()
+        cdef int i
+        for i in range(REGS_ARR_SIZE):
+            if self.regs_set[i]:
+                self.regs_set[i] = 0
+        if self.regs:
+            self.regs.clear()
+        if self.reg_sizes:
+            self.reg_sizes.clear()
         self.uniq.clear()
         self.mem.clear()
-        self.reg_sizes.clear()
 
     # ------------------------------------------------------------------
     # Fast read/write using pre-decoded space IDs (no string comparison)

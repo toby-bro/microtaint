@@ -1,4 +1,5 @@
 # cython: language_level=3
+# cython: profile=False
 from enum import Enum
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture, Register
