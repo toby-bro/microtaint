@@ -55,3 +55,5 @@ class PCodeCellEvaluator:
 
     def stats(self) -> dict[str, int | float]:
         """Return performance statistics."""
+
+    def evaluate_concrete_state(self, cell: InstructionCellExpr, regs: dict[str, int], mem: dict[int, int]) -> int: ...

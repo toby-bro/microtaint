@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 from __future__ import annotations
 
 import ctypes
@@ -11,7 +12,7 @@ from qiling.const import QL_INTERCEPT
 
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
-from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.ast import EvalContext, Expr
 from microtaint.instrumentation.cell import _get_decoded
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import _cached_generate_static_rule
@@ -181,10 +182,13 @@ _SLEIGH_OFFSET_TO_UC: dict[int, tuple[str, int, bool]] = {
 # Key: frozenset of Sleigh byte offsets (== DecodedOps.input_reg_offsets).
 # Value: (ids_arr, vals_arr, ptrs_arr, uc_names, needs_eflags)
 # Built once per unique instruction type, reused on every subsequent call.
-_OFFSETS_CACHE: dict = {}
+_OFFSETS_CACHE: dict[
+    int | frozenset[int],
+    tuple[object, object, object, int, list[str], bool] | tuple[None, None, None, int, list[str], bool],
+] = {}
 
 
-def _build_offsets_arrays(offsets):
+def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, object, int, list[str], bool]:
     """Build and cache ctypes arrays. Uses id() fast-path on the hot path."""
     oid = id(offsets)
     cached = _OFFSETS_CACHE.get(oid)
@@ -216,7 +220,14 @@ def _build_offsets_arrays(offsets):
 
     n = len(uc_ids)
     if n == 0:
-        result = (None, None, None, 0, [], False)
+        result: tuple[object, object, object, int, list[str], bool] | tuple[None, None, None, int, list[str], bool] = (
+            None,
+            None,
+            None,
+            0,
+            [],
+            False,
+        )
         _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
         return result
 
@@ -228,39 +239,6 @@ def _build_offsets_arrays(offsets):
     result = (ids_arr, vals_arr, ptrs_arr, len(uc_names), uc_names, needs_eflags)
     _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
     return result
-
-
-def _read_regs_by_offsets(uch: object, offsets: object) -> dict[str, int]:
-    """Build arrays from offsets and read. Used only when _uc_arrays not yet cached."""
-    return _exec_regs_from_arrays(uch, _build_offsets_arrays(offsets))
-
-
-def _exec_regs_from_arrays(uch: object, arrays: object) -> dict[str, int]:
-    """Execute a single targeted uc_reg_read_batch using pre-built cached arrays.
-
-    Hot path: one C call + one dict comprehension. Zero allocation.
-    arrays = (ids_arr, vals_arr, ptrs_arr, n, uc_names, needs_eflags)
-    """
-    try:
-        ids_arr, vals_arr, ptrs_arr, n, uc_names, needs_eflags = arrays
-
-        if ids_arr is None:
-            return {}
-
-        err = _uc_reg_read_batch(uch, ids_arr, ptrs_arr, n)
-        if err != 0:
-            return _read_regs_ctypes(uch, _ALL_REG_NAMES)
-
-        result: dict[str, int] = {uc_names[i]: int(vals_arr[i]) for i in range(n)}
-
-        if needs_eflags:
-            eflags = result.get('EFLAGS', 0)
-            for flag, bit in _EFLAGS_BITS.items():
-                result[flag] = (eflags >> bit) & 1
-
-        return result
-    except Exception:
-        return _read_regs_ctypes(uch, _ALL_REG_NAMES)
 
 
 # Pre-built: all 18 "full" register names (for the AIW snapshot fallback)
@@ -311,36 +289,7 @@ def _read_regs_ctypes(uch: ctypes.c_void_p, _names_unused: list[str]) -> dict[st
         return {}
 
 
-def _collect_circuit_reg_names(circuit) -> frozenset[str]:
-    """
-    Walk all InstructionCellExpr.inputs dicts in the circuit and collect the
-    register names that the circuit needs as concrete input values.
-
-    These are exactly the registers we must read from Unicorn — no more.
-    For most instructions this is 1–3 parent registers; never all 18.
-
-    The result is cached on the circuit object itself (_needed_regs attribute)
-    so repeat calls for the same instruction (same cached circuit) are O(1).
-    """
-    cached = getattr(circuit, '_needed_regs', None)
-    if cached is not None:
-        return cached
-
-    names: set[str] = set()
-    for assignment in circuit.assignments:
-        expr = assignment.expression
-        if expr is None:
-            continue
-        _collect_expr_reg_names(expr, names)
-    result = frozenset(names)
-    try:
-        circuit._needed_regs = result  # cache on circuit object for next call
-    except AttributeError:
-        pass  # Cython extension type may be read-only; that's fine
-    return result
-
-
-def _collect_expr_reg_names(expr, names: set[str]) -> None:
+def _collect_expr_reg_names(expr: Expr, names: set[str]) -> None:
     """Recursively walk an Expr tree collecting InstructionCellExpr input keys
     and TaintOperand / ValueOperand names."""
     type_name = type(expr).__name__
@@ -414,7 +363,7 @@ class MicrotaintWrapper:
         # because ql.uc may not be valid at __init__ time.
         # Cache ImplicitTaintPolicy — computed once, used on every instruction.
         self._policy = ImplicitTaintPolicy.STOP if (check_sc or check_bof) else ImplicitTaintPolicy.IGNORE
-        self._uc_handle: object = None  # set properly in _setup_hooks
+        self._uc_handle: ctypes.c_void_p = None  # type: ignore[assignment]  # set properly in _setup_hooks
         self._any_taint: bool = False  # set True on first _taint_bytes call
         self._mem_write_hook_registered: bool = False  # set True when hook registered
         self._instr_hook_registered: bool = False  # set True when instr hook registered
@@ -499,7 +448,7 @@ class MicrotaintWrapper:
         # Unicorn runs 5M+ instructions before taint injection — registering early
         # costs ~6 us/instruction in Unicorn's C->Python overhead even for early-exit.
         # Deferred registration: ~0 cost before taint, normal cost after.
-        self._instr_hook_registered: bool = False
+        self._instr_hook_registered = False
 
     def _sys_read_hook(self, ql: Qiling, fd: int, buf: int, count: int) -> int:
         if fd != 0 or count <= 0:
@@ -540,7 +489,13 @@ class MicrotaintWrapper:
             logger.debug(f'Poisoned freed mmap region at 0x{addr:x} ({length}B)')
 
     def _uaf_unmapped_write_hook(
-        self, uc: object, access: int, address: int, size: int, value: int, user_data: object
+        self,
+        uc: object,
+        access: int,
+        address: int,
+        size: int,
+        value: int,
+        user_data: object,
     ) -> bool:
         """Fires when code writes to UNMAPPED memory (UC_HOOK_MEM_WRITE_UNMAPPED).
 
@@ -581,13 +536,13 @@ class MicrotaintWrapper:
             if err == 0:
                 ptr = _MEM_PTRS.get(size)
                 if ptr is not None:
-                    return ptr[0]
+                    return ptr[0]  # type: ignore[no-any-return,index]
                 return int.from_bytes(_MEM_BUF[:size], 'little')
             return int.from_bytes(self.ql.mem.read(address, size), 'little')
         except Exception:
             return 0
 
-    def _get_live_registers(self, uch: object) -> dict[str, int]:
+    def _get_live_registers(self, uch: ctypes.c_void_p) -> dict[str, int]:
         """Read all 18 AMD64 registers via uc_reg_read_batch, fall back to Python."""
         try:
             return _read_regs_ctypes(uch, _ALL_REG_NAMES)
@@ -627,8 +582,8 @@ class MicrotaintWrapper:
             if hasattr(self.ql.loader, 'images') and len(self.ql.loader.images) > 0:
                 main_image = self.ql.loader.images[0]
                 self._main_bounds.append((main_image.base, main_image.end))
-                self._main_base: int = main_image.base
-                self._main_end: int = main_image.end
+                self._main_base = main_image.base
+                self._main_end = main_image.end
                 self._main_single = True
             else:
                 self._main_single = False

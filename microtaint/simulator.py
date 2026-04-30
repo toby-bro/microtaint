@@ -168,7 +168,7 @@ class CellSimulator:
             raise ValueError(f'Architecture {arch} is not supported by CellSimulator.')
         self.arch = arch
         self.use_unicorn = use_unicorn
-        self._pcode: Any = None
+        self._pcode: None | PCodeCellEvaluator = None
         self._pcode_fallback_exc: Any = None
 
         # Initialise Unicorn FIRST.  pypcode (called inside _get_pcode_evaluator_class)
