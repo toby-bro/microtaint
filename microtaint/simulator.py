@@ -568,7 +568,7 @@ class CellSimulator:
         mask = (1 << (cell.out_bit_end - cell.out_bit_start + 1)) - 1
         return int((val >> cell.out_bit_start) & mask)
 
-    def evaluate_cell_differential(
+    def evaluate_cell_differential(  # noqa: C901
         self,
         bytestring: bytes,
         target_reg: str | tuple[str, int, int],

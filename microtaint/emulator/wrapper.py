@@ -9,6 +9,7 @@ import unicorn.unicorn_py3.unicorn as _uu
 import unicorn.x86_const as _uc_x86_const
 from qiling import Qiling
 from qiling.const import QL_INTERCEPT
+from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE_UNMAPPED
 
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
@@ -62,9 +63,8 @@ _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X
 # We grab it once at import time so there's zero attribute lookup per call.
 # ---------------------------------------------------------------------------
 _uclib = _uu.uclib
-import unicorn
 
-_UC_HOOK_MEM_WRITE_UNMAPPED = unicorn.UC_HOOK_MEM_WRITE_UNMAPPED
+_UC_HOOK_MEM_WRITE_UNMAPPED = UC_HOOK_MEM_WRITE_UNMAPPED
 _uc_reg_read = _uclib.uc_reg_read
 _uc_reg_read.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
 _uc_reg_read.restype = ctypes.c_int
@@ -388,7 +388,7 @@ class MicrotaintWrapper:
             if not self._instr_hook_registered:
                 if self._main_single:
                     self.ql.uc.hook_add(
-                        unicorn.UC_HOOK_CODE,
+                        UC_HOOK_CODE,
                         self._instruction_evaluator_raw,
                         begin=self._main_base,
                         end=self._main_end,
@@ -490,12 +490,12 @@ class MicrotaintWrapper:
 
     def _uaf_unmapped_write_hook(
         self,
-        uc: object,
-        access: int,
+        uc: object,  # noqa: ARG002
+        access: int,  # noqa: ARG002
         address: int,
         size: int,
-        value: int,
-        user_data: object,
+        value: int,  # noqa: ARG002
+        user_data: object,  # noqa: ARG002
     ) -> bool:
         """Fires when code writes to UNMAPPED memory (UC_HOOK_MEM_WRITE_UNMAPPED).
 
@@ -554,7 +554,7 @@ class MicrotaintWrapper:
         reg_ids = [_AMD64_REG_ID[n] for n in _ALL_REG_NAMES]
         try:
             raw = self.ql.uc.reg_read_batch(reg_ids)
-            vals = dict(zip(_ALL_REG_NAMES, raw))
+            vals = dict(zip(_ALL_REG_NAMES, raw, strict=False))
         except Exception:
             vals = {}
             for name in _ALL_REG_NAMES:
@@ -574,7 +574,10 @@ class MicrotaintWrapper:
                 img = self.ql.loader.images[0]
                 return img.base, img.end
         except Exception:
-            pass
+            logger.warning(
+                'Failed to get main binary range from Qiling loader — falling back to no range filter',
+                exc_info=True,
+            )
         return 0, 0
 
     def _is_main_binary(self, address: int) -> bool:
@@ -619,7 +622,13 @@ class MicrotaintWrapper:
     # Core instruction evaluator
     # ------------------------------------------------------------------
 
-    def _instruction_evaluator_raw(self, uc: object, address: int, size: int, user_data: object) -> None:  # noqa: C901
+    def _instruction_evaluator_raw(  # noqa: C901
+        self,
+        uc: object,  # noqa: ARG002
+        address: int,
+        size: int,
+        user_data: object,  # noqa: ARG002
+    ) -> None:
         """Direct Unicorn hook — bypasses Qiling's Python dispatch chain (~12 us/instr saved)."""
         if not self.register_taint and not self._any_taint:
             return
@@ -735,6 +744,6 @@ class MicrotaintWrapper:
             else:
                 self.ql.emu_stop()
 
-    def _instruction_evaluator(self, ql: Qiling, address: int, size: int) -> None:
+    def _instruction_evaluator(self, ql: Qiling, address: int, size: int) -> None:  # noqa: ARG002
         """Qiling-path fallback — delegates to _instruction_evaluator_raw."""
         self._instruction_evaluator_raw(None, address, size, None)
