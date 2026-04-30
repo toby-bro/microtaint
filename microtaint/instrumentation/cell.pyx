@@ -979,27 +979,30 @@ cdef class PCodeCellEvaluator:
     cdef void _load(self, _PCodeFrame frame, dict inputs):
         frame._arch = str(self.arch)  # for CBRANCH PC lookup
         cdef object   name, val, off_obj, sz_obj
-        cdef str      key, body
+        cdef str      key, body, head
         cdef long     off
         cdef uint64_t addr_u64
-        cdef int      sz, size, sep
+        cdef int      sz, size, sep, second_us
         cdef uint64_t v
+        cdef int64_t  signed_off
+        cdef list     deferred_mem
 
         frame.clear()
+
+        # Two-pass: register/value writes FIRST so MEM_<reg>_<off>_<size>
+        # entries (which need to look up <reg> from the frame) can resolve
+        # the address register correctly. Memory writes are deferred and
+        # executed after all register writes complete.
+        deferred_mem = []
+
         for name, val in inputs.items():
             # Mask to 64-bit unsigned BEFORE casting: Python AND stays in Python
             # int domain (no overflow), then Cython casts the bounded value.
             v = <uint64_t>(val & 0xFFFFFFFFFFFFFFFF)
-            if (<str>name).startswith('MEM_'):
-                body = (<str>name)[4:]
-                sep  = body.rfind('_')
-                if sep >= 0:
-                    try:
-                        addr_u64 = int(body[:sep], 16)
-                        size = int(body[sep + 1:])
-                        frame._write_mem(addr_u64, v, size)
-                    except (ValueError, OverflowError):
-                        pass
+            # Fast prefix check — direct slice comparison is faster than
+            # str.startswith(); benchmark-verified.
+            if (<str>name)[:4] == 'MEM_':
+                deferred_mem.append((<str>name, v))
             else:
                 key     = (<str>name).upper()
                 off_obj = self._offsets.get(key)
@@ -1008,6 +1011,50 @@ cdef class PCodeCellEvaluator:
                     sz_obj = self._sizes.get(key)
                     sz     = <int>sz_obj if sz_obj is not None else 8
                     frame._write_reg(off, sz, _mask64(v, sz))
+
+        # Pass 2: resolve MEM_<...> entries.
+        # Format A:  MEM_<hex>_<size>           (static address)
+        # Format B:  MEM_<reg>_<offset>_<size>  (dynamic register-relative)
+        for name, val in deferred_mem:
+            v = <uint64_t>(val & 0xFFFFFFFFFFFFFFFF)
+            body = (<str>name)[4:]
+            sep  = body.rfind('_')
+            if sep < 0:
+                continue
+
+            # Try Format A: MEM_<hex>_<size>
+            head = body[:sep]
+            if head[:2] == '0x' or head[:3] == '-0x':
+                try:
+                    addr_u64 = <uint64_t>int(head, 16)
+                    size = int(body[sep + 1:])
+                    frame._write_mem(addr_u64, v, size)
+                    continue
+                except (ValueError, OverflowError):
+                    pass
+
+            # Format B: MEM_<reg>_<offset>_<size>
+            # body looks like 'RBP_-16_8'.  rfind('_') gave us the size split,
+            # so head='RBP_-16'. Find the next '_' between the reg name and
+            # the signed integer offset.
+            second_us = head.rfind('_')
+            if second_us < 0:
+                continue
+            try:
+                key = head[:second_us].upper()
+                signed_off = <int64_t>int(head[second_us + 1:])
+                size = int(body[sep + 1:])
+            except (ValueError, OverflowError):
+                continue
+
+            off_obj = self._offsets.get(key)
+            if off_obj is None:
+                continue
+            sz_obj = self._sizes.get(key)
+            sz     = <int>sz_obj if sz_obj is not None else 8
+            addr_u64 = frame._read_reg(<long>off_obj, sz)
+            addr_u64 = (addr_u64 + <uint64_t>signed_off) & 0xFFFFFFFFFFFFFFFF
+            frame._write_mem(addr_u64, v, size)
 
     cdef void _load_state(self, _PCodeFrame frame, dict regs, dict mem):
         """
@@ -1052,20 +1099,27 @@ cdef class PCodeCellEvaluator:
     cdef uint64_t _read_output(self, _PCodeFrame frame, str out_reg,
                                int bit_start, int bit_end):
         cdef object   off_obj, sz_obj
-        cdef str      key, body
+        cdef str      key, body, head
         cdef long     off
         cdef uint64_t addr_u64
-        cdef int      sz, size, sep, width
+        cdef int      sz, size, sep, second_us, width
+        cdef int64_t  signed_off
         cdef uint64_t val, mask
 
         width = bit_end - bit_start + 1
 
-        if out_reg.startswith('MEM_'):
+        # Direct slice comparison — faster than str.startswith.
+        if out_reg[:4] == 'MEM_':
             body = out_reg[4:]
             sep  = body.rfind('_')
-            if sep >= 0:
+            if sep < 0:
+                return 0
+
+            # Format A: MEM_<hex>_<size> — static address
+            head = body[:sep]
+            if head[:2] == '0x' or head[:3] == '-0x':
                 try:
-                    addr_u64 = int(body[:sep], 16)
+                    addr_u64 = <uint64_t>int(head, 16)
                     size = int(body[sep + 1:])
                     val  = frame._read_mem(addr_u64, size)
                     if width >= 64:
@@ -1074,7 +1128,30 @@ cdef class PCodeCellEvaluator:
                     return (val >> bit_start) & mask
                 except (ValueError, OverflowError):
                     return 0
-            return 0
+
+            # Format B: MEM_<reg>_<offset>_<size> — register-relative.
+            second_us = head.rfind('_')
+            if second_us < 0:
+                return 0
+            try:
+                key = head[:second_us].upper()
+                signed_off = <int64_t>int(head[second_us + 1:])
+                size = int(body[sep + 1:])
+            except (ValueError, OverflowError):
+                return 0
+
+            off_obj = self._offsets.get(key)
+            if off_obj is None:
+                return 0
+            sz_obj = self._sizes.get(key)
+            sz     = <int>sz_obj if sz_obj is not None else 8
+            addr_u64 = frame._read_reg(<long>off_obj, sz)
+            addr_u64 = (addr_u64 + <uint64_t>signed_off) & 0xFFFFFFFFFFFFFFFF
+            val = frame._read_mem(addr_u64, size)
+            if width >= 64:
+                return val >> bit_start
+            mask = (<uint64_t>1 << width) - 1
+            return (val >> bit_start) & mask
 
         key     = out_reg.upper()
         off_obj = self._offsets.get(key)

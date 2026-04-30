@@ -7,18 +7,41 @@ from microtaint.types import Architecture, Register
 def _build_machine_state(dict input_dict, EvalContext context):
     cdef dict regs = {}
     cdef dict mem = {}
-    cdef str name
+    cdef str name, ptr_part, head
     cdef object val
-    cdef str ptr_part
     cdef object addr
+    cdef int second_us
+    cdef long signed_off
+    cdef long size
 
     for name, val in input_dict.items():
-        if name.startswith('MEM_'):
+        # Direct slice comparison — faster than str.startswith.
+        if name[:4] == 'MEM_':
             ptr_part = name[4:]
-            if ptr_part.startswith('0x'):
+            # Format A: MEM_0xHEX  or  MEM_0xHEX_size  (static address)
+            if ptr_part[:2] == '0x' or ptr_part[:3] == '-0x':
                 addr = int(ptr_part.split('_')[0], 16)
-            else:
-                addr = context.input_values.get(ptr_part, 0)
+                mem[addr] = val
+                continue
+
+            # Format B: MEM_<reg>_<offset>_<size>  (register-relative, signed offset)
+            # ptr_part = 'RBP_-16_8' for example.
+            second_us = ptr_part.rfind('_')
+            if second_us > 0:
+                head = ptr_part[:second_us]
+                first_us = head.rfind('_')
+                if first_us > 0:
+                    try:
+                        signed_off = int(head[first_us + 1:])
+                        addr = context.input_values.get(head[:first_us], 0) + signed_off
+                        mem[addr] = val
+                        continue
+                    except (ValueError, OverflowError):
+                        pass
+
+            # Legacy format: MEM_<reg>  (no offset, no size) — kept for
+            # backward compatibility with callers that haven't migrated.
+            addr = context.input_values.get(ptr_part, 0)
             mem[addr] = val
         else:
             regs[name] = val
@@ -604,3 +627,223 @@ cdef class InstructionCellExpr(Expr):
 
         m_state = _build_machine_state(evaluated_inputs, context)
         return sim.evaluate_concrete(self, m_state)
+
+cdef class MemoryDifferentialExpr(Expr):
+    """
+    Differential evaluator for instructions whose output is a memory write
+    (RMW: read-modify-write) and/or whose value depends on memory inputs
+    that the standard ``InstructionCellExpr`` path resolves incorrectly.
+
+    Why this class exists
+    ---------------------
+    The standard differential is built as
+    ``BinaryExpr(XOR, InstructionCellExpr(rep1), InstructionCellExpr(rep2))``,
+    where ``InstructionCellExpr.evaluate`` builds a ``MachineState`` via
+    ``_build_machine_state``.  For pure register inputs that path is fast
+    and correct.  For instructions with memory inputs whose addresses
+    involve an offset (e.g. ``[rbp-0x10]``) or whose address register is
+    not also a value dep (e.g. ``[rax]`` in ``add rdx, [rax]``), the
+    standard path produces a ``MachineState`` with the memory value at
+    the wrong address and/or the address register missing from
+    ``state.regs``.  Both bugs collapse the differential to
+    ``OR-of-input-bits``, breaking SipHash-style avalanche.
+
+    This class bypasses ``_build_machine_state`` by calling the underlying
+    ``cell.pyx`` ``evaluate_differential`` with two flat ``MEM_<reg>_<offset>_<size>``
+    keyed dicts (``or_inputs`` and ``and_inputs``) — a format that
+    ``cell.pyx`` ``_load`` and ``_read_output`` parse natively.
+
+    Performance
+    -----------
+    - One ``evaluate_differential`` call per instruction execution (the same
+      two Unicorn/p-code runs the broken path was already trying to do).
+    - Built on top of cell.pyx's existing ``_frame_a`` / ``_frame_b`` shared
+      buffers — no extra allocation.
+    - Construction (the engine emits this once per unique instruction byte
+      sequence) is cached by ``_cached_generate_static_rule``'s LRU.
+
+    Constructor parameters
+    ----------------------
+    bytestring : bytes
+        Raw instruction bytes.
+    target : tuple
+        ``('MEM', addr_reg_name, addr_const_offset, size_bytes)``  for memory targets,
+        or
+        ``('REG', name, bit_start, bit_end)``                      for register targets.
+    reg_inputs : list[tuple[str, int, int]]
+        Register value-deps that contribute to the result, as
+        ``(name, bit_start, bit_end)``.  Both V and T are populated for these.
+    mem_inputs : list[tuple[str, int, int]]
+        Memory value-deps as ``(addr_reg_name, addr_const_offset, size_bytes)``.
+    addr_only_regs : list[str]
+        Registers that appear ONLY as memory address bases (no value
+        contribution).  Their concrete value must be in v_state.regs so the
+        simulator can resolve ``[reg+offset]`` correctly; their taint is
+        excluded (address-taint is an AIW signal, handled separately).
+    """
+
+    cdef public bytes bytestring
+    cdef public object target            # tuple, kept as Python object
+    cdef public list reg_inputs
+    cdef public list mem_inputs
+    cdef public list addr_only_regs
+    cdef public str _instr_hex           # cached hex form of bytestring
+    cdef public str _target_out_reg      # cached out_reg string for cell
+    cdef public int _target_bit_start
+    cdef public int _target_bit_end
+
+    def __init__(
+        self,
+        bytes bytestring,
+        object target,
+        list reg_inputs,
+        list mem_inputs,
+        list addr_only_regs,
+    ):
+        cdef str kind, name, addr_reg
+        cdef int b_start, b_end
+        cdef long offset, size_bytes
+
+        self.bytestring     = bytestring
+        self.target         = target
+        self.reg_inputs     = reg_inputs
+        self.mem_inputs     = mem_inputs
+        self.addr_only_regs = addr_only_regs
+        self._instr_hex     = bytestring.hex()
+
+        # Pre-compute the cell out_reg string.  Both formats use the same
+        # parser path in cell.pyx ``_read_output``.
+        kind = <str>target[0]
+        if kind == 'MEM':
+            addr_reg   = <str>target[1]
+            offset     = <long>target[2]
+            size_bytes = <long>target[3]
+            self._target_out_reg   = f'MEM_{addr_reg}_{offset}_{size_bytes}'
+            self._target_bit_start = 0
+            self._target_bit_end   = <int>(size_bytes * 8 - 1)
+        else:  # 'REG'
+            name    = <str>target[1]
+            b_start = <int>target[2]
+            b_end   = <int>target[3]
+            self._target_out_reg   = name
+            self._target_bit_start = b_start
+            self._target_bit_end   = b_end
+
+    def __repr__(self):
+        return (
+            f'MemoryDifferentialExpr(instr={self._instr_hex}, '
+            f'target={self.target}, regs={self.reg_inputs}, '
+            f'mem={self.mem_inputs}, addr_only={self.addr_only_regs})'
+        )
+
+    def __str__(self):
+        return self.__repr__()
+
+    cpdef object evaluate(self, EvalContext context):
+        cdef dict or_inputs  = {}
+        cdef dict and_inputs = {}
+        cdef dict input_values = context.input_values
+        cdef dict input_taint  = context.input_taint
+        cdef object shadow_memory = context.shadow_memory
+        cdef object mem_reader    = context.mem_reader
+        cdef object sim           = context.simulator
+
+        cdef str name, addr_reg
+        cdef int b_start, b_end
+        cdef long offset, size_bytes
+        cdef object v, t, slice_mask, t_slice
+        cdef object base, addr
+        cdef object v_val, t_val
+        cdef str mem_key
+
+        if sim is None:
+            return 0
+
+        # ---- Register VALUE-deps: full V|T / V&~T polarisation ----
+        for name, b_start, b_end in self.reg_inputs:
+            v = input_values.get(name, 0)
+            t = input_taint.get(name, 0)
+            if b_start == 0 and b_end >= 63:
+                or_inputs[name]  = v | t
+                and_inputs[name] = v & ~t
+            else:
+                # Polarise only the slice bits; preserve other bits as V.
+                slice_mask = (((<object>1) << (b_end - b_start + 1)) - 1) << b_start
+                t_slice = t & slice_mask
+                or_inputs[name]  = (v & ~t_slice) | t_slice
+                and_inputs[name] = v & ~t_slice
+
+        # ---- Address-only registers: same value in both runs ----
+        for name in self.addr_only_regs:
+            if name in or_inputs:
+                continue  # already handled as a value-dep
+            v = input_values.get(name, 0)
+            or_inputs[name]  = v
+            and_inputs[name] = v
+
+        # ---- Memory value-deps: read V from mem_reader, T from shadow ----
+        for addr_reg, offset, size_bytes in self.mem_inputs:
+            base = input_values.get(addr_reg, 0)
+            addr = (base + offset) & 0xFFFFFFFFFFFFFFFF
+            if mem_reader is not None:
+                try:
+                    v_val = mem_reader(addr, size_bytes)
+                except Exception:
+                    v_val = 0
+            else:
+                v_val = 0
+            if shadow_memory is not None:
+                try:
+                    t_val = shadow_memory.read_mask(addr, size_bytes)
+                except Exception:
+                    t_val = 0
+            else:
+                t_val = 0
+            mem_key = f'MEM_{addr_reg}_{offset}_{size_bytes}'
+            or_inputs[mem_key]  = v_val | t_val
+            and_inputs[mem_key] = v_val & ~t_val
+
+        # ---- Run the differential through cell.pyx's native path ----
+        # ``simulator.evaluate_differential`` (added below) wraps cell.pyx's
+        # evaluator with a Unicorn fallback when the p-code path can't
+        # handle this instruction.  It returns the masked output XOR.
+        try:
+            return sim.evaluate_differential(
+                self, or_inputs, and_inputs,
+            )
+        except Exception:
+            # OR-of-input-taints fallback.  Conservative: all explicitly
+            # tainted bits are always reported even on simulator failure.
+            fallback = 0
+            for name, b_start, b_end in self.reg_inputs:
+                fallback |= input_taint.get(name, 0)
+            for addr_reg, offset, size_bytes in self.mem_inputs:
+                if shadow_memory is not None:
+                    base = input_values.get(addr_reg, 0)
+                    addr = (base + offset) & 0xFFFFFFFFFFFFFFFF
+                    try:
+                        fallback |= shadow_memory.read_mask(addr, size_bytes)
+                    except Exception:
+                        pass
+            width = self._target_bit_end - self._target_bit_start + 1
+            mask = ((<object>1) << width) - 1 if width < 64 else 0xFFFFFFFFFFFFFFFF
+            return (fallback >> self._target_bit_start) & mask
+
+    # cell.pyx's evaluate_differential reads `cell.instruction`, `cell.out_reg`,
+    # `cell.out_bit_start`, `cell.out_bit_end` — proxy these via Python
+    # attribute access using our pre-cached values.
+    @property
+    def instruction(self):
+        return self._instr_hex
+
+    @property
+    def out_reg(self):
+        return self._target_out_reg
+
+    @property
+    def out_bit_start(self):
+        return self._target_bit_start
+
+    @property
+    def out_bit_end(self):
+        return self._target_bit_end

@@ -342,7 +342,7 @@ class MicrotaintWrapper:
         self.reporter = reporter or Reporter()
 
         self.arch = Architecture.AMD64
-        self.sim = CellSimulator(self.arch)
+        self.sim = CellSimulator(self.arch, use_unicorn=False)
         self.shadow_mem = BitPreciseShadowMemory()
 
         self.register_taint: dict[str, int] = {}
@@ -380,26 +380,7 @@ class MicrotaintWrapper:
         Writes in 8-byte chunks to avoid uint64_t overflow in shadow.pyx
         (mask = (1 << (n*8)) - 1 overflows for n > 8).
         """
-        if not self._any_taint:
-            self._any_taint = True
-            # Register instruction hook now that taint exists.
-            # Before this point, Unicorn ran without any instruction hook —
-            # saving ~6 us x N_untainted_instructions in Unicorn's C overhead.
-            if not self._instr_hook_registered:
-                if self._main_single:
-                    self.ql.uc.hook_add(
-                        UC_HOOK_CODE,
-                        self._instruction_evaluator_raw,
-                        begin=self._main_base,
-                        end=self._main_end,
-                    )
-                else:
-                    self.ql.hook_code(self._instruction_evaluator)
-                self._instr_hook_registered = True
-            if not self._mem_write_hook_registered:
-                # Register _mem_write_clear_hook now that taint exists.
-                self.ql.hook_mem_write(self._mem_write_clear_hook)
-                self._mem_write_hook_registered = True
+        self._arm_deferred_hooks()
         FULL_MASK = 0xFFFFFFFFFFFFFFFF
         written = 0
         while written + 8 <= n:
@@ -409,6 +390,77 @@ class MicrotaintWrapper:
             remainder = n - written
             remainder_mask = (1 << (remainder * 8)) - 1
             self.shadow_mem.write_mask(address + written, remainder_mask, remainder)
+
+    # ------------------------------------------------------------------
+    # Public bit-precise taint injection API
+    # ------------------------------------------------------------------
+
+    def taint_bit(self, address: int, bit_index: int) -> None:
+        """
+        Mark exactly one bit of memory as tainted, leaving all other bits
+        of the shadow byte at `address` untouched.
+
+        `address`   — byte address in emulated memory.
+        `bit_index` — which bit within that byte (0 = LSB, 7 = MSB).
+
+        Semantics
+        ---------
+        OR-into-existing.  Calling taint_bit(addr, 0) then taint_bit(addr, 1)
+        leaves shadow[addr] with bits 0 AND 1 set (mask 0x03).  This matches
+        the natural reading of "mark this bit as tainted" without disturbing
+        other bits' taint state.  Use taint_region(addr, [0x00]) to clear.
+
+        The instruction hook is armed on the first call (same as _taint_bytes).
+        """
+        if not 0 <= bit_index <= 7:
+            raise ValueError(f'bit_index must be 0-7, got {bit_index}')
+        self._arm_deferred_hooks()
+        # Preserve any existing taint at this byte: read, OR in the new bit, write back.
+        existing = self.shadow_mem.read_mask(address, 1)
+        self.shadow_mem.write_mask(address, existing | (1 << bit_index), 1)
+
+    def taint_region(self, address: int, mask_bytes: bytes | bytearray) -> None:
+        """
+        Mark a region of memory with an explicit per-byte, per-bit taint mask.
+
+        `address`    — start address in emulated memory.
+        `mask_bytes` — one byte per memory byte; each bit in that byte controls
+                       whether the corresponding input bit is considered tainted.
+                       0x00 = no taint, 0xFF = fully tainted, 0x0F = low nibble tainted.
+
+        This is the general form of _taint_bytes (which uses 0xFF for every byte).
+        """
+        self._arm_deferred_hooks()
+        for i, mask in enumerate(mask_bytes):
+            # Always call write_mask even when mask is 0: this explicitly clears
+            # any pre-existing taint at that byte, matching write_mask's documented
+            # semantics ("write_mask(addr, 0, n) explicitly clears n bytes of taint").
+            self.shadow_mem.write_mask(address + i, mask, 1)
+
+    def _arm_deferred_hooks(self) -> None:
+        """
+        Arm the instruction hook and mem-write hook if not already registered.
+        Called by any public taint injection method so that hooks activate the
+        first time ANY taint is introduced, regardless of whether it came from
+        the read() syscall or a direct taint_bit() / taint_region() call.
+        """
+        if self._any_taint:
+            return
+        self._any_taint = True
+        if not self._instr_hook_registered:
+            if self._main_single:
+                self.ql.uc.hook_add(
+                    UC_HOOK_CODE,
+                    self._instruction_evaluator_raw,
+                    begin=self._main_base,
+                    end=self._main_end,
+                )
+            else:
+                self.ql.hook_code(self._instruction_evaluator)
+            self._instr_hook_registered = True
+        if not self._mem_write_hook_registered:
+            self.ql.hook_mem_write(self._mem_write_clear_hook)
+            self._mem_write_hook_registered = True
 
     def _setup_hooks(self) -> None:
         # Cache the raw Unicorn C handle once. ql.uc is a property that

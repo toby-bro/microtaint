@@ -14,6 +14,7 @@ from microtaint.instrumentation.ast import (
     Expr,
     InstructionCellExpr,
     LogicCircuit,
+    MemoryDifferentialExpr,
     MemoryOperand,
     Op,
     TaintAssignment,
@@ -415,6 +416,7 @@ def _cached_generate_static_rule(
             out_bit_start,
             out_bit_end,
             mapper,
+            mapping,
         )
 
     return LogicCircuit(
@@ -445,6 +447,7 @@ def generate_taint_assignments(  # noqa: C901
     out_bit_start: int,
     out_bit_end: int,
     mapper: StateMapper,
+    mapping: RegMapping | MemMapping | None = None,
 ) -> None:
     # -----------------------------------------------------------------------
     # STORE TARGET — memory output of a STORE instruction.
@@ -461,7 +464,33 @@ def generate_taint_assignments(  # noqa: C901
     #   - The transport term must use value_deps only.
     # -----------------------------------------------------------------------
     is_store_target = hasattr(out_target, 'address_expr')
+
+    # -----------------------------------------------------------------------
+    # RMW DETECTION
+    # -----------------------------------------------------------------------
+    # An RMW instruction (e.g. `add [rbp-0x10], rax`, `xor [mem], reg`) reads
+    # from memory, performs arithmetic with a source register, and writes
+    # back.  The output taint depends on BOTH old memory contents AND the
+    # source register, including carry/borrow chains.
+    #
+    # The OR-only path below was correct for pure stores (`mov [mem], reg`),
+    # where C1 XOR C2 == 0 — but for RMW the differential is non-zero, and
+    # the OR-only path silently drops the carry chain, breaking SipHash-style
+    # avalanche.
+    #
+    # Detection: a STORE target with a LOAD op in the same slice_ops is RMW.
+    # Cost: single linear scan over slice_ops (~10 ops max), runs once per
+    # unique instruction byte sequence, then cached by _cached_generate_static_rule.
+    # Pure stores (the common case) keep the fast OR-only path below.
+    # -----------------------------------------------------------------------
+    is_rmw = False
     if is_store_target:
+        for _op in slice_ops:
+            if _op.opcode.name == 'LOAD':
+                is_rmw = True
+                break
+
+    if is_store_target and not is_rmw:
         value_deps = dep_set.value_deps
 
         if not value_deps:
@@ -486,6 +515,90 @@ def generate_taint_assignments(  # noqa: C901
         # Putting addr taint into shadow would cause catastrophic false positives:
         # after 'leave' propagates T_RBP→T_RSP, every subsequent push/call would
         # write tainted shadow, poisoning all future return addresses.
+
+        assignments.append(
+            TaintAssignment(
+                target=out_target,
+                dependencies=value_dependencies,
+                expression=expr,
+            ),
+        )
+        return
+
+    # -----------------------------------------------------------------------
+    # RMW MEMORY TARGET — uses MemoryDifferentialExpr (sleigh.mem_diff) which
+    # bypasses the buggy `_build_machine_state` path that drops memory-input
+    # offsets and address-only register values.  See sleigh/mem_diff.py for
+    # the detailed background on the two underlying bugs in the standard
+    # InstructionCellExpr path.
+    #
+    # The C1 XOR C2 differential captures carry/borrow chains and per-bit
+    # dependency structure that the OR-only fast path drops.  We still OR
+    # with the explicit value-taint fallback so bits explicitly tainted in
+    # inputs are never lost even on simulator failure.
+    #
+    # addr_deps taint is still excluded here — same security property as
+    # the pure-store path: a tainted destination POINTER is an AIW signal,
+    # not data taint, and must not poison shadow memory.
+    # -----------------------------------------------------------------------
+    if is_rmw:
+        if not isinstance(mapping, MemMapping):
+            raise RuntimeError('RMW target without MemMapping')
+
+        # Collect value-deps as (reg_inputs, mem_inputs) lists for the
+        # MemoryDifferentialExpr constructor.  Address-only registers are
+        # built from the union of input addresses minus value-deps.
+        reg_inputs: list[tuple[str, int, int]] = []
+        mem_inputs: list[tuple[str, int, int]] = []
+        addr_only_regs_set: set[str] = set()
+
+        # Always add the destination's own address register as address-only.
+        addr_only_regs_set.add(mapping.addr_reg.name)
+
+        for dep_map in dep_set.value_deps.keys():
+            if isinstance(dep_map, MemMapping):
+                mem_inputs.append(
+                    (
+                        dep_map.addr_reg.name,
+                        dep_map.addr_const_offset,
+                        dep_map.size_bytes,
+                    ),
+                )
+                addr_only_regs_set.add(dep_map.addr_reg.name)
+            else:
+                reg_inputs.append((dep_map.name, dep_map.bit_start, dep_map.bit_end))
+
+        # Remove from addr_only_regs any register that is also a value dep.
+        value_reg_names = {r[0] for r in reg_inputs}
+        addr_only_regs = sorted(addr_only_regs_set - value_reg_names)
+
+        target_spec = (
+            'MEM',
+            mapping.addr_reg.name,
+            mapping.addr_const_offset,
+            mapping.size_bytes,
+        )
+
+        diff_expr: Expr = MemoryDifferentialExpr(
+            bytestring=bytestring,
+            target=target_spec,
+            reg_inputs=reg_inputs,
+            mem_inputs=mem_inputs,
+            addr_only_regs=addr_only_regs,
+        )
+
+        # Build the explicit value-taint OR fallback (transport term).
+        value_dependencies, _, _, _ = process_dependencies(dep_set.value_deps)
+
+        if value_dependencies:
+            transport = value_dependencies[0]
+            for t in value_dependencies[1:]:
+                transport = BinaryExpr(Op.OR, transport, t)
+            expr = BinaryExpr(Op.OR, diff_expr, transport)
+        else:
+            expr = diff_expr
+
+        # addr_deps deliberately excluded — same reason as pure-store path.
 
         assignments.append(
             TaintAssignment(
@@ -578,7 +691,43 @@ def generate_taint_assignments(  # noqa: C901
                     is_load_like = True
                     break
 
+    # Detect whether this register-target instruction has memory inputs
+    # OR address-only registers — both cases need MemoryDifferentialExpr
+    # (the standard make_differential() path resolves memory addresses
+    # incorrectly because cell_inputs uses the legacy MEM_<reg> key
+    # format that drops the offset).  See MemoryDifferentialExpr for
+    # the detailed bug background.
+    _has_mem_inputs = any(isinstance(d, MemMapping) for d in dep_set.value_deps.keys())
+    _value_reg_names = {d.name for d in dep_set.value_deps.keys() if not isinstance(d, MemMapping)}
+    _addr_only_regs_set: set[str] = set()
+    for d in dep_set.value_deps.keys():
+        if isinstance(d, MemMapping) and d.addr_reg.name not in _value_reg_names:
+            _addr_only_regs_set.add(d.addr_reg.name)
+    _has_addr_only = bool(_addr_only_regs_set)
+    _use_mem_diff = _has_mem_inputs or _has_addr_only
+
     def make_differential() -> Expr:
+        if _use_mem_diff:
+            # Memory-aware path: route through MemoryDifferentialExpr which
+            # builds the simulator state with correct addresses and
+            # address-only register values.  Performance: ~2x faster than
+            # the BinaryExpr(XOR, C1_cell, C2_cell) path because it shares
+            # cell.pyx's _frame_a/_frame_b buffers via evaluate_differential.
+            _reg_inputs = []
+            _mem_inputs = []
+            for d in dep_set.value_deps.keys():
+                if isinstance(d, MemMapping):
+                    _mem_inputs.append((d.addr_reg.name, d.addr_const_offset, d.size_bytes))
+                else:
+                    _reg_inputs.append((d.name, d.bit_start, d.bit_end))
+            return MemoryDifferentialExpr(
+                bytestring=bytestring,
+                target=('REG', out_name, out_bit_start, out_bit_end),
+                reg_inputs=_reg_inputs,
+                mem_inputs=_mem_inputs,
+                addr_only_regs=sorted(_addr_only_regs_set),
+            )
+        # Pure-register fast path: cell.pyx's static-cell evaluation.
         C1_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep1)
         C2_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep2)
         return BinaryExpr(Op.XOR, C1_cell, C2_cell)

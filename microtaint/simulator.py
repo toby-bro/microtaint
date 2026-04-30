@@ -568,6 +568,70 @@ class CellSimulator:
         mask = (1 << (cell.out_bit_end - cell.out_bit_start + 1)) - 1
         return int((val >> cell.out_bit_start) & mask)
 
+    def evaluate_differential(self, cell: Any, or_inputs: dict[str, int], and_inputs: dict[str, int]) -> int:
+        """
+        Evaluate the differential of `cell` given two flat input dicts:
+        `or_inputs`  is the high-polarity image  (V | T) of every input,
+        `and_inputs` is the low-polarity image   (V & ~T).
+
+        Returns ``cell(or_inputs) XOR cell(and_inputs)`` masked to the
+        target's bit slice.  Used by ``MemoryDifferentialExpr`` to drive
+        the cell.pyx native ``evaluate_differential`` for instructions
+        whose ``MachineState``-based path produces wrong addresses (e.g.
+        memory inputs with offsets, address-only registers).
+
+        Both input dicts use cell.pyx's flat key format:
+          - register name  -> integer value         (e.g. ``'RAX': 0xFF``)
+          - ``MEM_<hex>_<size>``  static address    (e.g. ``'MEM_0x1000_8'``)
+          - ``MEM_<reg>_<offset>_<size>`` register-relative
+            (e.g. ``'MEM_RBP_-16_8'`` resolves at runtime)
+
+        Native p-code path (``use_unicorn=False``) is preferred; falls
+        back to two Unicorn emulations if the instruction needs it.
+        """
+        # --- P-code native path (fast) ---
+        if not self.use_unicorn:
+            assert self._pcode is not None
+            try:
+                return self._pcode.evaluate_differential(cell, or_inputs, and_inputs)
+            except self._pcode_fallback_exc:
+                self._pcode.fallback_calls += 1
+                # fall through to Unicorn
+
+        # --- Unicorn fallback path: build MachineStates from flat dicts ---
+        # We can't reuse cell.pyx's `_load` here, so we lift the flat dicts
+        # into MachineState by calling our existing _build helpers.  The
+        # static-and-dynamic MEM key formats are handled by ast.pyx's
+        # _build_machine_state which we delegate to.
+        from microtaint.instrumentation.ast import EvalContext, _build_machine_state  # noqa: PLC0415
+
+        # We need a context with input_values to resolve dynamic MEM keys.
+        # The address registers are present as bare-register entries in
+        # both or_inputs and and_inputs (with the same value, since
+        # address-only regs are not polarised), so we use either dict.
+        ctx = EvalContext(input_taint={}, input_values=or_inputs, simulator=self)
+
+        v_state_or  = _build_machine_state(or_inputs, ctx)
+        v_state_and = _build_machine_state(and_inputs, ctx)
+
+        try:
+            self._execute(bytes.fromhex(cell.instruction), v_state_or)
+        except Exception as e:
+            logger.error(f'[!] Microtaint Unicorn crash on instruction (hex): {cell.instruction}. Exception: {e}')
+            raise
+        val_or = self._read_reg(cell.out_reg)
+
+        try:
+            self._execute(bytes.fromhex(cell.instruction), v_state_and)
+        except Exception as e:
+            logger.error(f'[!] Microtaint Unicorn crash on instruction (hex): {cell.instruction}. Exception: {e}')
+            raise
+        val_and = self._read_reg(cell.out_reg)
+
+        diff = val_or ^ val_and
+        mask = (1 << (cell.out_bit_end - cell.out_bit_start + 1)) - 1
+        return int((diff >> cell.out_bit_start) & mask)
+
     def evaluate_cell_differential(  # noqa: C901
         self,
         bytestring: bytes,

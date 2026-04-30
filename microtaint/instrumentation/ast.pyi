@@ -129,3 +129,33 @@ class InstructionCellExpr(Expr):
         inputs: dict[str, Expr],
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
+
+class MemoryDifferentialExpr(Expr):
+    bytestring: bytes
+    target: tuple[Any, ...]
+    reg_inputs: list[tuple[str, int, int]]
+    mem_inputs: list[tuple[str, int, int]]
+    addr_only_regs: list[str]
+
+    _instr_hex: str
+    _target_out_reg: str
+    _target_bit_start: int
+    _target_bit_end: int
+
+    def __init__(
+        self,
+        bytestring: bytes,
+        target: tuple[str, str, int, int],
+        reg_inputs: list[tuple[str, int, int]],
+        mem_inputs: list[tuple[str, int, int]],
+        addr_only_regs: list[str],
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+    @property
+    def instruction(self) -> str: ...
+    @property
+    def out_reg(self) -> str: ...
+    @property
+    def out_bit_start(self) -> int: ...
+    @property
+    def out_bit_end(self) -> int: ...
