@@ -50,6 +50,9 @@ X64_FORMAT = [
 # via genexpr on every generate_static_rule call (was 2.26s in profiling).
 _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X64_FORMAT)
 
+# Tier 3: empty frozenset for cache key when register_taint is empty.
+_EMPTY_FROZENSET = frozenset()
+
 # ---------------------------------------------------------------------------
 # ctypes shim for uc_reg_read
 #
@@ -354,6 +357,22 @@ class MicrotaintWrapper:
         self._pre_regs: dict[str, int] = {}
         self._pre_taint: dict[str, int] = {}
 
+        # Tier 3: per-instruction-address memoization cache.
+        # Maps address → (taint_signature_tuple, output_state_dict).
+        # On a hit, we apply the cached output_state directly without running
+        # circuit.evaluate(ctx).  Bench profile: 150 unique addresses for
+        # 1.19M callbacks (avg 7948 revisits each) — extremely cache-friendly.
+        # Disabled by setting MICROTAINT_DISABLE_INSTR_CACHE=1.
+        import os as _os
+        self._instr_cache_enabled: bool = _os.environ.get('MICROTAINT_DISABLE_INSTR_CACHE') != '1'
+        self._instr_cache: dict[int, tuple[tuple, dict]] = {}
+        self._instr_cache_hits: int = 0
+        self._instr_cache_misses: int = 0
+        # V5: Cython hot-path hook. Set MICROTAINT_DISABLE_CYTHON_HOOK=1 to
+        # fall back to the Python method (for debugging).
+        self._disable_cython_hook: bool = _os.environ.get('MICROTAINT_DISABLE_CYTHON_HOOK') == '1'
+        self._instr_hook_obj: object = None
+
         # Tracks addresses written with nonzero taint by the most recent circuit
         # evaluation. The mem_write hook reads this set to avoid clearing taint
         # that the circuit intentionally set.
@@ -437,6 +456,32 @@ class MicrotaintWrapper:
             # semantics ("write_mask(addr, 0, n) explicitly clears n bytes of taint").
             self.shadow_mem.write_mask(address + i, mask, 1)
 
+    def _make_cython_hook(self):
+        """Build a Cython-compiled hook callable.  Returns None if Cython
+        module isn't available (dev installations may not have built it)."""
+        try:
+            from microtaint.emulator.hook_core import InstructionHook  # type: ignore[import-not-found]
+        except ImportError:
+            return None
+        try:
+            return InstructionHook(
+                self,
+                uc_handle=self._uc_handle,
+                uc_mem_read=_uc_mem_read,
+                uc_reg_read_batch=_uc_reg_read_batch,
+                mem_buf=_MEM_BUF,
+                arch=self.arch,
+                cached_gen_rule=_cached_generate_static_rule,
+                x64_format_key=_X64_FORMAT_KEY,
+                get_decoded=_get_decoded,
+                build_offsets_arrs=_build_offsets_arrays,
+                eflags_bits=_EFLAGS_BITS,
+                eval_context_cls=EvalContext,
+            )
+        except Exception as exc:
+            logger.debug(f'Cython hook construction failed: {exc}')
+            return None
+
     def _arm_deferred_hooks(self) -> None:
         """
         Arm the instruction hook and mem-write hook if not already registered.
@@ -448,10 +493,17 @@ class MicrotaintWrapper:
             return
         self._any_taint = True
         if not self._instr_hook_registered:
+            # Build the Cython hot-path hook callable. Falls back to the
+            # Python method if hook_core failed to import (e.g. dev build
+            # without Cython).
+            instr_hook = self._make_cython_hook() if not self._disable_cython_hook else None
+            if instr_hook is None:
+                instr_hook = self._instruction_evaluator_raw
+            self._instr_hook_obj = instr_hook  # keep alive
             if self._main_single:
                 self.ql.uc.hook_add(
                     UC_HOOK_CODE,
-                    self._instruction_evaluator_raw,
+                    instr_hook,
                     begin=self._main_base,
                     end=self._main_end,
                 )
@@ -689,6 +741,32 @@ class MicrotaintWrapper:
         instruction_bytes = bytes(_MEM_BUF[:size]) if err == 0 else bytes(self.ql.mem.read(address, size))
         circuit = _cached_generate_static_rule(self.arch, instruction_bytes, _X64_FORMAT_KEY)
 
+        # Tier 3 fast path: per-address memoization.
+        # Check cache BEFORE the expensive register batch read.  On hit
+        # we don't need _pre_regs at all — the cached output_state is just
+        # a register-taint mapping.
+        cache_key = None
+        compiled_circuit = circuit._compiled
+        if (self._instr_cache_enabled
+                and compiled_circuit is not None
+                and compiled_circuit is not False
+                and not compiled_circuit.has_mem_ops):
+            cache_key = frozenset(self.register_taint.items()) if self.register_taint else _EMPTY_FROZENSET
+            cached = self._instr_cache.get(address)
+            if cached is not None and cached[0] == cache_key:
+                # Cache hit: replay the output_state directly.
+                output_state = cached[1]
+                self._instr_cache_hits += 1
+                if self._last_tainted_writes:
+                    self._last_tainted_writes.clear()
+                if self.register_taint:
+                    self.register_taint.clear()
+                for key, val in output_state.items():
+                    if val > 0:
+                        self.register_taint[key] = val
+                return
+            self._instr_cache_misses += 1
+
         # Read all live registers for the C1/C2 concrete execution in the pcode evaluator.
         # _load() uses these to populate frame values for both pcode and Unicorn cell paths.
         # Targeted register read: only fetch what this instruction's pcode needs.
@@ -725,6 +803,14 @@ class MicrotaintWrapper:
 
         try:
             output_state = circuit.evaluate(ctx)
+
+            # Tier 3: cache successful eval result for this address+taint_sig.
+            # We only populate the cache for circuits without mem ops (gated
+            # by cache_key being non-None).
+            if cache_key is not None:
+                # Make a private copy of output_state — circuit.evaluate may
+                # return ctx.input_taint reference for some Cython paths.
+                self._instr_cache[address] = (cache_key, dict(output_state))
 
             # Single pass over output_state: update shadow_mem, register_taint,
             # _last_tainted_writes, and collect MEM_ entries for AIW check.
