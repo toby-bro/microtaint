@@ -163,11 +163,12 @@ class CellSimulator:
     on V | T and V & ~T, computing the precise logical XOR differential.
     """
 
-    def __init__(self, arch: Architecture, use_unicorn: bool = False) -> None:  # noqa: C901
+    def __init__(self, arch: Architecture, use_unicorn: bool = False, use_c: bool = False) -> None:  # noqa: C901
         if arch not in _ARCH_MAP:
             raise ValueError(f'Architecture {arch} is not supported by CellSimulator.')
         self.arch = arch
         self.use_unicorn = use_unicorn
+        self.use_c = use_c
         self._pcode: None | PCodeCellEvaluator = None
         self._pcode_fallback_exc: Any = None
 
@@ -208,7 +209,15 @@ class CellSimulator:
         # P-code native evaluator — created after Unicorn is fully initialised.
         # pypcode's GHIDRA runtime must not start before uc_open() completes.
         if not use_unicorn:
-            self._pcode = _get_pcode_evaluator_class()(arch)
+            if use_c:
+                # Pure-C evaluator: drop-in replacement for PCodeCellEvaluator.
+                try:
+                    from cell_c import PCodeCellEvaluatorC  # type: ignore[import-not-found]
+                    self._pcode = PCodeCellEvaluatorC(arch)
+                except ImportError:
+                    self._pcode = _get_pcode_evaluator_class()(arch)
+            else:
+                self._pcode = _get_pcode_evaluator_class()(arch)
             # Cache the fallback exception class — avoids per-call import in hot path.
             from microtaint.instrumentation.cell import PCodeFallbackNeeded as _exc  # noqa: PLC0415
 

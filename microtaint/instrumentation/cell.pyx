@@ -270,6 +270,11 @@ cdef class DecodedOps:
     cdef public object    input_reg_offsets  # set of SP_REGISTER input offsets
     cdef public object    _uc_arrays         # cached (ids_arr,vals_arr,ptrs_arr,names,needs_eflags)
 
+    def get_buf_bytes(self):
+        """Return the raw PCodeOp struct array as a bytes object.
+        Used by cell_c.c to copy the pre-decoded ops into its own DecodedBundle."""
+        return bytes((<unsigned char*>self.buf)[:sizeof(PCodeOp) * MAX_PCODE_OPS])
+
 
 def _predecode_ops(arch, bytestring):
     """
