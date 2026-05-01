@@ -75,6 +75,12 @@ compile_py = false
 # can resolve sibling .pxd files (currently: microtaint/emulator/shadow.pxd,
 # imported by hook_core.pyx).
 includes = ["."]
+# Always regenerate .c from .pyx — by default cythonize skips regeneration
+# when the .c file is newer than the .pyx, which causes stale builds when
+# users update .pyx without deleting the cached .c (e.g. `uv sync
+# --reinstall-package` after editing a .pyx in place).
+cythonize_kwargs = { force = true }
+
 
 [tool.hatch.build.targets.wheel.hooks.cython.options.files]
 exclude = [
@@ -182,9 +188,7 @@ artifacts = [
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
 packages = ["microtaint"]
-include = [
-    "microtaint/instrumentation/cell_c/*.h",
-]
+include = ["microtaint/instrumentation/cell_c/*.h"]
 artifacts = [
     # Compiled extensions
     "microtaint/instrumentation/cell_c/*.so",
@@ -284,7 +288,15 @@ warn_unused_ignores = true
 warn_unused_configs = true
 namespace_packages = true
 pretty = true
-exclude = [".venv/", ".git/", "__pycache__/", "output/", "peekaboo/", "tools/", "hatch_build.py"]
+exclude = [
+    ".venv/",
+    ".git/",
+    "__pycache__/",
+    "output/",
+    "peekaboo/",
+    "tools/",
+    "hatch_build.py",
+]
 
 # pypcode and unicorn are C extensions with no bundled stubs
 [[tool.mypy.overrides]]
