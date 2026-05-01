@@ -120,14 +120,27 @@ class DependencySet:
         return result
 
 
+@dataclass(frozen=True, slots=True)
+class _SynthVarnode:
+    """Minimal Varnode-shaped object for synthetic state_format entries
+    (currently: XMM<n>_LO / XMM<n>_HI).  StateMapper only reads .offset
+    and .size from these, never anything else, so the shim is sufficient."""
+
+    offset: int
+    size: int
+
+
 class StateMapper:
     def __init__(self, ctx: Context, arch: str, state_format: list[Register]):
         self.ctx = ctx
         self.arch = arch
         self.state_format = state_format
         self.arm_aliases: dict[str, str] = {'N': 'ng', 'Z': 'zr', 'C': 'cy', 'V': 'ov'}
-        self.is_x86 = 'X86' in arch.upper()
-        self.is_arm = 'ARM' in arch.upper()
+        # is_x86 covers both "X86" (32-bit) and "AMD64" (64-bit) — they share
+        # the Sleigh register space layout (XMM0 at 0x1200, EFLAGS at 0x200, ...).
+        arch_upper = str(arch).upper()
+        self.is_x86 = 'X86' in arch_upper or 'AMD64' in arch_upper
+        self.is_arm = 'ARM' in arch_upper
 
         self.sf_resolved: list[tuple[Register, Varnode]] = []
         for sf_reg in state_format:
@@ -135,8 +148,38 @@ class StateMapper:
             if not s_r and self.is_arm and sf_reg.name in self.arm_aliases:
                 alias = self.arm_aliases[sf_reg.name]
                 s_r = ctx.registers.get(alias) or ctx.registers.get(alias.upper())
+            if not s_r and self.is_x86:
+                # Synthetic XMM<n>_LO / XMM<n>_HI: pypcode has a single
+                # XMM<n> at offset 0x1200+n*0x40 size 16.  We register
+                # _LO at the base offset (low 64 bits) and _HI 8 bytes
+                # in (high 64 bits) so Ghidra-emitted varnodes targeting
+                # XMM<n>[63:0]  / XMM<n>[127:64] map correctly.
+                s_r = self._synth_xmm_varnode(sf_reg.name)  # type: ignore[assignment]
             if s_r:
                 self.sf_resolved.append((sf_reg, s_r))
+
+    @staticmethod
+    def _synth_xmm_varnode(name: str) -> _SynthVarnode | None:
+        """Build a lightweight Varnode-like object for XMM<n>_LO / _HI.
+
+        The StateMapper only reads `.offset` and `.size` from these
+        objects, so a tiny shim suffices.  Returns None for any name
+        that doesn't match the XMM<n>_LO / XMM<n>_HI pattern.
+        """
+        if not name.startswith('XMM'):
+            return None
+        # Parse "XMM<n>_LO" or "XMM<n>_HI"
+        try:
+            rest = name[3:]
+            num_str, _, half = rest.partition('_')
+            n = int(num_str)
+        except ValueError:
+            return None
+        if not (0 <= n < 16) or half not in ('LO', 'HI'):
+            return None
+        # pypcode's XMM<n> sits at 0x1200 + n*0x40, size 16.
+        sub_offset = 0 if half == 'LO' else 8
+        return _SynthVarnode(offset=0x1200 + n * 0x40 + sub_offset, size=8)
 
     def map_to_state(self, offset: int, size: int) -> RegMapping | None:
         if self.is_x86 and 512 <= offset < 560:
@@ -1151,19 +1194,31 @@ def extract_dependencies(  # noqa: C901
 
         for vn in op.inputs:
             if vn.space.name == 'register':
+                # Try the singular map first — preserves the existing
+                # "smallest covering register" semantics for GPRs and
+                # their aliases (RAX → just RAX, not RAX+EAX+AX+AL).
                 mapped_dep = mapper.map_to_state(vn.offset, vn.size)
-                if mapped_dep is None:
-                    continue
-                # Classify: is this register used as a pointer, or as data?
-                if vn.offset in ptr_reg_offsets:
-                    # Address register — goes into addr_deps.
-                    # Do NOT add to value_deps.
-                    if mapped_dep not in addr_deps:
-                        addr_deps[mapped_dep] = 1
+                if mapped_dep is not None:
+                    mapped_deps: list[RegMapping] = [mapped_dep]
                 else:
-                    # Data register — goes into value_deps.
-                    if mapped_dep not in value_deps:
-                        value_deps[mapped_dep] = 1
+                    # No single state_format entry covers the input — fall
+                    # back to the multi-mapping form.  This is how XMM
+                    # registers (split into XMM<n>_LO + XMM<n>_HI in the
+                    # state_format) get all their pieces tracked.
+                    mapped_deps = mapper.map_to_state_all(vn.offset, vn.size)
+                if not mapped_deps:
+                    continue
+                for md in mapped_deps:
+                    # Classify: is this register used as a pointer, or as data?
+                    if vn.offset in ptr_reg_offsets:
+                        # Address register — goes into addr_deps.
+                        # Do NOT add to value_deps.
+                        if md not in addr_deps:
+                            addr_deps[md] = 1
+                    else:
+                        # Data register — goes into value_deps.
+                        if md not in value_deps:
+                            value_deps[md] = 1
 
     # Apply polarity annotations to value_deps only (addr_deps don't
     # participate in the differential so polarity is irrelevant for them).

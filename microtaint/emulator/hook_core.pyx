@@ -227,11 +227,13 @@ cdef class InstructionHook:
             if uc_arrs is None:
                 uc_arrs = self.build_offsets_arrs(decoded.input_reg_offsets)
                 decoded._uc_arrays = uc_arrs
-            ids, vals, ptrs, n, names, need_ef = uc_arrs
+            ids, vals, ptrs, n, names, need_ef, n_calls = uc_arrs
             if ids is None:
                 pre_regs = {}
             else:
-                self.uc_reg_read_batch(self.uc_handle, ids, ptrs, n)
+                # n_calls = number of uc_reg_read calls (one per UC reg id);
+                # n      = number of vals slots = len(names) (XMM contributes 2).
+                self.uc_reg_read_batch(self.uc_handle, ids, ptrs, n_calls)
                 pre_regs = {names[i]: int(vals[i]) for i in range(n)}
                 if need_ef:
                     ef = pre_regs.get('EFLAGS', 0)

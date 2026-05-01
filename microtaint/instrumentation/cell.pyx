@@ -947,6 +947,19 @@ def _build_reg_maps(arch):
                     offsets[friendly] = offsets[sleigh]
                     sizes[friendly]   = sizes[sleigh]
             break
+    # XMM<n>_LO / XMM<n>_HI: split each 128-bit XMM register into two
+    # 64-bit halves (LO at base offset, HI at base+8).  Mirrors the
+    # wrapper.X64_FORMAT layout so the cell.pyx _load can populate the
+    # P-code frame from XMM_LO/_HI keys in InstructionCellExpr inputs.
+    if 'AMD64' in arch_str or 'X86' in arch_str:
+        for i in range(16):
+            full_key = f'XMM{i}'
+            if full_key in offsets:
+                base_off = offsets[full_key]
+                offsets[f'XMM{i}_LO'] = base_off
+                sizes[f'XMM{i}_LO']   = 8
+                offsets[f'XMM{i}_HI'] = base_off + 8
+                sizes[f'XMM{i}_HI']   = 8
     arch_key = str(arch)
     for _pc_name in ('RIP', 'EIP', 'PC'):
         if _pc_name in offsets:

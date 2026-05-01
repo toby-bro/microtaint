@@ -54,6 +54,18 @@ X64_FORMAT = [
     Register('OF', 1),
     Register('PF', 1),
 ]
+# XMM register taint tracking — each 128-bit XMM is split into two
+# 64-bit halves (_LO = bits 0-63, _HI = bits 64-127) so the state-passing
+# infrastructure (uint64 taint masks, dict[str,int] state) can handle
+# them without changing every signature to 128-bit.  The sleigh.engine
+# StateMapper resolves these synthetic names back to the underlying
+# pypcode XMM<n> varnode at byte offsets 0 and 8 respectively, so
+# Ghidra-emitted XMM0[63:0] correctly maps to T_XMM0_LO[63:0] and
+# XMM0[127:64] to T_XMM0_HI[63:0].
+for _i in range(16):
+    X64_FORMAT.append(Register(f'XMM{_i}_LO', 64))
+    X64_FORMAT.append(Register(f'XMM{_i}_HI', 64))
+del _i
 # Pre-computed cache key for X64_FORMAT — avoids rebuilding a 24-element tuple
 # via genexpr on every generate_static_rule call (was 2.26s in profiling).
 _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X64_FORMAT)
@@ -243,19 +255,49 @@ _SLEIGH_OFFSET_TO_UC: dict[int, tuple[str, int, bool]] = {
     523: ('EFLAGS', 25, True),  # OF
 }
 
+# Sleigh XMM-register byte offset -> (lo_name, hi_name, uc_reg_id).
+# Pypcode emits XMM<n> at offset 0x1200 + n*0x40, size 16.  We split each
+# 128-bit XMM into two 64-bit halves (XMM<n>_LO at byte 0, XMM<n>_HI at
+# byte 8) and read both with one uc_reg_read per register (16 bytes).
+# The same uc_id reads the full 16 bytes; _build_offsets_arrays splits
+# the result into the two state slots.
+_SLEIGH_XMM_OFFSETS: dict[int, tuple[str, str, int]] = {
+    0x1200 + i * 0x40: (f'XMM{i}_LO', f'XMM{i}_HI', 122 + i) for i in range(16)
+}
+
 
 # Cache of pre-built ctypes arrays per unique offset-set.
 # Key: frozenset of Sleigh byte offsets (== DecodedOps.input_reg_offsets).
-# Value: (ids_arr, vals_arr, ptrs_arr, uc_names, needs_eflags)
+# Value tuple: (ids_arr, vals_arr, ptrs_arr, n_slots, uc_names, needs_eflags, n_calls)
+# - n_slots = number of c_uint64 slots in vals_arr (also = len(uc_names));
+#   one per GPR/flag, two per XMM (LO + HI).  Used as the iteration count
+#   for the dict-build step on the hot path.
+# - n_calls = number of uc_reg_read calls (i.e. len(ids_arr)).  For all-GPR
+#   instructions n_calls == n_slots; XMM instructions have n_calls < n_slots
+#   because one XMM read fills two slots.
 # Built once per unique instruction type, reused on every subsequent call.
 _OFFSETS_CACHE: dict[
     int | frozenset[int],
-    tuple[object, object, object, int, list[str], bool] | tuple[None, None, None, int, list[str], bool],
+    tuple[object, object, object, int, list[str], bool, int] | tuple[None, None, None, int, list[str], bool, int],
 ] = {}
 
 
-def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, object, int, list[str], bool]:
-    """Build and cache ctypes arrays. Uses id() fast-path on the hot path."""
+def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, object, int, list[str], bool, int]:
+    """Build and cache ctypes arrays. Uses id() fast-path on the hot path.
+
+    Layout
+    ------
+    - GPR / EFLAGS: one ctypes c_uint64 slot in vals_arr; one entry in uc_names.
+    - XMM (16 bytes each): one uc_reg_read into a 16-byte aligned region;
+      two consecutive c_uint64 slots immediately follow in vals_arr (slot[k]
+      = LO, slot[k+1] = HI).  uc_names gets two entries (XMM<n>_LO, XMM<n>_HI)
+      but ids_arr / ptrs_arr get only ONE entry pointing to the 16-byte
+      region — a single uc_reg_read fills both halves at once.
+
+    The Cython hot path then does ``int(vals[i])`` for every slot in
+    uc_names.  XMM halves come out as the right two consecutive vals[i]
+    values automatically — no special-casing on the read side.
+    """
     oid = id(offsets)
     cached = _OFFSETS_CACHE.get(oid)
     if cached is not None:
@@ -266,48 +308,82 @@ def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, obje
         _OFFSETS_CACHE[oid] = cached
         return cached
 
-    uc_names: list[str] = []
-    uc_ids: list[int] = []
+    # First pass: collect (uc_name, uc_id, is_flag, is_xmm) for every offset.
+    # XMM offsets contribute one (xmm_id, is_xmm=True) entry; the LO/HI
+    # name pair is recorded separately and consumed during slot allocation.
+    uc_names: list[str] = []  # ordered to match vals_arr slots
+    uc_ids: list[int] = []  # one per uc_reg_read call (so XMM is one entry)
     needs_eflags = False
-    seen_ids: set[int] = set()
+    seen_uc_ids: set[int] = set()
+    # Per-call descriptor: (slot_index_in_vals, is_xmm).  slot_index points
+    # into vals_arr for the FIRST 8-byte chunk written by this read (XMM
+    # writes two consecutive chunks).
+    call_slot_indices: list[int] = []
 
+    next_slot = 0
     for off in offsets:
+        # XMM first — distinct ID space from GPRs.
+        xmm_entry = _SLEIGH_XMM_OFFSETS.get(off)
+        if xmm_entry is not None:
+            lo_name, hi_name, uc_id = xmm_entry
+            if uc_id in seen_uc_ids:
+                continue
+            seen_uc_ids.add(uc_id)
+            uc_ids.append(uc_id)
+            call_slot_indices.append(next_slot)
+            # Two consecutive c_uint64 slots — LO at next_slot, HI at next_slot+1.
+            uc_names.append(lo_name)
+            uc_names.append(hi_name)
+            next_slot += 2
+            continue
         entry = _SLEIGH_OFFSET_TO_UC.get(off)
         if entry is None:
             continue
         uc_name, uc_id, is_flag = entry
-        if uc_id in seen_ids:
+        if uc_id in seen_uc_ids:
             continue
-        seen_ids.add(uc_id)
-        uc_names.append(uc_name)
+        seen_uc_ids.add(uc_id)
         uc_ids.append(uc_id)
+        call_slot_indices.append(next_slot)
+        uc_names.append(uc_name)
+        next_slot += 1
         if is_flag:
             needs_eflags = True
 
-    n = len(uc_ids)
-    if n == 0:
-        result: tuple[object, object, object, int, list[str], bool] | tuple[None, None, None, int, list[str], bool] = (
+    n_slots = next_slot  # number of c_uint64 slots in vals_arr
+    n_calls = len(uc_ids)  # number of uc_reg_read calls (i.e. ids_arr length)
+    if n_calls == 0:
+        result: (
+            tuple[object, object, object, int, list[str], bool, int]
+            | tuple[None, None, None, int, list[str], bool, int]
+        ) = (
             None,
             None,
             None,
             0,
             [],
             False,
+            0,
         )
         _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
         return result
 
-    ids_arr = (ctypes.c_int * n)(*uc_ids)
-    vals_arr = (ctypes.c_uint64 * n)()
-    ptrs_arr = (ctypes.c_void_p * n)(*[ctypes.addressof(vals_arr) + i * 8 for i in range(n)])
+    ids_arr = (ctypes.c_int * n_calls)(*uc_ids)
+    vals_arr = (ctypes.c_uint64 * n_slots)()
+    ptrs_arr = (ctypes.c_void_p * n_calls)(
+        *[ctypes.addressof(vals_arr) + slot * 8 for slot in call_slot_indices],
+    )
 
-    # Store n = len(uc_names) in the tuple to avoid len() on the hot path
-    result = (ids_arr, vals_arr, ptrs_arr, len(uc_names), uc_names, needs_eflags)
+    # n in the cached tuple is len(uc_names) — the number of slots the Cython
+    # hot path will iterate over to build pre_regs.  This equals n_slots.
+    result = (ids_arr, vals_arr, ptrs_arr, len(uc_names), uc_names, needs_eflags, n_calls)
     _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
     return result
 
 
-# Pre-built: all 18 "full" register names (for the AIW snapshot fallback)
+# Pre-built: all 18 "full" register names (for the AIW snapshot fallback).
+# XMM<n>_LO / XMM<n>_HI are added separately because each XMM read fills
+# two slots (16 bytes total -> two consecutive c_uint64 slots in _VALS_ARR).
 _ALL_REG_NAMES: list[str] = [
     'RAX',
     'RBX',
@@ -328,25 +404,44 @@ _ALL_REG_NAMES: list[str] = [
     'RIP',
     'EFLAGS',
 ]
-_ALL_REG_IDS: list[int] = [_AMD64_REG_ID[n] for n in _ALL_REG_NAMES]
+_ALL_REG_NAMES.extend(name for i in range(16) for name in (f'XMM{i}_LO', f'XMM{i}_HI'))
+_ALL_REG_IDS: list[int] = [_AMD64_REG_ID[n] for n in _ALL_REG_NAMES if not n.startswith('XMM')]
+# UC ids list: one entry per uc_reg_read call.  GPRs/EFLAGS contribute one
+# id each; each XMM<n> contributes one id (122 + n) but fills two slots.
+_ALL_UC_IDS: list[int] = list(_ALL_REG_IDS) + [122 + i for i in range(16)]
 
 # Pre-allocated C arrays for uc_reg_read_batch — must come after _ALL_REG_NAMES.
-_N_REGS = len(_ALL_REG_NAMES)
-_IDS_ARR = (ctypes.c_int * _N_REGS)(*[_AMD64_REG_ID[n] for n in _ALL_REG_NAMES])
-_VALS_ARR = (ctypes.c_uint64 * _N_REGS)()
-_PTRS_ARR = (ctypes.c_void_p * _N_REGS)(*[ctypes.addressof(_VALS_ARR) + i * 8 for i in range(_N_REGS)])
+# _N_SLOTS = number of c_uint64 slots in _VALS_ARR (= len(_ALL_REG_NAMES)).
+# _N_CALLS = number of uc_reg_read calls (= 18 GPRs/EFLAGS + 16 XMMs).
+_N_SLOTS = len(_ALL_REG_NAMES)  # 18 + 32 = 50
+_N_CALLS = len(_ALL_UC_IDS)  # 18 + 16 = 34
+_IDS_ARR = (ctypes.c_int * _N_CALLS)(*_ALL_UC_IDS)
+_VALS_ARR = (ctypes.c_uint64 * _N_SLOTS)()
+# Pointers: GPR/EFLAGS calls each point to one 8-byte slot;
+# XMM calls each point to a 16-byte region (two consecutive 8-byte slots).
+# Slot ordering in _ALL_REG_NAMES: 18 GPR/EFLAGS slots followed by 32 XMM
+# slots (XMM0_LO, XMM0_HI, XMM1_LO, XMM1_HI, ...).
+_N_GPR_SLOTS = 18
+_PTRS_ARR = (ctypes.c_void_p * _N_CALLS)(
+    *[ctypes.addressof(_VALS_ARR) + i * 8 for i in range(_N_GPR_SLOTS)],
+    *[ctypes.addressof(_VALS_ARR) + (_N_GPR_SLOTS + 2 * i) * 8 for i in range(16)],
+)
+# Kept for backward-compat with code that referenced _N_REGS as the count:
+_N_REGS = _N_SLOTS
 
 
 def _read_regs_ctypes(uch: ctypes.c_void_p, _names_unused: list[str]) -> dict[str, int]:
     """
-    Read all 18 AMD64 registers in one uc_reg_read_batch C call (~1.3 us total).
+    Read all AMD64 registers in one uc_reg_read_batch C call.
+    Includes 18 GPR/EFLAGS slots and 16 XMM registers (each split into
+    XMM<n>_LO / XMM<n>_HI in the result dict).
     Falls back gracefully on any error.
     """
     try:
-        err = _uc_reg_read_batch(uch, _IDS_ARR, _PTRS_ARR, _N_REGS)
+        err = _uc_reg_read_batch(uch, _IDS_ARR, _PTRS_ARR, _N_CALLS)
         if err != 0:
             raise OSError(f'uc_reg_read_batch: {err}')
-        result: dict[str, int] = {_ALL_REG_NAMES[i]: int(_VALS_ARR[i]) for i in range(_N_REGS)}
+        result: dict[str, int] = {_ALL_REG_NAMES[i]: int(_VALS_ARR[i]) for i in range(_N_SLOTS)}
         eflags = result.get('EFLAGS', 0)
         for flag, bit in _EFLAGS_BITS.items():
             result[flag] = (eflags >> bit) & 1
@@ -994,11 +1089,13 @@ class MicrotaintWrapper:
                 _uc_arrs = _build_offsets_arrays(_decoded.input_reg_offsets)
                 _decoded._uc_arrays = _uc_arrs
             # Inlined _exec_regs_from_arrays — eliminates function call overhead
-            _ids, _vals, _ptrs, _n, _names, _need_ef = _uc_arrs
+            _ids, _vals, _ptrs, _n, _names, _need_ef, _n_calls = _uc_arrs
             if _ids is None:
                 self._pre_regs = {}
             else:
-                _uc_reg_read_batch(uch, _ids, _ptrs, _n)
+                # _n_calls = number of uc_reg_read calls (one per UC reg id);
+                # _n = number of vals slots = len(_names) (XMM contributes 2).
+                _uc_reg_read_batch(uch, _ids, _ptrs, _n_calls)
                 self._pre_regs = {_names[_i]: int(_vals[_i]) for _i in range(_n)}
                 if _need_ef:
                     _ef = self._pre_regs.get('EFLAGS', 0)

@@ -308,6 +308,29 @@ class CellSimulator:
         mapping = _UC_REGS.get(self.arch, {})
         return mapping.get(reg_name)
 
+    @staticmethod
+    def _xmm_uc_id(reg_name: str) -> int | None:
+        """Return the UC_X86_REG_XMM<n> id for an XMM<n>_LO / XMM<n>_HI
+        state-format name, or None if the name doesn't fit that pattern.
+
+        XMM register tracking splits each 128-bit XMM register into two
+        64-bit halves at the state-format level (XMM<n>_LO = bits 0-63,
+        XMM<n>_HI = bits 64-127).  Unicorn doesn't have separate ids for
+        the halves, so we use the full XMM<n> id and split/combine the
+        128-bit value at read/write time.
+        """
+        if not reg_name.startswith('XMM'):
+            return None
+        try:
+            rest = reg_name[3:]
+            num_str, _, half = rest.partition('_')
+            n = int(num_str)
+        except ValueError:
+            return None
+        if not (0 <= n < 16) or half not in ('LO', 'HI'):
+            return None
+        return getattr(uc_x86_const, f'UC_X86_REG_XMM{n}')  # type: ignore[no-any-return]
+
     def _read_mem(self, addr: int, size: int) -> int:
         page_addr = addr & ~0xFFF
         if page_addr not in self._mapped_pages:
@@ -372,6 +395,19 @@ class CellSimulator:
                     return (nzcv >> 30) & 1
                 if reg_name == 'N':
                     return (nzcv >> 31) & 1
+
+        # X86 / AMD64 XMM split-half access.  XMM<n>_LO returns the low
+        # 64 bits of XMM<n>; XMM<n>_HI returns the high 64 bits.  This
+        # mirrors the wrapper.X64_FORMAT layout and lets the differential
+        # path round-trip XMM-targeting instructions through Unicorn.
+        if self.arch in (Architecture.X86, Architecture.AMD64) and reg_name.startswith('XMM'):
+            xmm_id = self._xmm_uc_id(reg_name)
+            if xmm_id is not None:
+                full = int(self.uc.reg_read(xmm_id))  # 128-bit int
+                if reg_name.endswith('_LO'):
+                    return full & 0xFFFFFFFFFFFFFFFF
+                if reg_name.endswith('_HI'):
+                    return (full >> 64) & 0xFFFFFFFFFFFFFFFF
 
         uc_reg = self._get_uc_reg(reg_name)
         if uc_reg is None:
@@ -492,6 +528,28 @@ class CellSimulator:
                     nzcv = (nzcv | (1 << 31)) if val else (nzcv & ~(1 << 31))
                 self.uc.reg_write(nzcv_reg, nzcv)  # pyright: ignore[reportUnknownMemberType]
                 continue
+
+            # XMM<n>_LO / XMM<n>_HI: combine the two halves into one 128-bit
+            # value and write once per XMM<n>.  We track which XMM regs were
+            # already-written via _pending_reg_writes (keyed by uc_id) so a
+            # later half can OR its contribution into the existing entry
+            # rather than clobbering it.  When only one half is in state.regs,
+            # the other half reads back as the current Unicorn value (which
+            # was zeroed by clear_memory_and_registers at _execute start).
+            if self.arch in (Architecture.X86, Architecture.AMD64) and reg_name.startswith('XMM'):
+                xmm_id = self._xmm_uc_id(reg_name)
+                if xmm_id is not None:
+                    is_lo = reg_name.endswith('_LO')
+                    half_64 = val & 0xFFFFFFFFFFFFFFFF
+                    existing = self._pending_reg_writes.get(xmm_id, 0)
+                    if is_lo:
+                        # Replace low 64 bits, keep upper as-is.
+                        new_val = (existing & ~((1 << 64) - 1)) | half_64
+                    else:
+                        # Replace high 64 bits, keep lower as-is.
+                        new_val = (existing & ((1 << 64) - 1)) | (half_64 << 64)
+                    self._pending_reg_writes[xmm_id] = new_val
+                    continue
 
             uc_reg = self._get_uc_reg(reg_name)
             if uc_reg is not None:
