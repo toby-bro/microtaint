@@ -48,6 +48,70 @@ def _build_machine_state(dict input_dict, EvalContext context):
     return MachineState(regs=regs, mem=mem)
 
 
+def _process_output_state(
+    dict output_state,
+    object shadow_mem,            # BitPreciseShadowMemory (Cython class)
+    dict register_taint,          # mutated in place: cleared then refilled
+    object last_tainted_writes,   # set, mutated in place
+    bint check_aiw,
+    list mem_writes,              # caller-allocated list, populated in place
+):
+    """
+    Cython-level post-processing of LogicCircuit.evaluate() output.
+
+    Replaces the Python ``for key, val in output_state.items()`` loop in
+    the hook (_instruction_evaluator_raw lines 737–757) which is ~14 s
+    out of the 36 s hook tottime in the bench.
+
+    Mutates:
+      - register_taint: cleared, then refilled with non-MEM_ entries
+      - shadow_mem: write_mask called for each MEM_ entry
+      - last_tainted_writes: cleared, then add() for tainted bytes
+      - mem_writes: appended (addr, size, val) tuples for AIW check
+
+    Caller is responsible for clearing ``last_tainted_writes`` *before*
+    the call (it isn't done here so the caller can decide whether the
+    set is empty without reaching here).
+    """
+    cdef str key
+    cdef object val
+    cdef str body
+    cdef int last
+    cdef long mem_addr
+    cdef int mem_size
+    cdef long val_int
+    cdef int i, sb
+    cdef object byte_val
+
+    register_taint.clear()
+
+    for key, val in output_state.items():
+        if key[:4] == 'MEM_':
+            body = key[4:]
+            last = body.rfind('_')
+            if last < 0:
+                continue
+            try:
+                mem_addr = <long>int(body[:last], 16)
+                mem_size = <int>int(body[last + 1:])
+            except (ValueError, OverflowError):
+                continue
+            shadow_mem.write_mask(mem_addr, val, mem_size)
+            if val:
+                # Use Python int >> for arbitrary-precision safety; mem_size <= 8
+                # in practice so the inner loop is tiny.
+                val_int = int(val)
+                for i in range(mem_size):
+                    sb = i << 3
+                    if (val_int >> sb) & 0xFF:
+                        last_tainted_writes.add(mem_addr + i)
+                if check_aiw:
+                    mem_writes.append((mem_addr, mem_size, val_int))
+        elif val:
+            register_taint[key] = val
+
+
+
 class Op(str, Enum):
     AND = 'AND'
     OR = 'OR'
@@ -232,12 +296,29 @@ def _normalize_register_dict(dict d, str arch_str) -> dict:
     MEM_ keys are passed through unchanged.
     """
     cdef dict parent_map = _ARCH_PARENT_REGS.get(arch_str, {})
-    cdef dict result = {}
+    cdef dict result
     cdef str key
     cdef object val
     cdef str parent_name
     cdef int bit_start
+    cdef bint needs_normalize = False
 
+    # Hot-path fast check: if every key is already canonical (not in parent_map)
+    # and not MEM_-prefixed-with-aliasing, we can return the dict as-is. This
+    # is the common case from the wrapper, which builds _pre_regs from
+    # canonical Sleigh names like 'RAX'/'RBX'.
+    if parent_map:
+        for key in d:
+            if key in parent_map:
+                needs_normalize = True
+                break
+    if not needs_normalize:
+        # Caller may mutate the result; copy to keep dict ownership clean only
+        # when truly needed. EvalContext stores it directly without further
+        # mutation in input_taint/input_values, so a shallow alias is fine.
+        return d
+
+    result = {}
     for key, val in d.items():
         # Pass through memory and unknown keys unchanged
         if key.startswith('MEM_') or key not in parent_map:
@@ -492,6 +573,7 @@ cdef class LogicCircuit:
     cdef public str _pc_target      # pre-computed: 'RIP'/'EIP'/'PC' or None
     cdef public bint has_unicorn_cells  # True if any assignment uses InstructionCellExpr
     cdef public object input_reg_names  # set of register names needed as value inputs
+    cdef public object _compiled       # cached CompiledCircuit (or None if compile failed/disabled)
 
     def __init__(self, list assignments, object architecture, str instruction, list state_format):
         self.assignments = assignments
@@ -502,6 +584,7 @@ cdef class LogicCircuit:
         self._pc_target = None
         self.has_unicorn_cells = False
         self.input_reg_names = set()  # register names needed as VALUE inputs
+        self._compiled = None
         for _a in assignments:
             if not _a.is_mem_target and _a.target.name in ('RIP', 'EIP', 'PC'):
                 self._pc_target = _a.target.name
@@ -517,6 +600,24 @@ cdef class LogicCircuit:
         return f"LogicCircuit(instr={self.instruction}, assignments_count={len(self.assignments)})"
 
     cpdef dict evaluate(self, EvalContext context):
+        # Compiled-bytecode fast path:  if circuit_c is importable and the
+        # circuit has a compiled form (or one can be built lazily), use it.
+        # Disabled by setting the env var MICROTAINT_DISABLE_COMPILED_CIRCUIT=1
+        # or by setting LogicCircuit._compiled to a sentinel.
+        if self._compiled is None:
+            try:
+                import os
+                if os.environ.get('MICROTAINT_DISABLE_COMPILED_CIRCUIT') != '1':
+                    from circuit_c import compile_circuit  # type: ignore[import-not-found]
+                    self._compiled = compile_circuit(self)
+                else:
+                    self._compiled = False
+            except Exception:
+                self._compiled = False
+        if self._compiled is not False and self._compiled is not None:
+            return self._compiled.evaluate(context)
+
+        # Cython AST fallback (the original implementation):
         # Cache frequently accessed context fields as C locals — avoids repeated
         # Python property dispatch for each field access in the hot loop.
         cdef dict output_taint = context.input_taint.copy()
@@ -621,9 +722,22 @@ cdef class InstructionCellExpr(Expr):
         cdef str name
         cdef Expr expr
         cdef object sim = context.simulator  # cache — avoids repeated __get__ dispatch
+        cdef object pcode
 
         for name, expr in self.inputs.items():
             evaluated_inputs[name] = expr.evaluate(context)
+
+        # Fast path: if the simulator's pcode evaluator implements evaluate_concrete_flat
+        # (the C evaluator does), skip MachineState construction entirely.
+        # This avoids a Python dataclass alloc + dict-merge per call (~0.4 us savings).
+        if sim is not None and not sim.use_unicorn:
+            pcode = sim._pcode
+            if pcode is not None and hasattr(pcode, 'evaluate_concrete_flat'):
+                try:
+                    return pcode.evaluate_concrete_flat(self, evaluated_inputs)
+                except sim._pcode_fallback_exc:
+                    pcode.fallback_calls += 1
+                    # Fall through to the standard MachineState path below.
 
         m_state = _build_machine_state(evaluated_inputs, context)
         return sim.evaluate_concrete(self, m_state)

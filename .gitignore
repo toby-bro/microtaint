@@ -109,6 +109,12 @@ venv.bak/
 .mypy_cache/
 
 *.json
+shadow.c
+__init__.c
+categories.c
+ast_test.c
+microtaint/instrumentation/ast.c
+microtaint/instrumentation/cell.c
 
 output/
 stubs/
