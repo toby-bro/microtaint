@@ -163,7 +163,7 @@ class CellSimulator:
     on V | T and V & ~T, computing the precise logical XOR differential.
     """
 
-    def __init__(self, arch: Architecture, use_unicorn: bool = False, use_c: bool = False) -> None:  # noqa: C901
+    def __init__(self, arch: Architecture, use_unicorn: bool = False, use_c: bool = True) -> None:  # noqa: C901
         if arch not in _ARCH_MAP:
             raise ValueError(f'Architecture {arch} is not supported by CellSimulator.')
         self.arch = arch
@@ -213,6 +213,7 @@ class CellSimulator:
                 # Pure-C evaluator: drop-in replacement for PCodeCellEvaluator.
                 try:
                     from cell_c import PCodeCellEvaluatorC  # type: ignore[import-not-found]
+
                     self._pcode = PCodeCellEvaluatorC(arch)
                 except ImportError:
                     self._pcode = _get_pcode_evaluator_class()(arch)
@@ -620,7 +621,7 @@ class CellSimulator:
         # address-only regs are not polarised), so we use either dict.
         ctx = EvalContext(input_taint={}, input_values=or_inputs, simulator=self)
 
-        v_state_or  = _build_machine_state(or_inputs, ctx)
+        v_state_or = _build_machine_state(or_inputs, ctx)
         v_state_and = _build_machine_state(and_inputs, ctx)
 
         try:

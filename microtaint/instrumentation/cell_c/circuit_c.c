@@ -951,6 +951,18 @@ static PyObject *do_evaluate(CompiledCircuit *self,
             if (expr != Py_None) {
                 val = PyObject_CallMethod(expr, "evaluate", "O", ctx_for_py);
             } else {
+                /* Match Cython AST behavior: an assignment with neither
+                 * expression nor empty dependencies but with expression_str
+                 * set is unsupported (e.g., 'FOO' literal). */
+                PyObject *expr_str = PyObject_GetAttrString(prog->python_assignment, "expression_str");
+                if (expr_str && PyUnicode_Check(expr_str) && PyUnicode_GET_LENGTH(expr_str) > 0) {
+                    Py_DECREF(expr_str);
+                    Py_DECREF(expr); Py_DECREF(target); Py_XDECREF(built_ctx); Py_DECREF(output_taint);
+                    PyErr_SetString(PyExc_NotImplementedError,
+                                    "Arbitrary string expressions not supported.");
+                    return NULL;
+                }
+                Py_XDECREF(expr_str);
                 PyObject *deps = PyObject_GetAttrString(prog->python_assignment, "dependencies");
                 if (!deps) { Py_DECREF(expr); Py_DECREF(target); Py_XDECREF(built_ctx); Py_DECREF(output_taint); return NULL; }
                 val = PyLong_FromLong(0);
@@ -1164,19 +1176,26 @@ static PyObject *CompiledCircuit_evaluate(CompiledCircuit *self, PyObject *args)
         Py_XDECREF(mem_reader); Py_XDECREF(simulator);
         return NULL;
     }
-    PyObject *pcode = PyObject_GetAttrString(simulator, "_pcode");
-    if (!pcode) {
-        Py_DECREF(input_taint); Py_DECREF(input_values);
-        Py_DECREF(implicit_policy); Py_XDECREF(shadow_memory);
-        Py_XDECREF(mem_reader); Py_DECREF(simulator);
-        return NULL;
+    /* simulator may be None (tests sometimes skip it).  In that case
+     * pcode is also None — the slow path fallback will run with pcode=None,
+     * which only matters if the circuit has cells that need evaluation. */
+    PyObject *pcode = NULL;
+    if (simulator != Py_None) {
+        pcode = PyObject_GetAttrString(simulator, "_pcode");
+        if (!pcode) {
+            /* Some simulators may not have _pcode; clear the error and
+             * proceed with pcode=None.  do_evaluate handles NULL pcode
+             * by falling through to the Python evaluation path. */
+            PyErr_Clear();
+        }
     }
 
     PyObject *result = do_evaluate(self, context, input_taint, input_values,
-                                    implicit_policy, shadow_memory, mem_reader, pcode);
+                                    implicit_policy, shadow_memory, mem_reader,
+                                    pcode ? pcode : Py_None);
     Py_DECREF(input_taint); Py_DECREF(input_values);
     Py_DECREF(implicit_policy); Py_XDECREF(shadow_memory);
-    Py_XDECREF(mem_reader); Py_DECREF(simulator); Py_DECREF(pcode);
+    Py_XDECREF(mem_reader); Py_DECREF(simulator); Py_XDECREF(pcode);
     return result;
 }
 
