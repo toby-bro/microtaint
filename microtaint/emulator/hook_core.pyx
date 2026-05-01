@@ -51,7 +51,8 @@ cdef class InstructionHook:
     cdef public object wrapper            # MicrotaintWrapper, for slow-path callbacks
     cdef public dict   register_taint     # mutated in-place
     cdef public set    last_tainted_writes
-    cdef public dict   instr_cache        # address -> (frozenset, dict)
+    cdef public dict   instr_cache        # address -> (frozenset, dict)  legacy entries
+    cdef public dict   instr_cache_v      # address -> (taint_version, dict, taint_snapshot)
     cdef public object shadow_mem         # BitPreciseShadowMemory (cdef class)
     cdef public object sim                # CellSimulator
     cdef public object policy             # ImplicitTaintPolicy
@@ -61,6 +62,11 @@ cdef class InstructionHook:
     cdef public bint   check_sc
     cdef public bint   check_aiw
     cdef public bint   instr_cache_enabled
+
+    # Versioned-state tracking: incremented every time register_taint mutates.
+    # Used as a fast cache key — avoids frozenset(register_taint.items())
+    # on every callback (~1 us savings per call × 1.19M = ~1.3 s).
+    cdef public unsigned long long taint_version
 
     # Captured ctypes function pointers and helpers.
     cdef object       uc_handle           # int (cached uc handle)
@@ -91,6 +97,9 @@ cdef class InstructionHook:
         self.register_taint = wrapper.register_taint
         self.last_tainted_writes = wrapper._last_tainted_writes
         self.instr_cache = wrapper._instr_cache
+        # Version-keyed companion cache.  address -> (taint_version, output_state).
+        # On hit, no dict-equality check needed: same version means same state.
+        self.instr_cache_v = {}
         self.shadow_mem = wrapper.shadow_mem
         self.sim = wrapper.sim
         self.policy = wrapper._policy
@@ -100,6 +109,7 @@ cdef class InstructionHook:
         self.check_sc = wrapper.check_sc
         self.check_aiw = wrapper.check_aiw
         self.instr_cache_enabled = wrapper._instr_cache_enabled
+        self.taint_version = 0
         self.uc_handle = uc_handle
         self.uc_mem_read = uc_mem_read
         self.uc_reg_read_batch = uc_reg_read_batch
@@ -148,6 +158,9 @@ cdef class InstructionHook:
         cdef object output_state
         cdef object key, val
         cdef long long val_int
+        cdef object v_entry
+        cdef unsigned long long live_version
+        cdef unsigned long long out_version
         cdef bint can_cache = (
             self.instr_cache_enabled
             and compiled_circuit is not None
@@ -155,6 +168,26 @@ cdef class InstructionHook:
             and not compiled_circuit.has_mem_ops
         )
         if can_cache:
+            # Tier 4: version-cache fast path.
+            v_entry = self.instr_cache_v.get(address)
+            live_version = self.taint_version
+            if v_entry is not None and (<unsigned long long>(<object>v_entry[0])) == live_version:
+                output_state = <object>v_entry[2]
+                self.instr_cache_hits += 1
+                if self.last_tainted_writes:
+                    self.last_tainted_writes.clear()
+                if PyDict_Size(register_taint):
+                    PyDict_Clear(register_taint)
+                for key, val in output_state.items():
+                    if val:
+                        PyDict_SetItem(register_taint, key, val)
+                # Adopt the cached output_version: register_taint now has
+                # exactly the content that was assigned this version.
+                self.taint_version = <unsigned long long>(<object>v_entry[1])
+                return
+
+            # Legacy frozenset-keyed cache (still useful for first-visit
+            # cold paths and for cross-version equivalence).
             if PyDict_Size(register_taint) == 0:
                 cache_key = EMPTY_FROZENSET
             else:
@@ -168,10 +201,18 @@ cdef class InstructionHook:
                     self.last_tainted_writes.clear()
                 if PyDict_Size(register_taint):
                     PyDict_Clear(register_taint)
+                # Populate the version cache too, so the next visit
+                # at this address skips the frozenset construction.
+                # We need a deterministic output_version derived from
+                # output_state's content.  Use frozenset hash (one-shot
+                # cost; only happens on cold version-cache misses).
+                out_version = (<Py_ssize_t>hash(frozenset(output_state.items())))
+                self.instr_cache_v[address] = (live_version, out_version, output_state)
                 # No-mem-ops circuits never produce MEM_ keys; just refill.
                 for key, val in output_state.items():
                     if val:
                         PyDict_SetItem(register_taint, key, val)
+                self.taint_version = out_version
                 return
             self.instr_cache_misses += 1
 
@@ -222,10 +263,24 @@ cdef class InstructionHook:
             raise
 
         # Cache the output for next time at this address with this taint sig.
+        # We need a stable output_version derived from output_state content,
+        # so that future cache hits can adopt this version atomically.
+        cdef unsigned long long out_version_slow = 0
         if cache_key is not None:
             self.instr_cache[address] = (cache_key, dict(output_state))
+            # Compute output_version once (one frozenset hash; happens
+            # ~167k times across the bench, not 1.19M).
+            out_version_slow = (<Py_ssize_t>hash(frozenset(output_state.items())))
+            self.instr_cache_v[address] = (self.taint_version, out_version_slow, dict(output_state))
 
         # Post-processing: clear writes set, clear register_taint, walk output.
+        # This mutates register_taint to a new state — adopt the deterministic
+        # output_version derived above (or fall back to a fresh increment if
+        # the version cache wasn't populated, e.g. has_mem_ops circuit).
+        if cache_key is not None:
+            self.taint_version = out_version_slow
+        else:
+            self.taint_version += 1
         if self.last_tainted_writes:
             self.last_tainted_writes.clear()
         if PyDict_Size(register_taint):
@@ -235,7 +290,7 @@ cdef class InstructionHook:
         cdef str skey, sbody
         cdef long mem_addr_l
         cdef int mem_size_i, ii
-        cdef long long val_ll
+        cdef unsigned long long val_ll
         cdef object shadow_mem = self.shadow_mem
         cdef set last_writes = self.last_tainted_writes
         cdef bint check_aiw = self.check_aiw
@@ -255,12 +310,15 @@ cdef class InstructionHook:
                     continue
                 shadow_mem.write_mask(mem_addr_l, val, mem_size_i)
                 if val:
-                    val_ll = int(val)
+                    # val may be a Python int up to 64 bits (0..0xFFFF_FFFF_FFFF_FFFF).
+                    # Cast through unsigned long long, not signed long, to avoid
+                    # OverflowError on values >= 2^63.
+                    val_ll = <unsigned long long>(int(val) & 0xFFFFFFFFFFFFFFFFULL)
                     for ii in range(mem_size_i):
                         if (val_ll >> (ii * 8)) & 0xFF:
                             last_writes.add(mem_addr_l + ii)
                     if check_aiw:
-                        mem_writes.append((mem_addr_l, mem_size_i, val_ll))
+                        mem_writes.append((mem_addr_l, mem_size_i, int(val)))
             elif val:
                 PyDict_SetItem(register_taint, key, val)
 

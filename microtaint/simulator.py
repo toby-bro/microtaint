@@ -22,6 +22,7 @@ from unicorn import (
 )
 
 from microtaint.instrumentation.cell import PCodeCellEvaluator
+from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
 from microtaint.types import Architecture
 
 logger = logging.getLogger(__name__)
@@ -163,11 +164,19 @@ class CellSimulator:
     on V | T and V & ~T, computing the precise logical XOR differential.
     """
 
-    def __init__(self, arch: Architecture, use_unicorn: bool = False, use_c: bool = True) -> None:  # noqa: C901
+    def __init__(self, arch: Architecture, use_unicorn: bool = False, use_c: bool | None = None) -> None:  # noqa: C901
         if arch not in _ARCH_MAP:
             raise ValueError(f'Architecture {arch} is not supported by CellSimulator.')
         self.arch = arch
         self.use_unicorn = use_unicorn
+        # Default: use the C kernel when available.  Pass use_c=False to
+        # force the Cython evaluator (e.g. for differential testing).  Set
+        # MICROTAINT_DISABLE_C_KERNEL=1 in the environment to disable
+        # globally without code changes.
+        if use_c is None:
+            import os as _os
+
+            use_c = _os.environ.get('MICROTAINT_DISABLE_C_KERNEL') != '1'
         self.use_c = use_c
         self._pcode: None | PCodeCellEvaluator = None
         self._pcode_fallback_exc: Any = None
@@ -212,7 +221,6 @@ class CellSimulator:
             if use_c:
                 # Pure-C evaluator: drop-in replacement for PCodeCellEvaluator.
                 try:
-                    from cell_c import PCodeCellEvaluatorC  # type: ignore[import-not-found]
 
                     self._pcode = PCodeCellEvaluatorC(arch)
                 except ImportError:

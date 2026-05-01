@@ -82,6 +82,33 @@ _uc_mem_read = _uclib.uc_mem_read
 _uc_mem_read.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_size_t]
 _uc_mem_read.restype = ctypes.c_int
 
+# uc_hook_add: bypass Qiling's hook_add wrapper AND unicorn's `uccallback`
+# / `__hook_code_cb` Python wrappers entirely.  Profile of v6.1 showed
+# ~8.6 s out of ~13 s spent in those binding wrappers across 1.19 M
+# callbacks.  By going straight to ctypes-wrapped uc_hook_add, we trade
+# the two-frame Python wrapper for a single ctypes trampoline frame
+# that directly invokes the Cython __call__ (which is itself C).
+_uc_hook_add = _uclib.uc_hook_add
+_uc_hook_add.argtypes = [
+    ctypes.c_void_p,            # uc_engine *
+    ctypes.c_void_p,            # uc_hook *
+    ctypes.c_int,                # type
+    ctypes.c_void_p,            # callback (HOOK_CODE_CFUNC)
+    ctypes.c_void_p,            # user_data
+    ctypes.c_uint64,             # begin
+    ctypes.c_uint64,             # end
+]
+_uc_hook_add.restype = ctypes.c_int
+
+# Native callback signature for code hooks — same as Unicorn's binding.
+_HOOK_CODE_CFUNC = ctypes.CFUNCTYPE(
+    None,
+    ctypes.c_void_p,    # uc handle
+    ctypes.c_uint64,    # address
+    ctypes.c_uint32,    # size
+    ctypes.c_void_p,    # user_data
+)
+
 # Pre-allocated C arrays — defined AFTER _ALL_REG_NAMES below.
 _MEM_BUF_SIZE = 64
 _MEM_BUF = (ctypes.c_uint8 * _MEM_BUF_SIZE)()
@@ -500,13 +527,43 @@ class MicrotaintWrapper:
             if instr_hook is None:
                 instr_hook = self._instruction_evaluator_raw
             self._instr_hook_obj = instr_hook  # keep alive
+
             if self._main_single:
-                self.ql.uc.hook_add(
+                # FAST PATH: bypass Unicorn's Python binding wrappers
+                # entirely.  Wrap the Cython callable in a ctypes
+                # CFUNCTYPE trampoline (single frame) and register it
+                # directly via uc_hook_add — no uccallback/Wrapper frames.
+                # Saves ~3-4 us per callback × 1.19M = ~4-5 s on the bench.
+                #
+                # We must keep the CFUNCTYPE instance alive ourselves
+                # (Unicorn won't track it because we're calling uc_hook_add
+                # outside of unicorn-py3).  Stash on self._instr_cfunc.
+                self._instr_cfunc = _HOOK_CODE_CFUNC(instr_hook)
+                hook_handle = ctypes.c_size_t()
+                rc = _uc_hook_add(
+                    self._uc_handle,
+                    ctypes.byref(hook_handle),
                     UC_HOOK_CODE,
-                    instr_hook,
-                    begin=self._main_base,
-                    end=self._main_end,
+                    ctypes.cast(self._instr_cfunc, ctypes.c_void_p),
+                    None,                              # user_data (unused)
+                    ctypes.c_uint64(self._main_base),
+                    ctypes.c_uint64(self._main_end),
                 )
+                if rc != 0:
+                    # Fall back to the slow path on registration failure.
+                    logger.debug(f'uc_hook_add bypass failed (rc={rc}); '
+                                 f'falling back to ql.uc.hook_add')
+                    self.ql.uc.hook_add(
+                        UC_HOOK_CODE,
+                        instr_hook,
+                        begin=self._main_base,
+                        end=self._main_end,
+                    )
+                else:
+                    # Stash the Unicorn-internal callback list to keep it
+                    # alive (Unicorn frees the function pointer on uc_close
+                    # via _callbacks dict; we register our own bookkeeping).
+                    self._instr_hook_handle = hook_handle.value
             else:
                 self.ql.hook_code(self._instruction_evaluator)
             self._instr_hook_registered = True
