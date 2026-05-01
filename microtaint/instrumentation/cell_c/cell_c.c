@@ -507,7 +507,215 @@ static int cell_output_info(PyObject *cell_obj, char **out_reg_copy,
     return 0;
 }
 
-/* ──────────── Methods ──────────── */
+/* ──────────────────────────────────────────────────────────────────
+ * Fast-path C API for circuit_c
+ * ──────────────────────────────────────────────────────────────────
+ * A compile-time-resolved cell handle that pre-extracts everything
+ * we need from a Python InstructionCellExpr.  Compiled once per cell
+ * (currently cached implicitly — the bundle is pulled from get_bundle
+ * which is cached on bytestring), but the handle struct itself stores
+ * the parsed bytes and out_reg info to avoid repeated GetAttr calls.
+ */
+typedef struct {
+    /* Bundle key bytes — owned PyObject (interned by us). */
+    PyObject *instr_bytes;
+    /* Output register: pre-resolved offset & size, plus bit window */
+    int       out_off;
+    int       out_sz;
+    int       bit_start;
+    int       bit_end;
+    /* Cell out_reg name as a C string for read_output_full's MEM/EFLAGS path */
+    char      out_reg[16];
+    /* Cached resolved offsets for each input name (parallel to inputs list) */
+    int       n_inputs;
+    int       inp_off[16];
+    int       inp_sz[16];
+    /* Whether out_reg requires the slow read_output_full path (MEM_ / EFLAGS) */
+    int       use_slow_read;
+} CellHandle;
+
+/* Build a CellHandle from a Python InstructionCellExpr.
+ * Caller owns the handle and must free instr_bytes via Py_DECREF. */
+static int cell_handle_init(EvalC *self, PyObject *cell_obj,
+                             const char **input_names, int n_inputs,
+                             CellHandle *h) {
+    /* Get instruction hex → bytes (interned to share with bundle cache) */
+    PyObject *hex_obj = PyObject_GetAttrString(cell_obj, "instruction");
+    if (!hex_obj) return -1;
+    const char *hex_str = PyUnicode_AsUTF8(hex_obj);
+    if (!hex_str) { Py_DECREF(hex_obj); return -1; }
+    Py_ssize_t hlen = strlen(hex_str);
+    Py_ssize_t blen = hlen / 2;
+    if (blen > 32) blen = 32;
+    uint8_t buf[32];
+    for (Py_ssize_t i = 0; i < blen; i++) {
+        char p[3] = {hex_str[i*2], hex_str[i*2+1], 0};
+        buf[i] = (uint8_t)strtoul(p, NULL, 16);
+    }
+    h->instr_bytes = PyBytes_FromStringAndSize((char*)buf, blen);
+    Py_DECREF(hex_obj);
+    if (!h->instr_bytes) return -1;
+
+    /* out_reg / bit_start / bit_end */
+    PyObject *r  = PyObject_GetAttrString(cell_obj, "out_reg");
+    PyObject *bs = PyObject_GetAttrString(cell_obj, "out_bit_start");
+    PyObject *be = PyObject_GetAttrString(cell_obj, "out_bit_end");
+    if (!r || !bs || !be) {
+        Py_XDECREF(r); Py_XDECREF(bs); Py_XDECREF(be);
+        Py_DECREF(h->instr_bytes); return -1;
+    }
+    const char *out_reg = PyUnicode_AsUTF8(r);
+    h->bit_start = (int)PyLong_AsLong(bs);
+    h->bit_end   = (int)PyLong_AsLong(be);
+    Py_DECREF(bs); Py_DECREF(be);
+
+    /* Detect whether out_reg needs the slow path (MEM_*, EFLAGS quirk).
+     * Fast path uses direct frame_read_reg + masking. */
+    int needs_slow = 0;
+    if (strncmp(out_reg, "MEM_", 4) == 0 || strncmp(out_reg, "mem_", 4) == 0) {
+        needs_slow = 1;
+    }
+    if (!needs_slow && self->eflags_off >= 0) {
+        /* EFLAGS read needs reconstruction */
+        char up[16]; upper_into(up, sizeof(up), out_reg);
+        if (strcmp(up, "EFLAGS") == 0) needs_slow = 1;
+    }
+    h->use_slow_read = needs_slow;
+
+    /* Resolve out_reg → (offset, size) for the fast path */
+    char up[16];
+    if (!upper_into(up, sizeof(up), out_reg)) { Py_DECREF(r); Py_DECREF(h->instr_bytes); return -1; }
+    if (!reg_off_size(self, up, &h->out_off, &h->out_sz)) {
+        h->out_off = -1; /* signal: must use slow path */
+        h->use_slow_read = 1;
+    }
+    /* Save out_reg name (for slow path) */
+    size_t orlen = strlen(out_reg);
+    if (orlen >= sizeof(h->out_reg)) orlen = sizeof(h->out_reg) - 1;
+    memcpy(h->out_reg, out_reg, orlen);
+    h->out_reg[orlen] = 0;
+    Py_DECREF(r);
+
+    /* Pre-resolve input names to (offset, size) */
+    h->n_inputs = (n_inputs > 16) ? 16 : n_inputs;
+    for (int i = 0; i < h->n_inputs; i++) {
+        char up_in[16];
+        upper_into(up_in, sizeof(up_in), input_names[i]);
+        int off, sz;
+        if (reg_off_size(self, up_in, &off, &sz)) {
+            h->inp_off[i] = off;
+            h->inp_sz[i]  = sz;
+        } else {
+            h->inp_off[i] = -1;
+            h->inp_sz[i]  = 8;
+        }
+    }
+    return 0;
+}
+
+/* Fast-path cell call — used by circuit_c via PyCapsule.
+ *
+ * Inputs: pre-built CellHandle, packed uint64 values (one per input).
+ *
+ * Returns: 0 on success (out_value populated), 1 on fallback needed
+ * (caller raises PCodeFallbackNeeded), -1 on hard error. */
+static int cell_eval_fast(EvalC *self, CellHandle *h,
+                           const uint64_t *input_values,
+                           uint64_t *out_value) {
+    DecodedBundle *bundle = get_bundle(self, h->instr_bytes);
+    if (!bundle) {
+        self->fallback_calls++;
+        return -1;
+    }
+    if (bundle->has_fallback) {
+        self->fallback_calls++;
+        return 1;  /* fallback */
+    }
+
+    Frame *f = &self->frame_a;
+    frame_clear(f);
+
+    /* Load inputs by pre-resolved offset (no dict iter, no name parsing) */
+    for (int i = 0; i < h->n_inputs; i++) {
+        if (h->inp_off[i] < 0) continue;
+        uint64_t v = input_values[i];
+        frame_write_reg(f, h->inp_off[i], h->inp_sz[i], mask64(v, h->inp_sz[i]));
+    }
+
+    if (execute_decoded(f, bundle) == EXEC_FALLBACK) {
+        self->fallback_calls++;
+        return 1;
+    }
+
+    /* Read output: fast path uses pre-resolved (off, sz) + direct masking. */
+    uint64_t v;
+    if (h->use_slow_read || h->out_off < 0) {
+        v = read_output_full(self, f, h->out_reg, h->bit_start, h->bit_end);
+    } else {
+        uint64_t raw = frame_read_reg(f, h->out_off, h->out_sz);
+        int width = h->bit_end - h->bit_start + 1;
+        uint64_t m = (width >= 64) ? UINT64_MAX : (((uint64_t)1 << width) - 1);
+        v = (raw >> h->bit_start) & m;
+    }
+    *out_value = v;
+    self->native_calls++;
+    return 0;
+}
+
+/* Build a CellHandle and return it as a PyCapsule for circuit_c to keep.
+ * Args: (cell_obj, list_of_input_names_in_order)
+ * Returns: PyCapsule wrapping a CellHandle*. */
+static void cell_handle_destructor(PyObject *cap) {
+    CellHandle *h = (CellHandle *)PyCapsule_GetPointer(cap, "CellHandle");
+    if (h) {
+        Py_XDECREF(h->instr_bytes);
+        free(h);
+    }
+}
+
+static PyObject *EvalC_make_cell_handle(EvalC *self, PyObject *args) {
+    PyObject *cell_obj, *names_list;
+    if (!PyArg_ParseTuple(args, "OO", &cell_obj, &names_list)) return NULL;
+    if (!PyList_Check(names_list)) {
+        PyErr_SetString(PyExc_TypeError, "names must be a list");
+        return NULL;
+    }
+    int n = (int)PyList_GET_SIZE(names_list);
+    if (n > 16) {
+        PyErr_SetString(PyExc_ValueError, "too many cell inputs (>16)");
+        return NULL;
+    }
+    const char *names[16];
+    for (int i = 0; i < n; i++) {
+        PyObject *s = PyList_GET_ITEM(names_list, i);
+        names[i] = PyUnicode_AsUTF8(s);
+        if (!names[i]) return NULL;
+    }
+    CellHandle *h = (CellHandle *)calloc(1, sizeof(CellHandle));
+    if (!h) { PyErr_NoMemory(); return NULL; }
+    if (cell_handle_init(self, cell_obj, names, n, h) < 0) {
+        free(h);
+        return NULL;
+    }
+    return PyCapsule_New(h, "CellHandle", cell_handle_destructor);
+}
+
+/* Export the fast-call function and the EvalC->fallback_exc via a
+ * single capsule.  circuit_c retrieves these via PyCapsule_Import. */
+typedef struct {
+    int (*cell_eval_fast)(EvalC *self, CellHandle *h,
+                          const uint64_t *input_values, uint64_t *out_value);
+    PyObject *(*get_fallback_exc)(EvalC *self);
+} CellCAPI;
+
+static PyObject *get_fallback_exc_impl(EvalC *self) {
+    return self->fallback_exc;
+}
+
+static CellCAPI _cell_capi = {
+    .cell_eval_fast    = cell_eval_fast,
+    .get_fallback_exc  = get_fallback_exc_impl,
+};
 
 static PyObject *EvalC_evaluate_concrete(EvalC *self, PyObject *args) {
     PyObject *cell_obj, *flat_inputs;
@@ -718,6 +926,7 @@ static PyMethodDef EvalC_methods[] = {
     {"evaluate_concrete",       (PyCFunction)EvalC_evaluate_concrete,       METH_VARARGS, NULL},
     {"evaluate_concrete_state", (PyCFunction)EvalC_evaluate_concrete_state, METH_VARARGS, NULL},
     {"evaluate_concrete_flat",  (PyCFunction)EvalC_evaluate_concrete_flat,  METH_VARARGS, NULL},
+    {"make_cell_handle",        (PyCFunction)EvalC_make_cell_handle,        METH_VARARGS, NULL},
     {"stats",                   (PyCFunction)EvalC_stats,                   METH_NOARGS,  NULL},
     {NULL}
 };
@@ -744,5 +953,10 @@ PyMODINIT_FUNC PyInit_cell_c(void) {
     if (!m) return NULL;
     Py_INCREF(&EvalCType);
     PyModule_AddObject(m, "PCodeCellEvaluatorC", (PyObject *)&EvalCType);
+
+    /* Export the CellCAPI capsule for circuit_c to import via PyCapsule_Import. */
+    PyObject *cap = PyCapsule_New(&_cell_capi, "cell_c._cell_capi", NULL);
+    if (!cap) return NULL;
+    PyModule_AddObject(m, "_cell_capi", cap);
     return m;
 }
