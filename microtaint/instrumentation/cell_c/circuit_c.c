@@ -455,20 +455,26 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
             cc->has_mem_ops = 1;   /* memory write — disables Tier 3 cache */
             continue;
         }
-        /* Register target */
-        PyObject *t_name = PyObject_GetAttrString(target, "name");
-        PyObject *t_bs   = PyObject_GetAttrString(target, "bit_start");
-        PyObject *t_be   = PyObject_GetAttrString(target, "bit_end");
+        /* Register target.
+         * Initialize to NULL so the `fb:` cleanup is safe regardless of
+         * which path we take (each Py_DECREF is paired with a clear).
+         * This also silences -Wmaybe-uninitialized warnings. */
+        PyObject *t_name = NULL, *t_bs = NULL, *t_be = NULL;
+        t_name = PyObject_GetAttrString(target, "name");
+        t_bs   = PyObject_GetAttrString(target, "bit_start");
+        t_be   = PyObject_GetAttrString(target, "bit_end");
         Py_DECREF(target);
-        if (!t_name || !t_bs || !t_be) { Py_XDECREF(t_name); Py_XDECREF(t_bs); Py_XDECREF(t_be); goto fb; }
+        if (!t_name || !t_bs || !t_be) { Py_XDECREF(t_name); t_name = NULL; Py_XDECREF(t_bs); t_bs = NULL; Py_XDECREF(t_be); t_be = NULL; goto fb; }
         const char *tn = PyUnicode_AsUTF8(t_name);
-        if (!tn) { Py_DECREF(t_name); Py_DECREF(t_bs); Py_DECREF(t_be); goto fb; }
+        if (!tn) { Py_DECREF(t_name); t_name = NULL; Py_DECREF(t_bs); t_bs = NULL; Py_DECREF(t_be); t_be = NULL; goto fb; }
         p->target_kind = TGT_REG;
         p->target_name_idx = strpool_intern(cc, tn);
         p->target_bit_start = (int)PyLong_AsLong(t_bs);
         p->target_bit_end   = (int)PyLong_AsLong(t_be);
         p->target_size_bytes = 0;
-        Py_DECREF(t_name); Py_DECREF(t_bs); Py_DECREF(t_be);
+        Py_DECREF(t_name); t_name = NULL;
+        Py_DECREF(t_bs);   t_bs   = NULL;
+        Py_DECREF(t_be);   t_be   = NULL;
 
         /* Compile the rhs expression */
         PyObject *expr = PyObject_GetAttrString(a, "expression");
