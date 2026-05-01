@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 import sysconfig
 from pathlib import Path
 
@@ -63,6 +64,9 @@ def _compiler_command() -> list[str]:
         '-fPIC',
         '-Wall',
     ]
+    if sys.platform == 'darwin':
+        base_flags.extend(['-undefined', 'dynamic_lookup'])
+
     extra = shlex.split(os.environ.get('CFLAGS', ''))
     return cmd + base_flags + extra
 
@@ -110,7 +114,11 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
             artifacts.append(rel_so)
 
     def _compile(
-        self, cc_cmd: list[str], py_include: str, source: Path, output: Path,
+        self,
+        cc_cmd: list[str],
+        py_include: str,
+        source: Path,
+        output: Path,
     ) -> None:
         """Run the compiler and surface a clear error on failure."""
         # Include path: Python headers + the source's own directory (for
@@ -129,13 +137,11 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
             subprocess.run(cmd, check=True)
         except FileNotFoundError as exc:
             raise RuntimeError(
-                f'[microtaint-c-ext] C compiler not found: {cc_cmd[0]!r}. '
-                f'Set $CC to an available compiler.',
+                f'[microtaint-c-ext] C compiler not found: {cc_cmd[0]!r}. ' f'Set $CC to an available compiler.',
             ) from exc
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(
-                f'[microtaint-c-ext] failed to compile {source.name} '
-                f'(exit code {exc.returncode}): {" ".join(cmd)}',
+                f'[microtaint-c-ext] failed to compile {source.name} ' f'(exit code {exc.returncode}): {" ".join(cmd)}',
             ) from exc
 
 
