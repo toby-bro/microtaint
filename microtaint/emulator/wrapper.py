@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import ctypes
 import logging
-from typing import Any
+import os
+from typing import Any, Callable
 
 import unicorn.unicorn_py3.unicorn as _uu
 import unicorn.x86_const as _uc_x86_const
@@ -11,6 +12,7 @@ from qiling import Qiling
 from qiling.const import QL_INTERCEPT
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE_UNMAPPED
 
+from microtaint.emulator.hook_core import InstructionHook
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext, Expr
@@ -51,7 +53,7 @@ X64_FORMAT = [
 _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X64_FORMAT)
 
 # Tier 3: empty frozenset for cache key when register_taint is empty.
-_EMPTY_FROZENSET = frozenset()
+_EMPTY_FROZENSET: frozenset[tuple[str, int]] = frozenset()
 
 # ---------------------------------------------------------------------------
 # ctypes shim for uc_reg_read
@@ -390,14 +392,13 @@ class MicrotaintWrapper:
         # circuit.evaluate(ctx).  Bench profile: 150 unique addresses for
         # 1.19M callbacks (avg 7948 revisits each) — extremely cache-friendly.
         # Disabled by setting MICROTAINT_DISABLE_INSTR_CACHE=1.
-        import os as _os
-        self._instr_cache_enabled: bool = _os.environ.get('MICROTAINT_DISABLE_INSTR_CACHE') != '1'
-        self._instr_cache: dict[int, tuple[tuple, dict]] = {}
+        self._instr_cache_enabled: bool = os.environ.get('MICROTAINT_DISABLE_INSTR_CACHE') != '1'
+        self._instr_cache: dict[int, tuple[frozenset[tuple[str, int]], dict[str, int]]] = {}
         self._instr_cache_hits: int = 0
         self._instr_cache_misses: int = 0
         # V5: Cython hot-path hook. Set MICROTAINT_DISABLE_CYTHON_HOOK=1 to
         # fall back to the Python method (for debugging).
-        self._disable_cython_hook: bool = _os.environ.get('MICROTAINT_DISABLE_CYTHON_HOOK') == '1'
+        self._disable_cython_hook: bool = os.environ.get('MICROTAINT_DISABLE_CYTHON_HOOK') == '1'
         self._instr_hook_obj: object = None
 
         # Tracks addresses written with nonzero taint by the most recent circuit
@@ -483,13 +484,12 @@ class MicrotaintWrapper:
             # semantics ("write_mask(addr, 0, n) explicitly clears n bytes of taint").
             self.shadow_mem.write_mask(address + i, mask, 1)
 
-    def _make_cython_hook(self):
-        """Build a Cython-compiled hook callable.  Returns None if Cython
-        module isn't available (dev installations may not have built it)."""
-        try:
-            from microtaint.emulator.hook_core import InstructionHook  # type: ignore[import-not-found]
-        except ImportError:
-            return None
+    def _make_cython_hook(self) -> InstructionHook | None:
+        """Build a Cython-compiled hook callable.  Returns None if hook
+        construction itself fails (e.g. some wrapper field isn't ready).
+        The hook_core module is a hard import: when it's unavailable,
+        microtaint cannot start at all, and that failure surfaces at the
+        package import (not here) — exactly the behaviour we want."""
         try:
             return InstructionHook(
                 self,
@@ -521,11 +521,14 @@ class MicrotaintWrapper:
         self._any_taint = True
         if not self._instr_hook_registered:
             # Build the Cython hot-path hook callable. Falls back to the
-            # Python method if hook_core failed to import (e.g. dev build
-            # without Cython).
-            instr_hook = self._make_cython_hook() if not self._disable_cython_hook else None
-            if instr_hook is None:
-                instr_hook = self._instruction_evaluator_raw
+            # Python method if Cython hook construction fails.
+            # Typed as Callable[..., None] because both InstructionHook.__call__
+            # and the plain bound method _instruction_evaluator_raw satisfy it.
+            instr_hook: Callable[..., None] = (
+                self._make_cython_hook() or self._instruction_evaluator_raw
+                if not self._disable_cython_hook
+                else self._instruction_evaluator_raw
+            )
             self._instr_hook_obj = instr_hook  # keep alive
 
             if self._main_single:
@@ -533,7 +536,7 @@ class MicrotaintWrapper:
                 # entirely.  Wrap the Cython callable in a ctypes
                 # CFUNCTYPE trampoline (single frame) and register it
                 # directly via uc_hook_add — no uccallback/Wrapper frames.
-                # Saves ~3-4 us per callback × 1.19M = ~4-5 s on the bench.
+                # Saves ~3-4 us per callback x 1.19M = ~4-5 s on the bench.
                 #
                 # We must keep the CFUNCTYPE instance alive ourselves
                 # (Unicorn won't track it because we're calling uc_hook_add

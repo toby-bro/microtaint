@@ -13,6 +13,7 @@ directly through ctypes-wrapped uc_hook_add (Tier 4 bypass).  In both
 cases Unicorn invokes the instance as `hook(uc, address, size, user_data)`.
 """
 
+import ctypes
 from typing import Any, Callable
 
 from microtaint.types import Architecture
@@ -91,7 +92,7 @@ class InstructionHook:
         self,
         wrapper: Any,
         *,
-        uc_handle: int,
+        uc_handle: ctypes.c_void_p,
         uc_mem_read: Callable[..., int],
         uc_reg_read_batch: Callable[..., int],
         mem_buf: Any,

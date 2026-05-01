@@ -1,6 +1,8 @@
 # cython: language_level=3
 # cython: profile=False
+import os
 from enum import Enum
+from microtaint.instrumentation.cell_c.circuit_c import compile_circuit
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture, Register
 
@@ -615,12 +617,15 @@ cdef class LogicCircuit:
             except Exception:
                 self._compiled = None
         if self._compiled is None:
-            try:
-                import os
-                if os.environ.get('MICROTAINT_DISABLE_COMPILED_CIRCUIT') != '1':
-                    from circuit_c import compile_circuit  # type: ignore[import-not-found]
+            # The compiled-circuit fast path is on by default.  Setting
+            # MICROTAINT_DISABLE_COMPILED_CIRCUIT=1 forces the Cython AST
+            # walker (kept around as a reference / debug fallback).
+            if os.environ.get('MICROTAINT_DISABLE_COMPILED_CIRCUIT') == '1':
+                self._compiled = False
+            else:
+                try:
                     # Pass pcode if available — enables CellHandle pre-resolution
-                    # so OP_CALL_CELL skips Python boundary entirely.
+                    # so OP_CALL_CELL skips the Python boundary entirely.
                     pcode = None
                     if context.simulator is not None:
                         pcode = getattr(context.simulator, '_pcode', None)
@@ -628,10 +633,13 @@ cdef class LogicCircuit:
                         self._compiled = compile_circuit(self, pcode)
                     else:
                         self._compiled = compile_circuit(self)
-                else:
+                except Exception:
+                    # compile_circuit raises if the AST contains an
+                    # unsupported expression form (e.g. expression_str=
+                    # 'FOO').  Fall back to the Cython AST walker; the
+                    # call site below detects _compiled is False and
+                    # uses the slow path.
                     self._compiled = False
-            except Exception:
-                self._compiled = False
         if self._compiled is not False and self._compiled is not None:
             return self._compiled.evaluate(context)
 

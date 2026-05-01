@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,7 +22,7 @@ from unicorn import (
     UC_MODE_ARM,
 )
 
-from microtaint.instrumentation.cell import PCodeCellEvaluator
+from microtaint.instrumentation.cell import PCodeCellEvaluator, PCodeFallbackNeeded
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
 from microtaint.types import Architecture
 
@@ -174,11 +175,9 @@ class CellSimulator:
         # MICROTAINT_DISABLE_C_KERNEL=1 in the environment to disable
         # globally without code changes.
         if use_c is None:
-            import os as _os
-
-            use_c = _os.environ.get('MICROTAINT_DISABLE_C_KERNEL') != '1'
+            use_c = os.environ.get('MICROTAINT_DISABLE_C_KERNEL') != '1'
         self.use_c = use_c
-        self._pcode: None | PCodeCellEvaluator = None
+        self._pcode: None | PCodeCellEvaluator | PCodeCellEvaluatorC = None
         self._pcode_fallback_exc: Any = None
 
         # Initialise Unicorn FIRST.  pypcode (called inside _get_pcode_evaluator_class)
@@ -220,17 +219,11 @@ class CellSimulator:
         if not use_unicorn:
             if use_c:
                 # Pure-C evaluator: drop-in replacement for PCodeCellEvaluator.
-                try:
-
-                    self._pcode = PCodeCellEvaluatorC(arch)
-                except ImportError:
-                    self._pcode = _get_pcode_evaluator_class()(arch)
+                self._pcode = PCodeCellEvaluatorC(arch)
             else:
                 self._pcode = _get_pcode_evaluator_class()(arch)
             # Cache the fallback exception class — avoids per-call import in hot path.
-            from microtaint.instrumentation.cell import PCodeFallbackNeeded as _exc  # noqa: PLC0415
-
-            self._pcode_fallback_exc = _exc
+            self._pcode_fallback_exc = PCodeFallbackNeeded
 
         # Cache PC register ID — avoids a match statement on every _execute call
         if arch == Architecture.X86:
@@ -629,7 +622,7 @@ class CellSimulator:
         # address-only regs are not polarised), so we use either dict.
         ctx = EvalContext(input_taint={}, input_values=or_inputs, simulator=self)
 
-        v_state_or = _build_machine_state(or_inputs, ctx)
+        v_state_or  = _build_machine_state(or_inputs, ctx)
         v_state_and = _build_machine_state(and_inputs, ctx)
 
         try:

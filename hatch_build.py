@@ -22,12 +22,10 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-import sys
 import sysconfig
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
-
 
 # --------------------------------------------------------------------------
 # C extension manifest
@@ -74,7 +72,7 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
 
     PLUGIN_NAME = 'microtaint-c-ext'
 
-    def initialize(self, version: str, build_data: dict) -> None:  # noqa: ARG002
+    def initialize(self, version: str, build_data: dict) -> None:
         """
         Called before the wheel is built. Compiles each C extension to a
         .so next to its source, and registers the .so as a force-included
@@ -98,7 +96,7 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
                 # Tolerate missing source on weird editable layouts; do
                 # not fail the whole build for a missing optional ext.
                 self.app.display_warning(
-                    f'[microtaint-c-ext] {source_rel} not found, skipping'
+                    f'[microtaint-c-ext] {source_rel} not found, skipping',
                 )
                 continue
 
@@ -112,13 +110,14 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
             artifacts.append(rel_so)
 
     def _compile(
-        self, cc_cmd: list[str], py_include: str, source: Path, output: Path
+        self, cc_cmd: list[str], py_include: str, source: Path, output: Path,
     ) -> None:
         """Run the compiler and surface a clear error on failure."""
         # Include path: Python headers + the source's own directory (for
         # cell_c_api.h, circuit_bytecode.h, cell_core.h shared headers).
         include_dir = str(source.parent)
-        cmd = cc_cmd + [
+        cmd = [
+            *cc_cmd,
             f'-I{py_include}',
             f'-I{include_dir}',
             str(source),
@@ -131,12 +130,12 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
         except FileNotFoundError as exc:
             raise RuntimeError(
                 f'[microtaint-c-ext] C compiler not found: {cc_cmd[0]!r}. '
-                f'Set $CC to an available compiler.'
+                f'Set $CC to an available compiler.',
             ) from exc
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(
                 f'[microtaint-c-ext] failed to compile {source.name} '
-                f'(exit code {exc.returncode}): {" ".join(cmd)}'
+                f'(exit code {exc.returncode}): {" ".join(cmd)}',
             ) from exc
 
 
