@@ -111,6 +111,22 @@ class LogicCircuit:
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> dict[str, int]: ...
 
+class ChainedCircuit(LogicCircuit):
+    sub_circuits: list[LogicCircuit]
+    architecture: Architecture
+    instruction: str
+    state_format: list[Register]
+    assignments: list[TaintAssignment]  # flattened view across all sub-circuits
+
+    def __init__(
+        self,
+        sub_circuits: list[LogicCircuit],
+        architecture: Architecture,
+        instruction: str,
+        state_format: list[Register],
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> dict[str, int]: ...
+
 class InstructionCellExpr(Expr):
     architecture: Architecture
     instruction: str

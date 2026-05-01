@@ -89,7 +89,7 @@ def _eval(
 
 
 class TestBitwiseSSE:
-    def test_pxor_xmm_xmm_propagates_taint(self, simulator, regs):
+    def test_pxor_xmm_xmm_propagates_taint(self, simulator, regs) -> None:
         """pxor xmm0, xmm1 — XOR-of-inputs (avalanche / orable category).
 
         ANY tainted input bit must produce SOME taint at the same level
@@ -109,7 +109,7 @@ class TestBitwiseSSE:
         total = out.get('XMM0_LO', 0) | out.get('XMM0_HI', 0)
         assert total != 0, f'pxor failed to propagate XMM1 taint to XMM0; got {out}'
 
-    def test_pxor_zeroing_idiom_emits_no_taint(self, simulator, regs):
+    def test_pxor_zeroing_idiom_emits_no_taint(self, simulator, regs) -> None:
         """pxor xmm0, xmm0 zeros the register.  The rule generator
         recognises this idiom and emits a Constant(0) — even if XMM0
         was previously tainted, the output must be untainted."""
@@ -124,7 +124,7 @@ class TestBitwiseSSE:
         assert out.get('XMM0_LO', 0) == 0, f'zeroing pxor leaked taint: {out}'
         assert out.get('XMM0_HI', 0) == 0, f'zeroing pxor leaked taint: {out}'
 
-    def test_pand_xmm_xmm_propagates_taint(self, simulator, regs):
+    def test_pand_xmm_xmm_propagates_taint(self, simulator, regs) -> None:
         """pand xmm0, xmm1 — AND of two 128-bit registers.
 
         With V_XMM0_LO=0, T_XMM0_LO=0xFF, and V_XMM1_LO=0xFF
@@ -143,7 +143,7 @@ class TestBitwiseSSE:
         )
         assert out.get('XMM0_LO', 0) != 0, f'pand failed to propagate: {out}'
 
-    def test_por_xmm_xmm_propagates_taint(self, simulator, regs):
+    def test_por_xmm_xmm_propagates_taint(self, simulator, regs) -> None:
         """por xmm0, xmm1 — OR of two 128-bit registers."""
         # 66 0f eb c1
         out = _eval(
@@ -162,7 +162,7 @@ class TestBitwiseSSE:
 
 
 class TestSimdMoves:
-    def test_movaps_xmm_xmm_propagates_full_taint(self, simulator, regs):
+    def test_movaps_xmm_xmm_propagates_full_taint(self, simulator, regs) -> None:
         """movaps xmm0, xmm1 — full 128-bit register copy.  XMM1 fully
         tainted must produce XMM0 fully tainted."""
         # 0f 28 c1
@@ -177,7 +177,7 @@ class TestSimdMoves:
         assert out.get('XMM0_LO', 0) != 0, f'movaps lost LO half taint: {out}'
         assert out.get('XMM0_HI', 0) != 0, f'movaps lost HI half taint: {out}'
 
-    def test_movaps_low_only_taint(self, simulator, regs):
+    def test_movaps_low_only_taint(self, simulator, regs) -> None:
         """If only XMM1's low half is tainted, XMM0_HI must end up
         clean — high-half taint must NOT leak into the low half via
         over-approximation in the rule generator."""
@@ -196,7 +196,7 @@ class TestSimdMoves:
         # — i.e. should be 0 here, but since the generator's
         # over-approximation is intentional we accept any value.
 
-    def test_movdqu_xmm_mem_propagates_loaded_taint(self, simulator, regs):
+    def test_movdqu_xmm_mem_propagates_loaded_taint(self, simulator, regs) -> None:
         """movdqu xmm0, [rax] — load 128 bits from memory.  Without a
         shadow_memory backing this, the static rule still resolves
         XMM0's deps correctly; we just smoke-test that the rule
@@ -214,7 +214,7 @@ class TestSimdMoves:
 
 
 class TestFloatAvalanche:
-    def test_addsd_taints_low_half_when_input_tainted(self, simulator, regs):
+    def test_addsd_taints_low_half_when_input_tainted(self, simulator, regs) -> None:
         """addsd xmm0, xmm1 — scalar double add (FLOAT_ADD).
         Classified as AVALANCHE: any tainted input bit produces
         full taint over the affected destination half (low 64 bits)."""
@@ -232,7 +232,7 @@ class TestFloatAvalanche:
             out.get('XMM0_LO', 0) != 0
         ), f'addsd: avalanche failed to propagate to XMM0_LO from XMM1_LO taint; got {out}'
 
-    def test_mulps_taints_low_half(self, simulator, regs):
+    def test_mulps_taints_low_half(self, simulator, regs) -> None:
         """mulps xmm0, xmm1 — packed single-precision float multiply.
         Tainting any single input bit must avalanche to non-zero output taint."""
         # 0f 59 c1
@@ -253,7 +253,7 @@ class TestFloatAvalanche:
 
 
 class TestCallOtherFallback:
-    def test_vpaddd_ymm_rule_generation_does_not_crash(self, simulator, regs):
+    def test_vpaddd_ymm_rule_generation_does_not_crash(self, simulator, regs) -> None:
         """vpaddd ymm0, ymm1, ymm2 — uses CALLOTHER in p-code.
         We can't exercise the runtime Unicorn fallback in a unit test
         (no live Qiling instance), but the rule generator must produce
@@ -269,7 +269,7 @@ class TestCallOtherFallback:
         targets = [str(a.target) for a in circuit.assignments]
         assert len(targets) > 0, 'vpaddd produced no assignments'
 
-    def test_aesenc_rule_generation_does_not_crash(self, simulator, regs):
+    def test_aesenc_rule_generation_does_not_crash(self, simulator, regs) -> None:
         """aesenc xmm0, xmm1 — AES-NI instruction (CALLOTHER)."""
         # 66 0f 38 dc c1
         circuit = generate_static_rule(
@@ -280,7 +280,7 @@ class TestCallOtherFallback:
         targets = [str(a.target) for a in circuit.assignments]
         assert any('XMM0' in t for t in targets), f'aesenc did not produce XMM0 assignments; got {targets}'
 
-    def test_sha256rnds2_rule_generation_does_not_crash(self, simulator, regs):
+    def test_sha256rnds2_rule_generation_does_not_crash(self, simulator, regs) -> None:
         """sha256rnds2 xmm0, xmm1 — SHA extension (CALLOTHER)."""
         # 0f 38 cb c1
         circuit = generate_static_rule(
@@ -301,7 +301,7 @@ class TestGprBaselineUnchanged:
     """Sanity: adding XMM_LO/HI to state_format must not affect GPR
     propagation.  These are sentinel tests that lock in the contract."""
 
-    def test_mov_rbx_rax_full_taint_unchanged(self, simulator, regs):
+    def test_mov_rbx_rax_full_taint_unchanged(self, simulator, regs) -> None:
         out = _eval(
             simulator,
             regs,
@@ -313,7 +313,7 @@ class TestGprBaselineUnchanged:
             out.get('RBX', 0) == 0xFFFFFFFFFFFFFFFF
         ), f'GPR mov regression: expected full taint, got {out.get("RBX", 0):#x}'
 
-    def test_xor_rax_rbx_orable_unchanged(self, simulator, regs):
+    def test_xor_rax_rbx_orable_unchanged(self, simulator, regs) -> None:
         out = _eval(
             simulator,
             regs,

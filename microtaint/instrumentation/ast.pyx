@@ -720,6 +720,76 @@ cdef class LogicCircuit:
         return output_taint
 
 
+cdef class ChainedCircuit:
+    """A sequence of LogicCircuits evaluated one-by-one, threading the output
+    taint of each step into the input taint of the next.
+
+    This is used for multi-instruction sequences.  Lifting all instructions
+    into a single P-code block and analysing them as a unit (``LogicCircuit``)
+    loses intermediate state: if instruction 1 writes CL and instruction 2
+    reads CL, the static rule for the joined block sees the *original* CL dep
+    rather than the updated one.  Chaining is the correct compositional fix.
+
+    The EvalContext is rebuilt before each sub-circuit with the taint dict
+    from the previous step.  Concrete ``input_values`` are held constant
+    (they reflect the entry state of the whole sequence).  This is sound but
+    slightly conservative for value-dependent taint (e.g. `and` with a
+    concrete 0 mask) because the concrete values don't update between steps;
+    however, the static-rule evaluator already doesn't propagate concrete
+    values across steps, so this is no worse than before.
+    """
+
+    cdef public list sub_circuits
+    cdef public object architecture
+    cdef public str instruction
+    cdef public list state_format
+
+    def __init__(self, list sub_circuits, object architecture, str instruction, list state_format):
+        self.sub_circuits = sub_circuits
+        self.architecture = architecture
+        self.instruction = instruction
+        self.state_format = state_format
+
+    def __repr__(self):
+        return (f'ChainedCircuit(instr={self.instruction}, '
+                f'n_steps={len(self.sub_circuits)})')
+
+    cpdef dict evaluate(self, EvalContext context):
+        cdef dict taint = dict(context.input_taint)
+        cdef EvalContext step_ctx
+        cdef LogicCircuit sub
+
+        for sub in self.sub_circuits:
+            # Build a new context with the running taint state but the same
+            # concrete values and simulator.  The implicit_policy is propagated
+            # so PC-taint detection fires within any step.
+            step_ctx = EvalContext(
+                input_taint=taint,
+                input_values=context.input_values,
+                simulator=context.simulator,
+                implicit_policy=context.implicit_policy,
+                shadow_memory=context.shadow_memory,
+                mem_reader=context.mem_reader,
+            )
+            taint = sub.evaluate(step_ctx)
+
+        return taint
+
+    @property
+    def assignments(self) -> list:
+        """Flattened list of all assignments across every sub-circuit.
+
+        Provided for structural compatibility with LogicCircuit so that
+        code that inspects ``circuit.assignments`` works on both types.
+        The list is rebuilt on each access — callers that need it
+        repeatedly should cache the result.
+        """
+        result = []
+        for sub in self.sub_circuits:
+            result.extend(sub.assignments)
+        return result
+
+
 cdef class InstructionCellExpr(Expr):
     cdef public object architecture
     cdef public str instruction

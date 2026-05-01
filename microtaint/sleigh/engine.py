@@ -10,6 +10,7 @@ from microtaint.classifier.categories import InstructionCategory
 from microtaint.instrumentation.ast import (
     AvalancheExpr,
     BinaryExpr,
+    ChainedCircuit,
     Constant,
     Expr,
     InstructionCellExpr,
@@ -142,9 +143,11 @@ class StateMapper:
         self.is_x86 = 'X86' in arch_upper or 'AMD64' in arch_upper
         self.is_arm = 'ARM' in arch_upper
 
-        self.sf_resolved: list[tuple[Register, Varnode]] = []
+        self.sf_resolved: list[tuple[Register, Varnode | _SynthVarnode]] = []
         for sf_reg in state_format:
-            s_r = ctx.registers.get(sf_reg.name) or ctx.registers.get(sf_reg.name.lower())
+            s_r: Varnode | _SynthVarnode | None = ctx.registers.get(sf_reg.name) or ctx.registers.get(
+                sf_reg.name.lower(),
+            )
             if not s_r and self.is_arm and sf_reg.name in self.arm_aliases:
                 alias = self.arm_aliases[sf_reg.name]
                 s_r = ctx.registers.get(alias) or ctx.registers.get(alias.upper())
@@ -154,7 +157,7 @@ class StateMapper:
                 # _LO at the base offset (low 64 bits) and _HI 8 bytes
                 # in (high 64 bits) so Ghidra-emitted varnodes targeting
                 # XMM<n>[63:0]  / XMM<n>[127:64] map correctly.
-                s_r = self._synth_xmm_varnode(sf_reg.name)  # type: ignore[assignment]
+                s_r = self._synth_xmm_varnode(sf_reg.name)
             if s_r:
                 self.sf_resolved.append((sf_reg, s_r))
 
@@ -460,6 +463,7 @@ def _cached_generate_static_rule(
             out_bit_end,
             mapper,
             mapping,
+            has_cbranch=any(op.opcode.name == 'CBRANCH' for op in translation.ops),
         )
 
     return LogicCircuit(
@@ -476,7 +480,59 @@ def generate_static_rule(
     state_format: list[Register],
 ) -> LogicCircuit:
     reg_names_tuple = tuple((reg.name, reg.bits) for reg in state_format)
-    return _cached_generate_static_rule(arch, bytestring, reg_names_tuple)
+    circuit = _cached_generate_static_rule(arch, bytestring, reg_names_tuple)
+
+    # Multi-instruction sequences must be evaluated per-instruction so that
+    # intermediate taint state (produced by instruction N) is correctly
+    # visible to instruction N+1.  Lifting all instructions into one P-code
+    # block and analysing them as a unit loses this: the dep-extraction only
+    # sees original-input register names, so an intermediate updated CL after
+    # `mov rcx, rdx` is invisible to the subsequent `shr rax, cl`.
+    #
+    # Detect multiple instructions via IMARK boundaries.  If there is more
+    # than one instruction, split the bytestring, generate a circuit per
+    # instruction, and wrap the whole thing in a ChainedCircuit that threads
+    # the output taint of each step into the input taint of the next.
+    #
+    # Exceptions — keep as a single monolithic circuit when:
+    #   1. BRANCH/CBRANCH present: backward slice from PC correctly traces
+    #      through intermediate flags (e.g. `test rdi,1; jz` finds RDI→ZF→RIP).
+    #      Splitting loses the cross-instruction data path through ZF.
+    #   2. STORE/LOAD present: shadow memory is not threaded between steps,
+    #      so memory-taint would be silently lost (push/pop, load-then-store).
+    ctx = get_context(arch)
+    translation = ctx.translate(bytestring, 0x1000)
+    imarks = [(op.inputs[0].offset - 0x1000, op.inputs[0].size) for op in translation.ops if op.opcode.name == 'IMARK']
+    if len(imarks) <= 1:
+        return circuit  # single instruction — no chaining needed
+
+    _skip_chain_opcodes = frozenset(
+        {
+            'STORE',
+            'LOAD',
+            'BRANCH',
+            'BRANCHIND',
+            'CBRANCH',
+            'CALL',
+            'CALLIND',
+            'RETURN',
+        },
+    )
+    if any(op.opcode.name in _skip_chain_opcodes for op in translation.ops):
+        return circuit  # monolithic circuit preserves cross-instruction deps
+
+    # Build one sub-circuit per instruction
+    sub_circuits: list[LogicCircuit] = []
+    for addr_offset, length in imarks:
+        instr_bytes = bytestring[addr_offset : addr_offset + length]
+        sub_circuits.append(_cached_generate_static_rule(arch, instr_bytes, reg_names_tuple))
+
+    return ChainedCircuit(
+        sub_circuits=sub_circuits,
+        architecture=arch,
+        instruction=bytestring.hex(),
+        state_format=state_format,
+    )
 
 
 def generate_taint_assignments(  # noqa: C901
@@ -491,6 +547,7 @@ def generate_taint_assignments(  # noqa: C901
     out_bit_end: int,
     mapper: StateMapper,
     mapping: RegMapping | MemMapping | None = None,
+    has_cbranch: bool = False,
 ) -> None:
     # -----------------------------------------------------------------------
     # STORE TARGET — memory output of a STORE instruction.
@@ -965,6 +1022,18 @@ def generate_taint_assignments(  # noqa: C901
             )
             expr = BinaryExpr(Op.AND, C_eval, T_any)
 
+        # CMOV not-taken passthrough: when the condition is false the destination
+        # register keeps its OLD value, so its OLD taint must also survive.
+        # The old taint of the destination is simply T_<out_name>[out_bits].
+        # We OR it into the expression so that:
+        #   - taken path  → (source taint drives output)  OR old_dest_taint
+        #   - not-taken   → 0 (C_eval=0 since no write)   OR old_dest_taint
+        # This is conservative but sound: in the taken path the old dest taint
+        # may be over-counted, but taint propagation must never drop bits.
+        # NOTE: The same passthrough is applied generically below for ALL
+        # instruction categories that have a CBRANCH in their P-code, which
+        # covers MONOTONIC cmovz/cmovs in addition to COND_TRANSPORTABLE cmovl.
+
     elif cat == InstructionCategory.TRANSPORTABLE:
         diff_expr = make_differential()
         is_flag = out_bit_end == out_bit_start
@@ -1014,6 +1083,25 @@ def generate_taint_assignments(  # noqa: C901
             ptr_combined = BinaryExpr(Op.OR, ptr_combined, t)
         avalanche_ptr = AvalancheExpr(ptr_combined, out_bit_end - out_bit_start + 1)
         expr = BinaryExpr(Op.OR, expr, avalanche_ptr)
+
+    # Conditional-execution old-dest passthrough (covers CMOV in all categories).
+    #
+    # Any instruction whose P-code contains a CBRANCH might NOT write its
+    # output — if the branch is taken, the destination register keeps its
+    # old value.  The differential C1 XOR C2 only captures changes driven by
+    # the *source* operands; it returns 0 when neither run writes the output.
+    # We must OR in the old destination taint so the not-taken path doesn't
+    # silently drop it.
+    #
+    # cmovz / cmovs → MONOTONIC (no COND_TRANSPORTABLE special-casing)
+    # cmovl / cmovge → COND_TRANSPORTABLE
+    # All share the same need: old_dest_taint flows through on not-taken.
+    #
+    # Excluded: PC/IP registers (branch targets) and memory outputs (stores
+    # to memory don't have a previous value to pass through).
+    if not isinstance(mapping, MemMapping) and out_name not in ('EIP', 'RIP', 'PC') and has_cbranch:
+        old_dest_taint = _get_taint_operand(out_name, out_bit_start, out_bit_end, True)
+        expr = BinaryExpr(Op.OR, expr, old_dest_taint)
 
     if out_name in ('EIP', 'RIP', 'PC'):
         expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
@@ -1130,9 +1218,32 @@ def extract_dependencies(  # noqa: C901
       push rbp  →  T_MEM = T_RBP | T_RSP   (T_RSP is address, not value)
     After 'leave' propagates T_RBP→T_RSP, every subsequent push would
     write tainted shadow, causing a cascade of false positive BOFs.
+
+    Root cause fix #2 (dest read-back): Ghidra emits flag-update ops that
+    read the destination register AFTER the main computation has written it.
+    For example, `imul rax,rbx,3` emits `INT_SEXT in=RAX` to compute OF
+    after `INT_MULT out=RAX`.  That RAX read should not count as an *input*
+    dep.  We track the index of the first write to the output register and
+    suppress reads of that same register from ops that come *after* the write.
     """
     value_deps: dict[RegMapping | MemMapping, int] = {}
     addr_deps: dict[RegMapping, int] = {}
+
+    # Find the index of the first op in all_ops that writes to the output register.
+    # Any subsequent op that reads the same register is a read-back of the result
+    # (e.g. Ghidra's flag-update patterns) and must NOT be treated as an input dep.
+    # We only apply this when the output is a named register (not memory, not unique).
+    _out_write_index: int = len(all_ops)  # sentinel: no write found yet
+    if _out_vn.space.name == 'register':
+        for _i, _op in enumerate(all_ops):
+            if (
+                _op.output is not None
+                and _op.output.space.name == 'register'
+                and _op.output.offset == _out_vn.offset
+                and _op.output.size == _out_vn.size
+            ):
+                _out_write_index = _i
+                break
 
     # Registers that are used as LOAD/STORE *pointers* within this slice.
     # We identify them first so we can classify register inputs correctly.
@@ -1175,7 +1286,7 @@ def extract_dependencies(  # noqa: C901
         len(all_ops),
     )
 
-    for op in all_ops:
+    for _op_idx, op in enumerate(all_ops):
         if op.opcode.name == 'RETURN':
             continue
 
@@ -1194,6 +1305,22 @@ def extract_dependencies(  # noqa: C901
 
         for vn in op.inputs:
             if vn.space.name == 'register':
+                # Skip read-backs of the destination register that occur AFTER
+                # the main computation has already written it.  Ghidra emits
+                # flag-update ops (e.g. `INT_SEXT in=RAX` after `INT_MULT out=RAX`
+                # for `imul rax,rbx,3`) that reference the destination as an
+                # input — but only to compute OF/CF, not as a true source value.
+                # We suppress these only when the op comes after _out_write_index.
+                # Reads of the destination BEFORE the write (e.g. bswap's source
+                # reads of RAX before the final INT_OR writes RAX) are legitimate.
+                if (
+                    _op_idx > _out_write_index
+                    and vn.offset == _out_vn.offset
+                    and vn.size == _out_vn.size
+                    and _out_vn.space.name == 'register'
+                ):
+                    continue
+
                 # Try the singular map first — preserves the existing
                 # "smallest covering register" semantics for GPRs and
                 # their aliases (RAX → just RAX, not RAX+EAX+AX+AL).

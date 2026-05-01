@@ -31,13 +31,13 @@ from microtaint.emulator.shadow import BitPreciseShadowMemory
 
 
 class TestSingleByteBitPrecision:
-    def test_single_bit_tainted(self):
+    def test_single_bit_tainted(self) -> None:
         """Setting bit 3 of one byte must yield mask 0x08 — not 0xFF."""
         shm = BitPreciseShadowMemory()
         shm.write_mask(0x1000, 0x08, 1)  # bit 3 only
         assert shm.read_mask(0x1000, 1) == 0x08
 
-    def test_each_bit_independently(self):
+    def test_each_bit_independently(self) -> None:
         """Each of the 8 bits inside a byte is tracked separately."""
         shm = BitPreciseShadowMemory()
         for bit in range(8):
@@ -45,7 +45,7 @@ class TestSingleByteBitPrecision:
             got = shm.read_mask(0x2000 + bit, 1)
             assert got == (1 << bit), f'bit {bit}: expected {1 << bit:#x}, got {got:#x}'
 
-    def test_partial_taint_does_not_leak(self):
+    def test_partial_taint_does_not_leak(self) -> None:
         """Tainting bits 0,2,4,6 leaves bits 1,3,5,7 clean."""
         shm = BitPreciseShadowMemory()
         shm.write_mask(0x3000, 0x55, 1)  # 01010101
@@ -53,7 +53,7 @@ class TestSingleByteBitPrecision:
         # The complement bits must read as untainted
         assert (shm.read_mask(0x3000, 1) & 0xAA) == 0
 
-    def test_clear_specific_byte_leaves_neighbours(self):
+    def test_clear_specific_byte_leaves_neighbours(self) -> None:
         """Clearing one byte's taint must not affect adjacent bytes."""
         shm = BitPreciseShadowMemory()
         shm.write_mask(0x4000, 0xFF, 1)
@@ -71,7 +71,7 @@ class TestSingleByteBitPrecision:
 
 
 class TestMultiByteLittleEndian:
-    def test_write_8byte_mask_each_byte_independent(self):
+    def test_write_8byte_mask_each_byte_independent(self) -> None:
         """An 8-byte write packs 8 per-byte taint masks into one uint64.
         Bit group [i*8 .. i*8+7] is the taint mask for memory byte addr+i."""
         shm = BitPreciseShadowMemory()
@@ -87,7 +87,7 @@ class TestMultiByteLittleEndian:
             got = shm.read_mask(0x5000 + i, 1)
             assert got == expected, f'byte {i}: expected {expected:#x}, got {got:#x}'
 
-    def test_partial_taint_across_bytes(self):
+    def test_partial_taint_across_bytes(self) -> None:
         """Taint flows in arbitrary bit patterns across byte boundaries."""
         shm = BitPreciseShadowMemory()
         # Byte 0: 0x0F (low nibble), Byte 1: 0xF0 (high nibble),
@@ -102,7 +102,7 @@ class TestMultiByteLittleEndian:
         # And the whole thing
         assert shm.read_mask(0x6000, 4) == packed
 
-    def test_partial_read_within_tainted_region(self):
+    def test_partial_read_within_tainted_region(self) -> None:
         """Reading 2 bytes of a 4-byte tainted region returns just those 2."""
         shm = BitPreciseShadowMemory()
         shm.write_mask(0x7000, 0xDEADBEEF, 4)
@@ -116,7 +116,7 @@ class TestMultiByteLittleEndian:
 
 
 class TestPageBoundary:
-    def test_write_spanning_pages_preserves_bits(self):
+    def test_write_spanning_pages_preserves_bits(self) -> None:
         """A multi-byte write that crosses a page boundary must keep
         per-bit precision in both pages."""
         shm = BitPreciseShadowMemory()
@@ -132,7 +132,7 @@ class TestPageBoundary:
         # And the round-trip reads back identical
         assert shm.read_mask(addr, 4) == packed
 
-    def test_independent_pages_dont_leak(self):
+    def test_independent_pages_dont_leak(self) -> None:
         """Tainting one page does not affect a different page."""
         shm = BitPreciseShadowMemory()
         shm.write_mask(0x2000, 0xFFFFFFFF, 4)  # page 0x2000
@@ -147,18 +147,18 @@ class TestPageBoundary:
 
 
 class TestIsTaintedQuery:
-    def test_is_tainted_any_bit(self):
+    def test_is_tainted_any_bit(self) -> None:
         """is_tainted returns True if any of the 8 bits of any byte is set."""
         shm = BitPreciseShadowMemory()
         shm.write_mask(0x8000, 0x01, 1)  # only bit 0 of byte 0 tainted
         assert shm.is_tainted(0x8000, 1) is True
 
-    def test_is_tainted_false_when_all_bits_clear(self):
+    def test_is_tainted_false_when_all_bits_clear(self) -> None:
         shm = BitPreciseShadowMemory()
         shm.write_mask(0x9000, 0x00, 4)  # explicit no-taint write
         assert shm.is_tainted(0x9000, 4) is False
 
-    def test_is_tainted_range_finds_one_tainted_byte(self):
+    def test_is_tainted_range_finds_one_tainted_byte(self) -> None:
         """A single tainted byte in the middle of a clean range must
         flip is_tainted to True."""
         shm = BitPreciseShadowMemory()
@@ -174,7 +174,7 @@ class TestIsTaintedQuery:
 
 
 class TestByteArrayRoundTrip:
-    def test_write_bytes_read_bytes_identity(self):
+    def test_write_bytes_read_bytes_identity(self) -> None:
         """write_bytes(addr, taint_array) → read_bytes(addr, n) returns
         the exact same array, byte-for-byte."""
         shm = BitPreciseShadowMemory()
@@ -186,7 +186,7 @@ class TestByteArrayRoundTrip:
         got = shm.read_bytes(0xB000, len(taint))
         assert got == taint, f'mismatch: wrote {bytes(taint).hex()}, read {bytes(got).hex()}'
 
-    def test_partial_read_does_not_consume_bits(self):
+    def test_partial_read_does_not_consume_bits(self) -> None:
         """Reading is non-destructive — the same shadow can be read again."""
         shm = BitPreciseShadowMemory()
         shm.write_mask(0xC000, 0xFF00FF00FF00FF00, 8)
@@ -201,14 +201,14 @@ class TestByteArrayRoundTrip:
 
 
 class TestClearSemantics:
-    def test_clear_removes_all_bits_in_range(self):
+    def test_clear_removes_all_bits_in_range(self) -> None:
         shm = BitPreciseShadowMemory()
         shm.write_mask(0xD000, 0xFFFFFFFF, 4)
         shm.clear(0xD000, 4)
         assert shm.read_mask(0xD000, 4) == 0
         assert shm.is_tainted(0xD000, 4) is False
 
-    def test_clear_partial_range_leaves_neighbours(self):
+    def test_clear_partial_range_leaves_neighbours(self) -> None:
         """Clearing bytes 1-2 of a 4-byte tainted region leaves 0 and 3."""
         shm = BitPreciseShadowMemory()
         shm.write_mask(0xE000, 0xAABBCCDD, 4)  # bytes [0xDD, 0xCC, 0xBB, 0xAA]
@@ -226,7 +226,7 @@ class TestClearSemantics:
 
 class TestPropertyStyle:
     @pytest.mark.parametrize('taint_byte', [0x01, 0x02, 0x10, 0x80, 0x55, 0xAA, 0xC3, 0x69])
-    def test_per_byte_distinct_patterns(self, taint_byte: int):
+    def test_per_byte_distinct_patterns(self, taint_byte: int) -> None:
         """For every interesting per-bit pattern, write/read must round-trip."""
         shm = BitPreciseShadowMemory()
         shm.write_mask(0xF000, taint_byte, 1)
@@ -234,7 +234,7 @@ class TestPropertyStyle:
 
     @pytest.mark.parametrize('size', [1, 2, 4, 8])
     @pytest.mark.parametrize('addr', [0x10000, 0x10003, 0x10FFE, 0x11FFF])
-    def test_aligned_and_unaligned_writes(self, size: int, addr: int):
+    def test_aligned_and_unaligned_writes(self, size: int, addr: int) -> None:
         """Write/read is correct at any alignment, including across pages."""
         shm = BitPreciseShadowMemory()
         # Per-byte mask that's distinct for every byte
