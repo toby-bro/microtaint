@@ -14,6 +14,7 @@ from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE_UNMAPPED
 
 from microtaint.emulator.hook_core import (
     InstructionHook,
+    LiveMemReader,
     MemAccessHook,
     MemWriteClearHook,
     UafUnmappedWriteHook,
@@ -449,6 +450,9 @@ class MicrotaintWrapper:
         # Cache ImplicitTaintPolicy — computed once, used on every instruction.
         self._policy = ImplicitTaintPolicy.STOP if (check_sc or check_bof) else ImplicitTaintPolicy.IGNORE
         self._uc_handle: ctypes.c_void_p = None  # type: ignore[assignment]  # set properly in _setup_hooks
+        # Cython mem-reader for circuit_c's OP_PUSH_MEM_VALUE.  Built in
+        # _setup_hooks() once we have the Unicorn handle.
+        self._live_mem_reader: LiveMemReader | None = None
         self._any_taint: bool = False  # set True on first _taint_bytes call
         self._mem_write_hook_registered: bool = False  # set True when hook registered
         self._instr_hook_registered: bool = False  # set True when instr hook registered
@@ -680,6 +684,15 @@ class MicrotaintWrapper:
         # Cache the raw Unicorn C handle once. ql.uc is a property that
         # does work on every access — caching avoids 407k property calls.
         self._uc_handle = self.ql.uc._uch
+        # Build the Cython LiveMemReader once.  Replaces the bound-method
+        # _read_live_memory that circuit_c invokes from OP_PUSH_MEM_VALUE
+        # — saves ~0.5 us of Python frame setup per call x 256k calls/run.
+        self._live_mem_reader = LiveMemReader(
+            self,
+            uc_mem_read=_uc_mem_read,
+            mem_buf=_MEM_BUF,
+            mem_ptrs=_MEM_PTRS,
+        )
 
         self.ql.os.set_syscall(0, self._sys_read_hook, QL_INTERCEPT.CALL)
         self.ql.os.set_syscall(334, self._stub_unimplemented_syscall, QL_INTERCEPT.ENTER)
@@ -846,19 +859,6 @@ class MicrotaintWrapper:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _read_live_memory(self, address: int, size: int) -> int:
-        """Read `size` bytes from Unicorn via uc_mem_read + typed ctypes pointer."""
-        try:
-            err = _uc_mem_read(self._uc_handle, address, _MEM_BUF, size)
-            if err == 0:
-                ptr = _MEM_PTRS.get(size)
-                if ptr is not None:
-                    return ptr[0]  # type: ignore[no-any-return,index]
-                return int.from_bytes(_MEM_BUF[:size], 'little')
-            return int.from_bytes(self.ql.mem.read(address, size), 'little')
-        except Exception:
-            return 0
-
     def _get_live_registers(self, uch: ctypes.c_void_p) -> dict[str, int]:
         """Read all 18 AMD64 registers via uc_reg_read_batch, fall back to Python."""
         try:
@@ -1013,7 +1013,7 @@ class MicrotaintWrapper:
             simulator=self.sim,
             implicit_policy=self._policy,
             shadow_memory=self.shadow_mem,
-            mem_reader=self._read_live_memory,
+            mem_reader=self._live_mem_reader,
         )
 
         try:

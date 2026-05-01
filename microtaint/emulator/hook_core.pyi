@@ -204,3 +204,34 @@ class UafUnmappedWriteHook:
         value: int,
         user_data: Any = ...,
     ) -> bool: ...
+
+
+class LiveMemReader:
+    """
+    Cython callable that reads `size` bytes from Unicorn at a given address
+    via ctypes-wrapped `uc_mem_read` into a pre-allocated buffer.
+
+    Replaces the wrapper's pure-Python `_read_live_memory` method, which was
+    the last Python frame on the per-instruction hot path (~256k calls/run
+    in the bench).  Created once in `MicrotaintWrapper._setup_hooks()` and
+    passed to circuit_c via `mem_reader=` so OP_PUSH_MEM_VALUE invokes it
+    with no Python frame setup.
+    """
+
+    wrapper: Any
+    uc_mem_read: Callable[..., int]
+    mem_buf: Any
+    mem_ptrs: dict[int, Any]
+    ql: Any
+
+    def __init__(
+        self,
+        wrapper: Any,
+        *,
+        uc_mem_read: Callable[..., int],
+        mem_buf: Any,
+        mem_ptrs: dict[int, Any],
+    ) -> None: ...
+
+    def __call__(self, address: int, size: int) -> int:
+        """Read `size` bytes at `address`. Returns 0 on error."""

@@ -123,7 +123,7 @@ cdef class InstructionHook:
         self.build_offsets_arrs = build_offsets_arrs
         self.eflags_bits = eflags_bits
         self.eval_context_cls = eval_context_cls
-        self.read_live_memory = wrapper._read_live_memory
+        self.read_live_memory = wrapper._live_mem_reader
         self.get_live_registers = wrapper._get_live_registers
         self.disasm = wrapper._disasm
         self.instr_cache_hits = 0
@@ -481,3 +481,64 @@ cdef class UafUnmappedWriteHook:
             self.reporter.uaf(address, size)
         self.ql.emu_stop()
         return False
+
+
+# ---------------------------------------------------------------------------
+# LiveMemReader — Cython port of MicrotaintWrapper._read_live_memory.
+#
+# Called ~256k times per bench run from circuit_c's OP_PUSH_MEM_VALUE
+# bytecode op when a circuit needs to read guest memory.  Original was a
+# Python method on the wrapper (~1.48 us/call frame overhead).  This
+# version exposes a callable cdef class that circuit_c invokes directly.
+# Signature is identical (address, size) -> int so it's a drop-in
+# replacement for the bound method passed via mem_reader=.
+# ---------------------------------------------------------------------------
+
+cdef class LiveMemReader:
+    """Callable that reads `size` bytes from Unicorn's address space.
+
+    The wrapper used to do this through a Python method that called
+    ctypes-wrapped uc_mem_read into a pre-allocated buffer.  Moving the
+    body to a cdef class drops the Python frame setup per call (~0.5 us
+    out of 1.48 us total).  The remaining ~1 us is the actual ctypes
+    call into libunicorn's uc_mem_read — which is C, just C through a
+    Python ABI.
+    """
+    cdef public object wrapper        # the MicrotaintWrapper that owns us
+    cdef public object uc_mem_read    # ctypes function for uc_mem_read
+    cdef public object mem_buf        # pre-allocated ctypes buffer
+    cdef public object mem_ptrs       # dict[int, ctypes.POINTER(uintN_t)]
+    cdef public object ql             # Qiling, for the slow-path fallback
+    cdef unsigned long long uc_handle # Unicorn engine pointer
+
+    def __init__(self, wrapper, *, uc_mem_read, mem_buf, mem_ptrs):
+        self.wrapper = wrapper
+        self.uc_mem_read = uc_mem_read
+        self.mem_buf = mem_buf
+        self.mem_ptrs = mem_ptrs
+        self.ql = wrapper.ql
+        # uc_handle is a ctypes c_void_p — extract the integer once for
+        # the hot path.  ctypes will accept the int argument directly.
+        cdef object handle = wrapper._uc_handle
+        if hasattr(handle, 'value'):
+            self.uc_handle = <unsigned long long>(handle.value or 0)
+        else:
+            self.uc_handle = <unsigned long long>(handle or 0)
+
+    def __call__(self, unsigned long long address, int size):
+        """Read `size` bytes at `address` from the live Unicorn engine."""
+        cdef int err
+        cdef object ptr
+        try:
+            err = self.uc_mem_read(self.uc_handle, address, self.mem_buf, size)
+            if err == 0:
+                ptr = self.mem_ptrs.get(size)
+                if ptr is not None:
+                    return ptr[0]
+                return int.from_bytes(self.mem_buf[:size], 'little')
+            # Unicorn returned an error; fall back to Qiling's mem.read
+            # (slower but knows about Qiling-mapped regions Unicorn
+            # doesn't expose directly).
+            return int.from_bytes(self.ql.mem.read(address, size), 'little')
+        except Exception:
+            return 0

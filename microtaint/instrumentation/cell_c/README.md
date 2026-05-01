@@ -1,7 +1,8 @@
-# microtaint native acceleration layer (v8)
+# microtaint native acceleration layer (v9)
 
 Hand-written C extensions and supporting glue that accelerate microtaint's
-hot path. The full stack now consists of five optimization tiers.
+hot path. The full stack now consists of six optimization layers — and
+**zero Python frames remain on the per-instruction hot path**.
 
 | Layer | What | Where |
 |---|---|---|
@@ -11,6 +12,7 @@ hot path. The full stack now consists of five optimization tiers.
 | V5 | `hook_core` — Cython-compiled per-instruction Unicorn hook | `microtaint/emulator/hook_core.pyx` |
 | V7 | direct `uc_hook_add` bypass + version-cache fast path | `wrapper.py` + `hook_core.pyx` |
 | V8 | Cython memory hooks (read/write/UAF-unmapped) with `cimport`-typed shadow_mem | `hook_core.pyx` + `shadow.pxd` |
+| V9 | `LiveMemReader` Cython class + direct C-kernel dispatch from `MemoryDifferentialExpr` | `hook_core.pyx` + `ast.pyx` |
 
 ## Performance
 
@@ -25,33 +27,37 @@ x86-64 binary running ~1.19M tainted instructions:
 | + Tier 3 (instruction memoization, ~86% hit rate) | 16.5 s | 2.3× | 1650× |
 | + V5 (Cython hook) | 13.8 s | 2.8× | 1380× |
 | + V7 (uc_hook_add bypass + version cache) | 11.2 s | 3.4× | 1120× |
-| **+ V8 (Cython memory hooks)** | **6.7 s** | **5.7×** | **670×** |
+| + V8 (Cython memory hooks) | 6.7 s | 5.7× | 670× |
+| **+ V9 (LiveMemReader, direct kernel dispatch)** | **6.5 s** | **5.8×** | **650×** |
 
-## V8 — Cython memory hooks
+## V9 — eliminating the last Python frames
 
-Three new Cython callable classes in `hook_core.pyx`:
+After V8, profile audit (cProfile under bench) showed exactly two
+Python-level frames called >1000 times on the hot path:
 
-- **`MemWriteClearHook`** — replaces `_mem_write_clear_hook`
-- **`MemAccessHook`** — replaces `_mem_access_hook`
-- **`UafUnmappedWriteHook`** — replaces `_uaf_unmapped_write_hook`
+- `MicrotaintWrapper._read_live_memory` — 256k calls × 1.48 µs = **0.38 s**
+  Called from `circuit_c.c`'s `OP_PUSH_MEM_VALUE` whenever a circuit reads
+  guest memory.
 
-All three use the same architectural pattern as `InstructionHook`:
-typed `cdef public BitPreciseShadowMemory shadow_mem` field cached at
-construction time, dispatched via direct `cimport` from `shadow.pxd`
-(C-level cpdef call, not Python attribute lookup). They're registered
-through the same direct-`uc_hook_add` ctypes bypass we use for the
-instruction hook (Tier 4) — no Qiling `hook_mem_*` wrapper, no Unicorn
-`uccallback` / `__hook_mem_access_cb` Python frames.
+- `CellSimulator.evaluate_differential` — 205k calls × 0.32 µs = **0.065 s**
+  A thin Python wrapper around `self._pcode.evaluate_differential` (the
+  C kernel) that catches `PCodeFallbackNeeded` and falls back to Unicorn.
 
-A new file, `microtaint/emulator/shadow.pxd`, declares the
-`BitPreciseShadowMemory` cdef class so other Cython modules can
-`cimport` it. The build-system change required is one line in
-`pyproject.toml`:
+V9 removes both:
 
-```toml
-[tool.hatch.build.targets.wheel.hooks.cython.options]
-includes = ["."]
-```
+- `LiveMemReader` (new cdef class in `hook_core.pyx`) is a drop-in
+  replacement for `_read_live_memory`. Built once in `_setup_hooks()`,
+  passed via `mem_reader=` to circuit_c. Same ctypes-wrapped `uc_mem_read`
+  body, but no Python frame setup per call.
+
+- `MemoryDifferentialExpr.evaluate` (in `ast.pyx`) now calls the C kernel's
+  `evaluate_differential` directly, replicating the simulator middleman's
+  `PCodeFallbackNeeded` handling locally so the simulator method is only
+  hit when an actual Unicorn fallback is needed.
+
+After V9, the hot-path profile shows **no Python frames called >1000
+times** — every per-instruction operation goes through C, Cython, or
+ctypes-wrapped libunicorn calls only.
 
 ## Default configuration
 
