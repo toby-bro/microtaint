@@ -71,15 +71,17 @@ dependencies = ["hatch-cython"]
 
 [tool.hatch.build.targets.wheel.hooks.cython.options]
 compile_py = false
-# Cython needs the project root on its include path so `cimport` statements
-# can resolve sibling .pxd files (currently: microtaint/emulator/shadow.pxd,
-# imported by hook_core.pyx).
 includes = ["."]
-# Always regenerate .c from .pyx — by default cythonize skips regeneration
-# when the .c file is newer than the .pyx, which causes stale builds when
-# users update .pyx without deleting the cached .c (e.g. `uv sync
-# --reinstall-package` after editing a .pyx in place).
 cythonize_kwargs = { force = true }
+compile_args = [
+    "-O3",                             # SLP/loop vectorizer, more inlining
+    "-march=native",                   # AVX2/BMI2 on the build host
+    "-fno-plt",                        # cheaper indirect calls in PIC
+    "-fno-semantic-interposition",     # direct intra-DSO calls
+    "-flto",                           # cross-module inlining incl. shadow.pxd
+    "-fno-asynchronous-unwind-tables", # smaller .so, no perf cost
+    "-g0",                             # no debug info; cuts .so size 3-5×
+]
 
 
 [tool.hatch.build.targets.wheel.hooks.cython.options.files]
