@@ -20,6 +20,7 @@
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include <structmember.h>
 #include <stdint.h>
 #include <string.h>
 #include "circuit_bytecode.h"
@@ -82,6 +83,12 @@ typedef struct {
     /* Whether ANY assignment fell back to Python.  If true, run-time
      * uses a hybrid path: each assignment is dispatched individually. */
     int             has_python_fallback;
+
+    /* Tier 3: whether this circuit reads memory (any OP_PUSH_MEM_*
+     * or TGT_MEM_* in the bytecode).  When false, the wrapper can
+     * safely cache (input_taint → output_state) without including
+     * shadow-memory state in the cache key. */
+    int             has_mem_ops;
 } CompiledCircuit;
 
 /* ──────────── string_pool helpers ──────────── */
@@ -345,6 +352,7 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         if (e->fallback) return;
         emit(e, is_taint ? OP_PUSH_MEM_TAINT : OP_PUSH_MEM_VALUE);
         emit(e, (uint32_t)size_bytes);
+        cc->has_mem_ops = 1;
         return;
     }
     /* Unknown / MemoryDifferentialExpr / etc — fall back */
@@ -444,6 +452,7 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
             Py_DECREF(target);
             p->python_assignment = a; Py_INCREF(a);
             cc->has_python_fallback = 1;
+            cc->has_mem_ops = 1;   /* memory write — disables Tier 3 cache */
             continue;
         }
         /* Register target */
@@ -1208,6 +1217,12 @@ static PyMethodDef CompiledCircuit_methods[] = {
     {NULL}
 };
 
+static PyMemberDef CompiledCircuit_members[] = {
+    {"has_mem_ops", T_INT, offsetof(CompiledCircuit, has_mem_ops), READONLY,
+     "True if this circuit reads or writes memory (disables wrapper-level Tier 3 cache)."},
+    {NULL}
+};
+
 static PyTypeObject CompiledCircuitType = {
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name      = "circuit_c.CompiledCircuit",
@@ -1215,6 +1230,7 @@ static PyTypeObject CompiledCircuitType = {
     .tp_dealloc   = (destructor)CompiledCircuit_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
     .tp_methods   = CompiledCircuit_methods,
+    .tp_members   = CompiledCircuit_members,
     .tp_new       = CompiledCircuit_new,
 };
 
