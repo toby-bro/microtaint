@@ -115,6 +115,14 @@ categories.c
 ast_test.c
 microtaint/instrumentation/ast.c
 microtaint/instrumentation/cell.c
+microtaint/emulator/hook_core.c
 
 output/
 stubs/
+
+fix_*.py
+patch_*.py
+debug_*.py
+*.patch
+paper
+

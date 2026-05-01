@@ -604,12 +604,30 @@ cdef class LogicCircuit:
         # circuit has a compiled form (or one can be built lazily), use it.
         # Disabled by setting the env var MICROTAINT_DISABLE_COMPILED_CIRCUIT=1
         # or by setting LogicCircuit._compiled to a sentinel.
+        #
+        # If self.assignments was mutated since the last compile (rare: tests
+        # do this; production hot path never does), invalidate the cache.
+        cdef int n_live = len(self.assignments)
+        if self._compiled is not None and self._compiled is not False:
+            try:
+                if self._compiled.stats()['n_assignments'] != n_live:
+                    self._compiled = None
+            except Exception:
+                self._compiled = None
         if self._compiled is None:
             try:
                 import os
                 if os.environ.get('MICROTAINT_DISABLE_COMPILED_CIRCUIT') != '1':
                     from circuit_c import compile_circuit  # type: ignore[import-not-found]
-                    self._compiled = compile_circuit(self)
+                    # Pass pcode if available — enables CellHandle pre-resolution
+                    # so OP_CALL_CELL skips Python boundary entirely.
+                    pcode = None
+                    if context.simulator is not None:
+                        pcode = getattr(context.simulator, '_pcode', None)
+                    if pcode is not None:
+                        self._compiled = compile_circuit(self, pcode)
+                    else:
+                        self._compiled = compile_circuit(self)
                 else:
                     self._compiled = False
             except Exception:
