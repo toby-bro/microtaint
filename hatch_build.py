@@ -124,24 +124,49 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
         # Include path: Python headers + the source's own directory (for
         # cell_c_api.h, circuit_bytecode.h, cell_core.h shared headers).
         include_dir = str(source.parent)
+
         cmd = [
             *cc_cmd,
             f'-I{py_include}',
             f'-I{include_dir}',
-            str(source),
-            '-o',
-            str(output),
         ]
+
+        # Windows specifically requires linking against the python library
+        if sys.platform == 'win32':
+            # E.g., 'C:\\...\\Python312\\libs'
+            py_libdir = sysconfig.get_paths()['data'] + '\\libs'
+
+            # Extract the 'python312' from the version, or use standard sysconfig
+            # sysconfig.get_config_var('VERSION') usually returns '312' on Windows
+            py_version = sysconfig.get_config_var('VERSION')
+            if not py_version:
+                py_version = f'{sys.version_info.major}{sys.version_info.minor}'
+
+            cmd.extend(
+                [
+                    f'-L{py_libdir}',
+                    f'-lpython{py_version}',
+                ],
+            )
+
+        cmd.extend(
+            [
+                str(source),
+                '-o',
+                str(output),
+            ],
+        )
+
         self.app.display_info(f'[microtaint-c-ext] {source.name} → {output.name}')
         try:
             subprocess.run(cmd, check=True)
         except FileNotFoundError as exc:
             raise RuntimeError(
-                f'[microtaint-c-ext] C compiler not found: {cc_cmd[0]!r}. ' f'Set $CC to an available compiler.',
+                f'[microtaint-c-ext] C compiler not found: {cc_cmd[0]!r}. Set $CC to an available compiler.',
             ) from exc
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(
-                f'[microtaint-c-ext] failed to compile {source.name} ' f'(exit code {exc.returncode}): {" ".join(cmd)}',
+                f'[microtaint-c-ext] failed to compile {source.name} (exit code {exc.returncode}): {" ".join(cmd)}',
             ) from exc
 
 
