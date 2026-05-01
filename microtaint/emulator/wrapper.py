@@ -12,7 +12,12 @@ from qiling import Qiling
 from qiling.const import QL_INTERCEPT
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE_UNMAPPED
 
-from microtaint.emulator.hook_core import InstructionHook
+from microtaint.emulator.hook_core import (
+    InstructionHook,
+    MemAccessHook,
+    MemWriteClearHook,
+    UafUnmappedWriteHook,
+)
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext, Expr
@@ -110,6 +115,34 @@ _HOOK_CODE_CFUNC = ctypes.CFUNCTYPE(
     ctypes.c_uint32,  # size
     ctypes.c_void_p,  # user_data
 )
+
+# Native callback signature for valid mem read/write hooks.
+# Same prototype the Unicorn binding uses internally for UC_HOOK_MEM_{READ,WRITE}.
+_HOOK_MEM_ACCESS_CFUNC = ctypes.CFUNCTYPE(
+    None,
+    ctypes.c_void_p,  # uc handle
+    ctypes.c_int,  # access type (read/write)
+    ctypes.c_uint64,  # address
+    ctypes.c_int,  # size
+    ctypes.c_int64,  # value
+    ctypes.c_void_p,  # user_data
+)
+
+# Native callback signature for invalid-mem hooks (returns bool — True keeps
+# emulating, False stops).  Used for UC_HOOK_MEM_WRITE_UNMAPPED.
+_HOOK_MEM_INVALID_CFUNC = ctypes.CFUNCTYPE(
+    ctypes.c_bool,
+    ctypes.c_void_p,  # uc handle
+    ctypes.c_int,  # access type
+    ctypes.c_uint64,  # address
+    ctypes.c_int,  # size
+    ctypes.c_int64,  # value
+    ctypes.c_void_p,  # user_data
+)
+
+# UC_HOOK constants we need but that aren't already imported from unicorn.
+_UC_HOOK_MEM_READ_CONST = 1024  # UC_HOOK_MEM_READ
+_UC_HOOK_MEM_WRITE_CONST = 2048  # UC_HOOK_MEM_WRITE
 
 # Pre-allocated C arrays — defined AFTER _ALL_REG_NAMES below.
 _MEM_BUF_SIZE = 64
@@ -400,6 +433,11 @@ class MicrotaintWrapper:
         # fall back to the Python method (for debugging).
         self._disable_cython_hook: bool = os.environ.get('MICROTAINT_DISABLE_CYTHON_HOOK') == '1'
         self._instr_hook_obj: object = None
+        # Cython mem-hook trampolines (CFUNCTYPE instances + the Cython
+        # callables they wrap).  These must be kept alive for the lifetime
+        # of the Unicorn instance — Unicorn keeps only the raw function
+        # pointer, not the Python object that backs it.
+        self._mem_cfuncs: list[Any] = []
 
         # Tracks addresses written with nonzero taint by the most recent circuit
         # evaluation. The mem_write hook reads this set to avoid clearing taint
@@ -570,8 +608,73 @@ class MicrotaintWrapper:
                 self.ql.hook_code(self._instruction_evaluator)
             self._instr_hook_registered = True
         if not self._mem_write_hook_registered:
-            self.ql.hook_mem_write(self._mem_write_clear_hook)
+            # Same Cython hook + direct-bypass registration as in _setup_hooks().
+            self._mem_write_hook = MemWriteClearHook(self)
+            self._register_cython_mem_hook(
+                self._mem_write_hook,
+                _UC_HOOK_MEM_WRITE_CONST,
+            )
             self._mem_write_hook_registered = True
+
+    def _register_cython_mem_hook(
+        self,
+        hook_obj: Callable[..., None],
+        hook_type: int,
+    ) -> None:
+        """Register a Cython MemWriteClearHook / MemAccessHook via the
+        same direct uc_hook_add bypass used for the instruction hook.
+
+        We trade Qiling's hook_mem_{read,write} wrapper plus Unicorn's
+        `uccallback` + `__hook_mem_access_cb` Python frames for a single
+        ctypes trampoline frame that calls into Cython's `__call__`.
+
+        The CFUNCTYPE instance must be kept alive for the lifetime of
+        the Unicorn instance; we stash it on `self._mem_cfuncs`.
+        """
+        cfunc = _HOOK_MEM_ACCESS_CFUNC(hook_obj)
+        self._mem_cfuncs.append(cfunc)
+        handle = ctypes.c_size_t()
+        rc = _uc_hook_add(
+            self._uc_handle,
+            ctypes.byref(handle),
+            hook_type,
+            ctypes.cast(cfunc, ctypes.c_void_p),
+            None,
+            ctypes.c_uint64(0),
+            ctypes.c_uint64(0xFFFFFFFFFFFFFFFF),
+        )
+        if rc != 0:
+            # Fall back to Qiling's high-level wrapper on registration failure.
+            logger.debug(f'uc_hook_add bypass for hook_type {hook_type} failed (rc={rc}); using ql.uc.hook_add')
+            self.ql.uc.hook_add(hook_type, hook_obj)
+
+    def _register_cython_invalid_hook(
+        self,
+        hook_obj: Callable[..., bool],
+        hook_type: int,
+    ) -> None:
+        """Register a Cython invalid-mem hook (e.g. UC_HOOK_MEM_WRITE_UNMAPPED).
+
+        Same bypass as _register_cython_mem_hook but uses HOOK_MEM_INVALID_CFUNC
+        (returns bool — False stops emulation).
+        """
+        cfunc = _HOOK_MEM_INVALID_CFUNC(hook_obj)
+        self._mem_cfuncs.append(cfunc)
+        handle = ctypes.c_size_t()
+        rc = _uc_hook_add(
+            self._uc_handle,
+            ctypes.byref(handle),
+            hook_type,
+            ctypes.cast(cfunc, ctypes.c_void_p),
+            None,
+            ctypes.c_uint64(0),
+            ctypes.c_uint64(0xFFFFFFFFFFFFFFFF),
+        )
+        if rc != 0:
+            logger.debug(
+                f'uc_hook_add bypass for invalid hook_type {hook_type} failed (rc={rc}); using ql.uc.hook_add',
+            )
+            self.ql.uc.hook_add(hook_type, hook_obj)
 
     def _setup_hooks(self) -> None:
         # Cache the raw Unicorn C handle once. ql.uc is a property that
@@ -582,16 +685,31 @@ class MicrotaintWrapper:
         self.ql.os.set_syscall(334, self._stub_unimplemented_syscall, QL_INTERCEPT.ENTER)
 
         if self.check_uaf:
-            # UAF detection requires _mem_write_clear_hook from the start —
-            # writes to poisoned (munmap'd) memory must be intercepted even before
-            # any taint is injected (UAF tests pass payload=b'').
-            self.ql.hook_mem_write(self._mem_write_clear_hook)
+            # UAF detection requires the mem-write hook from the start —
+            # writes to poisoned (munmap'd) memory must be intercepted even
+            # before any taint is injected (UAF tests pass payload=b'').
+            #
+            # All three mem hooks are now Cython callables registered via
+            # the same direct uc_hook_add bypass we use for the instruction
+            # hook (Tier 4).  This eliminates the per-callback Python frame
+            # overhead from `__hook_mem_access_cb` / `uccallback`.
+            self._mem_write_hook = MemWriteClearHook(self)
+            self._mem_read_hook = MemAccessHook(self)
+            self._uaf_unmapped_hook = UafUnmappedWriteHook(self)
+            self._register_cython_mem_hook(
+                self._mem_write_hook,
+                _UC_HOOK_MEM_WRITE_CONST,
+            )
+            self._register_cython_mem_hook(
+                self._mem_read_hook,
+                _UC_HOOK_MEM_READ_CONST,
+            )
+            self._register_cython_invalid_hook(
+                self._uaf_unmapped_hook,
+                _UC_HOOK_MEM_WRITE_UNMAPPED,
+            )
             self._mem_write_hook_registered = True
             self.ql.os.set_syscall(11, self._munmap_hook, QL_INTERCEPT.ENTER)
-            self.ql.hook_mem_read(self._mem_access_hook)
-            # Also catch writes to fully UNMAPPED pages (mmap->munmap->write pattern).
-            # UC_HOOK_MEM_WRITE_UNMAPPED fires before Qiling's crash handler.
-            self.ql.uc.hook_add(_UC_HOOK_MEM_WRITE_UNMAPPED, self._uaf_unmapped_write_hook)
         else:
             # For non-UAF modes, defer _mem_write_clear_hook until taint exists.
             # This skips 1.5M hook dispatches before the first read() call.
@@ -646,6 +764,10 @@ class MicrotaintWrapper:
     def _stub_unimplemented_syscall(self, ql: Qiling, *_args: Any) -> None:
         ql.arch.regs.write('RAX', 0xFFFFFFFFFFFFFFDA)
 
+    # Labels that Qiling assigns to regions that are NOT user heap data.
+    # Munmapping these is glibc/loader cleanup; poisoning them causes
+    # false-positive UAFs when libc re-reads them during its own shutdown
+    # (observed on glibc >= 2.40 even with syscall(SYS_exit, 0)).
     _SKIP_POISON_LABELS: frozenset[str] = frozenset(
         {
             '[stack]',

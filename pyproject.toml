@@ -71,6 +71,10 @@ dependencies = ["hatch-cython"]
 
 [tool.hatch.build.targets.wheel.hooks.cython.options]
 compile_py = false
+# Cython needs the project root on its include path so `cimport` statements
+# can resolve sibling .pxd files (currently: microtaint/emulator/shadow.pxd,
+# imported by hook_core.pyx).
+includes = ["."]
 
 [tool.hatch.build.targets.wheel.hooks.cython.options.files]
 exclude = [

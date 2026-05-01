@@ -31,10 +31,12 @@ cdef class BitPreciseShadowMemory:
     All public methods are cpdef — callable from both Python and Cython.
     Hot paths (read_mask, write_mask, is_tainted, is_poisoned) use typed
     C locals and never allocate Python integers in their inner loops.
-    """
 
-    cdef dict taint_pages   # page_base (int) -> bytearray(PAGE_SIZE)
-    cdef dict state_pages   # page_base (int) -> bytearray(PAGE_SIZE), UAF poison
+    cdef attribute declarations and cpdef method signatures are in shadow.pxd
+    so that other Cython modules can `cimport BitPreciseShadowMemory` and
+    dispatch its cpdef methods at C level (skipping the Python attribute
+    lookup + bound-method-call path).
+    """
 
     def __init__(self):
         self.taint_pages = {}

@@ -113,3 +113,94 @@ class InstructionHook:
         user_data: Any,
     ) -> None:
         """Unicorn-invoked instruction callback. Hot-path entry point."""
+
+
+# ---------------------------------------------------------------------------
+# Memory hooks (V8) — Cython port of the three Unicorn mem callbacks.
+#
+# Same design pattern as InstructionHook:
+#   - capture wrapper state once at construction
+#   - cimport BitPreciseShadowMemory so shadow_mem method calls dispatch at C level
+#   - register via direct ctypes-wrapped uc_hook_add (bypassing Qiling's
+#     hook_mem_{read,write} and Unicorn's __hook_mem_access_cb wrapper)
+# ---------------------------------------------------------------------------
+
+class MemWriteClearHook:
+    """
+    Unicorn UC_HOOK_MEM_WRITE callback.
+
+    On every guest memory write:
+      1. UAF detection — if the target address is poisoned (was munmap'd),
+         report and stop.
+      2. Taint clearing — addresses outside the wrapper's
+         `_last_tainted_writes` set get their shadow taint cleared
+         (the program wrote a fresh, untainted value).
+    """
+
+    wrapper: Any
+    shadow_mem: Any                # BitPreciseShadowMemory (cdef class)
+    last_tainted_writes: set[int]
+    reporter: Any
+    ql: Any
+    check_uaf: bool
+
+    def __init__(self, wrapper: Any) -> None: ...
+
+    def __call__(
+        self,
+        uc: Any,
+        access: int,
+        address: int,
+        size: int,
+        value: int,
+        user_data: Any = ...,
+    ) -> None: ...
+
+
+class MemAccessHook:
+    """Unicorn UC_HOOK_MEM_READ callback. Reports UAF on read-after-free."""
+
+    wrapper: Any
+    shadow_mem: Any
+    reporter: Any
+    ql: Any
+    check_uaf: bool
+
+    def __init__(self, wrapper: Any) -> None: ...
+
+    def __call__(
+        self,
+        uc: Any,
+        access: int,
+        address: int,
+        size: int,
+        value: int,
+        user_data: Any = ...,
+    ) -> None: ...
+
+
+class UafUnmappedWriteHook:
+    """
+    Unicorn UC_HOOK_MEM_WRITE_UNMAPPED callback.
+
+    Catches the mmap → munmap → write UAF pattern where the target
+    page is fully unmapped.  Returns False to terminate the run before
+    Unicorn's own crash handler fires.
+    """
+
+    wrapper: Any
+    shadow_mem: Any
+    reporter: Any
+    ql: Any
+
+    def __init__(self, wrapper: Any) -> None: ...
+
+    def __call__(
+        self,
+        uc: Any,
+        access: int,
+        address: int,
+        size: int,
+        value: int,
+        user_data: Any = ...,
+    ) -> bool: ...

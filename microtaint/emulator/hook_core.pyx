@@ -27,9 +27,11 @@ from cpython.dict cimport (
 from cpython.object cimport PyObject_RichCompareBool, Py_EQ
 from cpython.long cimport PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong
 from cpython.bytes cimport PyBytes_FromStringAndSize
-from cpython.set cimport PySet_Add
+from cpython.set cimport PySet_Add, PySet_Discard, PySet_Contains
 from cpython.exc cimport PyErr_Clear, PyErr_Occurred, PyErr_ExceptionMatches
 from cpython.ref cimport Py_INCREF, Py_DECREF, PyObject
+
+from microtaint.emulator.shadow cimport BitPreciseShadowMemory
 
 import ctypes
 from microtaint.types import ImplicitTaintError as _ImplicitTaintError
@@ -53,7 +55,7 @@ cdef class InstructionHook:
     cdef public set    last_tainted_writes
     cdef public dict   instr_cache        # address -> (frozenset, dict)  legacy entries
     cdef public dict   instr_cache_v      # address -> (taint_version, dict, taint_snapshot)
-    cdef public object shadow_mem         # BitPreciseShadowMemory (cdef class)
+    cdef public BitPreciseShadowMemory shadow_mem  # cdef class — direct C-level method dispatch
     cdef public object sim                # CellSimulator
     cdef public object policy             # ImplicitTaintPolicy
     cdef public object reporter
@@ -291,7 +293,7 @@ cdef class InstructionHook:
         cdef long mem_addr_l
         cdef int mem_size_i, ii
         cdef unsigned long long val_ll
-        cdef object shadow_mem = self.shadow_mem
+        cdef BitPreciseShadowMemory shadow_mem = self.shadow_mem
         cdef set last_writes = self.last_tainted_writes
         cdef bint check_aiw = self.check_aiw
 
@@ -368,3 +370,114 @@ cdef class InstructionHook:
             self.ql.emu_stop()
         else:
             self.ql.emu_stop()
+
+
+# ---------------------------------------------------------------------------
+# Memory hooks — Cython port of _mem_write_clear_hook, _mem_access_hook,
+# and _uaf_unmapped_write_hook.  Same design as InstructionHook: capture
+# typed references to wrapper state once, dispatch into shadow_mem via
+# C-level cpdef calls, no Python attribute lookups in the hot path.
+# ---------------------------------------------------------------------------
+
+cdef class MemWriteClearHook:
+    """
+    Memory-write callback (UC_HOOK_MEM_WRITE).
+
+    Two responsibilities:
+      1. UAF detection: if the target address is poisoned (was munmap'd),
+         report and stop.
+      2. Taint clearing: any guest write to an address NOT in
+         `last_tainted_writes` clears the shadow-memory taint at that
+         address.  This is how the engine "forgets" stale taint when
+         the program writes a fresh, untainted value.
+    """
+    cdef public object wrapper
+    cdef public BitPreciseShadowMemory shadow_mem
+    cdef public set last_tainted_writes
+    cdef public object reporter
+    cdef public object ql
+    cdef public bint check_uaf
+
+    def __init__(self, wrapper):
+        self.wrapper = wrapper
+        self.shadow_mem = wrapper.shadow_mem
+        self.last_tainted_writes = wrapper._last_tainted_writes
+        self.reporter = wrapper.reporter
+        self.ql = wrapper.ql
+        self.check_uaf = wrapper.check_uaf
+
+    def __call__(self, object _uc, int _access, unsigned long long address,
+                 int size, long long _value, object _user_data=None):
+        # Hot path. Keep everything cdef.
+        cdef BitPreciseShadowMemory sm = self.shadow_mem
+        cdef set lw = self.last_tainted_writes
+        cdef int i
+        cdef unsigned long long a
+
+        if self.check_uaf and sm.is_poisoned(address, size):
+            self.reporter.uaf(address, size)
+            self.ql.emu_stop()
+            return
+
+        if not lw:
+            sm.clear(address, size)
+            return
+        for i in range(size):
+            a = address + <unsigned long long>i
+            if not PySet_Contains(lw, a):
+                sm.clear(a, 1)
+
+
+cdef class MemAccessHook:
+    """
+    Memory-read callback (UC_HOOK_MEM_READ).
+
+    Reports a UAF if the read targets a poisoned region and stops the
+    emulator.  Trivial enough to inline but lives here for symmetry
+    with the write hook and to share the same Cython compilation unit.
+    """
+    cdef public object wrapper
+    cdef public BitPreciseShadowMemory shadow_mem
+    cdef public object reporter
+    cdef public object ql
+    cdef public bint check_uaf
+
+    def __init__(self, wrapper):
+        self.wrapper = wrapper
+        self.shadow_mem = wrapper.shadow_mem
+        self.reporter = wrapper.reporter
+        self.ql = wrapper.ql
+        self.check_uaf = wrapper.check_uaf
+
+    def __call__(self, object _uc, int _access, unsigned long long address,
+                 int size, long long _value, object _user_data=None):
+        if self.check_uaf and self.shadow_mem.is_poisoned(address, size):
+            self.reporter.uaf(address, size)
+            self.ql.emu_stop()
+
+
+cdef class UafUnmappedWriteHook:
+    """
+    Invalid-memory-write callback (UC_HOOK_MEM_WRITE_UNMAPPED).
+
+    Catches the mmap → munmap → write UAF pattern where the target
+    page is fully unmapped (Unicorn would otherwise call its own crash
+    handler).  Returns False to terminate emulation.
+    """
+    cdef public object wrapper
+    cdef public BitPreciseShadowMemory shadow_mem
+    cdef public object reporter
+    cdef public object ql
+
+    def __init__(self, wrapper):
+        self.wrapper = wrapper
+        self.shadow_mem = wrapper.shadow_mem
+        self.reporter = wrapper.reporter
+        self.ql = wrapper.ql
+
+    def __call__(self, object _uc, int _access, unsigned long long address,
+                 int size, long long _value, object _user_data=None):
+        if self.shadow_mem.is_poisoned(address, size):
+            self.reporter.uaf(address, size)
+        self.ql.emu_stop()
+        return False
