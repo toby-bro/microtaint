@@ -622,7 +622,7 @@ class CellSimulator:
         # address-only regs are not polarised), so we use either dict.
         ctx = EvalContext(input_taint={}, input_values=or_inputs, simulator=self)
 
-        v_state_or  = _build_machine_state(or_inputs, ctx)
+        v_state_or = _build_machine_state(or_inputs, ctx)
         v_state_and = _build_machine_state(and_inputs, ctx)
 
         try:

@@ -92,23 +92,23 @@ _uc_mem_read.restype = ctypes.c_int
 # that directly invokes the Cython __call__ (which is itself C).
 _uc_hook_add = _uclib.uc_hook_add
 _uc_hook_add.argtypes = [
-    ctypes.c_void_p,            # uc_engine *
-    ctypes.c_void_p,            # uc_hook *
-    ctypes.c_int,                # type
-    ctypes.c_void_p,            # callback (HOOK_CODE_CFUNC)
-    ctypes.c_void_p,            # user_data
-    ctypes.c_uint64,             # begin
-    ctypes.c_uint64,             # end
+    ctypes.c_void_p,  # uc_engine *
+    ctypes.c_void_p,  # uc_hook *
+    ctypes.c_int,  # type
+    ctypes.c_void_p,  # callback (HOOK_CODE_CFUNC)
+    ctypes.c_void_p,  # user_data
+    ctypes.c_uint64,  # begin
+    ctypes.c_uint64,  # end
 ]
 _uc_hook_add.restype = ctypes.c_int
 
 # Native callback signature for code hooks — same as Unicorn's binding.
 _HOOK_CODE_CFUNC = ctypes.CFUNCTYPE(
     None,
-    ctypes.c_void_p,    # uc handle
-    ctypes.c_uint64,    # address
-    ctypes.c_uint32,    # size
-    ctypes.c_void_p,    # user_data
+    ctypes.c_void_p,  # uc handle
+    ctypes.c_uint64,  # address
+    ctypes.c_uint32,  # size
+    ctypes.c_void_p,  # user_data
 )
 
 # Pre-allocated C arrays — defined AFTER _ALL_REG_NAMES below.
@@ -548,14 +548,13 @@ class MicrotaintWrapper:
                     ctypes.byref(hook_handle),
                     UC_HOOK_CODE,
                     ctypes.cast(self._instr_cfunc, ctypes.c_void_p),
-                    None,                              # user_data (unused)
+                    None,  # user_data (unused)
                     ctypes.c_uint64(self._main_base),
                     ctypes.c_uint64(self._main_end),
                 )
                 if rc != 0:
                     # Fall back to the slow path on registration failure.
-                    logger.debug(f'uc_hook_add bypass failed (rc={rc}); '
-                                 f'falling back to ql.uc.hook_add')
+                    logger.debug(f'uc_hook_add bypass failed (rc={rc}); falling back to ql.uc.hook_add')
                     self.ql.uc.hook_add(
                         UC_HOOK_CODE,
                         instr_hook,
@@ -647,10 +646,42 @@ class MicrotaintWrapper:
     def _stub_unimplemented_syscall(self, ql: Qiling, *_args: Any) -> None:
         ql.arch.regs.write('RAX', 0xFFFFFFFFFFFFFFDA)
 
-    def _munmap_hook(self, _ql: Qiling, addr: int, length: int, *_args: Any) -> None:
-        if length > 0:
-            self.shadow_mem.poison(addr, length)
-            logger.debug(f'Poisoned freed mmap region at 0x{addr:x} ({length}B)')
+    _SKIP_POISON_LABELS: frozenset[str] = frozenset(
+        {
+            '[stack]',
+            '[GDT]',
+            '[vsyscall]',
+            '[vdso]',
+            '[vvar]',
+            '[hook_mem]',
+        },
+    )
+
+    def _region_label_at(self, ql: Qiling, addr: int, length: int) -> str | None:
+        """Return the Qiling memory-map label for the region overlapping addr."""
+        end = addr + length
+        for start, stop, _perms, label, *_ in ql.mem.map_info:
+            if start < end and stop > addr:  # overlap
+                return str(label)
+        return None
+
+    def _munmap_hook(self, ql: Qiling, addr: int, length: int, *_args: Any) -> None:
+        if length <= 0:
+            return
+        label = self._region_label_at(ql, addr, length)
+        if label is not None:
+            # Skip system / dynamic-library regions.
+            if label in self._SKIP_POISON_LABELS:
+                logger.debug(f'Skipped poisoning system region {label!r} at 0x{addr:x}')
+                return
+            # Dynamic libraries end with .so or .so.<N> — libc, ld-linux, etc.
+            # These are munmap'd by the dynamic linker during shutdown and
+            # re-read by its own cleanup code immediately after.
+            if label.endswith(('.so', '.so.2', '.so.1', '.so.0')) or '.so.' in label:
+                logger.debug(f'Skipped poisoning shared-lib region {label!r} at 0x{addr:x}')
+                return
+        self.shadow_mem.poison(addr, length)
+        logger.debug(f'Poisoned freed mmap region at 0x{addr:x} ({length}B)')
 
     def _uaf_unmapped_write_hook(
         self,
@@ -807,10 +838,12 @@ class MicrotaintWrapper:
         # a register-taint mapping.
         cache_key = None
         compiled_circuit = circuit._compiled
-        if (self._instr_cache_enabled
-                and compiled_circuit is not None
-                and compiled_circuit is not False
-                and not compiled_circuit.has_mem_ops):
+        if (
+            self._instr_cache_enabled
+            and compiled_circuit is not None
+            and compiled_circuit is not False
+            and not compiled_circuit.has_mem_ops
+        ):
             cache_key = frozenset(self.register_taint.items()) if self.register_taint else _EMPTY_FROZENSET
             cached = self._instr_cache.get(address)
             if cached is not None and cached[0] == cache_key:
