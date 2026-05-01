@@ -57,7 +57,9 @@ jobs:
           # Optional: Skip 32-bit and PyPy builds to save CI time
           CIBW_SKIP: "pp* *i686* *musllinux* *win32* cp314-* cp314t-*"
           CIBW_BEFORE_BUILD: >
-            python -c "import pathlib, shutil; shutil.rmtree('build', ignore_errors=True); [p.unlink() for ext in ('*.so', '*.pyd', '*.c', '*.o') for p in pathlib.Path('microtaint').rglob(ext)]"
+            git config --global --add safe.directory '*' &&
+            python -c "import pathlib, shutil; shutil.rmtree('build', ignore_errors=True); [p.unlink() for ext in ('*.so', '*.pyd', '*.c', '*.o') for p in pathlib.Path('microtaint').rglob(ext)]" &&
+            git checkout -- .
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v7
