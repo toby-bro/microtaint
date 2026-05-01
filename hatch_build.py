@@ -133,21 +133,17 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
 
         # Windows specifically requires linking against the python library
         if sys.platform == 'win32':
-            # E.g., 'C:\\...\\Python312\\libs'
-            py_libdir = sysconfig.get_paths()['data'] + '\\libs'
+            # Use sys.base_prefix to reliably find the Python root, then /libs
+            py_libdir = Path(sys.base_prefix) / 'libs'
 
-            # Extract the 'python312' from the version, or use standard sysconfig
-            # sysconfig.get_config_var('VERSION') usually returns '312' on Windows
             py_version = sysconfig.get_config_var('VERSION')
             if not py_version:
                 py_version = f'{sys.version_info.major}{sys.version_info.minor}'
 
-            cmd.extend(
-                [
-                    f'-L{py_libdir}',
-                    f'-lpython{py_version}',
-                ],
-            )
+            # Instead of -L and -l, we can just pass the direct path to the .lib file
+            # which works flawlessly with both MinGW (GCC) and MSVC on Windows.
+            lib_path = py_libdir / f'python{py_version}.lib'
+            cmd.append(str(lib_path))
 
         cmd.extend(
             [
