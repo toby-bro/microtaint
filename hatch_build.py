@@ -129,29 +129,20 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
             *cc_cmd,
             f'-I{py_include}',
             f'-I{include_dir}',
+            str(source),
+            '-o',
+            str(output),
         ]
 
         # Windows specifically requires linking against the python library
         if sys.platform == 'win32':
-            # Use sys.base_prefix to reliably find the Python root, then /libs
             py_libdir = Path(sys.base_prefix) / 'libs'
-
             py_version = sysconfig.get_config_var('VERSION')
             if not py_version:
                 py_version = f'{sys.version_info.major}{sys.version_info.minor}'
 
-            # Instead of -L and -l, we can just pass the direct path to the .lib file
-            # which works flawlessly with both MinGW (GCC) and MSVC on Windows.
             lib_path = py_libdir / f'python{py_version}.lib'
             cmd.append(str(lib_path))
-
-        cmd.extend(
-            [
-                str(source),
-                '-o',
-                str(output),
-            ],
-        )
 
         self.app.display_info(f'[microtaint-c-ext] {source.name} → {output.name}')
         try:
