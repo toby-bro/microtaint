@@ -329,7 +329,7 @@ class CellSimulator:
             return None
         if not (0 <= n < 16) or half not in ('LO', 'HI'):
             return None
-        return getattr(uc_x86_const, f'UC_X86_REG_XMM{n}')  # type: ignore[no-any-return]
+        return int(getattr(uc_x86_const, f'UC_X86_REG_XMM{n}'))
 
     def _read_mem(self, addr: int, size: int) -> int:
         page_addr = addr & ~0xFFF

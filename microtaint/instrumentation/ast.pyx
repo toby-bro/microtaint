@@ -773,7 +773,12 @@ cdef class ChainedCircuit:
             )
             taint = sub.evaluate(step_ctx)
 
-        return taint
+        # Filter to the registers in the caller's state_format.
+        # Sub-circuits may have been built with an augmented format that includes
+        # flag registers (CF, ZF, etc.) not in the caller's format — those extra
+        # keys must not appear in the output dict.
+        cdef set caller_names = {reg.name for reg in self.state_format}
+        return {k: v for k, v in taint.items() if k in caller_names or k.startswith('MEM_')}
 
     @property
     def assignments(self) -> list:

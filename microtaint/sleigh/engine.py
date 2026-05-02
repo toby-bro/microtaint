@@ -451,6 +451,20 @@ def _cached_generate_static_rule(
 
         out_target, out_name, out_bit_start, out_bit_end = generate_output_target(mapping)
 
+        # Detect whether this instruction has a *forward* CBRANCH — meaning the
+        # branch skips over a write to the output register (conditional-move pattern).
+        # Backward CBRANCHes are loop bodies (tzcnt, bsf, bsr lift as software loops);
+        # the output write is on the loop-exit path and is always executed, so the
+        # not-taken passthrough must NOT be applied there.
+        #
+        # Heuristic: a CBRANCH is "forward" when its target address is greater than
+        # the instruction base address (0x1000 in our lifted translation). A backward
+        # branch target is smaller (loops back).
+        _BASE_ADDR = 0x1000
+        has_cbranch = any(
+            op.opcode.name == 'CBRANCH' and op.inputs and op.inputs[0].offset > _BASE_ADDR for op in translation.ops
+        )
+
         generate_taint_assignments(
             arch,
             bytestring,
@@ -463,7 +477,7 @@ def _cached_generate_static_rule(
             out_bit_end,
             mapper,
             mapping,
-            has_cbranch=any(op.opcode.name == 'CBRANCH' for op in translation.ops),
+            has_cbranch=has_cbranch,
         )
 
     return LogicCircuit(
@@ -521,11 +535,31 @@ def generate_static_rule(
     if any(op.opcode.name in _skip_chain_opcodes for op in translation.ops):
         return circuit  # monolithic circuit preserves cross-instruction deps
 
-    # Build one sub-circuit per instruction
+    # Build one sub-circuit per instruction, using a state_format augmented
+    # with x86 status flags so that intermediate flag taint (e.g. T_CF produced
+    # by `add rax,rbx`) flows into the next sub-circuit (e.g. `adc rcx,rdx`).
+    # Without flags in the sub-circuit's state_format, CF never appears in the
+    # assignments and ChainedCircuit cannot thread it forward.
+    # The outer state_format may or may not include flags — we add them regardless
+    # for the internal sub-circuits.  The final output dict is filtered back to
+    # only the registers in the caller's state_format by ChainedCircuit.evaluate.
+    _X86_FLAG_REGISTERS: tuple[tuple[str, int], ...] = (
+        ('CF', 1),
+        ('OF', 1),
+        ('ZF', 1),
+        ('SF', 1),
+        ('PF', 1),
+    )
+    _existing_names = {name for name, _ in reg_names_tuple}
+    _extra_flags = tuple((name, bits) for name, bits in _X86_FLAG_REGISTERS if name not in _existing_names)
+    # Only augment for x86/AMD64 — flag names differ on other arches
+    _is_x86 = arch in (Architecture.AMD64, Architecture.X86)
+    sub_reg_names_tuple = reg_names_tuple + _extra_flags if _is_x86 and _extra_flags else reg_names_tuple
+
     sub_circuits: list[LogicCircuit] = []
     for addr_offset, length in imarks:
         instr_bytes = bytestring[addr_offset : addr_offset + length]
-        sub_circuits.append(_cached_generate_static_rule(arch, instr_bytes, reg_names_tuple))
+        sub_circuits.append(_cached_generate_static_rule(arch, instr_bytes, sub_reg_names_tuple))
 
     return ChainedCircuit(
         sub_circuits=sub_circuits,
