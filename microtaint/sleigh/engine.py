@@ -13,6 +13,7 @@ from microtaint.instrumentation.ast import (
     ChainedCircuit,
     Constant,
     Expr,
+    FullMaskAvalancheExpr,
     InstructionCellExpr,
     LogicCircuit,
     MemoryDifferentialExpr,
@@ -884,6 +885,17 @@ def generate_taint_assignments(  # noqa: C901
             expr = mem_taint if mem_taint is not None else _get_zero_constant(out_bit_end - out_bit_start + 1)
 
     elif cat == InstructionCategory.AVALANCHE:
+        # Constant-dominating slice: result is always a constant, so any flag
+        # computed from it (e.g. PF via POPCOUNT+INT_EQUAL) is deterministic.
+        if _slice_has_constant_dominator(slice_ops):
+            assignments.append(
+                TaintAssignment(
+                    target=out_target,
+                    dependencies=[],
+                    expression=_get_zero_constant(out_bit_end - out_bit_start + 1),
+                ),
+            )
+            return
         expr = dependencies[0]
         for dep in dependencies[1:]:
             expr = BinaryExpr(Op.OR, expr, dep)
@@ -948,6 +960,19 @@ def generate_taint_assignments(  # noqa: C901
             expr = diff_expr
 
     elif cat == InstructionCategory.COND_TRANSPORTABLE:
+        # Short-circuit: if the backward slice contains a constant-dominating op
+        # (AND with 0, OR with -1, XOR-self), the output is always a constant
+        # regardless of any tainted input.  T_flag = 0 always.
+        if _slice_has_constant_dominator(slice_ops):
+            assignments.append(
+                TaintAssignment(
+                    target=out_target,
+                    dependencies=[],
+                    expression=_get_zero_constant(out_bit_end - out_bit_start + 1),
+                ),
+            )
+            return
+
         T_union = dependencies[0]
         for dep in dependencies[1:]:
             T_union = BinaryExpr(Op.OR, T_union, dep)
@@ -1056,6 +1081,47 @@ def generate_taint_assignments(  # noqa: C901
             )
             expr = BinaryExpr(Op.AND, C_eval, T_any)
 
+        # For 1-bit flag outputs based on INT_NOTEQUAL bit-extraction
+        # (e.g. shr CF = NOTEQUAL(AND(RAX,1), 0)), also include the full
+        # differential.  The C_eval masking sets the input to 0, making
+        # NOTEQUAL(0,0)=0 even when the bit is tainted — the differential
+        # restores this.
+        #
+        # Only applies when NOTEQUAL reads a dynamic (register) value via AND,
+        # not when its input is purely computed from constants (shift-amount
+        # checks in OF computation for shl/sar/etc.).
+        def _is_bit_extract_notequal(ops: list[PcodeOp]) -> bool:
+            """True iff the slice is a simple bit-extraction via NOTEQUAL(AND(register, const), 0).
+
+            Only matches slices with ≤ 2 ops (INT_AND + INT_NOTEQUAL, or
+            INT_NOTEQUAL reading a register directly).  Longer slices are
+            complex compound computations (OF for rotate/shift) where the
+            differential does not help and breaks pcode/unicorn agreement.
+            """
+            if len(ops) > 2:
+                return False
+            for op in ops:
+                if op.opcode.name != 'INT_NOTEQUAL':
+                    continue
+                for vn in op.inputs:
+                    if vn.space.name == 'register':
+                        return True
+                    if vn.space.name == 'unique':
+                        for prev in ops:
+                            if (
+                                prev.output is not None
+                                and prev.output.space.name == 'unique'
+                                and prev.output.offset == vn.offset
+                                and prev.opcode.name == 'INT_AND'
+                                and any(v.space.name == 'register' for v in prev.inputs)
+                            ):
+                                return True
+            return False
+
+        if out_bit_end == out_bit_start and _is_bit_extract_notequal(slice_ops):
+            diff_for_flag = make_differential()
+            expr = BinaryExpr(Op.OR, expr, diff_for_flag)
+
         # CMOV not-taken passthrough: when the condition is false the destination
         # register keeps its OLD value, so its OLD taint must also survive.
         # The old taint of the destination is simply T_<out_name>[out_bits].
@@ -1104,10 +1170,79 @@ def generate_taint_assignments(  # noqa: C901
             expr = _get_zero_constant(out_bit_end - out_bit_start + 1)
 
     elif cat == InstructionCategory.MONOTONIC:
-        expr = make_differential()
+        diff_expr = make_differential()
+
+        # 1-bit flag soundness floor for MONOTONIC.
+        #
+        # See detailed comment in generate_taint_assignments docstring.
+        # Short summary: differential gives 0 for fully-tainted inputs on
+        # symmetric comparison ops; FullMaskAvalancheExpr provides the floor.
+        #
+        # Exception: constant-dominating ops (AND with 0, OR with -1, XOR-self)
+        # produce a deterministic result regardless of input, so their flag
+        # assignments must NOT get the floor — the differential's 0 is correct.
+        is_flag = out_bit_end == out_bit_start
+        if is_flag and dependencies:
+            _is_constant_result = _slice_has_constant_dominator(slice_ops)
+            if not _is_constant_result:
+                floor_terms: list[Expr] = []
+                for dep_map in dep_set.value_deps.keys():
+                    if isinstance(dep_map, RegMapping):
+                        dep_bits = dep_map.bit_end - dep_map.bit_start + 1
+                        dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
+                        floor_terms.append(FullMaskAvalancheExpr(dep_expr, dep_bits))
+                if floor_terms:
+                    floor_expr: Expr = floor_terms[0]
+                    for ft in floor_terms[1:]:
+                        floor_expr = BinaryExpr(Op.OR, floor_expr, ft)
+                    expr = BinaryExpr(Op.OR, diff_expr, floor_expr)
+                else:
+                    expr = diff_expr
+            else:
+                expr = diff_expr
+        else:
+            expr = diff_expr
 
     else:
         raise ValueError(f'Unsupported instruction category: {cat}')
+
+    # 1-bit flag soundness floor for COND_TRANSPORTABLE.
+    #
+    # Same principle as the MONOTONIC floor: when dep operands are fully
+    # tainted, masking forces inputs to 0, making conditional expressions
+    # (e.g. INT_NOTEQUAL(0,0)=0) return 0 even though the flag depends on
+    # the input.  The floor fires only when dep taint == full mask.
+    # Suppressed for constant-dominating slices.
+    #
+    # Applies to both:
+    #   - 1-bit outputs (flag registers: ZF, CF, etc.)
+    #   - Small byte outputs (e.g. setcc al = RAX[7:0]) whose ALL deps are
+    #     1-bit flag registers.  The floor produces a 1-byte result (0x01 or 0).
+    _ct_is_small_output = (out_bit_end - out_bit_start) <= 7  # ≤ 8 bits wide
+    _ct_all_deps_one_bit = all(
+        isinstance(dm, RegMapping) and dm.bit_end == dm.bit_start for dm in dep_set.value_deps.keys()
+    )
+    if (
+        cat == InstructionCategory.COND_TRANSPORTABLE
+        and _ct_is_small_output
+        and not isinstance(mapping, MemMapping)
+        and not _slice_has_constant_dominator(slice_ops)
+    ):
+        for dep_map in dep_set.value_deps.keys():
+            if isinstance(dep_map, RegMapping):
+                dep_bits = dep_map.bit_end - dep_map.bit_start + 1
+                dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
+                _out_width = out_bit_end - out_bit_start + 1
+                _floor = FullMaskAvalancheExpr(dep_expr, dep_bits)
+                if _out_width > 1 and _ct_all_deps_one_bit:
+                    # setcc-style byte output: result can only be 0x00 or 0x01.
+                    # Taint floor = 0x01 (bit 0 only), NOT 0xFF.
+                    # AvalancheExpr would give 0xFF (all 8 bits), which is wrong
+                    # because bits 7:1 of the result are always 0.
+                    _floor = BinaryExpr(Op.AND, _floor, Constant(1, _out_width))
+                elif _out_width > 1:
+                    _floor = AvalancheExpr(_floor, _out_width)
+                expr = BinaryExpr(Op.OR, expr, _floor)
 
     # For non-stack LOAD pointers in non-load-like instructions (e.g. ADD RAX, [RBX]),
     # OR in the pointer avalanche. Stack pointer excluded for the same reason.
@@ -1141,6 +1276,44 @@ def generate_taint_assignments(  # noqa: C901
         expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
 
     assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
+
+
+def _slice_has_constant_dominator(slice_ops: list[PcodeOp]) -> bool:
+    """Return True if the backward slice contains an operation whose output is
+    always a constant regardless of any tainted input.
+
+    This detects three patterns:
+      - INT_AND with a constant-0 operand: any_val AND 0 = 0 always.
+      - INT_OR  with an all-ones constant:  any_val OR -1 = -1 always.
+      - INT_XOR / INT_SUB where both inputs are the same register:
+        x XOR x = 0, x SUB x = 0 always (zeroing idioms).
+
+    When any of these are present, the result register (and any flags that
+    depend on it) is always a constant, so the FullMaskAvalancheExpr floor
+    must NOT fire for their flag assignments.
+    """
+    for op in slice_ops:
+        if op.opcode.name == 'INT_AND':
+            for vn in op.inputs:
+                if vn.space.name == 'const' and vn.offset == 0:
+                    return True
+        elif op.opcode.name == 'INT_OR':
+            for vn in op.inputs:
+                if vn.space.name == 'const':
+                    full = (1 << (vn.size * 8)) - 1
+                    if vn.offset == full:
+                        return True
+        elif op.opcode.name in ('INT_XOR', 'INT_SUB'):
+            ins = op.inputs
+            if (
+                len(ins) == 2
+                and ins[0].space.name == 'register'
+                and ins[1].space.name == 'register'
+                and ins[0].offset == ins[1].offset
+                and ins[0].size == ins[1].size
+            ):
+                return True
+    return False
 
 
 def build_polarized_reg(name: str, slices: list[tuple[int, int, int]], replica_id: int) -> Expr:
@@ -1283,6 +1456,16 @@ def extract_dependencies(  # noqa: C901
     # We identify them first so we can classify register inputs correctly.
     ptr_reg_offsets: set[int] = set()
 
+    # Compute first-write index for EVERY register written in all_ops.
+    # This lets us suppress reads of any register that was written by an
+    # earlier op in the same P-code block (intra-instruction intermediate).
+    # Example: ror rax,1 writes CF (new-CF = bit0 of RAX) and then reads CF
+    # again to place it at bit63. The CF read is not an external input dep.
+    _reg_first_write: dict[int, int] = {}  # register offset -> first write op index
+    for _i, _op in enumerate(all_ops):
+        if _op.output is not None and _op.output.space.name == 'register' and _op.output.offset not in _reg_first_write:
+            _reg_first_write[_op.output.offset] = _i
+
     def _collect_ptr_offsets(vn: Varnode, visited: set[int] | None = None) -> None:
         """
         Walk a pointer varnode to its ultimate register source(s) and record
@@ -1353,6 +1536,20 @@ def extract_dependencies(  # noqa: C901
                     and vn.size == _out_vn.size
                     and _out_vn.space.name == 'register'
                 ):
+                    continue
+
+                # Also skip intra-instruction intermediates: any non-output register
+                # that was WRITTEN earlier in the same P-code block before this read.
+                # Example: ror rax,1 writes CF at op 2 (new-CF = bit0 of RAX) then
+                # reads CF at op 4 to place it in bit63. The CF read at op 4 is NOT
+                # an external input — it is an intermediate computed from RAX.
+                # Without this filter, CF would appear as a dep for ror's RAX output,
+                # making it COND_TRANSPORTABLE (2 sources) instead of MAPPED (1 source).
+                if (
+                    vn.offset in _reg_first_write
+                    and _reg_first_write[vn.offset] < _op_idx
+                    and vn.offset != _out_vn.offset
+                ):  # out_vn handled above
                     continue
 
                 # Try the singular map first — preserves the existing

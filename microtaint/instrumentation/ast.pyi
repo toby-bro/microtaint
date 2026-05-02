@@ -43,6 +43,15 @@ class AvalancheExpr(Expr):
     def __init__(self, expr: Expr, size_bits: int) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 
+class FullMaskAvalancheExpr(Expr):
+    """Fires to 1 only when dep taint value equals the full mask for dep_bits."""
+
+    dep: Expr
+    full_mask: int
+
+    def __init__(self, dep: Expr, dep_bits: int) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
 class TaintOperand(Expr):
     name: str
     bit_start: int

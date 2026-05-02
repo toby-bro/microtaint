@@ -366,6 +366,38 @@ cdef class AvalancheExpr(Expr):
         return 0
 
 
+cdef class FullMaskAvalancheExpr(Expr):
+    """Flag-floor avalanche: fires only when dep taint == full mask for dep_bits.
+
+    This is used for the MONOTONIC / COND_TRANSPORTABLE 1-bit flag soundness
+    floor.  Unlike AvalancheExpr (fires on any nonzero taint), this only fires
+    when the dep operand is *fully* tainted — i.e. all dep_bits are unknown.
+
+    With partial taint (e.g. T_EBX = 0x1, single bit), the differential
+    already captures the precise flag outcome; we must not override it.
+    With full taint (T_EBX = MASK), the differential gives 0 due to equal-
+    regime evaluation; this floor provides the soundness safety net.
+    """
+    cdef public Expr dep
+    cdef public object full_mask   # (1 << dep_bits) - 1
+
+    def __init__(self, Expr dep, int dep_bits):
+        self.dep = dep
+        self.full_mask = (<object>1 << dep_bits) - 1
+
+    def __str__(self):
+        return f'FULLMASK_AVAL({self.dep})'
+
+    def __repr__(self):
+        return f'FullMaskAvalancheExpr(dep={repr(self.dep)}, full_mask={self.full_mask:#x})'
+
+    cpdef object evaluate(self, EvalContext context):
+        cdef object val = self.dep.evaluate(context)
+        if val == self.full_mask and val != 0:
+            return 1
+        return 0
+
+
 cdef class TaintOperand(Expr):
     cdef public str name
     cdef public int bit_start
