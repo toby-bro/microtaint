@@ -135,7 +135,7 @@ class TestCbranchPassthroughLoopInstructions:
             taint={'RAX': MASK64, 'RBX': 0, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 1, 'RCX': 0, 'RDX': 0},
         )
-        assert out.get('RAX', 0) == 0, f'bsf: untainted RBX must produce untainted RAX, ' f'got {out.get("RAX", 0):#x}'
+        assert out.get('RAX', 0) == 0, f'bsf: untainted RBX must produce untainted RAX, got {out.get("RAX", 0):#x}'
 
     def test_bsf_tainted_source_propagates(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """bsf rax, rbx — RBX tainted → RAX must be tainted."""
@@ -157,7 +157,7 @@ class TestCbranchPassthroughLoopInstructions:
             taint={'RAX': MASK64, 'RBX': 0, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 0x80, 'RCX': 0, 'RDX': 0},
         )
-        assert out.get('RAX', 0) == 0, f'bsr: untainted RBX must produce untainted RAX, ' f'got {out.get("RAX", 0):#x}'
+        assert out.get('RAX', 0) == 0, f'bsr: untainted RBX must produce untainted RAX, got {out.get("RAX", 0):#x}'
 
     def test_bsr_tainted_source_propagates(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """bsr rax, rbx — RBX tainted → RAX must be tainted."""
@@ -324,9 +324,9 @@ class TestFlagTaintThreading:
             values={'RAX': MASK64, 'RBX': 1, 'RCX': 0, 'RDX': 0},
         )
         # Even without CF in state_format, the chain must propagate carry taint
-        assert out.get('RCX', 0) != 0, (
-            f'add;adc chain (GP-only format): carry taint must propagate to RCX; ' f'got RCX={out.get("RCX", 0):#x}'
-        )
+        assert (
+            out.get('RCX', 0) != 0
+        ), f'add;adc chain (GP-only format): carry taint must propagate to RCX; got RCX={out.get("RCX", 0):#x}'
 
     def test_add_zf_sf_pf_tainted(self, sim: CellSimulator, gp_and_flag_regs: list[Register]) -> None:
         """add rax, rbx with tainted inputs → ZF, SF, PF should all be tainted."""
@@ -380,6 +380,4 @@ class TestFlagTaintThreading:
         )
         # sete al writes al (low byte of RAX) — it should be tainted from ZF
         rax_out = out.get('RAX', 0)
-        assert (rax_out & 0xFF) != 0, (
-            f'sete after cmp with tainted operands: AL must be tainted; ' f'got RAX={rax_out:#x}'
-        )
+        assert (rax_out & 0xFF) != 0, f'sete after cmp with tainted operands: AL must be tainted; got RAX={rax_out:#x}'
