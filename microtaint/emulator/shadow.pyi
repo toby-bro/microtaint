@@ -1,5 +1,4 @@
 # shadow.pyi
-# ruff: noqa: PYI021
 
 class BitPreciseShadowMemory:
     """

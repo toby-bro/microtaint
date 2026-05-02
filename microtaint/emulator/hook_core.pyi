@@ -1,4 +1,3 @@
-# ruff: noqa: PYI021
 """Type stubs for the hook_core module — Cython-compiled per-instruction
 Unicorn callback.
 

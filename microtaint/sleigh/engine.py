@@ -1233,7 +1233,7 @@ def generate_taint_assignments(  # noqa: C901
                 dep_bits = dep_map.bit_end - dep_map.bit_start + 1
                 dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
                 _out_width = out_bit_end - out_bit_start + 1
-                _floor = FullMaskAvalancheExpr(dep_expr, dep_bits)
+                _floor: Expr = FullMaskAvalancheExpr(dep_expr, dep_bits)
                 if _out_width > 1 and _ct_all_deps_one_bit:
                     # setcc-style byte output: result can only be 0x00 or 0x01.
                     # Taint floor = 0x01 (bit 0 only), NOT 0xFF.
@@ -1278,7 +1278,7 @@ def generate_taint_assignments(  # noqa: C901
     assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
 
 
-def _slice_has_constant_dominator(slice_ops: list[PcodeOp]) -> bool:
+def _slice_has_constant_dominator(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
     """Return True if the backward slice contains an operation whose output is
     always a constant regardless of any tainted input.
 

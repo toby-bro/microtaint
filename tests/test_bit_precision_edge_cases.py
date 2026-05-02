@@ -22,7 +22,8 @@ G-F  AVALANCHE with concrete-zero operand: not a fixable precision issue
 ARM64 cases are also included.
 """
 
-# mypy: disable-error-code="no-untyped-def"
+# ruff: noqa: ARG002
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, attr-defined"
 
 from __future__ import annotations
 

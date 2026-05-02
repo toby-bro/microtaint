@@ -1,4 +1,3 @@
-# ruff: noqa: PYI021
 """Type stubs for the circuit_c module — hand-written C extension that
 compiles LogicCircuit ASTs to a compact bytecode and evaluates them
 without traversing the Python AST on every instruction.

@@ -1,4 +1,3 @@
-# ruff: noqa: PYI021
 """Type stubs for the cell_c module — hand-written C extension exposing
 the pure-C P-code differential evaluator.
 

@@ -342,12 +342,6 @@ class TestAndOrFlags:
         for flag in ('SF', 'ZF', 'PF', 'CF', 'OF'):
             assert out.get(flag, 0) == 0, f'and no taint: {flag} must be clean; got {out.get(flag, 0):#x}'
 
-    def test_and_flags_no_taint(self, sim, regs) -> None:
-        """and rax,rbx with no taint → no flags tainted."""
-        out = _ev(sim, regs, bytes.fromhex('4821d8'), taint=_z(regs), values={**_z(regs), 'RAX': 5, 'RBX': 3})
-        for flag in ('SF', 'ZF', 'PF', 'CF', 'OF'):
-            assert out.get(flag, 0) == 0, f'and no taint: {flag} must be clean; got {out.get(flag, 0):#x}'
-
     def test_and_result_written_correctly(self, sim, regs) -> None:
         """and rax,rbx — the 64-bit result register is still computed via differential."""
         # With partial taint on RAX, the AND result bits are a subset of RAX taint.

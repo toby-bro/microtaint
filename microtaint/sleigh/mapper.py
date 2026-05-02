@@ -127,7 +127,7 @@ IGNORED_OPCODES: set[str] = {
 }
 
 
-def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:
+def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
     """
     Heuristic: A true permutation only uses routing/shifting opcodes
     AND relies on only ONE dynamic input (register/memory). All other inputs must be constants.
@@ -169,28 +169,29 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:
         # This prevents push/pop (INT_SUB writes RSP, LOAD reads RSP-8) from being
         # incorrectly classified as a permutation.
         _is_intra_intermediate = False
-        if (op.opcode.name not in ROUTING_OPCODES
-                and op.output is not None
-                and op.output.space.name == 'register'
-                and op.output.size == 1  # only flag-sized (1-bit) registers qualify
-                and op.output.offset in _slice_written
-                and _slice_written[op.output.offset] == _i):
+        if (
+            op.opcode.name not in ROUTING_OPCODES
+            and op.output is not None
+            and op.output.space.name == 'register'
+            and op.output.size == 1  # only flag-sized (1-bit) registers qualify
+            and op.output.offset in _slice_written
+            and _slice_written[op.output.offset] == _i
+        ):
             # Get the final output register: the last op that writes to a register in the slice
             _final_out_offsets = {
                 o.output.offset
                 for o in slice_ops
-                if (o.output is not None
-                    and o.output.space.name == 'register'
-                    and o is slice_ops[-1])
+                if (o.output is not None and o.output.space.name == 'register' and o is slice_ops[-1])
             }
             # Also accept: the output is to a register that is NOT the one we're
             # ultimately computing taint for. We detect this by checking whether
             # any later routing op reads this register as input.
             _consumed_by_routing = any(
-                (later_op.opcode.name in ROUTING_OPCODES
-                 and any(v.space.name == 'register' and v.offset == op.output.offset
-                         for v in later_op.inputs))
-                for later_op in slice_ops[_i + 1:]
+                (
+                    later_op.opcode.name in ROUTING_OPCODES
+                    and any(v.space.name == 'register' and v.offset == op.output.offset for v in later_op.inputs)
+                )
+                for later_op in slice_ops[_i + 1 :]
             )
             # Only an intermediate if: consumed by routing op AND output register
             # is NOT the same as any routing op's output (i.e. not the main data path).
@@ -200,18 +201,13 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:
                 _final_routing_writes = {
                     (o.output.offset, o.output.size)
                     for o in slice_ops
-                    if (o.output is not None
-                        and o.output.space.name == 'register'
-                        and o.opcode.name in ROUTING_OPCODES)
+                    if (o.output is not None and o.output.space.name == 'register' and o.opcode.name in ROUTING_OPCODES)
                 }
                 if (op.output.offset, op.output.size) not in _final_routing_writes:
                     # Also check: is this offset covered by any final routing write
                     # of a different size (e.g. INT_ADD writes EAX offset 0 size 4,
                     # while INT_ZEXT writes RAX offset 0 size 8 — same register family)?
-                    _offset_in_routing = any(
-                        roff == op.output.offset
-                        for roff, _ in _final_routing_writes
-                    )
+                    _offset_in_routing = any(roff == op.output.offset for roff, _ in _final_routing_writes)
                     if not _offset_in_routing:
                         _is_intra_intermediate = True
 
@@ -258,11 +254,15 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:
         # a fill bit, so it must remain TRANSLATABLE (variable-amount shift → avalanche).
         # We distinguish carry-fill bits from shift-amount bits by checking whether the
         # 1-bit source lives at a known x86 flag register offset.
-        _X86_FLAG_OFFSETS = frozenset({0x200, 0x20b, 0x206, 0x207, 0x202, 0x203})
+        _X86_FLAG_OFFSETS = frozenset({0x200, 0x20B, 0x206, 0x207, 0x202, 0x203})
         one_bit_sources = [(sp, off, sz) for sp, off, sz in dynamic_sources if sz == 1]
         multi_bit_sources = [(sp, off, sz) for sp, off, sz in dynamic_sources if sz > 1]
-        if (len(one_bit_sources) == 1 and len(multi_bit_sources) == 1 and has_shift
-                and one_bit_sources[0][1] in _X86_FLAG_OFFSETS):
+        if (
+            len(one_bit_sources) == 1
+            and len(multi_bit_sources) == 1
+            and has_shift
+            and one_bit_sources[0][1] in _X86_FLAG_OFFSETS
+        ):
             return True
 
     return False

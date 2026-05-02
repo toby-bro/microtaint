@@ -211,8 +211,8 @@ target-version = "py312"
 format.quote-style = "single"
 
 [tool.ruff.lint]
+ignore = ["UP015", "S311", "S101", "INP001", "S501", "PYI021"]
 unfixable = ["F841"]
-ignore = ["UP015", "S311", "S101", "INP001", "S501"]
 task-tags = ["TODO"]
 select = [
     "F",     # Pyflakes                          https://beta.ruff.rs/docs/rules/#pyflakes-f

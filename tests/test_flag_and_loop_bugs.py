@@ -104,7 +104,9 @@ class TestCbranchPassthroughLoopInstructions:
     def test_tzcnt_untainted_source_no_dest_passthrough(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """tzcnt rax, rbx — RBX untainted, old RAX tainted → output must be 0."""
         out = _ev(
-            sim, gp_regs, bytes.fromhex('f3480fbcc3'),
+            sim,
+            gp_regs,
+            bytes.fromhex('f3480fbcc3'),
             taint={'RAX': MASK64, 'RBX': 0, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 15016014666445342834, 'RCX': 0, 'RDX': 0},
         )
@@ -116,81 +118,79 @@ class TestCbranchPassthroughLoopInstructions:
     def test_tzcnt_tainted_source_propagates(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """tzcnt rax, rbx — RBX tainted → RAX must be tainted (AVALANCHE)."""
         out = _ev(
-            sim, gp_regs, bytes.fromhex('f3480fbcc3'),
+            sim,
+            gp_regs,
+            bytes.fromhex('f3480fbcc3'),
             taint={'RAX': 0, 'RBX': MASK64, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 12, 'RCX': 0, 'RDX': 0},
         )
-        assert out.get('RAX', 0) != 0, (
-            f'tzcnt: tainted RBX must produce tainted RAX; got {out}'
-        )
+        assert out.get('RAX', 0) != 0, f'tzcnt: tainted RBX must produce tainted RAX; got {out}'
 
     def test_bsf_untainted_source_no_dest_passthrough(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """bsf rax, rbx — RBX untainted, old RAX tainted → output must be 0."""
         out = _ev(
-            sim, gp_regs, bytes.fromhex('480fbcc3'),
+            sim,
+            gp_regs,
+            bytes.fromhex('480fbcc3'),
             taint={'RAX': MASK64, 'RBX': 0, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 1, 'RCX': 0, 'RDX': 0},
         )
-        assert out.get('RAX', 0) == 0, (
-            f'bsf: untainted RBX must produce untainted RAX, '
-            f'got {out.get("RAX", 0):#x}'
-        )
+        assert out.get('RAX', 0) == 0, f'bsf: untainted RBX must produce untainted RAX, ' f'got {out.get("RAX", 0):#x}'
 
     def test_bsf_tainted_source_propagates(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """bsf rax, rbx — RBX tainted → RAX must be tainted."""
         out = _ev(
-            sim, gp_regs, bytes.fromhex('480fbcc3'),
+            sim,
+            gp_regs,
+            bytes.fromhex('480fbcc3'),
             taint={'RAX': 0, 'RBX': MASK64, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 0x100, 'RCX': 0, 'RDX': 0},
         )
-        assert out.get('RAX', 0) != 0, (
-            f'bsf: tainted RBX must produce tainted RAX; got {out}'
-        )
+        assert out.get('RAX', 0) != 0, f'bsf: tainted RBX must produce tainted RAX; got {out}'
 
     def test_bsr_untainted_source_no_dest_passthrough(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """bsr rax, rbx — RBX untainted, old RAX tainted → output must be 0."""
         out = _ev(
-            sim, gp_regs, bytes.fromhex('480fbdc3'),
+            sim,
+            gp_regs,
+            bytes.fromhex('480fbdc3'),
             taint={'RAX': MASK64, 'RBX': 0, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 0x80, 'RCX': 0, 'RDX': 0},
         )
-        assert out.get('RAX', 0) == 0, (
-            f'bsr: untainted RBX must produce untainted RAX, '
-            f'got {out.get("RAX", 0):#x}'
-        )
+        assert out.get('RAX', 0) == 0, f'bsr: untainted RBX must produce untainted RAX, ' f'got {out.get("RAX", 0):#x}'
 
     def test_bsr_tainted_source_propagates(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """bsr rax, rbx — RBX tainted → RAX must be tainted."""
         out = _ev(
-            sim, gp_regs, bytes.fromhex('480fbdc3'),
+            sim,
+            gp_regs,
+            bytes.fromhex('480fbdc3'),
             taint={'RAX': 0, 'RBX': MASK64, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 0x1000, 'RCX': 0, 'RDX': 0},
         )
-        assert out.get('RAX', 0) != 0, (
-            f'bsr: tainted RBX must produce tainted RAX; got {out}'
-        )
+        assert out.get('RAX', 0) != 0, f'bsr: tainted RBX must produce tainted RAX; got {out}'
 
     def test_cmovz_passthrough_still_works(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """Regression: cmovz passthrough must still apply (forward CBRANCH = skip)."""
         out = _ev(
-            sim, gp_regs, bytes.fromhex('480f44c3'),   # cmovz rax, rbx
+            sim,
+            gp_regs,
+            bytes.fromhex('480f44c3'),  # cmovz rax, rbx
             taint={'RAX': MASK64, 'RBX': 0, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 0, 'RCX': 0, 'RDX': 0},
         )
-        assert out.get('RAX', 0) == MASK64, (
-            f'cmovz not-taken: old T_RAX must survive; got {out.get("RAX", 0):#x}'
-        )
+        assert out.get('RAX', 0) == MASK64, f'cmovz not-taken: old T_RAX must survive; got {out.get("RAX", 0):#x}'
 
     def test_cmovl_passthrough_still_works(self, sim: CellSimulator, gp_regs: list[Register]) -> None:
         """Regression: cmovl passthrough must still apply."""
         out = _ev(
-            sim, gp_regs, bytes.fromhex('480f4cda'),   # cmovl rbx, rdx
+            sim,
+            gp_regs,
+            bytes.fromhex('480f4cda'),  # cmovl rbx, rdx
             taint={'RAX': 0, 'RBX': MASK64, 'RCX': 0, 'RDX': 0},
             values={'RAX': 0, 'RBX': 0, 'RCX': 0, 'RDX': 0},
         )
-        assert out.get('RBX', 0) == MASK64, (
-            f'cmovl not-taken: old T_RBX must survive; got {out.get("RBX", 0):#x}'
-        )
+        assert out.get('RBX', 0) == MASK64, f'cmovl not-taken: old T_RBX must survive; got {out.get("RBX", 0):#x}'
 
 
 # ===========================================================================
@@ -209,15 +209,13 @@ class TestFlagTaintThreading:
     def test_add_produces_cf_taint(self, sim: CellSimulator, gp_and_flag_regs: list[Register]) -> None:
         """add rax, rbx — both tainted → CF must be tainted in output."""
         out = _ev(
-            sim, gp_and_flag_regs, bytes.fromhex('4801d8'),
-            taint={**{r.name: 0 for r in gp_and_flag_regs},
-                   'RAX': MASK64, 'RBX': MASK64},
-            values={**{r.name: 0 for r in gp_and_flag_regs},
-                    'RAX': MASK64, 'RBX': 1},
+            sim,
+            gp_and_flag_regs,
+            bytes.fromhex('4801d8'),
+            taint={**{r.name: 0 for r in gp_and_flag_regs}, 'RAX': MASK64, 'RBX': MASK64},
+            values={**{r.name: 0 for r in gp_and_flag_regs}, 'RAX': MASK64, 'RBX': 1},
         )
-        assert out.get('CF', 0) != 0, (
-            f'add with tainted operands must produce tainted CF; got CF={out.get("CF",0):#x}'
-        )
+        assert out.get('CF', 0) != 0, f'add with tainted operands must produce tainted CF; got CF={out.get("CF",0):#x}'
 
     def test_add_produces_of_taint(self, sim: CellSimulator, gp_and_flag_regs: list[Register]) -> None:
         """add rax, rbx — RBX tainted with overflow-causing value → OF/SF must be tainted.
@@ -228,7 +226,9 @@ class TestFlagTaintThreading:
         _HALF = 0x4000000000000000
         z = {r.name: 0 for r in gp_and_flag_regs}
         out = _ev(
-            sim, gp_and_flag_regs, bytes.fromhex('4801d8'),
+            sim,
+            gp_and_flag_regs,
+            bytes.fromhex('4801d8'),
             taint={**z, 'RBX': _HALF},
             values={**z, 'RAX': _HALF, 'RBX': _HALF},
         )
@@ -245,50 +245,48 @@ class TestFlagTaintThreading:
         Both inputs fully tainted gives equal rep1/rep2 for INT_LESS so we taint only RBX.
         """
         out = _ev(
-            sim, gp_and_flag_regs, bytes.fromhex('4829d8'),
+            sim,
+            gp_and_flag_regs,
+            bytes.fromhex('4829d8'),
             taint={**{r.name: 0 for r in gp_and_flag_regs}, 'RBX': MASK64},
             values={**{r.name: 0 for r in gp_and_flag_regs}, 'RAX': 5, 'RBX': 0},
         )
-        assert out.get('CF', 0) != 0, (
-            f'sub with tainted RBX must produce tainted CF; got CF={out.get("CF",0):#x}'
-        )
+        assert out.get('CF', 0) != 0, f'sub with tainted RBX must produce tainted CF; got CF={out.get("CF",0):#x}'
 
     def test_adc_with_tainted_cf_taints_output(self, sim: CellSimulator, gp_and_flag_regs: list[Register]) -> None:
         """adc rcx, rdx — tainted CF alone → RCX must be tainted."""
         out = _ev(
-            sim, gp_and_flag_regs, bytes.fromhex('4811d1'),
+            sim,
+            gp_and_flag_regs,
+            bytes.fromhex('4811d1'),
             taint={**{r.name: 0 for r in gp_and_flag_regs}, 'CF': 1},
-            values={**{r.name: 0 for r in gp_and_flag_regs},
-                    'RCX': 100, 'RDX': 200, 'CF': 1},
+            values={**{r.name: 0 for r in gp_and_flag_regs}, 'RCX': 100, 'RDX': 200, 'CF': 1},
         )
-        assert out.get('RCX', 0) != 0, (
-            f'adc with tainted CF must produce tainted RCX; got {out}'
-        )
+        assert out.get('RCX', 0) != 0, f'adc with tainted CF must produce tainted RCX; got {out}'
 
     def test_sbb_with_tainted_cf_taints_output(self, sim: CellSimulator, gp_and_flag_regs: list[Register]) -> None:
         """sbb rcx, rdx — tainted CF alone → RCX must be tainted."""
         out = _ev(
-            sim, gp_and_flag_regs, bytes.fromhex('4819d1'),
+            sim,
+            gp_and_flag_regs,
+            bytes.fromhex('4819d1'),
             taint={**{r.name: 0 for r in gp_and_flag_regs}, 'CF': 1},
-            values={**{r.name: 0 for r in gp_and_flag_regs},
-                    'RCX': 500, 'RDX': 100, 'CF': 1},
+            values={**{r.name: 0 for r in gp_and_flag_regs}, 'RCX': 500, 'RDX': 100, 'CF': 1},
         )
-        assert out.get('RCX', 0) != 0, (
-            f'sbb with tainted CF must produce tainted RCX; got {out}'
-        )
+        assert out.get('RCX', 0) != 0, f'sbb with tainted CF must produce tainted RCX; got {out}'
 
     def test_add_adc_chain_flags_threaded(self, sim: CellSimulator, gp_and_flag_regs: list[Register]) -> None:
         """add rax,rbx; adc rcx,rdx — CF from step 1 must reach step 2."""
         z = {r.name: 0 for r in gp_and_flag_regs}
         out = _ev(
-            sim, gp_and_flag_regs, bytes.fromhex('4801d84811d1'),
+            sim,
+            gp_and_flag_regs,
+            bytes.fromhex('4801d84811d1'),
             taint={**z, 'RAX': MASK64, 'RBX': MASK64, 'RCX': 0, 'RDX': 0},
             values={**z, 'RAX': MASK64, 'RBX': 1, 'RCX': 0, 'RDX': 0},
         )
         # The carry from add propagates into adc → RCX must be tainted
-        assert out.get('RCX', 0) != 0, (
-            f'add;adc chain: carry taint must propagate to RCX; got {out}'
-        )
+        assert out.get('RCX', 0) != 0, f'add;adc chain: carry taint must propagate to RCX; got {out}'
 
     def test_sub_sbb_chain_flags_threaded(self, sim: CellSimulator, gp_and_flag_regs: list[Register]) -> None:
         """sub rax,rbx; sbb rcx,rdx — borrow CF from step 1 must reach step 2.
@@ -299,16 +297,18 @@ class TestFlagTaintThreading:
         """
         z = {r.name: 0 for r in gp_and_flag_regs}
         out = _ev(
-            sim, gp_and_flag_regs, bytes.fromhex('4829d84819d1'),
+            sim,
+            gp_and_flag_regs,
+            bytes.fromhex('4829d84819d1'),
             taint={**z, 'RBX': MASK64},
             values={**z, 'RAX': 0, 'RBX': 1},
         )
-        assert out.get('RCX', 0) != 0, (
-            f'sub;sbb chain: borrow taint must propagate to RCX; got {out}'
-        )
+        assert out.get('RCX', 0) != 0, f'sub;sbb chain: borrow taint must propagate to RCX; got {out}'
 
     def test_add_adc_chain_gp_only_format_flags_threaded(
-        self, sim: CellSimulator, gp_regs: list[Register]
+        self,
+        sim: CellSimulator,
+        gp_regs: list[Register],
     ) -> None:
         """add rax,rbx; adc rcx,rdx with GP-only state format.
 
@@ -317,21 +317,24 @@ class TestFlagTaintThreading:
         receives carry taint from the add step.
         """
         out = _ev(
-            sim, gp_regs, bytes.fromhex('4801d84811d1'),
+            sim,
+            gp_regs,
+            bytes.fromhex('4801d84811d1'),
             taint={'RAX': MASK64, 'RBX': MASK64, 'RCX': 0, 'RDX': 0},
             values={'RAX': MASK64, 'RBX': 1, 'RCX': 0, 'RDX': 0},
         )
         # Even without CF in state_format, the chain must propagate carry taint
         assert out.get('RCX', 0) != 0, (
-            f'add;adc chain (GP-only format): carry taint must propagate to RCX; '
-            f'got RCX={out.get("RCX", 0):#x}'
+            f'add;adc chain (GP-only format): carry taint must propagate to RCX; ' f'got RCX={out.get("RCX", 0):#x}'
         )
 
     def test_add_zf_sf_pf_tainted(self, sim: CellSimulator, gp_and_flag_regs: list[Register]) -> None:
         """add rax, rbx with tainted inputs → ZF, SF, PF should all be tainted."""
         z = {r.name: 0 for r in gp_and_flag_regs}
         out = _ev(
-            sim, gp_and_flag_regs, bytes.fromhex('4801d8'),
+            sim,
+            gp_and_flag_regs,
+            bytes.fromhex('4801d8'),
             taint={**z, 'RAX': MASK64, 'RBX': MASK64},
             values={**z, 'RAX': 5, 'RBX': 7},
         )
@@ -353,16 +356,14 @@ class TestFlagTaintThreading:
         # rep2(RAX = 0)      cmp MASK64 → 0-MASK borrow → ZF=0, CF=1
         # ZF diff=1, CF diff=1.
         out = _ev(
-            sim, gp_and_flag_regs, bytes.fromhex('4839d8'),   # cmp rax, rbx
+            sim,
+            gp_and_flag_regs,
+            bytes.fromhex('4839d8'),  # cmp rax, rbx
             taint={**z, 'RAX': MASK64},
             values={**z, 'RAX': 5, 'RBX': MASK64},
         )
-        assert out.get('ZF', 0) != 0, (
-            f'cmp with tainted RAX must taint ZF; got {out}'
-        )
-        assert out.get('CF', 0) != 0, (
-            f'cmp with tainted RAX must taint CF; got {out}'
-        )
+        assert out.get('ZF', 0) != 0, f'cmp with tainted RAX must taint ZF; got {out}'
+        assert out.get('CF', 0) != 0, f'cmp with tainted RAX must taint CF; got {out}'
 
     def test_cmp_jnz_chain_flags_thread(self, sim: CellSimulator, gp_and_flag_regs: list[Register]) -> None:
         """cmp produces tainted ZF; setne reads it — ZF taint must not be lost."""
@@ -371,13 +372,14 @@ class TestFlagTaintThreading:
         # cmp rax,rbx; sete al
         code = bytes.fromhex('48 39 d8 0f 94 c0'.replace(' ', ''))
         out = _ev(
-            sim, gp_and_flag_regs, code,
+            sim,
+            gp_and_flag_regs,
+            code,
             taint={**z, 'RAX': MASK64, 'RBX': MASK64},
             values={**z, 'RAX': 5, 'RBX': 3},
         )
         # sete al writes al (low byte of RAX) — it should be tainted from ZF
         rax_out = out.get('RAX', 0)
         assert (rax_out & 0xFF) != 0, (
-            f'sete after cmp with tainted operands: AL must be tainted; '
-            f'got RAX={rax_out:#x}'
+            f'sete after cmp with tainted operands: AL must be tainted; ' f'got RAX={rax_out:#x}'
         )
