@@ -667,8 +667,8 @@ CORPUS: list[tuple[str, str, dict, dict, str | None, int | None, str]] = [
         {'RAX': 0xFF},
         {'RAX': FULL_TAINT_64},
         'RAX',
-        FULL_TAINT_64,
-        'POPCNT RAX,RAX — tainted input taints count',
+        0x7F,  # count fits in 7 bits (0..64) — bounded avalanche
+        'POPCNT RAX,RAX — count bounded to 7 bits',
     ),
     (
         'BSF r64,r64',
@@ -676,8 +676,8 @@ CORPUS: list[tuple[str, str, dict, dict, str | None, int | None, str]] = [
         {'RBX': 0x40},
         {'RBX': FULL_TAINT_64},
         'RAX',
-        FULL_TAINT_64,
-        'BSF RAX,RBX — tainted source taints bit index result',
+        0x7F,  # bit index 0..63 fits in 7 bits
+        'BSF RAX,RBX — bit-index result bounded to 7 bits',
     ),
     (
         'BSR r64,r64',
@@ -685,8 +685,8 @@ CORPUS: list[tuple[str, str, dict, dict, str | None, int | None, str]] = [
         {'RBX': 0x40},
         {'RBX': FULL_TAINT_64},
         'RAX',
-        FULL_TAINT_64,
-        'BSR RAX,RBX — tainted source taints bit index result',
+        0x7F,
+        'BSR RAX,RBX — bit-index result bounded to 7 bits',
     ),
     # -----------------------------------------------------------------------
     # PUSH / POP (memory taint)

@@ -147,7 +147,7 @@ class StateMapper:
         self.sf_resolved: list[tuple[Register, Varnode | _SynthVarnode]] = []
         for sf_reg in state_format:
             s_r: Varnode | _SynthVarnode | None = ctx.registers.get(sf_reg.name) or ctx.registers.get(
-                sf_reg.name.lower(),
+                sf_reg.name.lower()
             )
             if not s_r and self.is_arm and sf_reg.name in self.arm_aliases:
                 alias = self.arm_aliases[sf_reg.name]
@@ -466,6 +466,73 @@ def _cached_generate_static_rule(
             op.opcode.name == 'CBRANCH' and op.inputs and op.inputs[0].offset > _BASE_ADDR for op in translation.ops
         )
 
+        # Walk back from the CBRANCH condition to find the 1-bit flag registers
+        # that determine the branch.  These are needed to gate the cmov old-dest
+        # passthrough on whether the condition is concretely known: when none of
+        # the flag deps are tainted, the differential C1⊕C2 alone gives the exact
+        # answer (in both reps the cmov takes the same path with the same
+        # concrete flags), and the old-dest passthrough only adds spurious bits.
+        cbranch_flag_deps: list[tuple[int, int]] = []
+        if has_cbranch:
+            cbranch_op = next(
+                op
+                for op in translation.ops
+                if op.opcode.name == 'CBRANCH' and op.inputs and op.inputs[0].offset > _BASE_ADDR
+            )
+            _worklist = [cbranch_op.inputs[1]]  # condition input
+            _seen: set[tuple[str, int, int]] = set()
+            while _worklist:
+                _vn = _worklist.pop()
+                _key = (_vn.space.name, _vn.offset, _vn.size)
+                if _key in _seen:
+                    continue
+                _seen.add(_key)
+                if _vn.space.name == 'register' and _vn.size == 1:
+                    cbranch_flag_deps.append((_vn.offset, _vn.size))
+                elif _vn.space.name == 'unique':
+                    for _prev in translation.ops:
+                        if _prev.output is None:
+                            continue
+                        if _prev.output.space.name == _vn.space.name and _prev.output.offset == _vn.offset:
+                            for _inp in _prev.inputs:
+                                if _inp.space.name in ('register', 'unique'):
+                                    _worklist.append(_inp)
+
+        # Detect bit-counting patterns whose result is bounded by the operand
+        # width.  For tzcnt/lzcnt/bsf/bsr/popcnt the count fits in
+        # ⌈log2(width+1)⌉ bits (e.g. 7 bits for 64-bit operands), regardless of
+        # how many input bits are tainted.  We compute is_bit_count here and
+        # pass it down so that AVALANCHE/TRANSPORTABLE branches can cap the
+        # taint mask to the appropriate width.
+        _slice_op_names = [op.opcode.name for op in slice_ops]
+        is_bit_count = False
+        if 'LZCOUNT' in _slice_op_names:
+            is_bit_count = True
+        elif 'POPCOUNT' in _slice_op_names:
+            # Distinguish a true popcnt instruction from the PF-flag POPCOUNT
+            # (which operates on a single masked byte, size < 4).
+            for _op in slice_ops:
+                if _op.opcode.name == 'POPCOUNT' and _op.inputs[0].size >= 4:
+                    is_bit_count = True
+                    break
+        else:
+            # Software-loop bit scans: backward BRANCH + counter step.
+            _has_backward = any(
+                op.opcode.name == 'BRANCH'
+                and op.inputs
+                and op.inputs[0].space.name == 'const'
+                and (op.inputs[0].offset & 0x80000000)
+                for op in translation.ops
+            )
+            _has_counter_step = any(
+                op.opcode.name in ('INT_ADD', 'INT_SUB')
+                and len(op.inputs) == 2
+                and op.inputs[1].space.name == 'const'
+                and op.inputs[1].offset == 1
+                for op in slice_ops
+            )
+            is_bit_count = _has_backward and _has_counter_step
+
         generate_taint_assignments(
             arch,
             bytestring,
@@ -479,6 +546,8 @@ def _cached_generate_static_rule(
             mapper,
             mapping,
             has_cbranch=has_cbranch,
+            cbranch_flag_deps=cbranch_flag_deps,
+            is_bit_count=is_bit_count,
         )
 
     return LogicCircuit(
@@ -531,7 +600,7 @@ def generate_static_rule(
             'CALL',
             'CALLIND',
             'RETURN',
-        },
+        }
     )
     if any(op.opcode.name in _skip_chain_opcodes for op in translation.ops):
         return circuit  # monolithic circuit preserves cross-instruction deps
@@ -563,10 +632,7 @@ def generate_static_rule(
         sub_circuits.append(_cached_generate_static_rule(arch, instr_bytes, sub_reg_names_tuple))
 
     return ChainedCircuit(
-        sub_circuits=sub_circuits,
-        architecture=arch,
-        instruction=bytestring.hex(),
-        state_format=state_format,
+        sub_circuits=sub_circuits, architecture=arch, instruction=bytestring.hex(), state_format=state_format
     )
 
 
@@ -583,6 +649,8 @@ def generate_taint_assignments(  # noqa: C901
     mapper: StateMapper,
     mapping: RegMapping | MemMapping | None = None,
     has_cbranch: bool = False,
+    cbranch_flag_deps: list[tuple[int, int]] | None = None,
+    is_bit_count: bool = False,
 ) -> None:
     # -----------------------------------------------------------------------
     # STORE TARGET — memory output of a STORE instruction.
@@ -753,6 +821,45 @@ def generate_taint_assignments(  # noqa: C901
         dep_set.value_deps,
     )
 
+    # CMOV / forward-CBRANCH old-destination injection.
+    #
+    # When an instruction has a forward CBRANCH (typical of cmov/setcc-by-flag
+    # patterns), the destination register is implicitly READ on the not-taken
+    # path (the register keeps its old value).  But the static slice from the
+    # destination's *write* doesn't include any read of the destination, so
+    # process_dependencies omits it from cell_inputs.
+    #
+    # Consequence: when both replicas take the not-taken path (concrete flag
+    # FALSE), they each see the same concrete V_dest as the implicit pre-state
+    # → C1=C2 → diff=0 → old-dest taint silently dropped.
+    #
+    # Fix: inject the destination register as a polarised cell_input.  Then:
+    #   - condition concretely TRUE  → both reps overwrite dest → diff = T_source
+    #   - condition concretely FALSE → both reps preserve dest = V|T or V&~T → diff = T_old_dest
+    #   - condition flag tainted     → mixed; the gated passthrough below still applies
+    #
+    # Excluded: PC/IP/memory outputs (no implicit pre-state read).
+    if (
+        has_cbranch
+        and not isinstance(mapping, MemMapping)
+        and out_name not in ('EIP', 'RIP', 'PC')
+        and out_name not in cell_inputs_rep1
+    ):
+        # Only register-typed outputs reach this branch (memory was excluded above).
+        # Add a full-width polarised input for the destination register.
+        # Use bit_start=0, bit_end=out_bit_end (the full slice of the dest).
+        dest_slice = [(out_bit_start, out_bit_end, 0)]
+        cell_inputs_rep1[out_name] = build_polarized_reg(out_name, dest_slice, 1)
+        cell_inputs_rep2[out_name] = build_polarized_reg(out_name, dest_slice, 2)
+        # Add the old-dest taint as a tracked dependency so output_taint is
+        # written when only old-dest taint contributes (e.g. cmov not-taken
+        # with untainted source — without this dep, the assignment would be
+        # eligible for elision).
+        old_dest_dep = _get_taint_operand(out_name, out_bit_start, out_bit_end, True)
+        if old_dest_dep not in dependencies:
+            dependencies.append(old_dest_dep)
+            dependency_names.append(out_name)
+
     if not dependencies:
         expr = _get_zero_constant(out_bit_end - out_bit_start + 1)
         if out_name in ('EIP', 'RIP', 'PC'):
@@ -893,13 +1000,23 @@ def generate_taint_assignments(  # noqa: C901
                     target=out_target,
                     dependencies=[],
                     expression=_get_zero_constant(out_bit_end - out_bit_start + 1),
-                ),
+                )
             )
             return
         expr = dependencies[0]
         for dep in dependencies[1:]:
             expr = BinaryExpr(Op.OR, expr, dep)
-        expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
+        out_width = out_bit_end - out_bit_start + 1
+        if is_bit_count and out_width >= 8:
+            # The result is a count bounded by the operand width: at most ⌈log2(width+1)⌉
+            # bits can be tainted.  For any 8+-bit GP register the count fits in 7 bits.
+            # Avalanche to MASK over 7 bits, then zero-extend to the output width.
+            count_width = max(1, (out_width).bit_length())  # ⌈log2(width+1)⌉, e.g. 7 for 64-bit
+            cap_mask = (1 << count_width) - 1
+            avalanche = AvalancheExpr(expr, count_width)
+            expr = BinaryExpr(Op.AND, avalanche, Constant(cap_mask, 8))
+        else:
+            expr = AvalancheExpr(expr, out_width)
 
     elif cat == InstructionCategory.TRANSLATABLE:
         diff_expr = make_differential()
@@ -969,7 +1086,7 @@ def generate_taint_assignments(  # noqa: C901
                     target=out_target,
                     dependencies=[],
                     expression=_get_zero_constant(out_bit_end - out_bit_start + 1),
-                ),
+                )
             )
             return
 
@@ -1142,6 +1259,19 @@ def generate_taint_assignments(  # noqa: C901
             transport_term = dependencies[0]
             for dep in dependencies[1:]:
                 transport_term = BinaryExpr(Op.OR, transport_term, dep)
+            out_width = out_bit_end - out_bit_start + 1
+            if is_bit_count and out_width >= 8:
+                # tzcnt/bsf/bsr lift as software loops with INT_ADD counter.
+                # The output is the count, bounded by ⌈log2(width+1)⌉ bits
+                # (e.g. 7 for 64-bit operands).  Cap the union term to that
+                # width: avalanche over 7 bits zero-extended to full width.
+                count_width = max(1, (out_width).bit_length())
+                cap_mask = (1 << count_width) - 1
+                transport_term = BinaryExpr(
+                    Op.AND,
+                    AvalancheExpr(transport_term, count_width),
+                    Constant(cap_mask, 8),
+                )
             expr = BinaryExpr(Op.OR, diff_expr, transport_term)
         else:
             expr = diff_expr
@@ -1233,7 +1363,7 @@ def generate_taint_assignments(  # noqa: C901
                 dep_bits = dep_map.bit_end - dep_map.bit_start + 1
                 dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
                 _out_width = out_bit_end - out_bit_start + 1
-                _floor: Expr = FullMaskAvalancheExpr(dep_expr, dep_bits)
+                _floor = FullMaskAvalancheExpr(dep_expr, dep_bits)
                 if _out_width > 1 and _ct_all_deps_one_bit:
                     # setcc-style byte output: result can only be 0x00 or 0x01.
                     # Taint floor = 0x01 (bit 0 only), NOT 0xFF.
@@ -1253,24 +1383,69 @@ def generate_taint_assignments(  # noqa: C901
         avalanche_ptr = AvalancheExpr(ptr_combined, out_bit_end - out_bit_start + 1)
         expr = BinaryExpr(Op.OR, expr, avalanche_ptr)
 
-    # Conditional-execution old-dest passthrough (covers CMOV in all categories).
+    # Conditional-execution gated passthrough (covers CMOV in all categories).
     #
-    # Any instruction whose P-code contains a CBRANCH might NOT write its
-    # output — if the branch is taken, the destination register keeps its
-    # old value.  The differential C1 XOR C2 only captures changes driven by
-    # the *source* operands; it returns 0 when neither run writes the output.
-    # We must OR in the old destination taint so the not-taken path doesn't
-    # silently drop it.
+    # The polarised old-dest injection (added in process_dependencies above)
+    # makes the differential exact in the two CONCRETE-CONDITION cases:
+    #   - condition concretely TAKEN     → both reps overwrite dest →
+    #                                       Diff = T_source         ✓
+    #   - condition concretely NOT-TAKEN → both reps preserve dest with
+    #                                       polarised V|T / V&~T values →
+    #                                       Diff = T_old_dest       ✓
     #
-    # cmovz / cmovs → MONOTONIC (no COND_TRANSPORTABLE special-casing)
-    # cmovl / cmovge → COND_TRANSPORTABLE
-    # All share the same need: old_dest_taint flows through on not-taken.
+    # When the condition flag IS tainted, the high and low replicas can take
+    # *different* paths — the XOR may cancel coincidentally-equal bits and
+    # underestimate the true taint.  Per the cmov spec:
+    #   - condition tainted → T_out = T_old_dest ∪ T_source
+    # We OR in this union, gated by the flag-taint mask.  When all flags are
+    # concrete (taint=0), the gate evaluates to 0 and the differential alone
+    # gives the exact answer.
     #
-    # Excluded: PC/IP registers (branch targets) and memory outputs (stores
-    # to memory don't have a previous value to pass through).
+    # Excluded: PC/IP (branch targets) and memory outputs (no prior value).
     if not isinstance(mapping, MemMapping) and out_name not in ('EIP', 'RIP', 'PC') and has_cbranch:
         old_dest_taint = _get_taint_operand(out_name, out_bit_start, out_bit_end, True)
-        expr = BinaryExpr(Op.OR, expr, old_dest_taint)
+        _FLAG_OFFSET_TO_NAME = {
+            0x200: 'CF',
+            0x202: 'PF',
+            0x203: 'AF',
+            0x206: 'ZF',
+            0x207: 'SF',
+            0x20B: 'OF',
+        }
+        flag_taint_or: Expr | None = None
+        for flag_off, flag_size in cbranch_flag_deps or []:
+            flag_name = _FLAG_OFFSET_TO_NAME.get(flag_off)
+            if flag_name is None:
+                continue
+            flag_taint = _get_taint_operand(flag_name, 0, flag_size - 1, True)
+            flag_taint_or = flag_taint if flag_taint_or is None else BinaryExpr(Op.OR, flag_taint_or, flag_taint)
+        if flag_taint_or is not None:
+            # Build T_source = OR of all dependency taints EXCEPT the injected
+            # old-dest (which corresponds to out_name with full output slice).
+            source_taint_or: Expr | None = None
+            for dep in dependencies:
+                # Skip the injected old-dest dep (has out_name and the same slice).
+                if (
+                    isinstance(dep, TaintOperand)
+                    and dep.name == out_name
+                    and dep.bit_start == out_bit_start
+                    and dep.bit_end == out_bit_end
+                ):
+                    continue
+                source_taint_or = dep if source_taint_or is None else BinaryExpr(Op.OR, source_taint_or, dep)
+            # Combined gated term: T_old_dest | T_source, ANDed with the flag-taint mask.
+            if source_taint_or is not None:
+                combined = BinaryExpr(Op.OR, old_dest_taint, source_taint_or)
+            else:
+                combined = old_dest_taint
+            out_width = out_bit_end - out_bit_start + 1
+            gate = AvalancheExpr(flag_taint_or, out_width)
+            gated_passthrough = BinaryExpr(Op.AND, combined, gate)
+            expr = BinaryExpr(Op.OR, expr, gated_passthrough)
+        else:
+            # Fall back to unconditional passthrough when flag deps aren't identified
+            # (e.g. CBRANCH on a non-flag predicate). Sound but possibly imprecise.
+            expr = BinaryExpr(Op.OR, expr, old_dest_taint)
 
     if out_name in ('EIP', 'RIP', 'PC'):
         expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
@@ -1278,7 +1453,7 @@ def generate_taint_assignments(  # noqa: C901
     assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
 
 
-def _slice_has_constant_dominator(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
+def _slice_has_constant_dominator(slice_ops: list[PcodeOp]) -> bool:
     """Return True if the backward slice contains an operation whose output is
     always a constant regardless of any tainted input.
 
@@ -1461,7 +1636,7 @@ def extract_dependencies(  # noqa: C901
     # earlier op in the same P-code block (intra-instruction intermediate).
     # Example: ror rax,1 writes CF (new-CF = bit0 of RAX) and then reads CF
     # again to place it at bit63. The CF read is not an external input dep.
-    _reg_first_write: dict[int, int] = {}  # register offset -> first write op index
+    _reg_first_write: dict[int, int] = {}  # register offset → first write op index
     for _i, _op in enumerate(all_ops):
         if _op.output is not None and _op.output.space.name == 'register' and _op.output.offset not in _reg_first_write:
             _reg_first_write[_op.output.offset] = _i
