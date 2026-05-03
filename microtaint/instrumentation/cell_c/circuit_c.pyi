@@ -65,7 +65,6 @@ class CompiledCircuit:
           * python_fallback  — number that fell back to Python evaluation
         """
 
-
 def compile_circuit(
     circuit: LogicCircuit,
     pcode: Any = ...,

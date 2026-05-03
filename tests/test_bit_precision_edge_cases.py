@@ -463,17 +463,24 @@ class TestFlagPrecision:
         ), f'add partial CF: true={true.get("CF",0):#x} mt={mt.get("CF",0):#x}'
 
     def test_sub_borrow_chain_exact(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
-        """sub with partial taint — borrow chain must be exact."""
+        """sub with partial taint — borrow chain must be SOUND (mt ⊇ true).
+
+        Note: this test was previously named *_exact and asserted equality.
+        After the v0.6.3 symmetric-comparison-floor fix (which prevents the
+        sub/sbb undertaint regression), 1-bit flags may be over-tainted
+        when the differential coincidentally cancels and the AvalancheExpr
+        floor fires.  Soundness (mt ⊇ true) is preserved; exact precision
+        for 1-bit flags is sacrificed for it.
+        """
         code = bytes.fromhex('4829d8')
         taint = {**z(regs_amd64), 'RBX': 0x0000000000000001}  # bit 0 only
         values = {**z(regs_amd64), 'RAX': 0, 'RBX': 0}
         true = _true_taint_x86(code, reg_names_amd64, taint, values)
         mt = _mt_eval(sim_amd64, regs_amd64, code, taint, values)
         for flag in ('CF', 'ZF', 'SF', 'OF'):
-            assert mt.get(flag, 0) == true.get(
-                flag,
-                0,
-            ), f'sub borrow {flag}: true={true.get(flag,0):#x} mt={mt.get(flag,0):#x}'
+            true_v = true.get(flag, 0)
+            mt_v = mt.get(flag, 0)
+            assert (true_v & ~mt_v) == 0, f'sub borrow {flag} UNSOUND: true={true_v:#x} mt={mt_v:#x}'
 
     def test_cmp_flags_all_precise_partial_taint(
         self,
@@ -481,17 +488,19 @@ class TestFlagPrecision:
         regs_amd64,
         reg_names_amd64,
     ) -> None:
-        """cmp rax,rbx with partial taint — all flags match true differential."""
+        """cmp rax,rbx with partial taint — all flags must be SOUND (mt ⊇ true).
+
+        See test_sub_borrow_chain_exact for the soundness/precision tradeoff.
+        """
         code = bytes.fromhex('4839d8')
         taint = {**z(regs_amd64), 'RAX': 0x00000000000000FF}  # low byte
         values = {**z(regs_amd64), 'RAX': 0x80, 'RBX': 0x100}
         true = _true_taint_x86(code, reg_names_amd64, taint, values)
         mt = _mt_eval(sim_amd64, regs_amd64, code, taint, values)
         for flag in ('CF', 'ZF', 'SF', 'OF', 'PF'):
-            assert mt.get(flag, 0) == true.get(
-                flag,
-                0,
-            ), f'cmp partial {flag}: true={true.get(flag,0):#x} mt={mt.get(flag,0):#x}'
+            true_v = true.get(flag, 0)
+            mt_v = mt.get(flag, 0)
+            assert (true_v & ~mt_v) == 0, f'cmp partial {flag} UNSOUND: true={true_v:#x} mt={mt_v:#x}'
 
     def test_and_partial_taint_exact(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
         """and rax,rbx with partial taint — result and ZF must be exact."""

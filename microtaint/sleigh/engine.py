@@ -147,7 +147,7 @@ class StateMapper:
         self.sf_resolved: list[tuple[Register, Varnode | _SynthVarnode]] = []
         for sf_reg in state_format:
             s_r: Varnode | _SynthVarnode | None = ctx.registers.get(sf_reg.name) or ctx.registers.get(
-                sf_reg.name.lower()
+                sf_reg.name.lower(),
             )
             if not s_r and self.is_arm and sf_reg.name in self.arm_aliases:
                 alias = self.arm_aliases[sf_reg.name]
@@ -600,7 +600,7 @@ def generate_static_rule(
             'CALL',
             'CALLIND',
             'RETURN',
-        }
+        },
     )
     if any(op.opcode.name in _skip_chain_opcodes for op in translation.ops):
         return circuit  # monolithic circuit preserves cross-instruction deps
@@ -632,7 +632,10 @@ def generate_static_rule(
         sub_circuits.append(_cached_generate_static_rule(arch, instr_bytes, sub_reg_names_tuple))
 
     return ChainedCircuit(
-        sub_circuits=sub_circuits, architecture=arch, instruction=bytestring.hex(), state_format=state_format
+        sub_circuits=sub_circuits,
+        architecture=arch,
+        instruction=bytestring.hex(),
+        state_format=state_format,
     )
 
 
@@ -867,7 +870,7 @@ def generate_taint_assignments(  # noqa: C901
         assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expr))
         return
 
-    cat = determine_category(slice_ops)
+    cat = determine_category(slice_ops, out_width_bits=(out_bit_end - out_bit_start + 1))
 
     # --- LOAD POINTER TAINT DETECTION ---
     # Identify which value_dep RegMappings are used as *pointer* inputs to
@@ -1000,7 +1003,7 @@ def generate_taint_assignments(  # noqa: C901
                     target=out_target,
                     dependencies=[],
                     expression=_get_zero_constant(out_bit_end - out_bit_start + 1),
-                )
+                ),
             )
             return
         expr = dependencies[0]
@@ -1086,7 +1089,7 @@ def generate_taint_assignments(  # noqa: C901
                     target=out_target,
                     dependencies=[],
                     expression=_get_zero_constant(out_bit_end - out_bit_start + 1),
-                )
+                ),
             )
             return
 
@@ -1315,19 +1318,103 @@ def generate_taint_assignments(  # noqa: C901
         if is_flag and dependencies:
             _is_constant_result = _slice_has_constant_dominator(slice_ops)
             if not _is_constant_result:
-                floor_terms: list[Expr] = []
-                for dep_map in dep_set.value_deps.keys():
-                    if isinstance(dep_map, RegMapping):
-                        dep_bits = dep_map.bit_end - dep_map.bit_start + 1
-                        dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
-                        floor_terms.append(FullMaskAvalancheExpr(dep_expr, dep_bits))
-                if floor_terms:
-                    floor_expr: Expr = floor_terms[0]
-                    for ft in floor_terms[1:]:
-                        floor_expr = BinaryExpr(Op.OR, floor_expr, ft)
-                    expr = BinaryExpr(Op.OR, diff_expr, floor_expr)
+                # Symmetric two-operand comparison opcodes can produce
+                # coincidental cancellation in the differential when BOTH
+                # operands have OVERLAPPING (not just full) taint masks.
+                # Example: sub rax, rbx with T_RAX = T_RBX = 0xFFFF0000FFFF0000.
+                # The high replica V|T evaluates the comparison with the same
+                # bits set in both operands; the low replica V&~T has those
+                # bits cleared in both operands.  The two comparisons can
+                # coincidentally agree (e.g. both report CF=0) even though
+                # individual per-bit flips of one operand alone would change
+                # the result.  The FullMaskAvalancheExpr floor only fires
+                # when T_j is the FULL mask, so it doesn't cover this case.
+                #
+                # Fix: when the slice is dominated by one of these symmetric
+                # comparison opcodes, use AvalancheExpr (fires on ANY nonzero
+                # taint) instead of FullMaskAvalancheExpr.  This is sound
+                # (we never miss real taint) at the cost of over-tainting
+                # 1-bit flags when the differential alone would have been
+                # exact.  For 1-bit outputs this is a minor precision cost.
+                _SYMMETRIC_COMPARISON_OPS = {
+                    'INT_LESS',
+                    'INT_LESSEQUAL',
+                    'INT_SLESS',
+                    'INT_SLESSEQUAL',
+                    'INT_EQUAL',
+                    'INT_NOTEQUAL',
+                    'INT_CARRY',
+                    'INT_SCARRY',
+                    'INT_SBORROW',
+                }
+                _slice_has_symmetric_cmp = any(op.opcode.name in _SYMMETRIC_COMPARISON_OPS for op in slice_ops)
+                if _slice_has_symmetric_cmp:
+                    # Refined sound floor for symmetric two-operand comparisons.
+                    #
+                    # The floor must fire in two regimes where the differential
+                    # alone can miss real taint:
+                    #
+                    #   (A) TWO OR MORE deps tainted simultaneously.  The
+                    #       high/low replicas saturate every tainted dep
+                    #       symmetrically; comparisons can coincidentally agree
+                    #       even though per-bit flips of one dep alone would
+                    #       change the result.  Detected by AvalancheExpr AND
+                    #       AvalancheExpr (1 iff every dep has at least one
+                    #       tainted bit at runtime).
+                    #
+                    #   (B) ONE dep with a FULL-MASK taint.  Example: neg rax
+                    #       with T_RAX=MASK64.  OF = (RAX == MIN_INT).  The
+                    #       differential evaluates INT_EQUAL(MASK, MIN_INT)
+                    #       XOR INT_EQUAL(0, MIN_INT) = 0 XOR 0 = 0, missing
+                    #       that flipping bit 63 alone changes the equality.
+                    #       Detected by FullMaskAvalancheExpr per dep.
+                    #
+                    # The differential remains exact when EXACTLY ONE dep has
+                    # PARTIAL taint (single tainted bit or partial mask short
+                    # of the full dep width): in that regime both regimes (A)
+                    # and (B) evaluate to 0 and the differential's precision
+                    # is preserved.  This is the regime exercised by the
+                    # bit-precision tests (`test_flag_carry_cf` etc.).
+                    aval_terms: list[Expr] = []
+                    fma_terms: list[Expr] = []
+                    for dep_map in dep_set.value_deps.keys():
+                        if isinstance(dep_map, RegMapping):
+                            dep_bits = dep_map.bit_end - dep_map.bit_start + 1
+                            dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
+                            aval_terms.append(AvalancheExpr(dep_expr, 1))
+                            fma_terms.append(FullMaskAvalancheExpr(dep_expr, dep_bits))
+
+                    floor_components: list[Expr] = []
+                    # Regime (A): conjunction of Aval over 2+ deps.
+                    if len(aval_terms) >= 2:
+                        and_term: Expr = aval_terms[0]
+                        for at in aval_terms[1:]:
+                            and_term = BinaryExpr(Op.AND, and_term, at)
+                        floor_components.append(and_term)
+                    # Regime (B): disjunction of FMA per dep.
+                    floor_components.extend(fma_terms)
+
+                    if floor_components:
+                        floor_expr: Expr = floor_components[0]
+                        for fc in floor_components[1:]:
+                            floor_expr = BinaryExpr(Op.OR, floor_expr, fc)
+                        expr = BinaryExpr(Op.OR, diff_expr, floor_expr)
+                    else:
+                        expr = diff_expr
                 else:
-                    expr = diff_expr
+                    floor_terms: list[Expr] = []
+                    for dep_map in dep_set.value_deps.keys():
+                        if isinstance(dep_map, RegMapping):
+                            dep_bits = dep_map.bit_end - dep_map.bit_start + 1
+                            dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
+                            floor_terms.append(FullMaskAvalancheExpr(dep_expr, dep_bits))
+                    if floor_terms:
+                        floor_expr_2: Expr = floor_terms[0]
+                        for ft in floor_terms[1:]:
+                            floor_expr_2 = BinaryExpr(Op.OR, floor_expr_2, ft)
+                        expr = BinaryExpr(Op.OR, diff_expr, floor_expr_2)
+                    else:
+                        expr = diff_expr
             else:
                 expr = diff_expr
         else:

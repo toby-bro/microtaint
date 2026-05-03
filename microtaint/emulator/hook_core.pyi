@@ -103,7 +103,6 @@ class InstructionHook:
         eflags_bits: dict[str, int],
         eval_context_cls: type,
     ) -> None: ...
-
     def __call__(
         self,
         uc: Any,
@@ -112,7 +111,6 @@ class InstructionHook:
         user_data: Any,
     ) -> None:
         """Unicorn-invoked instruction callback. Hot-path entry point."""
-
 
 # ---------------------------------------------------------------------------
 # Memory hooks (V8) — Cython port of the three Unicorn mem callbacks.
@@ -137,14 +135,13 @@ class MemWriteClearHook:
     """
 
     wrapper: Any
-    shadow_mem: Any                # BitPreciseShadowMemory (cdef class)
+    shadow_mem: Any  # BitPreciseShadowMemory (cdef class)
     last_tainted_writes: set[int]
     reporter: Any
     ql: Any
     check_uaf: bool
 
     def __init__(self, wrapper: Any) -> None: ...
-
     def __call__(
         self,
         uc: Any,
@@ -154,7 +151,6 @@ class MemWriteClearHook:
         value: int,
         user_data: Any = ...,
     ) -> None: ...
-
 
 class MemAccessHook:
     """Unicorn UC_HOOK_MEM_READ callback. Reports UAF on read-after-free."""
@@ -166,7 +162,6 @@ class MemAccessHook:
     check_uaf: bool
 
     def __init__(self, wrapper: Any) -> None: ...
-
     def __call__(
         self,
         uc: Any,
@@ -176,7 +171,6 @@ class MemAccessHook:
         value: int,
         user_data: Any = ...,
     ) -> None: ...
-
 
 class UafUnmappedWriteHook:
     """
@@ -193,7 +187,6 @@ class UafUnmappedWriteHook:
     ql: Any
 
     def __init__(self, wrapper: Any) -> None: ...
-
     def __call__(
         self,
         uc: Any,
@@ -203,7 +196,6 @@ class UafUnmappedWriteHook:
         value: int,
         user_data: Any = ...,
     ) -> bool: ...
-
 
 class LiveMemReader:
     """
@@ -231,6 +223,5 @@ class LiveMemReader:
         mem_buf: Any,
         mem_ptrs: dict[int, Any],
     ) -> None: ...
-
     def __call__(self, address: int, size: int) -> int:
         """Read `size` bytes at `address`. Returns 0 on error."""

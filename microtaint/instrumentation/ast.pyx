@@ -752,9 +752,56 @@ cdef class LogicCircuit:
         return output_taint
 
 
+def _run_concrete_step(sub, dict values, sim):
+    """Run a sub-circuit's instruction concretely and return updated values.
+
+    Used by ``ChainedCircuit.evaluate`` to thread concrete state across
+    sequence steps.  Concrete results are independent of taint, so we use
+    the current ``values`` (which start as the chain's entry state).
+
+    Returns a NEW dict; the input ``values`` is not mutated.
+
+    Failures fall back to returning the input dict unchanged — equivalent
+    to the pre-fix behaviour (concrete values stale).  This keeps the
+    chain evaluator robust against unsupported instructions.
+    """
+    try:
+        bytestring = bytes.fromhex(sub.instruction)
+    except (ValueError, AttributeError):
+        return values
+
+    # Build a MachineState from the current concrete state.  We only need
+    # the registers in state_format; memory and shadow are unchanged.
+    from microtaint.simulator import MachineState
+    regs = {}
+    for reg_obj in sub.state_format:
+        name = reg_obj.name
+        if name in values:
+            regs[name] = values[name]
+    state = MachineState(regs=regs, mem={})
+
+    try:
+        sim._execute(bytestring, state)
+    except Exception:
+        # Any execution failure (unmapped memory, illegal instruction, etc.)
+        # leaves the previous values untouched — sound fallback.
+        return values
+
+    # Read back every register in the state_format.
+    new_values = dict(values)
+    for reg_obj in sub.state_format:
+        name = reg_obj.name
+        try:
+            new_values[name] = sim._read_reg(name)
+        except Exception:
+            # Failed to read a register — leave it unchanged.
+            pass
+    return new_values
+
+
 cdef class ChainedCircuit:
     """A sequence of LogicCircuits evaluated one-by-one, threading the output
-    taint of each step into the input taint of the next.
+    taint AND the concrete state of each step into the next.
 
     This is used for multi-instruction sequences.  Lifting all instructions
     into a single P-code block and analysing them as a unit (``LogicCircuit``)
@@ -762,13 +809,16 @@ cdef class ChainedCircuit:
     reads CL, the static rule for the joined block sees the *original* CL dep
     rather than the updated one.  Chaining is the correct compositional fix.
 
-    The EvalContext is rebuilt before each sub-circuit with the taint dict
-    from the previous step.  Concrete ``input_values`` are held constant
-    (they reflect the entry state of the whole sequence).  This is sound but
-    slightly conservative for value-dependent taint (e.g. `and` with a
-    concrete 0 mask) because the concrete values don't update between steps;
-    however, the static-rule evaluator already doesn't propagate concrete
-    values across steps, so this is no worse than before.
+    Concrete-value threading
+    ------------------------
+    Between steps we run each sub-circuit's instruction concretely on the
+    current value state and merge the result back.  This is essential for
+    soundness: per-opcode taint formulas like AND
+    ``(V_a & T_b) | (V_b & T_a) | (T_a & T_b)`` read the *post-step* concrete
+    values of source registers and can under-taint when those values are
+    stale.  Example: ``mov rbx, 0xff00...; and rax, rbx`` — without value
+    threading, the AND uses the entry V_RBX instead of the post-mov value,
+    which can both over- and under-count taint.
     """
 
     cdef public list sub_circuits
@@ -788,22 +838,41 @@ cdef class ChainedCircuit:
 
     cpdef dict evaluate(self, EvalContext context):
         cdef dict taint = dict(context.input_taint)
+        cdef dict values = dict(context.input_values)  # mutable concrete state
         cdef EvalContext step_ctx
         cdef LogicCircuit sub
+        cdef object sim = context.simulator
 
         for sub in self.sub_circuits:
-            # Build a new context with the running taint state but the same
-            # concrete values and simulator.  The implicit_policy is propagated
-            # so PC-taint detection fires within any step.
+            # Build a new context with the running taint AND running concrete
+            # state.  Updating concrete values between steps is essential for
+            # soundness: value-dependent taint formulas (notably AND/OR with
+            # bits set/cleared by an earlier instruction) read the concrete
+            # values of source registers and can under-taint when those
+            # values are stale.
             step_ctx = EvalContext(
                 input_taint=taint,
-                input_values=context.input_values,
-                simulator=context.simulator,
+                input_values=values,
+                simulator=sim,
                 implicit_policy=context.implicit_policy,
                 shadow_memory=context.shadow_memory,
                 mem_reader=context.mem_reader,
             )
             taint = sub.evaluate(step_ctx)
+
+            # Update concrete state by running THIS step's instruction
+            # concretely on the running values.  The result is independent of
+            # taint (concrete bits don't depend on which bits are tainted),
+            # so any valid concrete state works — we use the current `values`.
+            #
+            # Skipping is safe (correct but possibly imprecise) only if the
+            # next step does not read any register written by this step;
+            # since we cannot know that statically without re-analysing every
+            # sub-circuit, we always run the concrete update.  The cost is
+            # one Unicorn execution per chain step; for chains of 2–6 instrs
+            # this is negligible compared to the differential evaluation.
+            if sim is not None and sub.instruction:
+                values = _run_concrete_step(sub, values, sim)
 
         # Filter to the registers in the caller's state_format.
         # Sub-circuits may have been built with an augmented format that includes

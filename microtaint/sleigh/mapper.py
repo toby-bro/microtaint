@@ -268,7 +268,10 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
     return False
 
 
-def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa: C901
+def determine_category(  # noqa: C901
+    slice_ops: list[PcodeOp],
+    out_width_bits: int = 64,
+) -> InstructionCategory:
     if not slice_ops:
         return InstructionCategory.MAPPED
 
@@ -299,6 +302,26 @@ def determine_category(slice_ops: list[PcodeOp]) -> InstructionCategory:  # noqa
 
     for op in core_ops:
         if op.opcode.name in MONOTONIC_OPCODES:
+            # Soundness fix for blsi/blsr-like patterns: if the slice ALSO contains
+            # a carry-introducing op (INT_2COMP, INT_ADD, INT_SUB), the MONOTONIC
+            # formula (just the differential) can miss carry propagation.  In that
+            # case fall through to TRANSPORTABLE, whose `diff | union(T_deps)`
+            # formula adds the input-taint union as a soundness floor.
+            #
+            # IMPORTANT: only apply for multi-bit outputs (≥2 bits).  For 1-bit
+            # flag outputs (CF/OF/SF/ZF), MONOTONIC has its own soundness floor
+            # via FullMaskAvalanche, while TRANSPORTABLE drops the union term
+            # for 1-bit outputs and would lose soundness on flags of cmp/sub/add.
+            #
+            # Affected instructions (multi-bit case):
+            #   blsi rax, rbx  (INT_2COMP + INT_AND)  → would under-taint without floor
+            #   blsr rax, rbx  (INT_SUB   + INT_AND)  → same
+            # Without this guard, blsi with T_RBX=MASK64 returns T_RAX=1 (the differential
+            # of the lowest-set-bit isolation) when the true taint is MASK64.
+            if out_width_bits >= 2:
+                has_carry_op = any(o.opcode.name in ('INT_2COMP', 'INT_ADD', 'INT_SUB') for o in core_ops)
+                if has_carry_op:
+                    return InstructionCategory.TRANSPORTABLE
             return InstructionCategory.MONOTONIC
 
     for op in core_ops:

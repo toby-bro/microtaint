@@ -1,4 +1,3 @@
-
 from microtaint.instrumentation.ast import InstructionCellExpr
 from microtaint.types import Architecture
 
