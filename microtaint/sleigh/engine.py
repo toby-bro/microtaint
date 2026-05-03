@@ -399,7 +399,7 @@ def apply_sless_msb_split(
 
 
 @functools.lru_cache(maxsize=16384)
-def _cached_generate_static_rule(
+def _cached_generate_static_rule(  # noqa: C901
     arch: Architecture,
     bytestring: bytes,
     state_format_tuple: tuple[tuple[str, int], ...],
@@ -1450,7 +1450,7 @@ def generate_taint_assignments(  # noqa: C901
                 dep_bits = dep_map.bit_end - dep_map.bit_start + 1
                 dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
                 _out_width = out_bit_end - out_bit_start + 1
-                _floor = FullMaskAvalancheExpr(dep_expr, dep_bits)
+                _floor: Expr = FullMaskAvalancheExpr(dep_expr, dep_bits)
                 if _out_width > 1 and _ct_all_deps_one_bit:
                     # setcc-style byte output: result can only be 0x00 or 0x01.
                     # Taint floor = 0x01 (bit 0 only), NOT 0xFF.
@@ -1483,7 +1483,7 @@ def generate_taint_assignments(  # noqa: C901
     # When the condition flag IS tainted, the high and low replicas can take
     # *different* paths — the XOR may cancel coincidentally-equal bits and
     # underestimate the true taint.  Per the cmov spec:
-    #   - condition tainted → T_out = T_old_dest ∪ T_source
+    #   - condition tainted → T_out = T_old_dest U T_source
     # We OR in this union, gated by the flag-taint mask.  When all flags are
     # concrete (taint=0), the gate evaluates to 0 and the differential alone
     # gives the exact answer.
@@ -1522,7 +1522,7 @@ def generate_taint_assignments(  # noqa: C901
                 source_taint_or = dep if source_taint_or is None else BinaryExpr(Op.OR, source_taint_or, dep)
             # Combined gated term: T_old_dest | T_source, ANDed with the flag-taint mask.
             if source_taint_or is not None:
-                combined = BinaryExpr(Op.OR, old_dest_taint, source_taint_or)
+                combined: Expr = BinaryExpr(Op.OR, old_dest_taint, source_taint_or)
             else:
                 combined = old_dest_taint
             out_width = out_bit_end - out_bit_start + 1
@@ -1540,7 +1540,7 @@ def generate_taint_assignments(  # noqa: C901
     assignments.append(TaintAssignment(target=out_target, dependencies=dependencies, expression=expr))
 
 
-def _slice_has_constant_dominator(slice_ops: list[PcodeOp]) -> bool:
+def _slice_has_constant_dominator(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
     """Return True if the backward slice contains an operation whose output is
     always a constant regardless of any tainted input.
 

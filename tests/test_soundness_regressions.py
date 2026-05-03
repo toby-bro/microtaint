@@ -29,7 +29,8 @@ the per-bit output sensitivity.  This is the strongest possible ground
 truth short of a formal proof.
 """
 
-# mypy: disable-error-code="no-untyped-def, no-untyped-call"
+# ruff: noqa: PLC0415
+# mypy: disable-error-code="no-untyped-def, no-untyped-call,import-untyped,attr-defined,no-any-return"
 
 from __future__ import annotations
 
@@ -367,7 +368,7 @@ def test_movzx_sub_movsx_chain_case_626(regs, sim):
     _assert_sound(_SEQ_MOVZX_SUB_MOVSX, state, taint, 'RCX', regs, sim)
 
 
-# ── SHL × 3 then OR × 3: base64-decode bit-packing ──────────────────────────
+# ── SHL x 3 then OR x 3: base64-decode bit-packing ──────────────────────────
 #
 # Sequence:       shl rax, 18
 #                 shl rbx, 12
@@ -523,7 +524,7 @@ def _assemble(asm_lines: list[str]) -> bytes:
     return out
 
 
-@pytest.mark.parametrize('asm_lines,n_seeds', _FUZZ_CASES)
+@pytest.mark.parametrize(('asm_lines', 'n_seeds'), _FUZZ_CASES)
 def test_random_soundness(regs, sim, asm_lines, n_seeds):
     """Random soundness fuzz over BMI / lea / chain patterns.
 

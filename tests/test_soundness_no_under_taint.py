@@ -39,6 +39,9 @@ tainted input bit, XOR outputs, OR the results).  This is the operational
 definition of "the bits whose values genuinely depend on tainted inputs".
 """
 
+# ruff: noqa: PLC0415
+# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,import-untyped"
+
 from __future__ import annotations
 
 import pytest
@@ -47,8 +50,8 @@ import unicorn.x86_const as ux
 from keystone import KS_ARCH_X86, KS_MODE_64, Ks
 
 from microtaint.instrumentation.ast import EvalContext
-from microtaint.sleigh.engine import _cached_generate_static_rule, generate_static_rule
 from microtaint.simulator import CellSimulator
+from microtaint.sleigh.engine import _cached_generate_static_rule, generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
@@ -68,6 +71,7 @@ _REG_MAP = {
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _assemble(asm_lines: list[str]) -> bytes:
     """Assemble a list of assembly mnemonics to a single byte string."""
@@ -97,7 +101,7 @@ def _ground_truth(code: bytes, state: dict[str, int], taint: dict[str, int]) -> 
         return {r: uc.reg_read(_REG_MAP[r]) for r in REGS}
 
     base_out = _run(base_vals)
-    result = {r: 0 for r in REGS}
+    result = dict.fromkeys(REGS, 0)
     for src in REGS:
         tm = taint.get(src, 0)
         if not tm:
@@ -151,7 +155,7 @@ def _assert_sound(asm_lines: list[str], state: dict[str, int], taint: dict[str, 
             n_under = bin(under).count('1')
             failures.append(
                 f'{reg}: under-taint by {n_under} bits — '
-                f'true={hex(true_mask)} got={hex(got_mask)} missing_bits={hex(under)}'
+                f'true={hex(true_mask)} got={hex(got_mask)} missing_bits={hex(under)}',
             )
     if failures:
         msg = '\n  '.join(failures)
@@ -197,6 +201,7 @@ def _assert_sound(asm_lines: list[str], state: dict[str, int], taint: dict[str, 
 #     T_RAX = differential  |  T_RBX
 #
 # When T_RBX = MASK64, this expands to MASK64, which is sound.
+
 
 class TestBlsiSoundness:
     """blsi rax, rbx with various taint configurations."""
@@ -255,6 +260,7 @@ class TestBlsiSoundness:
 # The same root cause and fix apply: INT_SUB is in TRANSPORTABLE_OPCODES,
 # INT_AND is in MONOTONIC_OPCODES.  The fix detects the combination.
 
+
 class TestBlsrSoundness:
     """blsr rax, rbx with fully-tainted RBX."""
 
@@ -291,6 +297,7 @@ class TestBlsrSoundness:
 # concrete-value threading fix in ChainedCircuit ensures andn reads the
 # post-blsi V_RAX (the lowest set bit of V_RBX) instead of the stale entry
 # value.
+
 
 class TestBlsiAndnChain:
     """blsi rax, rbx; andn rcx, rax, rdx — chained BMI1 ops."""
@@ -366,6 +373,7 @@ class TestBlsiAndnChain:
 # running value state and merges the result back, so step 3 sees the new
 # V_RBX = 0xff00ff00ff00ff00.
 
+
 class TestBswapMaskChain:
     """bswap rax; mov rbx, IMM; and rax, rbx — value-staleness sequence."""
 
@@ -385,7 +393,8 @@ class TestBswapMaskChain:
         }
         _assert_sound(
             ['bswap rax', 'mov rbx, 0xff00ff00ff00ff00', 'and rax, rbx'],
-            state, taint,
+            state,
+            taint,
         )
 
     def test_bswap_and_with_imm_mask_case2(self) -> None:
@@ -404,7 +413,8 @@ class TestBswapMaskChain:
         }
         _assert_sound(
             ['bswap rax', 'mov rbx, 0xff00ff00ff00ff00', 'and rax, rbx'],
-            state, taint,
+            state,
+            taint,
         )
 
 
@@ -438,8 +448,9 @@ class TestBswapMaskChain:
 # The concrete-state threading updates V_RAX after each shl and each or, so
 # the OR formula always sees the actual current value.
 
+
 class TestShiftOrCodec:
-    """Base64-style 4×6-bit combine via shifts and ORs."""
+    """Base64-style 4x6-bit combine via shifts and ORs."""
 
     def test_shl_or_sequence(self) -> None:
         state = {
@@ -451,10 +462,15 @@ class TestShiftOrCodec:
         taint = {'RAX': MASK64, 'RBX': MASK64, 'RCX': MASK64, 'RDX': MASK64}
         _assert_sound(
             [
-                'shl rax, 18', 'shl rbx, 12', 'shl rcx, 6',
-                'or rax, rbx', 'or rax, rcx', 'or rax, rdx',
+                'shl rax, 18',
+                'shl rbx, 12',
+                'shl rcx, 6',
+                'or rax, rbx',
+                'or rax, rcx',
+                'or rax, rdx',
             ],
-            state, taint,
+            state,
+            taint,
         )
 
 
@@ -491,6 +507,7 @@ class TestShiftOrCodec:
 # Concrete-state threading ensures the sub at step 3 sees V_RCX = al
 # (a small byte) and V_RDX = bl, producing the correct differential.
 
+
 class TestMovzxSubMovsxChain:
     """strcmp-style byte-difference computation."""
 
@@ -504,7 +521,8 @@ class TestMovzxSubMovsxChain:
         taint = {'RAX': MASK64, 'RBX': MASK64, 'RCX': MASK64, 'RDX': MASK64}
         _assert_sound(
             ['movzx rcx, al', 'movzx rdx, bl', 'sub rcx, rdx', 'movsx rax, cl'],
-            state, taint,
+            state,
+            taint,
         )
 
 
@@ -516,38 +534,42 @@ class TestMovzxSubMovsxChain:
 # asserts soundness.  This is the safety net: any future regression that
 # introduces under-taint should fail this test.
 
-@pytest.mark.parametrize('asm', [
-    'blsi rax, rbx',
-    'blsr rax, rbx',
-    'blsi rcx, rdx',
-    'blsr rcx, rdx',
-    'andn rax, rbx, rcx',
-    'and rax, rbx',
-    'or  rax, rbx',
-    'xor rax, rbx',
-    'add rax, rbx',
-    'sub rax, rbx',
-    'sbb rax, rbx',
-    'adc rax, rbx',
-    'imul rax, rbx',
-    'imul rax, rbx, 3',
-    'shl rax, 5',
-    'shr rax, cl',
-    'rol rax, 8',
-    'lea rax, [rbx + rcx*2]',
-    'movzx rax, bl',
-    'movsx rax, bl',
-    'cmovz rax, rbx',
-    'cmovnz rax, rbx',
-    'cmovg rax, rcx',
-    'tzcnt rax, rbx',
-    'lzcnt rax, rbx',
-    'popcnt rax, rbx',
-    'bswap rax',
-    'neg rax',
-    'not rax',
-    'inc rax',
-])
+
+@pytest.mark.parametrize(
+    'asm',
+    [
+        'blsi rax, rbx',
+        'blsr rax, rbx',
+        'blsi rcx, rdx',
+        'blsr rcx, rdx',
+        'andn rax, rbx, rcx',
+        'and rax, rbx',
+        'or  rax, rbx',
+        'xor rax, rbx',
+        'add rax, rbx',
+        'sub rax, rbx',
+        'sbb rax, rbx',
+        'adc rax, rbx',
+        'imul rax, rbx',
+        'imul rax, rbx, 3',
+        'shl rax, 5',
+        'shr rax, cl',
+        'rol rax, 8',
+        'lea rax, [rbx + rcx*2]',
+        'movzx rax, bl',
+        'movsx rax, bl',
+        'cmovz rax, rbx',
+        'cmovnz rax, rbx',
+        'cmovg rax, rcx',
+        'tzcnt rax, rbx',
+        'lzcnt rax, rbx',
+        'popcnt rax, rbx',
+        'bswap rax',
+        'neg rax',
+        'not rax',
+        'inc rax',
+    ],
+)
 def test_single_instruction_soundness_fuzz(asm: str) -> None:
     """Fuzz a single instruction across a variety of taint configurations.
 
@@ -556,50 +578,54 @@ def test_single_instruction_soundness_fuzz(asm: str) -> None:
     from the output).
     """
     import random
+
     rng = random.Random(hash(asm))
 
     taint_patterns: list[dict[str, int]] = [
-        {r: MASK64 for r in REGS},                                            # all tainted
-        {'RAX': MASK64},                                                       # only RAX
-        {'RBX': MASK64},                                                       # only RBX
-        {'RCX': MASK64},                                                       # only RCX
-        {r: 0xFF for r in REGS},                                              # low byte only
-        {r: 0xFFFFFFFF00000000 for r in REGS},                                # high half
+        dict.fromkeys(REGS, MASK64),  # all tainted
+        {'RAX': MASK64},  # only RAX
+        {'RBX': MASK64},  # only RBX
+        {'RCX': MASK64},  # only RCX
+        dict.fromkeys(REGS, 255),  # low byte only
+        dict.fromkeys(REGS, 18446744069414584320),  # high half
     ]
-    for trial in range(12):
+    for _trial in range(12):
         state = {r: rng.randint(1, MASK64) for r in REGS}  # avoid 0 (DIV-by-zero etc)
         for taint in taint_patterns:
             _assert_sound([asm], state, taint)
 
 
-@pytest.mark.parametrize('seq', [
-    ['blsi rax, rbx', 'andn rcx, rax, rdx'],
-    ['add rax, rbx', 'add rcx, rax', 'add rdx, rcx'],
-    ['shl rax, 4', 'or rbx, rax', 'shr rbx, 2'],
-    ['mov rcx, rax', 'xor rdx, rcx', 'mov rax, rdx'],
-    ['imul rax, rbx', 'add rcx, rax', 'mov rdx, rcx'],
-    ['neg rax', 'sub rbx, rax', 'mov rcx, rbx'],
-    ['add rax, rbx', 'adc rcx, rdx'],
-    ['sub rax, rbx', 'sbb rcx, rdx'],
-    ['xor rax, rax', 'add rax, rbx'],
-    ['movzx rax, bl', 'add rax, rcx'],
-    ['movsx rax, bl', 'imul rax, rdx'],
-    ['rol rax, 8', 'ror rbx, 8'],
-    ['bswap rax', 'mov rbx, 0xff00ff00ff00ff00', 'and rax, rbx'],
-    ['shl rax, 18', 'shl rbx, 12', 'shl rcx, 6',
-     'or rax, rbx', 'or rax, rcx', 'or rax, rdx'],
-    ['movzx rcx, al', 'movzx rdx, bl', 'sub rcx, rdx', 'movsx rax, cl'],
-    ['rol rax, 13', 'xor rax, rbx', 'rol rax, 7', 'xor rax, rcx', 'add rax, rdx'],
-])
+@pytest.mark.parametrize(
+    'seq',
+    [
+        ['blsi rax, rbx', 'andn rcx, rax, rdx'],
+        ['add rax, rbx', 'add rcx, rax', 'add rdx, rcx'],
+        ['shl rax, 4', 'or rbx, rax', 'shr rbx, 2'],
+        ['mov rcx, rax', 'xor rdx, rcx', 'mov rax, rdx'],
+        ['imul rax, rbx', 'add rcx, rax', 'mov rdx, rcx'],
+        ['neg rax', 'sub rbx, rax', 'mov rcx, rbx'],
+        ['add rax, rbx', 'adc rcx, rdx'],
+        ['sub rax, rbx', 'sbb rcx, rdx'],
+        ['xor rax, rax', 'add rax, rbx'],
+        ['movzx rax, bl', 'add rax, rcx'],
+        ['movsx rax, bl', 'imul rax, rdx'],
+        ['rol rax, 8', 'ror rbx, 8'],
+        ['bswap rax', 'mov rbx, 0xff00ff00ff00ff00', 'and rax, rbx'],
+        ['shl rax, 18', 'shl rbx, 12', 'shl rcx, 6', 'or rax, rbx', 'or rax, rcx', 'or rax, rdx'],
+        ['movzx rcx, al', 'movzx rdx, bl', 'sub rcx, rdx', 'movsx rax, cl'],
+        ['rol rax, 13', 'xor rax, rbx', 'rol rax, 7', 'xor rax, rcx', 'add rax, rdx'],
+    ],
+)
 def test_chain_soundness_fuzz(seq: list[str]) -> None:
     """Fuzz multi-instruction sequences for soundness across random states."""
     import random
+
     rng = random.Random(hash(tuple(seq)))
 
-    for trial in range(8):
+    for _trial in range(8):
         state = {r: rng.randint(1, MASK64) for r in REGS}
         for taint_mask in (MASK64, 0xFF, 0xFFFF0000FFFF0000):
-            taint = {r: taint_mask for r in REGS}
+            taint = dict.fromkeys(REGS, taint_mask)
             _assert_sound(seq, state, taint)
 
 
@@ -621,8 +647,7 @@ def test_chain_soundness_fuzz(seq: list[str]) -> None:
 _WORKER_REGS = [Register(n, 64) for n in REGS]  # exactly what worker_microtaint.py uses
 
 
-def _microtaint_run_worker_style(asm_lines: list[str], state: dict[str, int],
-                                 taint: dict[str, int]) -> dict[str, int]:
+def _microtaint_run_worker_style(asm_lines: list[str], state: dict[str, int], taint: dict[str, int]) -> dict[str, int]:
     """Run microtaint with the EXACT register list used by worker_microtaint.py.
 
     Differs from `_microtaint_run` in that the register list contains only
@@ -645,8 +670,7 @@ def _microtaint_run_worker_style(asm_lines: list[str], state: dict[str, int],
     return circuit.evaluate(ctx)
 
 
-def _assert_sound_worker(asm_lines: list[str], state: dict[str, int],
-                         taint: dict[str, int]) -> None:
+def _assert_sound_worker(asm_lines: list[str], state: dict[str, int], taint: dict[str, int]) -> None:
     """Run microtaint with the worker register list, compute Unicorn ground
     truth, assert no under-taint."""
     code = _assemble(asm_lines)
@@ -661,7 +685,7 @@ def _assert_sound_worker(asm_lines: list[str], state: dict[str, int],
             n_under = bin(under).count('1')
             failures.append(
                 f'{reg}: under-taint by {n_under} bits — '
-                f'true={hex(true_mask)} got={hex(got_mask)} missing={hex(under)}'
+                f'true={hex(true_mask)} got={hex(got_mask)} missing={hex(under)}',
             )
     if failures:
         msg = '\n  '.join(failures)
@@ -702,108 +726,144 @@ class TestBenchmarkRegression20260503:
     # id 821: neg rax; sub rbx, rax; mov rcx, rbx — neg-sub-mov chain (case A)
     def test_821_neg_sub_mov_caseA(self) -> None:
         state = {
-            'RAX': 15773031461073224685, 'RBX': 15207111530931456857,
-            'RCX': 12794402654832150797, 'RDX': 11036027302511947317,
+            'RAX': 15773031461073224685,
+            'RBX': 15207111530931456857,
+            'RCX': 12794402654832150797,
+            'RDX': 11036027302511947317,
         }
         taint = {
-            'RAX': 76561193665298432, 'RBX': 150994944,
-            'RCX': 9007216434610177, 'RDX': 1152921504606846976,
+            'RAX': 76561193665298432,
+            'RBX': 150994944,
+            'RCX': 9007216434610177,
+            'RDX': 1152921504606846976,
         }
         _assert_sound_worker(['neg rax', 'sub rbx, rax', 'mov rcx, rbx'], state, taint)
 
     # id 825: mov cl, 4; shl rax, cl — variable shift by constant count
     def test_825_mov_cl_then_shl(self) -> None:
         state = {
-            'RAX': 3145102647585366598, 'RBX': 323498066970872906,
-            'RCX': 16340536423274718691, 'RDX': 10011729623591357551,
+            'RAX': 3145102647585366598,
+            'RBX': 323498066970872906,
+            'RCX': 16340536423274718691,
+            'RDX': 10011729623591357551,
         }
         taint = {
-            'RAX': 576460821022916608, 'RBX': 73744,
-            'RCX': 1152921504607109120, 'RDX': 0,
+            'RAX': 576460821022916608,
+            'RBX': 73744,
+            'RCX': 1152921504607109120,
+            'RDX': 0,
         }
         _assert_sound_worker(['mov cl, 4', 'shl rax, cl'], state, taint)
 
     # id 851: rol/xor/rol/xor/add chain (crypto-style permutation)
     def test_851_crypto_chain_caseA(self) -> None:
         state = {
-            'RAX': 9462808105761198019, 'RBX': 1260233167559427307,
-            'RCX': 3211362100196543915, 'RDX': 8766221879185115725,
+            'RAX': 9462808105761198019,
+            'RBX': 1260233167559427307,
+            'RCX': 3211362100196543915,
+            'RDX': 8766221879185115725,
         }
         taint = {
-            'RAX': 4611686022722355200, 'RBX': 1342177280,
-            'RCX': 12884901888, 'RDX': 35433480192,
+            'RAX': 4611686022722355200,
+            'RBX': 1342177280,
+            'RCX': 12884901888,
+            'RDX': 35433480192,
         }
         _assert_sound_worker(
             ['rol rax, 13', 'xor rax, rbx', 'rol rax, 7', 'xor rax, rcx', 'add rax, rdx'],
-            state, taint,
+            state,
+            taint,
         )
 
-    # id 869: 4× add rax, rbx — pure carry chain stress test
+    # id 869: 4x add rax, rbx — pure carry chain stress test
     def test_869_add_chain_4x(self) -> None:
         state = {
-            'RAX': 3422279987030865735, 'RBX': 3947325121171498645,
-            'RCX': 1838748979518619040, 'RDX': 653864017478472027,
+            'RAX': 3422279987030865735,
+            'RBX': 3947325121171498645,
+            'RCX': 1838748979518619040,
+            'RDX': 653864017478472027,
         }
         taint = {
-            'RAX': 1125899940397120, 'RBX': 70368744181760,
-            'RCX': 0, 'RDX': 2251800082120712,
+            'RAX': 1125899940397120,
+            'RBX': 70368744181760,
+            'RCX': 0,
+            'RDX': 2251800082120712,
         }
         _assert_sound_worker(
             ['add rax, rbx', 'add rax, rbx', 'add rax, rbx', 'add rax, rbx'],
-            state, taint,
+            state,
+            taint,
         )
 
     # id 871: blsi + andn — BMI dataflow into third register
     def test_871_blsi_andn(self) -> None:
         state = {
-            'RAX': 11158715849010693534, 'RBX': 1105559444368898328,
-            'RCX': 4489845537896655591, 'RDX': 17813962747657217048,
+            'RAX': 11158715849010693534,
+            'RBX': 1105559444368898328,
+            'RCX': 4489845537896655591,
+            'RDX': 17813962747657217048,
         }
         taint = {
-            'RAX': 35184372088832, 'RBX': 70377334112256,
-            'RCX': 0, 'RDX': 17592186044416,
+            'RAX': 35184372088832,
+            'RBX': 70377334112256,
+            'RCX': 0,
+            'RDX': 17592186044416,
         }
         _assert_sound_worker(['blsi rax, rbx', 'andn rcx, rax, rdx'], state, taint)
 
     # id 939: rol/xor/rol/xor/add chain — second case with different state/taint
     def test_939_crypto_chain_caseB(self) -> None:
         state = {
-            'RAX': 17310100993514881776, 'RBX': 8352897263129780062,
-            'RCX': 12834837876267824982, 'RDX': 15552879662868555556,
+            'RAX': 17310100993514881776,
+            'RBX': 8352897263129780062,
+            'RCX': 12834837876267824982,
+            'RDX': 15552879662868555556,
         }
         taint = {
-            'RAX': 1049600, 'RBX': 72057594037927936,
-            'RCX': 8796630941696, 'RDX': 1099511627808,
+            'RAX': 1049600,
+            'RBX': 72057594037927936,
+            'RCX': 8796630941696,
+            'RDX': 1099511627808,
         }
         _assert_sound_worker(
             ['rol rax, 13', 'xor rax, rbx', 'rol rax, 7', 'xor rax, rcx', 'add rax, rdx'],
-            state, taint,
+            state,
+            taint,
         )
 
     # id 954: add cascade across 3 registers — RAX→RCX→RDX carry propagation
     def test_954_add_cascade_3reg(self) -> None:
         state = {
-            'RAX': 2239767635897444328, 'RBX': 9688080004658431800,
-            'RCX': 14895366135836793746, 'RDX': 1764350782183614702,
+            'RAX': 2239767635897444328,
+            'RBX': 9688080004658431800,
+            'RCX': 14895366135836793746,
+            'RDX': 1764350782183614702,
         }
         taint = {
-            'RAX': 8796093055012, 'RBX': 8589967361,
-            'RCX': 0, 'RDX': 16384,
+            'RAX': 8796093055012,
+            'RBX': 8589967361,
+            'RCX': 0,
+            'RDX': 16384,
         }
         _assert_sound_worker(
             ['add rax, rbx', 'add rcx, rax', 'add rdx, rcx'],
-            state, taint,
+            state,
+            taint,
         )
 
     # id 955: neg-sub-mov chain (case B with different state/taint)
     def test_955_neg_sub_mov_caseB(self) -> None:
         state = {
-            'RAX': 5487737478358155806, 'RBX': 12199477105233075724,
-            'RCX': 1304497809212559287, 'RDX': 2180567047932399672,
+            'RAX': 5487737478358155806,
+            'RBX': 12199477105233075724,
+            'RCX': 1304497809212559287,
+            'RDX': 2180567047932399672,
         }
         taint = {
-            'RAX': 65536, 'RBX': 8200,
-            'RCX': 618475290624, 'RDX': 2306124485264146432,
+            'RAX': 65536,
+            'RBX': 8200,
+            'RCX': 618475290624,
+            'RDX': 2306124485264146432,
         }
         _assert_sound_worker(['neg rax', 'sub rbx, rax', 'mov rcx, rbx'], state, taint)
 
@@ -815,12 +875,16 @@ class TestBenchmarkRegression20260503:
     # bit 9 of T_RCX).
     def test_958_movzx_add(self) -> None:
         state = {
-            'RAX': 0xf07afab7cb9f82a5, 'RBX': 0x41f3e01c7da1f511,
-            'RCX': 0x29d2680ab5f861b0, 'RDX': 0xf6e0a26e39bce100,
+            'RAX': 0xF07AFAB7CB9F82A5,
+            'RBX': 0x41F3E01C7DA1F511,
+            'RCX': 0x29D2680AB5F861B0,
+            'RDX': 0xF6E0A26E39BCE100,
         }
         taint = {
-            'RAX': 0x8000000001002, 'RBX': 0,
-            'RCX': 0x200200, 'RDX': 0x20000010000080,
+            'RAX': 0x8000000001002,
+            'RBX': 0,
+            'RCX': 0x200200,
+            'RDX': 0x20000010000080,
         }
         _assert_sound_worker(['movzx rax, bx', 'add rax, rcx'], state, taint)
 
@@ -829,16 +893,21 @@ class TestBenchmarkRegression20260503:
     # path under-taints) varies with concrete state.
     def test_976_crypto_chain_caseC(self) -> None:
         state = {
-            'RAX': 0xefcd7faebe5c32b8, 'RBX': 0xb7efef05d8fd2048,
-            'RCX': 0x36fda98d94ab24e9, 'RDX': 0x8dc12eba1f808e1c,
+            'RAX': 0xEFCD7FAEBE5C32B8,
+            'RBX': 0xB7EFEF05D8FD2048,
+            'RCX': 0x36FDA98D94AB24E9,
+            'RDX': 0x8DC12EBA1F808E1C,
         }
         taint = {
-            'RAX': 0, 'RBX': 0,
-            'RCX': 0x80, 'RDX': 0x2000000000000000,
+            'RAX': 0,
+            'RBX': 0,
+            'RCX': 0x80,
+            'RDX': 0x2000000000000000,
         }
         _assert_sound_worker(
             ['rol rax, 13', 'xor rax, rbx', 'rol rax, 7', 'xor rax, rcx', 'add rax, rdx'],
-            state, taint,
+            state,
+            taint,
         )
 
 
@@ -848,24 +917,28 @@ class TestBenchmarkRegression20260503:
 # even if the specific (state, taint) tuples above are all sound.
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize('seq', [
-    # Patterns observed unsound in report_1777829004.json + report_1777831878.json
-    ['neg rax', 'sub rbx, rax', 'mov rcx, rbx'],
-    ['mov cl, 4', 'shl rax, cl'],
-    ['mov cl, 7', 'shr rax, cl'],
-    ['mov cl, 13', 'rol rax, cl'],
-    ['rol rax, 13', 'xor rax, rbx', 'rol rax, 7', 'xor rax, rcx', 'add rax, rdx'],
-    ['add rax, rbx', 'add rax, rbx', 'add rax, rbx', 'add rax, rbx'],
-    ['add rax, rbx', 'add rcx, rax', 'add rdx, rcx'],
-    ['blsi rax, rbx', 'andn rcx, rax, rdx'],
-    ['movzx rax, bx', 'add rax, rcx'],   # report_1777831878 id=958
-    ['movzx rax, bl', 'add rax, rcx'],   # variation: movzx from byte
-    ['movsx rax, bx', 'add rax, rcx'],   # variation: signed extension
-    # Variations on the same themes
-    ['blsr rax, rbx', 'andn rcx, rax, rdx'],
-    ['neg rax', 'add rbx, rax', 'mov rcx, rbx'],
-    ['adc rax, rbx', 'adc rax, rbx', 'adc rax, rbx'],
-])
+
+@pytest.mark.parametrize(
+    'seq',
+    [
+        # Patterns observed unsound in report_1777829004.json + report_1777831878.json
+        ['neg rax', 'sub rbx, rax', 'mov rcx, rbx'],
+        ['mov cl, 4', 'shl rax, cl'],
+        ['mov cl, 7', 'shr rax, cl'],
+        ['mov cl, 13', 'rol rax, cl'],
+        ['rol rax, 13', 'xor rax, rbx', 'rol rax, 7', 'xor rax, rcx', 'add rax, rdx'],
+        ['add rax, rbx', 'add rax, rbx', 'add rax, rbx', 'add rax, rbx'],
+        ['add rax, rbx', 'add rcx, rax', 'add rdx, rcx'],
+        ['blsi rax, rbx', 'andn rcx, rax, rdx'],
+        ['movzx rax, bx', 'add rax, rcx'],  # report_1777831878 id=958
+        ['movzx rax, bl', 'add rax, rcx'],  # variation: movzx from byte
+        ['movsx rax, bx', 'add rax, rcx'],  # variation: signed extension
+        # Variations on the same themes
+        ['blsr rax, rbx', 'andn rcx, rax, rdx'],
+        ['neg rax', 'add rbx, rax', 'mov rcx, rbx'],
+        ['adc rax, rbx', 'adc rax, rbx', 'adc rax, rbx'],
+    ],
+)
 def test_worker_style_pattern_fuzz(seq: list[str]) -> None:
     """Fuzz the exact patterns the differential benchmark flagged.
 
@@ -875,6 +948,7 @@ def test_worker_style_pattern_fuzz(seq: list[str]) -> None:
     the benchmark.
     """
     import random
+
     rng = random.Random(hash(tuple(seq)) & 0xFFFF_FFFF)
 
     for trial in range(20):
@@ -916,7 +990,7 @@ def test_worker_style_pattern_fuzz(seq: list[str]) -> None:
 #           RCX=0xae9af1698a0c5100 RDX=0xaf895f5b9c2c0ac2
 #   truth RCX=0xfffffffbdffffffd  got RCX=0xfffffffffffffffc  missing 0x1
 #
-# The ADC chain ``adc rax, rbx`` ×3 with the same fuzz IS sound, so the
+# The ADC chain ``adc rax, rbx`` x3 with the same fuzz IS sound, so the
 # bug is specific to ``sbb``'s P-code lifting (likely INT_SBORROW
 # producing an op signature the bit-precise classifier handles slightly
 # differently from INT_CARRY).
@@ -925,11 +999,12 @@ def test_worker_style_pattern_fuzz(seq: list[str]) -> None:
 # the SBB lifter / classifier, flip the marker to .xpass-strict to
 # guard against regressions.
 
+
 @pytest.mark.xfail(
-    reason="Known SBB chain unsoundness: sbb rcx, rax under-taints bit 0 of "
-           "RCX after a prior sbb. The lifter mishandles INT_SBORROW fan-in "
-           "into the destination register. Tracked separately from the 8 "
-           "benchmark regressions which are all fixed.",
+    reason='Known SBB chain unsoundness: sbb rcx, rax under-taints bit 0 of '
+    'RCX after a prior sbb. The lifter mishandles INT_SBORROW fan-in '
+    'into the destination register. Tracked separately from the 8 '
+    'benchmark regressions which are all fixed.',
     strict=False,
 )
 def test_known_failing_sbb_chain() -> None:
@@ -940,12 +1015,15 @@ def test_known_failing_sbb_chain() -> None:
     """
     seq = ['sbb rax, rbx', 'sbb rcx, rax', 'sbb rdx, rcx']
     state = {
-        'RAX': 0x92e5dfe8cb1855ff, 'RBX': 0x14a03569d26b9497,
-        'RCX': 0xc320a4737c2b3abf, 'RDX': 0x96d373742f9a03a,
+        'RAX': 0x92E5DFE8CB1855FF,
+        'RBX': 0x14A03569D26B9497,
+        'RCX': 0xC320A4737C2B3ABF,
+        'RDX': 0x96D373742F9A03A,
     }
     taint = {
-        'RAX': 0xbc1e3ac1c27db4ec, 'RBX': 0xc527e27951c34250,
-        'RCX': 0xae9af1698a0c5100, 'RDX': 0xaf895f5b9c2c0ac2,
+        'RAX': 0xBC1E3AC1C27DB4EC,
+        'RBX': 0xC527E27951C34250,
+        'RCX': 0xAE9AF1698A0C5100,
+        'RDX': 0xAF895F5B9C2C0AC2,
     }
     _assert_sound_worker(seq, state, taint)
-
