@@ -8,8 +8,10 @@ from typing import Any
 import unicorn.arm64_const as uc_arm64_const
 import unicorn.unicorn_py3 as uc_py3
 import unicorn.x86_const as uc_x86_const
+import unicorn.riscv_const as uc_riscv_const
 from unicorn import (
     UC_ARCH_ARM64,
+    UC_ARCH_RISCV,
     UC_ARCH_X86,
     UC_ERR_FETCH_UNMAPPED,
     UC_ERR_MAP,
@@ -20,6 +22,7 @@ from unicorn import (
     UC_MODE_32,
     UC_MODE_64,
     UC_MODE_ARM,
+    UC_MODE_RISCV64,
 )
 
 from microtaint.instrumentation.cell import PCodeCellEvaluator, PCodeFallbackNeeded
@@ -40,6 +43,7 @@ _ARCH_MAP = {
     Architecture.X86: (UC_ARCH_X86, UC_MODE_32),
     Architecture.AMD64: (UC_ARCH_X86, UC_MODE_64),
     Architecture.ARM64: (UC_ARCH_ARM64, UC_MODE_ARM),
+    Architecture.RISCV64: (UC_ARCH_RISCV, UC_MODE_RISCV64),
 }
 
 _UC_REGS: dict[Architecture, dict[str, int]] = {
@@ -150,6 +154,47 @@ _UC_REGS: dict[Architecture, dict[str, int]] = {
         'PC': uc_arm64_const.UC_ARM64_REG_PC,
         'NZCV': uc_arm64_const.UC_ARM64_REG_NZCV,
     },
+    # RISC-V 64-bit (RV64GC).  Both numeric (X0..X31) and ABI aliases
+    # (ra/sp/gp/tp/t0-t6/s0-s11/a0-a7) point to the same Unicorn register
+    # IDs, so test corpora may use either form.  PC is also exposed.
+    Architecture.RISCV64: {
+        **{f'X{i}': getattr(uc_riscv_const, f'UC_RISCV_REG_X{i}') for i in range(32)},
+        'PC': uc_riscv_const.UC_RISCV_REG_PC,
+        # ABI aliases — same uc IDs as their X-numbered counterparts
+        'ZERO': uc_riscv_const.UC_RISCV_REG_X0,
+        'RA':   uc_riscv_const.UC_RISCV_REG_X1,
+        'SP':   uc_riscv_const.UC_RISCV_REG_X2,
+        'GP':   uc_riscv_const.UC_RISCV_REG_X3,
+        'TP':   uc_riscv_const.UC_RISCV_REG_X4,
+        'T0':   uc_riscv_const.UC_RISCV_REG_X5,
+        'T1':   uc_riscv_const.UC_RISCV_REG_X6,
+        'T2':   uc_riscv_const.UC_RISCV_REG_X7,
+        'S0':   uc_riscv_const.UC_RISCV_REG_X8,
+        'FP':   uc_riscv_const.UC_RISCV_REG_X8,  # frame pointer alias of s0
+        'S1':   uc_riscv_const.UC_RISCV_REG_X9,
+        'A0':   uc_riscv_const.UC_RISCV_REG_X10,
+        'A1':   uc_riscv_const.UC_RISCV_REG_X11,
+        'A2':   uc_riscv_const.UC_RISCV_REG_X12,
+        'A3':   uc_riscv_const.UC_RISCV_REG_X13,
+        'A4':   uc_riscv_const.UC_RISCV_REG_X14,
+        'A5':   uc_riscv_const.UC_RISCV_REG_X15,
+        'A6':   uc_riscv_const.UC_RISCV_REG_X16,
+        'A7':   uc_riscv_const.UC_RISCV_REG_X17,
+        'S2':   uc_riscv_const.UC_RISCV_REG_X18,
+        'S3':   uc_riscv_const.UC_RISCV_REG_X19,
+        'S4':   uc_riscv_const.UC_RISCV_REG_X20,
+        'S5':   uc_riscv_const.UC_RISCV_REG_X21,
+        'S6':   uc_riscv_const.UC_RISCV_REG_X22,
+        'S7':   uc_riscv_const.UC_RISCV_REG_X23,
+        'S8':   uc_riscv_const.UC_RISCV_REG_X24,
+        'S9':   uc_riscv_const.UC_RISCV_REG_X25,
+        'S10':  uc_riscv_const.UC_RISCV_REG_X26,
+        'S11':  uc_riscv_const.UC_RISCV_REG_X27,
+        'T3':   uc_riscv_const.UC_RISCV_REG_X28,
+        'T4':   uc_riscv_const.UC_RISCV_REG_X29,
+        'T5':   uc_riscv_const.UC_RISCV_REG_X30,
+        'T6':   uc_riscv_const.UC_RISCV_REG_X31,
+    },
 }
 
 
@@ -211,6 +256,8 @@ class CellSimulator:
             self.uc.reg_write(uc_x86_const.UC_X86_REG_RSP, stack_base)  # pyright: ignore[reportUnknownMemberType]
         elif self.arch == Architecture.ARM64:
             self.uc.reg_write(uc_arm64_const.UC_ARM64_REG_SP, stack_base)  # pyright: ignore[reportUnknownMemberType]
+        elif self.arch == Architecture.RISCV64:
+            self.uc.reg_write(uc_riscv_const.UC_RISCV_REG_X2, stack_base)  # pyright: ignore[reportUnknownMemberType]
 
         self._pristine_context = self.uc.context_save()
 
@@ -230,6 +277,8 @@ class CellSimulator:
             self._pc_reg: int = uc_x86_const.UC_X86_REG_EIP
         elif arch == Architecture.AMD64:
             self._pc_reg = uc_x86_const.UC_X86_REG_RIP
+        elif arch == Architecture.RISCV64:
+            self._pc_reg = uc_riscv_const.UC_RISCV_REG_PC
         else:
             self._pc_reg = uc_arm64_const.UC_ARM64_REG_PC
         # Bytestring cache — skip redundant mem_write when code hasn't changed
@@ -277,6 +326,10 @@ class CellSimulator:
                 'SP',
                 'PC',
                 'NZCV',
+            ],
+            Architecture.RISCV64: [
+                *[f'X{i}' for i in range(32)],
+                'PC',
             ],
         }.get(arch, [])
         reg_map = _UC_REGS.get(arch, {})

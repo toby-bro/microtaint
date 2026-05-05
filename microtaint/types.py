@@ -8,6 +8,7 @@ class Architecture(StrEnum):
     X86 = 'X86'
     ARM64 = 'ARM64'
     AMD64 = 'AMD64'
+    RISCV64 = 'RISCV64'
 
 
 @dataclass(slots=True)
