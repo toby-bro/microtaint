@@ -1275,6 +1275,33 @@ def generate_taint_assignments(  # noqa: C901
                     AvalancheExpr(transport_term, count_width),
                     Constant(cap_mask, 8),
                 )
+
+            # Soundness floor for widening INT_SEXT: when the slice computes a
+            # narrow value and then sign-extends it, the SEXT replicates the
+            # inner MSB into every fill bit.  The transport_term as-built is
+            # only `inner_width` bits wide (deps are sliced to the inner read
+            # width), so its bits above `inner_width` are 0 — they contribute
+            # nothing through the OR.  But the *true* taint of the SEXT fill
+            # is `transport_term[inner_width-1]` replicated into bits
+            # [inner_width .. out_width-1].  Fan it out by log-fold doubling.
+            sext_op = next(
+                (op for op in slice_ops
+                 if op.opcode.name == 'INT_SEXT'
+                 and op.output is not None
+                 and op.inputs[0].size * 8 < op.output.size * 8
+                 and op.output.size * 8 <= out_width),
+                None,
+            )
+            if sext_op is not None:
+                inner = sext_op.inputs[0].size * 8
+                msb = BinaryExpr(Op.AND, transport_term, Constant(1 << (inner - 1), 8))
+                fill = BinaryExpr(Op.LEFT, msb, Constant(1, 8))  # bit at position `inner`
+                width = 1
+                while width < out_width - inner:
+                    fill = BinaryExpr(Op.OR, fill, BinaryExpr(Op.LEFT, fill, Constant(width, 8)))
+                    width *= 2
+                transport_term = BinaryExpr(Op.OR, transport_term, fill)
+
             expr = BinaryExpr(Op.OR, diff_expr, transport_term)
         else:
             expr = diff_expr
