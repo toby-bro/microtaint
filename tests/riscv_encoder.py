@@ -21,15 +21,39 @@ from __future__ import annotations
 # ABI-name → register number (x0 .. x31).  Matches the RISC-V calling
 # convention (Volume I, ABI Appendix).
 _ABI_REGS: dict[str, int] = {
-    'zero': 0, 'ra': 1, 'sp': 2, 'gp': 3, 'tp': 4,
-    't0': 5, 't1': 6, 't2': 7,
-    's0': 8, 'fp': 8, 's1': 9,
-    'a0': 10, 'a1': 11, 'a2': 12, 'a3': 13,
-    'a4': 14, 'a5': 15, 'a6': 16, 'a7': 17,
-    's2': 18, 's3': 19, 's4': 20, 's5': 21,
-    's6': 22, 's7': 23, 's8': 24, 's9': 25,
-    's10': 26, 's11': 27,
-    't3': 28, 't4': 29, 't5': 30, 't6': 31,
+    'zero': 0,
+    'ra': 1,
+    'sp': 2,
+    'gp': 3,
+    'tp': 4,
+    't0': 5,
+    't1': 6,
+    't2': 7,
+    's0': 8,
+    'fp': 8,
+    's1': 9,
+    'a0': 10,
+    'a1': 11,
+    'a2': 12,
+    'a3': 13,
+    'a4': 14,
+    'a5': 15,
+    'a6': 16,
+    'a7': 17,
+    's2': 18,
+    's3': 19,
+    's4': 20,
+    's5': 21,
+    's6': 22,
+    's7': 23,
+    's8': 24,
+    's9': 25,
+    's10': 26,
+    's11': 27,
+    't3': 28,
+    't4': 29,
+    't5': 30,
+    't6': 31,
 }
 # Numeric x0 .. x31
 for _i in range(32):
@@ -47,10 +71,12 @@ def _r(name: str) -> int:
 def _imm(val: int, bits: int) -> int:
     """Validate immediate fits in `bits` (signed) and return its bit representation."""
     lo = -(1 << (bits - 1))
-    hi = (1 << (bits - 1))  # exclusive
-    hi_unsigned = (1 << bits)
+    hi = 1 << (bits - 1)  # exclusive
+    hi_unsigned = 1 << bits
     if not (lo <= val < hi_unsigned):
-        raise ValueError(f'immediate {val} does not fit in {bits} bits (range {lo}..{hi-1} signed or 0..{hi_unsigned-1} unsigned)')
+        raise ValueError(
+            f'immediate {val} does not fit in {bits} bits (range {lo}..{hi-1} signed or 0..{hi_unsigned-1} unsigned)',
+        )
     return val & ((1 << bits) - 1)
 
 
@@ -62,6 +88,7 @@ def _word_to_le(word: int) -> bytes:
 # ---------------------------------------------------------------------------
 # Format encoders
 # ---------------------------------------------------------------------------
+
 
 def _R(funct7: int, rs2: int, rs1: int, funct3: int, rd: int, opcode: int) -> int:
     return (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
@@ -114,7 +141,8 @@ def _J(imm21: int, rd: int, opcode: int) -> int:
 # Public encode() entry point
 # ---------------------------------------------------------------------------
 
-def encode(asm_line: str) -> bytes:
+
+def encode(asm_line: str) -> bytes:  # noqa: C901
     """
     Encode one RISC-V assembly line and return its 4-byte LE bytes.
 
@@ -143,35 +171,35 @@ def encode(asm_line: str) -> bytes:
     # ---- R-type ALU (RV64I + RV64M) ----
     R_TYPE = {
         # mnem:        (funct7, funct3, opcode)
-        'add':    (0x00, 0b000, 0b0110011),
-        'sub':    (0x20, 0b000, 0b0110011),
-        'sll':    (0x00, 0b001, 0b0110011),
-        'slt':    (0x00, 0b010, 0b0110011),
-        'sltu':   (0x00, 0b011, 0b0110011),
-        'xor':    (0x00, 0b100, 0b0110011),
-        'srl':    (0x00, 0b101, 0b0110011),
-        'sra':    (0x20, 0b101, 0b0110011),
-        'or':     (0x00, 0b110, 0b0110011),
-        'and':    (0x00, 0b111, 0b0110011),
-        'mul':    (0x01, 0b000, 0b0110011),
-        'mulh':   (0x01, 0b001, 0b0110011),
+        'add': (0x00, 0b000, 0b0110011),
+        'sub': (0x20, 0b000, 0b0110011),
+        'sll': (0x00, 0b001, 0b0110011),
+        'slt': (0x00, 0b010, 0b0110011),
+        'sltu': (0x00, 0b011, 0b0110011),
+        'xor': (0x00, 0b100, 0b0110011),
+        'srl': (0x00, 0b101, 0b0110011),
+        'sra': (0x20, 0b101, 0b0110011),
+        'or': (0x00, 0b110, 0b0110011),
+        'and': (0x00, 0b111, 0b0110011),
+        'mul': (0x01, 0b000, 0b0110011),
+        'mulh': (0x01, 0b001, 0b0110011),
         'mulhsu': (0x01, 0b010, 0b0110011),
-        'mulhu':  (0x01, 0b011, 0b0110011),
-        'div':    (0x01, 0b100, 0b0110011),
-        'divu':   (0x01, 0b101, 0b0110011),
-        'rem':    (0x01, 0b110, 0b0110011),
-        'remu':   (0x01, 0b111, 0b0110011),
+        'mulhu': (0x01, 0b011, 0b0110011),
+        'div': (0x01, 0b100, 0b0110011),
+        'divu': (0x01, 0b101, 0b0110011),
+        'rem': (0x01, 0b110, 0b0110011),
+        'remu': (0x01, 0b111, 0b0110011),
         # 32-bit RV64 word-ops (.W suffix)
-        'addw':   (0x00, 0b000, 0b0111011),
-        'subw':   (0x20, 0b000, 0b0111011),
-        'sllw':   (0x00, 0b001, 0b0111011),
-        'srlw':   (0x00, 0b101, 0b0111011),
-        'sraw':   (0x20, 0b101, 0b0111011),
-        'mulw':   (0x01, 0b000, 0b0111011),
-        'divw':   (0x01, 0b100, 0b0111011),
-        'divuw':  (0x01, 0b101, 0b0111011),
-        'remw':   (0x01, 0b110, 0b0111011),
-        'remuw':  (0x01, 0b111, 0b0111011),
+        'addw': (0x00, 0b000, 0b0111011),
+        'subw': (0x20, 0b000, 0b0111011),
+        'sllw': (0x00, 0b001, 0b0111011),
+        'srlw': (0x00, 0b101, 0b0111011),
+        'sraw': (0x20, 0b101, 0b0111011),
+        'mulw': (0x01, 0b000, 0b0111011),
+        'divw': (0x01, 0b100, 0b0111011),
+        'divuw': (0x01, 0b101, 0b0111011),
+        'remw': (0x01, 0b110, 0b0111011),
+        'remuw': (0x01, 0b111, 0b0111011),
     }
     if mnem in R_TYPE:
         if len(args) != 3:
@@ -182,12 +210,12 @@ def encode(asm_line: str) -> bytes:
 
     # ---- I-type ALU (immediate) ----
     I_TYPE_ALU = {
-        'addi':  (0b000, 0b0010011),
-        'slti':  (0b010, 0b0010011),
+        'addi': (0b000, 0b0010011),
+        'slti': (0b010, 0b0010011),
         'sltiu': (0b011, 0b0010011),
-        'xori':  (0b100, 0b0010011),
-        'ori':   (0b110, 0b0010011),
-        'andi':  (0b111, 0b0010011),
+        'xori': (0b100, 0b0010011),
+        'ori': (0b110, 0b0010011),
+        'andi': (0b111, 0b0010011),
         'addiw': (0b000, 0b0011011),
     }
     if mnem in I_TYPE_ALU:
@@ -227,10 +255,10 @@ def encode(asm_line: str) -> bytes:
 
     # ---- I-type loads (offset-form: 'lw t0, 8(t1)') ----
     LOADS = {
-        'lb':  (0b000, 0b0000011),
-        'lh':  (0b001, 0b0000011),
-        'lw':  (0b010, 0b0000011),
-        'ld':  (0b011, 0b0000011),
+        'lb': (0b000, 0b0000011),
+        'lh': (0b001, 0b0000011),
+        'lw': (0b010, 0b0000011),
+        'ld': (0b011, 0b0000011),
         'lbu': (0b100, 0b0000011),
         'lhu': (0b101, 0b0000011),
         'lwu': (0b110, 0b0000011),
@@ -256,10 +284,10 @@ def encode(asm_line: str) -> bytes:
 
     # ---- B-type branches ----
     BRANCHES = {
-        'beq':  (0b000, 0b1100011),
-        'bne':  (0b001, 0b1100011),
-        'blt':  (0b100, 0b1100011),
-        'bge':  (0b101, 0b1100011),
+        'beq': (0b000, 0b1100011),
+        'bne': (0b001, 0b1100011),
+        'blt': (0b100, 0b1100011),
+        'bge': (0b101, 0b1100011),
         'bltu': (0b110, 0b1100011),
         'bgeu': (0b111, 0b1100011),
     }

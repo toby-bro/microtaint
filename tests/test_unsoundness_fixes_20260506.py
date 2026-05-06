@@ -12,12 +12,16 @@ that the new implementation is sound.
 Each test computes the brute-force ground truth by 2^k Unicorn enumeration and
 checks `microtaint_output ⊇ ground_truth` (no under-tainted bits).
 """
+
+# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined"
+
 from __future__ import annotations
 
 import itertools
 
 import pytest
-from unicorn import Uc, UC_ARCH_X86, UC_MODE_64
+from unicorn import UC_ARCH_X86, UC_MODE_64
+from unicorn.unicorn_py3 import Uc
 from unicorn.x86_const import (
     UC_CPU_X86_BROADWELL,
     UC_X86_REG_RAX,
@@ -36,21 +40,21 @@ _REGS_GP = [Register('RAX', 64), Register('RBX', 64), Register('RCX', 64), Regis
 # SIMD tests need the XMM lane regs in state_format so the engine tracks
 # taint flow across the GP↔XMM boundary.  Fix 3 changes the worker (and
 # any downstream caller) to include these.
-_REGS_GP_XMM = _REGS_GP + [
-    Register(f'XMM{n}_LO', 64) for n in range(8)
-] + [
-    Register(f'XMM{n}_HI', 64) for n in range(8)
-]
+_REGS_GP_XMM = (
+    _REGS_GP + [Register(f'XMM{n}_LO', 64) for n in range(8)] + [Register(f'XMM{n}_HI', 64) for n in range(8)]
+)
 _SIM = CellSimulator(Architecture.AMD64)
 _UC_REGS = {
-    'RAX': UC_X86_REG_RAX, 'RBX': UC_X86_REG_RBX,
-    'RCX': UC_X86_REG_RCX, 'RDX': UC_X86_REG_RDX,
+    'RAX': UC_X86_REG_RAX,
+    'RBX': UC_X86_REG_RBX,
+    'RCX': UC_X86_REG_RCX,
+    'RDX': UC_X86_REG_RDX,
 }
 _BASE_ADDR = 0x400000
 _PAGE_SIZE = 0x1000
 
 
-def _brute_force_gt(
+def _brute_force_gt(  # noqa: C901
     bytestring: bytes,
     state: dict[str, int],
     taint: dict[str, int],
@@ -72,7 +76,7 @@ def _brute_force_gt(
     results: list[dict[str, int]] = []
     for assignment in itertools.product([0, 1], repeat=len(positions)):
         s = dict(state)
-        for (reg, bit), val in zip(positions, assignment):
+        for (reg, bit), val in zip(positions, assignment, strict=False):
             if val:
                 s[reg] = (s[reg] ^ (1 << bit)) & MASK64
         # Fresh Unicorn per assignment to avoid state bleed-through.
@@ -116,10 +120,7 @@ def _eval_microtaint(
     full_taint = {r.name: taint.get(r.name, 0) for r in regs}
     ctx = EvalContext(input_values=full_state, input_taint=full_taint, simulator=_SIM)
     raw = circuit.evaluate(ctx)
-    return {
-        r.name: (raw.get(r.name, 0) & MASK64 if isinstance(raw.get(r.name, 0), int) else 0)
-        for r in regs
-    }
+    return {r.name: (raw.get(r.name, 0) & MASK64 if isinstance(raw.get(r.name, 0), int) else 0) for r in regs}
 
 
 def _assert_sound(
@@ -167,40 +168,47 @@ _PDEP_RAX_RBX_RCX = bytes.fromhex('c4e2e3f5c1')
 
 
 @pytest.mark.parametrize(
-    'state,taint',
+    ('state', 'taint'),
     [
         # id=181
         (
-            {'RAX': 0x6cecdf821903f9b3, 'RBX': 0x8b31f4d8e073c1d0,
-             'RCX': 0x3063ae7f41ff81d1, 'RDX': 0x850f1cdc1e2a03f1},
+            {
+                'RAX': 0x6CECDF821903F9B3,
+                'RBX': 0x8B31F4D8E073C1D0,
+                'RCX': 0x3063AE7F41FF81D1,
+                'RDX': 0x850F1CDC1E2A03F1,
+            },
             {'RCX': 0x200000000},
         ),
         # id=478
         (
-            {'RAX': 0xfe3f566204680a4a, 'RBX': 0x1bb9d499b6eea1cf,
-             'RCX': 0x72742e763b6becb7, 'RDX': 0x902ad0197a0ffa86},
+            {
+                'RAX': 0xFE3F566204680A4A,
+                'RBX': 0x1BB9D499B6EEA1CF,
+                'RCX': 0x72742E763B6BECB7,
+                'RDX': 0x902AD0197A0FFA86,
+            },
             {'RAX': 0x1000, 'RBX': 0x4000000080000000, 'RDX': 0x8000000120000080},
         ),
         # id=761
         (
-            {'RAX': 0x4c442d17d98d2038, 'RBX': 0x54b279cd0c248f00,
-             'RCX': 0xed50a84e71bfd71b, 'RDX': 0xcd4ba10b4666d99},
-            {'RAX': 0x10000000000, 'RBX': 0x20020020000,
-             'RCX': 0x410080000000000, 'RDX': 0x800},
+            {'RAX': 0x4C442D17D98D2038, 'RBX': 0x54B279CD0C248F00, 'RCX': 0xED50A84E71BFD71B, 'RDX': 0xCD4BA10B4666D99},
+            {'RAX': 0x10000000000, 'RBX': 0x20020020000, 'RCX': 0x410080000000000, 'RDX': 0x800},
         ),
         # id=1978
         (
-            {'RAX': 0x2298e3d0cb5718ce, 'RBX': 0x1f923c2da511e769,
-             'RCX': 0x7b873eec9fb8785, 'RDX': 0x4169ed13be0af8f5},
-            {'RAX': 0x4010000800080, 'RCX': 0x100002020,
-             'RDX': 0x100000000001003},
+            {'RAX': 0x2298E3D0CB5718CE, 'RBX': 0x1F923C2DA511E769, 'RCX': 0x7B873EEC9FB8785, 'RDX': 0x4169ED13BE0AF8F5},
+            {'RAX': 0x4010000800080, 'RCX': 0x100002020, 'RDX': 0x100000000001003},
         ),
         # id=1979
         (
-            {'RAX': 0x45dc97cb2ef2d364, 'RBX': 0x2cabbc0ba8b1792f,
-             'RCX': 0xf5671bab96d0398b, 'RDX': 0xda7db85332c8b2b1},
-            {'RAX': 0x8400000000000000, 'RCX': 0x1000000000000,
-             'RDX': 0x20000000000},
+            {
+                'RAX': 0x45DC97CB2EF2D364,
+                'RBX': 0x2CABBC0BA8B1792F,
+                'RCX': 0xF5671BAB96D0398B,
+                'RDX': 0xDA7DB85332C8B2B1,
+            },
+            {'RAX': 0x8400000000000000, 'RCX': 0x1000000000000, 'RDX': 0x20000000000},
         ),
     ],
     ids=['id181', 'id478', 'id761', 'id1978', 'id1979'],
@@ -211,21 +219,22 @@ def test_pext_rax_sound_under_random_input_taint(state, taint):
 
 
 @pytest.mark.parametrize(
-    'state,taint',
+    ('state', 'taint'),
     [
         # id=1983
         (
-            {'RAX': 0x971d2da3a5a57309, 'RBX': 0x1797295a996976f6,
-             'RCX': 0x904dc2698a91420, 'RDX': 0xfab6819cb53e4fe3},
-            {'RAX': 0x1000000000080800, 'RBX': 0x2020000000,
-             'RCX': 0x88080040, 'RDX': 0x2800000000000},
+            {'RAX': 0x971D2DA3A5A57309, 'RBX': 0x1797295A996976F6, 'RCX': 0x904DC2698A91420, 'RDX': 0xFAB6819CB53E4FE3},
+            {'RAX': 0x1000000000080800, 'RBX': 0x2020000000, 'RCX': 0x88080040, 'RDX': 0x2800000000000},
         ),
         # id=1984
         (
-            {'RAX': 0x6137d61ee3b33b65, 'RBX': 0xc25f8c328f6ba093,
-             'RCX': 0xd754c81f76149744, 'RDX': 0xf08a9f63f7131a89},
-            {'RAX': 0x200000000000, 'RBX': 0x20000000,
-             'RCX': 0x20, 'RDX': 0x2},
+            {
+                'RAX': 0x6137D61EE3B33B65,
+                'RBX': 0xC25F8C328F6BA093,
+                'RCX': 0xD754C81F76149744,
+                'RDX': 0xF08A9F63F7131A89,
+            },
+            {'RAX': 0x200000000000, 'RBX': 0x20000000, 'RCX': 0x20, 'RDX': 0x2},
         ),
     ],
     ids=['id1983', 'id1984'],
@@ -239,9 +248,9 @@ def test_pdep_avalanche_basic():
     """PDEP is the inverse of PEXT and uses the same software-loop structure.
     Same software-loop detection should apply — any tainted source/mask bit
     must avalanche to the full output mask."""
-    state = {'RAX': 0, 'RBX': 0xff, 'RCX': 0x0123456789abcdef, 'RDX': 0}
+    state = {'RAX': 0, 'RBX': 0xFF, 'RCX': 0x0123456789ABCDEF, 'RDX': 0}
     # k=8 — within enumeration budget
-    taint = {'RBX': 0x0f}
+    taint = {'RBX': 0x0F}
     _assert_sound('pdep rax,rbx,rcx', _PDEP_RAX_RBX_RCX, state, taint)
 
 
@@ -266,18 +275,16 @@ _ADCX_RAX_RBX = bytes.fromhex('66480f38f6c3')
 
 def test_adcx_carry_chain_sound():
     """ADCX must propagate carry through tainted operands soundly."""
-    state = {'RAX': 0xe64b9b37ae01a122, 'RBX': 0x16dc5a6ea7890770,
-             'RCX': 0x4e9d23e9df162ec3, 'RDX': 0xe3082ddcc9c04b7d}
-    taint = {'RAX': 0x1000001008000000, 'RBX': 0x800000000,
-             'RCX': 0x400000, 'RDX': 0x3200000000000}
+    state = {'RAX': 0xE64B9B37AE01A122, 'RBX': 0x16DC5A6EA7890770, 'RCX': 0x4E9D23E9DF162EC3, 'RDX': 0xE3082DDCC9C04B7D}
+    taint = {'RAX': 0x1000001008000000, 'RBX': 0x800000000, 'RCX': 0x400000, 'RDX': 0x3200000000000}
     _assert_sound('adcx rax,rbx', _ADCX_RAX_RBX, state, taint)
 
 
 # =============================================================================
-# Pattern 3 — MULX (BMI2 64×64→128, low/high half write)
+# Pattern 3 — MULX (BMI2 64*64→128, low/high half write)
 # =============================================================================
 #
-# `mulx rax, rbx, rcx` performs RDX × RCX → 128-bit, writes high half to RAX,
+# `mulx rax, rbx, rcx` performs RDX * RCX → 128-bit, writes high half to RAX,
 # low half to RBX.  The COPY of the low 8 bytes of the 16-byte INT_MULT
 # output had the same overlap problem as ADCX's 9-bit ADD: the slicer's
 # exact-size match dropped INT_MULT, leaving the slice as just COPY (mapped).
@@ -293,8 +300,7 @@ _MULX_RAX_RBX_RCX = bytes.fromhex('c4e2e3f6c1')
 def test_mulx_low_half_sound():
     """The 128-bit product's low half (RBX) must avalanche from any tainted
     multiplicand bit, including high bits that affect carries."""
-    state = {'RAX': 0x548e2df49a2f8623, 'RBX': 0x700d5278b081391c,
-             'RCX': 0xe42390236c597f2e, 'RDX': 0xf0a4f07e43036244}
+    state = {'RAX': 0x548E2DF49A2F8623, 'RBX': 0x700D5278B081391C, 'RCX': 0xE42390236C597F2E, 'RDX': 0xF0A4F07E43036244}
     taint = {'RBX': 0x20000, 'RCX': 0x5000, 'RDX': 0x800000}
     _assert_sound('mulx rax,rbx,rcx', _MULX_RAX_RBX_RCX, state, taint)
 
@@ -322,14 +328,13 @@ _SIMD_PADDQ_ROUNDTRIP = bytes.fromhex('66480f6ec066480f6ecb660fd4c166480f7ec0')
 def test_simd_paddq_xmm_roundtrip_sound():
     """Taint MUST survive a GP→XMM→PADDQ→GP roundtrip when XMM regs are
     tracked in state_format."""
-    state = {'RAX': 0xe4723a97a7178558, 'RBX': 0x34f5b8ebaee5b68c,
-             'RCX': 0xf2128a487a6d9868, 'RDX': 0xf16da24334def7ee}
-    taint = {'RBX': 0x800000000041, 'RCX': 0x80000000000000,
-             'RDX': 0x8000010202000}
+    state = {'RAX': 0xE4723A97A7178558, 'RBX': 0x34F5B8EBAEE5B68C, 'RCX': 0xF2128A487A6D9868, 'RDX': 0xF16DA24334DEF7EE}
+    taint = {'RBX': 0x800000000041, 'RCX': 0x80000000000000, 'RDX': 0x8000010202000}
     _assert_sound(
         'movq xmm0,rax; movq xmm1,rbx; paddq; movq rax,xmm0',
         _SIMD_PADDQ_ROUNDTRIP,
-        state, taint,
+        state,
+        taint,
         regs=_REGS_GP_XMM,
         check_regs=('RAX',),  # only RAX matters for this case
     )
@@ -342,8 +347,8 @@ def test_simd_paddq_without_xmm_state_format_documents_limitation():
     taint tracking through SIMD.  This test pins that contract — if the
     engine ever changes to widen automatically, this test will break and
     the comment should be updated."""
-    state = {'RAX': 0, 'RBX': 0xff, 'RCX': 0, 'RDX': 0}
-    taint = {'RBX': 0xff}
+    state = {'RAX': 0, 'RBX': 0xFF, 'RCX': 0, 'RDX': 0}
+    taint = {'RBX': 0xFF}
     mt = _eval_microtaint(_SIMD_PADDQ_ROUNDTRIP, state, taint, regs=_REGS_GP)
     # Without XMM in state_format, RAX is reported clean (under-tainted vs GT).
     # That's the limitation the worker fix addresses.

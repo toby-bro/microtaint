@@ -30,7 +30,7 @@ truth short of a formal proof.
 """
 
 # ruff: noqa: PLC0415
-# mypy: disable-error-code="no-untyped-def, no-untyped-call,import-untyped,attr-defined,no-any-return"
+# mypy: disable-error-code="no-untyped-def,no-untyped-call,import-untyped,attr-defined,no-any-return,import-untyped"
 
 from __future__ import annotations
 

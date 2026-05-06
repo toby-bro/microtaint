@@ -133,7 +133,7 @@ def test_mov_ah_bh_preserves_other_rax_bytes() -> None:
 # =============================================================================
 
 @pytest.mark.parametrize(
-    'label,bytestring,regs_in',
+    ('label', 'bytestring', 'regs_in'),
     [
         # mov al, bl  — write byte 0 of RAX from byte 0 of RBX
         ('mov al, bl',     '88d8', {'RAX': 0xCAFEBABE_DEADBEEF, 'RBX': 0xAB}),

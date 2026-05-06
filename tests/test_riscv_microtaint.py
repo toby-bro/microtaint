@@ -45,7 +45,7 @@ Run
     pytest test_riscv_microtaint.py -v --benchmark-warmup=on --benchmark-min-rounds=20
 """
 
-# mypy: disable-error-code="type-arg,no-any-return,no-untyped-def"
+# mypy: disable-error-code="type-arg,no-any-return,no-untyped-def,attr-defined,no-untyped-call"
 # ruff: noqa: ARG001
 
 from __future__ import annotations
@@ -56,6 +56,7 @@ from typing import Any
 import pytest
 import unicorn
 import unicorn.riscv_const as ur
+import unicorn.unicorn_py3
 
 sys.path.insert(0, '/home/claude')
 from riscv_encoder import encode
@@ -367,8 +368,8 @@ _BASE_DATA = 0x80000000
 _DATA_SIZE = 0x10000
 
 
-def _new_uc() -> unicorn.Uc:
-    uc = unicorn.Uc(unicorn.UC_ARCH_RISCV, unicorn.UC_MODE_RISCV64)
+def _new_uc() -> unicorn.unicorn_py3.Uc:
+    uc = unicorn.unicorn_py3.Uc(unicorn.UC_ARCH_RISCV, unicorn.UC_MODE_RISCV64)
     uc.mem_map(_BASE_CODE, 0x4000)
     uc.mem_map(_BASE_DATA, _DATA_SIZE)
     return uc
@@ -386,7 +387,7 @@ def _run_unicorn_oracle(code: bytes, regs: dict[str, int]) -> dict[str, int]:
             uc.reg_write(rid, val & MASK64)
     try:
         uc.emu_start(_BASE_CODE, _BASE_CODE + len(code))
-    except unicorn.UcError:
+    except unicorn.unicorn_py3.UcError:
         pass
     out: dict[str, int] = {}
     for name, rid in _UC_GP.items():
@@ -735,7 +736,7 @@ def test_controlflow_backends_agree(
     Unicorn because microtaint's _execute caps emulation at one instruction's
     worth of bytes), the two backends produce different concrete PC values,
     which then cascade into different T_PC results through the BEQ/BNE
-    SimulateCell × AVALANCHE formula.
+    SimulateCell * AVALANCHE formula.
 
     Other registers must still agree — that's the property worth asserting.
     """
@@ -804,7 +805,10 @@ def test_bench_unicorn(
 
     def _go() -> dict:
         ctx = EvalContext(
-            input_values=values, input_taint=taint, simulator=sim_unicorn, implicit_policy=ImplicitTaintPolicy.KEEP
+            input_values=values,
+            input_taint=taint,
+            simulator=sim_unicorn,
+            implicit_policy=ImplicitTaintPolicy.KEEP,
         )
         return circuit.evaluate(ctx)
 
@@ -829,7 +833,10 @@ def test_bench_pcode(
 
     def _go() -> dict:
         ctx = EvalContext(
-            input_values=values, input_taint=taint, simulator=sim_pcode, implicit_policy=ImplicitTaintPolicy.KEEP
+            input_values=values,
+            input_taint=taint,
+            simulator=sim_pcode,
+            implicit_policy=ImplicitTaintPolicy.KEEP,
         )
         return circuit.evaluate(ctx)
 
@@ -860,7 +867,10 @@ def _run_chain(sim: CellSimulator, cache: dict) -> dict:
     for asm in TAINT_CHAIN:
         circuit = _circuit(asm, cache)
         ctx = EvalContext(
-            input_values=values, input_taint=taint, simulator=sim, implicit_policy=ImplicitTaintPolicy.KEEP
+            input_values=values,
+            input_taint=taint,
+            simulator=sim,
+            implicit_policy=ImplicitTaintPolicy.KEEP,
         )
         taint = circuit.evaluate(ctx)
     return taint
@@ -937,7 +947,7 @@ def test_pcode_fallback_rate(
     for asm in ARITHMETIC_PRIMITIVES:
         try:
             _run_microtaint(sim_pcode, asm, {'T1': 1, 'T2': 1}, {'T1': FULL_TAINT_64}, circuit_cache)
-        except Exception:
+        except Exception:  # noqa: S110
             pass
     pcode = sim_pcode._pcode
     if pcode is None:

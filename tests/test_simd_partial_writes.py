@@ -43,7 +43,7 @@ _SIM = CellSimulator(Architecture.AMD64)
 
 
 def _eval(
-    use_unicorn: bool, bytestring: str, regs_in: dict[str, int], out_reg: str, bit_start: int = 0, bit_end: int = 63
+    use_unicorn: bool, bytestring: str, regs_in: dict[str, int], out_reg: str, bit_start: int = 0, bit_end: int = 63,
 ) -> int:
     """Single-cell evaluation on either the C-pcode or Unicorn backend."""
     cell = InstructionCellExpr(
@@ -100,7 +100,7 @@ def _assert_c_matches_unicorn(
 
 
 @pytest.mark.parametrize(
-    'xmm0_lo,xmm1_lo,label',
+    ('xmm0_lo', 'xmm1_lo', 'label'),
     [
         (0x1, 0x2, 'minimal'),
         (0xFFFFFFFFFFFFFFFF, 0x1, 'overflow byte 0'),
@@ -119,7 +119,7 @@ def test_paddq_xmm_lo(xmm0_lo: int, xmm1_lo: int, label: str) -> None:
 
 
 @pytest.mark.parametrize(
-    'xmm0_lo,xmm1_lo,label',
+    ('xmm0_lo', 'xmm1_lo', 'label'),
     [
         (0x0102030405060708, 0x0101010101010101, 'no carry'),
         (0xFFFFFFFFFFFFFFFF, 0x0101010101010101, 'all bytes carry — but PADDB truncates per byte'),
@@ -143,7 +143,7 @@ def test_paddb_fans_out_to_byte_writes(
 
 
 @pytest.mark.parametrize(
-    'xmm0_lo,xmm1_lo',
+    ('xmm0_lo', 'xmm1_lo'),
     [
         (0xAAAA, 0x5555),  # bit-complement → all 1s
         (0x0000, 0xFFFF),  # zero ^ ones
@@ -162,7 +162,7 @@ def test_pxor_xmm_lo(xmm0_lo: int, xmm1_lo: int) -> None:
 
 
 @pytest.mark.parametrize(
-    'xmm0_lo,shift_imm,encoding',
+    ('xmm0_lo', 'shift_imm', 'encoding'),
     [
         (0xAB, 8, '660f73f008'),  # psllq xmm0, 8
         (0x100, 16, '660f73f010'),  # psllq xmm0, 16

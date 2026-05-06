@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import unicorn.arm64_const as uc_arm64_const
+import unicorn.riscv_const as uc_riscv_const
 import unicorn.unicorn_py3 as uc_py3
 import unicorn.x86_const as uc_x86_const
-import unicorn.riscv_const as uc_riscv_const
 from unicorn import (
     UC_ARCH_ARM64,
     UC_ARCH_RISCV,
