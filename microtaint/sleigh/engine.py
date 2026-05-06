@@ -533,6 +533,24 @@ def _cached_generate_static_rule(  # noqa: C901
             )
             is_bit_count = _has_backward and _has_counter_step
 
+        # Software-loop full-width avalanche.
+        # PEXT/PDEP (and similar BMI2 ops) lift to a CONDITIONAL backward
+        # branch (CBRANCH offset<0) — distinct from tzcnt/bsf/bsr which use
+        # an UNCONDITIONAL backward BRANCH paired with a separate condition.
+        # The slicer drops CBRANCH ops (no `output` field) so the loop
+        # structure is invisible at slice level: we detect it here, where
+        # `translation.ops` is in scope, and force AVALANCHE in
+        # generate_taint_assignments.
+        # Output width is unbounded (up to register width) — different from
+        # is_bit_count which caps to log2(width+1).
+        is_software_loop = not is_bit_count and any(
+            op.opcode.name == 'CBRANCH'
+            and op.inputs
+            and op.inputs[0].space.name == 'const'
+            and (op.inputs[0].offset & 0x80000000)
+            for op in translation.ops
+        )
+
         generate_taint_assignments(
             arch,
             bytestring,
@@ -548,6 +566,7 @@ def _cached_generate_static_rule(  # noqa: C901
             has_cbranch=has_cbranch,
             cbranch_flag_deps=cbranch_flag_deps,
             is_bit_count=is_bit_count,
+            is_software_loop=is_software_loop,
         )
 
     return LogicCircuit(
@@ -654,6 +673,7 @@ def generate_taint_assignments(  # noqa: C901
     has_cbranch: bool = False,
     cbranch_flag_deps: list[tuple[int, int]] | None = None,
     is_bit_count: bool = False,
+    is_software_loop: bool = False,
 ) -> None:
     # -----------------------------------------------------------------------
     # STORE TARGET — memory output of a STORE instruction.
@@ -871,6 +891,14 @@ def generate_taint_assignments(  # noqa: C901
         return
 
     cat = determine_category(slice_ops, out_width_bits=(out_bit_end - out_bit_start + 1))
+
+    # Software-loop override: PEXT/PDEP and similar BMI2 ops lift to a
+    # CBRANCH-driven loop whose body, when linearised by the slicer, gives
+    # a wrong straight-line result.  The loop's iteration count and output
+    # bit positions both depend on the input bits — full avalanche is the
+    # only safe answer.  See engine.py: is_software_loop computation above.
+    if is_software_loop:
+        cat = InstructionCategory.AVALANCHE
 
     # --- LOAD POINTER TAINT DETECTION ---
     # Identify which value_dep RegMappings are used as *pointer* inputs to
@@ -1285,11 +1313,14 @@ def generate_taint_assignments(  # noqa: C901
             # is `transport_term[inner_width-1]` replicated into bits
             # [inner_width .. out_width-1].  Fan it out by log-fold doubling.
             sext_op = next(
-                (op for op in slice_ops
-                 if op.opcode.name == 'INT_SEXT'
-                 and op.output is not None
-                 and op.inputs[0].size * 8 < op.output.size * 8
-                 and op.output.size * 8 <= out_width),
+                (
+                    op
+                    for op in slice_ops
+                    if op.opcode.name == 'INT_SEXT'
+                    and op.output is not None
+                    and op.inputs[0].size * 8 < op.output.size * 8
+                    and op.output.size * 8 <= out_width
+                ),
                 None,
             )
             if sext_op is not None:
