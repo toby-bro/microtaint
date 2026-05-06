@@ -152,11 +152,48 @@ static inline void frame_write_reg(Frame *f, long off, int sz, uint64_t val) {
 
 static inline uint64_t frame_read_reg(const Frame *f, long off, int sz) {
     if (off >= 0 && off < REGS_ARR_SIZE) {
-        if (f->regs_set[off]) return mask64(f->regs_arr[off], sz);
-        for (long k = off-1; k >= 0 && off-k <= 8; k--) {
-            if (f->regs_set[k] && k + (long)f->regs_sz[k] > off)
-                return mask64(f->regs_arr[k] >> ((off-k)*8), sz);
+        /* Step 1 — establish the base value of this register slot.
+         * If this exact slot was written, use it.  Otherwise look
+         * backwards for a parent register that contains this offset
+         * (e.g. reading AH after writing only RAX).  Otherwise base = 0. */
+        uint64_t base = 0;
+        if (f->regs_set[off]) {
+            base = f->regs_arr[off];
+        } else {
+            for (long k = off-1; k >= 0 && off-k <= 8; k--) {
+                if (f->regs_set[k] && k + (long)f->regs_sz[k] > off) {
+                    base = f->regs_arr[k] >> ((off-k)*8);
+                    break;
+                }
+            }
         }
+
+        /* Step 2 — overlay any sub-register writes that fall INSIDE our
+         * read range.  Critical for x86 partial-register writes like
+         * `mov ah, bh`: after the COPY writes byte 1 (AH) we read RAX
+         * (offset 0, size 8) and must merge the written AH byte over
+         * the original RAX value.  Without this overlay the read
+         * returns the pre-write parent value alone and the partial
+         * write is silently lost. */
+        long end_off = off + sz;
+        long k = off + 1;
+        while (k < end_off && k < REGS_ARR_SIZE) {
+            if (f->regs_set[k]) {
+                int k_sz = (int)f->regs_sz[k];
+                if (k_sz <= 0) { k++; continue; }
+                long byte_off = k - off;
+                uint64_t sub_mask = (k_sz >= 8)
+                    ? 0xFFFFFFFFFFFFFFFFULL
+                    : (((uint64_t)1 << (k_sz * 8)) - 1);
+                uint64_t sub_val = f->regs_arr[k] & sub_mask;
+                uint64_t lane_mask = sub_mask << (byte_off * 8);
+                base = (base & ~lane_mask) | (sub_val << (byte_off * 8));
+                k += k_sz;
+            } else {
+                k++;
+            }
+        }
+        return mask64(base, sz);
     }
     return 0;
 }

@@ -473,25 +473,57 @@ cdef class _PCodeFrame:
             self.reg_sizes[off] = sz
 
     cdef inline uint64_t _read_reg(self, long off, int sz) noexcept:
-        cdef long     k, byte_off
+        cdef long     k, byte_off, end_off
         cdef int      k_sz
+        cdef uint64_t base, sub_val, sub_mask, lane_mask
         cdef object   kv, v
         cdef uint64_t uv
 
         if off >= 0 and off < REGS_ARR_SIZE:
+            # Step 1 — establish the base value of this register slot.
+            # If this exact slot was written, that's the base.  Otherwise look
+            # backwards for a parent register that contains this offset (e.g.
+            # reading AH after writing only RAX).  Otherwise base is zero.
+            base = 0
             if self.regs_set[off]:
-                return _mask64(self.regs_arr[off], sz)
-            # Sub-register overlap scan for C-array registers.
-            # e.g. reading AH (off=1, sz=1) after writing RAX (off=0, sz=8):
-            # regs_set[0]=1, regs_sz[0]=8, 0 <= 1 < 0+8 → extract byte 1.
-            # Search backwards up to 8 bytes (max register size).
-            k = off - 1
-            while k >= 0 and off - k <= 8:
-                if self.regs_set[k] and k + <long>self.regs_sz[k] > off:
-                    byte_off = off - k
-                    return _mask64(self.regs_arr[k] >> (byte_off * 8), sz)
-                k -= 1
-            return 0
+                base = self.regs_arr[off]
+            else:
+                k = off - 1
+                while k >= 0 and off - k <= 8:
+                    if self.regs_set[k] and k + <long>self.regs_sz[k] > off:
+                        byte_off = off - k
+                        base = self.regs_arr[k] >> (byte_off * 8)
+                        break
+                    k -= 1
+
+            # Step 2 — merge in any sub-register writes whose range falls
+            # inside our read range.  Critical for x86 partial-register
+            # writes like `mov ah, bh`: after the COPY writes byte 1
+            # (AH) we read RAX (offset 0, size 8) and must overlay the
+            # written AH byte onto the original RAX value.  Without this
+            # merge, the read returns the pre-write parent value alone
+            # and the partial write is silently lost.
+            end_off = off + sz
+            k = off + 1
+            while k < end_off and k < REGS_ARR_SIZE:
+                if self.regs_set[k]:
+                    k_sz = <int>self.regs_sz[k]
+                    if k_sz <= 0:
+                        k += 1
+                        continue
+                    byte_off = k - off
+                    if k_sz >= 8:
+                        sub_mask = 0xFFFFFFFFFFFFFFFFULL
+                    else:
+                        sub_mask = ((<uint64_t>1) << (k_sz * 8)) - 1
+                    sub_val = self.regs_arr[k] & sub_mask
+                    lane_mask = sub_mask << (byte_off * 8)
+                    base = (base & ~lane_mask) | (sub_val << (byte_off * 8))
+                    k += k_sz
+                else:
+                    k += 1
+
+            return _mask64(base, sz)
 
         # Cold path: dict fallback
         v = self.regs.get(off)
