@@ -1416,9 +1416,18 @@ def generate_taint_assignments(  # noqa: C901
                     #       high/low replicas saturate every tainted dep
                     #       symmetrically; comparisons can coincidentally agree
                     #       even though per-bit flips of one dep alone would
-                    #       change the result.  Detected by AvalancheExpr AND
-                    #       AvalancheExpr (1 iff every dep has at least one
-                    #       tainted bit at runtime).
+                    #       change the result.  Detected by the disjunction of
+                    #       PAIRWISE conjunctions: AvalancheExpr(d_i) AND
+                    #       AvalancheExpr(d_j) for every pair (i,j) — fires iff
+                    #       any 2 of the deps have at least one tainted bit.
+                    #
+                    #       (Earlier versions used a single AND over ALL deps,
+                    #       which silently dropped cases where one dep was
+                    #       clean: e.g. ``sbb rax,rbx`` after ``sbb rax,rbx``
+                    #       has T_CF=0 but T_RAX, T_RBX both partially tainted,
+                    #       and INT_LESS can still cancel between high/low
+                    #       replicas — observed as the SBB-cascade
+                    #       under-tainting in test_known_failing_sbb_chain.)
                     #
                     #   (B) ONE dep with a FULL-MASK taint.  Example: neg rax
                     #       with T_RAX=MASK64.  OF = (RAX == MIN_INT).  The
@@ -1443,12 +1452,18 @@ def generate_taint_assignments(  # noqa: C901
                             fma_terms.append(FullMaskAvalancheExpr(dep_expr, dep_bits))
 
                     floor_components: list[Expr] = []
-                    # Regime (A): conjunction of Aval over 2+ deps.
-                    if len(aval_terms) >= 2:
-                        and_term: Expr = aval_terms[0]
-                        for at in aval_terms[1:]:
-                            and_term = BinaryExpr(Op.AND, and_term, at)
-                        floor_components.append(and_term)
+                    # Regime (A): pairwise conjunction over all dep pairs.
+                    # Fires iff ANY 2 deps simultaneously have at least one
+                    # tainted bit.  This is the right predicate for symmetric
+                    # comparison cancellation: the cancellation requires two
+                    # operands whose taint can flip independently of each
+                    # other.  Using a single AND over ALL deps (the previous
+                    # implementation) misfires when one dep is clean — the
+                    # other two can still cancel and we'd miss real taint.
+                    for i in range(len(aval_terms)):
+                        for j in range(i + 1, len(aval_terms)):
+                            pair_term: Expr = BinaryExpr(Op.AND, aval_terms[i], aval_terms[j])
+                            floor_components.append(pair_term)
                     # Regime (B): disjunction of FMA per dep.
                     floor_components.extend(fma_terms)
 

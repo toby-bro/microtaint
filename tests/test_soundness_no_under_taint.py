@@ -1000,13 +1000,6 @@ def test_worker_style_pattern_fuzz(seq: list[str]) -> None:
 # guard against regressions.
 
 
-@pytest.mark.xfail(
-    reason='Known SBB chain unsoundness: sbb rcx, rax under-taints bit 0 of '
-    'RCX after a prior sbb. The lifter mishandles INT_SBORROW fan-in '
-    'into the destination register. Tracked separately from the 8 '
-    'benchmark regressions which are all fixed.',
-    strict=False,
-)
 def test_known_failing_sbb_chain() -> None:
     """Known unsound case: sbb cascade across 3 registers.
 
