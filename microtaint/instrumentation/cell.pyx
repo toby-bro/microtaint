@@ -460,14 +460,31 @@ cdef class _PCodeFrame:
 
     cdef inline void _write_reg(self, long off, int sz, uint64_t val) noexcept:
         cdef uint64_t masked = _mask64(val, sz)
+        cdef uint64_t lo_mask
         if off >= 0 and off < REGS_ARR_SIZE:
             if not self.regs_set[off]:   # only record first write to each slot
-                self.regs_set[off] = 1
                 if self.dirty_count < 48:
                     self.dirty[self.dirty_count] = <int>off
                     self.dirty_count += 1
-            self.regs_arr[off] = masked
-            self.regs_sz [off] = <uint8_t>sz
+                self.regs_set[off] = 1
+                self.regs_arr[off] = masked
+                self.regs_sz [off] = <uint8_t>sz
+                return
+            # Same-offset narrower write (e.g. mov al, bl into a slot that
+            # currently holds full RAX): overlay the low `sz` bytes onto
+            # the existing wider value rather than clobbering it.  See
+            # cell_c.c::frame_write_reg for the full rationale.
+            if <int>self.regs_sz[off] > sz:
+                if sz >= 8:
+                    lo_mask = 0xFFFFFFFFFFFFFFFFULL
+                else:
+                    lo_mask = ((<uint64_t>1) << (sz * 8)) - 1
+                self.regs_arr[off] = (self.regs_arr[off] & ~lo_mask) | (masked & lo_mask)
+                # regs_sz stays at the wider size — the slot still
+                # represents the full architectural register.
+            else:
+                self.regs_arr[off] = masked
+                self.regs_sz [off] = <uint8_t>sz
         else:
             self.regs[off]      = masked
             self.reg_sizes[off] = sz

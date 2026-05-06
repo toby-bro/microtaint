@@ -144,9 +144,26 @@ static inline void frame_write_reg(Frame *f, long off, int sz, uint64_t val) {
     if (off >= 0 && off < REGS_ARR_SIZE) {
         if (!f->regs_set[off] && f->dirty_count < MAX_DIRTY)
             f->dirty[f->dirty_count++] = (int)off;
+        /* Same-offset narrower write: e.g. ``mov al, bl`` writes byte 0
+         * (size 1) of RAX while the slot already holds the full 8-byte
+         * RAX value.  We MUST preserve the upper bytes — clobbering the
+         * size-8 entry with a size-1 entry would silently lose them and
+         * any later read of RAX would return only the new low byte
+         * (the bug observed in test_misc_partial_writes).  Merge by
+         * keeping the wider stored size and overlaying the narrow new
+         * value onto the low ``sz`` bytes. */
+        if (f->regs_set[off] && (int)f->regs_sz[off] > sz) {
+            uint64_t lo_mask = (sz >= 8)
+                ? 0xFFFFFFFFFFFFFFFFULL
+                : (((uint64_t)1 << (sz * 8)) - 1);
+            f->regs_arr[off] = (f->regs_arr[off] & ~lo_mask) | (val & lo_mask);
+            /* regs_sz stays at the wider size — the slot still represents
+             * the full architectural register. */
+        } else {
+            f->regs_arr[off] = val;
+            f->regs_sz [off] = (uint8_t)sz;
+        }
         f->regs_set[off] = 1;
-        f->regs_arr[off] = val;
-        f->regs_sz [off] = (uint8_t)sz;
     }
 }
 
