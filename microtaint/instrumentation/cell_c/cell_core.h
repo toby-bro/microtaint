@@ -162,6 +162,22 @@ static inline void frame_write_reg(Frame *f, long off, int sz, uint64_t val) {
         } else {
             f->regs_arr[off] = val;
             f->regs_sz [off] = (uint8_t)sz;
+            /* Wider/equal write — invalidate any per-byte sub-writes that
+             * were overlaid in earlier ops and now sit inside our range.
+             * Without this, a later wider read would re-merge those stale
+             * sub-byte values onto the freshly-written wider value and
+             * silently revert the overlay (observed: ``paddb`` fans out
+             * 16 byte writes, then ``psllq`` writes a wider lane that
+             * should logically subsume them, but the read after the
+             * shift saw the stale 0-byte sub-writes).  Limit to the same
+             * 8-byte window as the read-side guard. */
+            long invalidate_end = off + sz;
+            if (invalidate_end > off + 8) invalidate_end = off + 8;
+            for (long k = off + 1; k < invalidate_end && k < REGS_ARR_SIZE; k++) {
+                if (f->regs_set[k] && (int)f->regs_sz[k] < sz) {
+                    f->regs_set[k] = 0;
+                }
+            }
         }
         f->regs_set[off] = 1;
     }
@@ -191,10 +207,20 @@ static inline uint64_t frame_read_reg(const Frame *f, long off, int sz) {
          * (offset 0, size 8) and must merge the written AH byte over
          * the original RAX value.  Without this overlay the read
          * returns the pre-write parent value alone and the partial
-         * write is silently lost. */
+         * write is silently lost.
+         *
+         * NOTE: we only overlay sub-writes whose start offset is within
+         * 8 bytes of `off` — beyond that, the overlay would shift past
+         * the 64-bit width of `base` and (on x86-64) the SHL by ≥64
+         * masks the count modulo 64, producing a wrong lane_mask that
+         * zeroes the low bits.  This guard limits the overlay to the
+         * representable low-8-byte window, which is the only case our
+         * GP-register partial-write fix actually needs.  Wider XMM/YMM
+         * reads (size > 8) are handled in their own slots (XMM<n>_LO at
+         * offset 0x1200, XMM<n>_HI at offset 0x1208) by the engine. */
         long end_off = off + sz;
         long k = off + 1;
-        while (k < end_off && k < REGS_ARR_SIZE) {
+        while (k < end_off && k < REGS_ARR_SIZE && k - off < 8) {
             if (f->regs_set[k]) {
                 int k_sz = (int)f->regs_sz[k];
                 if (k_sz <= 0) { k++; continue; }

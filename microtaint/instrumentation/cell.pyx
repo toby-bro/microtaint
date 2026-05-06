@@ -461,6 +461,7 @@ cdef class _PCodeFrame:
     cdef inline void _write_reg(self, long off, int sz, uint64_t val) noexcept:
         cdef uint64_t masked = _mask64(val, sz)
         cdef uint64_t lo_mask
+        cdef long invalidate_end, k
         if off >= 0 and off < REGS_ARR_SIZE:
             if not self.regs_set[off]:   # only record first write to each slot
                 if self.dirty_count < 48:
@@ -469,6 +470,15 @@ cdef class _PCodeFrame:
                 self.regs_set[off] = 1
                 self.regs_arr[off] = masked
                 self.regs_sz [off] = <uint8_t>sz
+                # New write — also invalidate sub-writes within range.
+                invalidate_end = off + sz
+                if invalidate_end > off + 8:
+                    invalidate_end = off + 8
+                k = off + 1
+                while k < invalidate_end and k < REGS_ARR_SIZE:
+                    if self.regs_set[k] and <int>self.regs_sz[k] < sz:
+                        self.regs_set[k] = 0
+                    k += 1
                 return
             # Same-offset narrower write (e.g. mov al, bl into a slot that
             # currently holds full RAX): overlay the low `sz` bytes onto
@@ -480,11 +490,23 @@ cdef class _PCodeFrame:
                 else:
                     lo_mask = ((<uint64_t>1) << (sz * 8)) - 1
                 self.regs_arr[off] = (self.regs_arr[off] & ~lo_mask) | (masked & lo_mask)
-                # regs_sz stays at the wider size — the slot still
-                # represents the full architectural register.
+                # regs_sz stays at the wider size.
             else:
                 self.regs_arr[off] = masked
                 self.regs_sz [off] = <uint8_t>sz
+                # Wider/equal write — invalidate sub-writes within range.
+                # See cell_c.c::frame_write_reg for the full rationale: a
+                # wider write logically subsumes any per-byte overlays
+                # within its range, so we drop them here to prevent a
+                # later read from re-merging the stale sub-byte values.
+                invalidate_end = off + sz
+                if invalidate_end > off + 8:
+                    invalidate_end = off + 8
+                k = off + 1
+                while k < invalidate_end and k < REGS_ARR_SIZE:
+                    if self.regs_set[k] and <int>self.regs_sz[k] < sz:
+                        self.regs_set[k] = 0
+                    k += 1
         else:
             self.regs[off]      = masked
             self.reg_sizes[off] = sz
@@ -520,9 +542,19 @@ cdef class _PCodeFrame:
             # written AH byte onto the original RAX value.  Without this
             # merge, the read returns the pre-write parent value alone
             # and the partial write is silently lost.
+            #
+            # We only overlay sub-writes whose start offset is within 8
+            # bytes of `off` — beyond that, the overlay would shift past
+            # the 64-bit width of `base` (uint64_t) and the SHL by ≥64
+            # is undefined / masked-mod-64 on x86-64, which yields the
+            # wrong lane_mask and zeroes the low bits.  This guard limits
+            # overlay to the representable low-8-byte window, which is
+            # all the GP partial-write fix needs.  XMM/YMM-wide reads are
+            # handled in separate slots (XMM<n>_LO / XMM<n>_HI) by the
+            # engine.
             end_off = off + sz
             k = off + 1
-            while k < end_off and k < REGS_ARR_SIZE:
+            while k < end_off and k < REGS_ARR_SIZE and (k - off) < 8:
                 if self.regs_set[k]:
                     k_sz = <int>self.regs_sz[k]
                     if k_sz <= 0:
