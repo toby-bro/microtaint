@@ -745,13 +745,31 @@ cdef void _execute_decoded(
                 frame.write_d(o_sp, o_off, o_sz,
                     1 if frame.read_d(i0_sp, i0_off, i0_sz) < frame.read_d(i1_sp, i1_off, i1_sz) else 0)
         elif oid == OP_INT_RIGHT:
+            # P-code spec (Ghidra pcodedescription.html): "If input1 is larger
+            # than the number of bits in output, the result is zero."  The
+            # output-width threshold is `o_sz * 8` bits (input0/output have the
+            # same size per the spec).  Using `& 0x3F` here was an x86-64-isa
+            # mask that wrongly turned shifts ≥ width into 0-shifts: e.g. for
+            # SHLD's lifted `RBX >> (0x40 - cl)` with cl=0, mask collapsed 64
+            # to 0, so the cell returned RBX instead of 0 and the differential
+            # lost the RAX-side taint (id=3252).
             if o_sp != NO_OUT_SPACE:
-                b = frame.read_d(i1_sp, i1_off, i1_sz) & 0x3F
-                frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz) >> b)
+                b = frame.read_d(i1_sp, i1_off, i1_sz)
+                if b >= <uint64_t>(o_sz * 8):
+                    frame.write_d(o_sp, o_off, o_sz, 0)
+                else:
+                    frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz) >> b)
         elif oid == OP_INT_LEFT:
+            # Same rule as INT_RIGHT: shift ≥ output-width-in-bits → 0.
+            # Without this, BEXTR's length-mask `(1 << length) - 1` with
+            # length=92 wrapped to `(1 << 28) - 1` and dropped any source bit
+            # that landed at result position ≥ 28 (id=5337).
             if o_sp != NO_OUT_SPACE:
-                b = frame.read_d(i1_sp, i1_off, i1_sz) & 0x3F
-                frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz) << b)
+                b = frame.read_d(i1_sp, i1_off, i1_sz)
+                if b >= <uint64_t>(o_sz * 8):
+                    frame.write_d(o_sp, o_off, o_sz, 0)
+                else:
+                    frame.write_d(o_sp, o_off, o_sz, frame.read_d(i0_sp, i0_off, i0_sz) << b)
         # ── Less frequent ops ────────────────────────────────────────
         elif oid == OP_CBRANCH:
             cond = frame.read_d(i1_sp, i1_off, i1_sz)
@@ -853,11 +871,26 @@ cdef void _execute_decoded(
 
 
         elif oid == OP_INT_SRIGHT:
+            # P-code spec: "If input1 is larger than the number of bits in
+            # output, the result is zero or all 1-bits (-1), depending on the
+            # original sign of input0."  Encode the all-1s case as a width-
+            # mask so the result fits the output varnode.
             if o_sp != NO_OUT_SPACE:
                 sz  = i0_sz
                 sa  = _signed64(frame.read_d(i0_sp, i0_off, i0_sz), sz)
-                b   = frame.read_d(i1_sp, i1_off, i1_sz) & 0x3F
-                frame.write_d(o_sp, o_off, o_sz, <uint64_t>(sa >> b))
+                b   = frame.read_d(i1_sp, i1_off, i1_sz)
+                if b >= <uint64_t>(o_sz * 8):
+                    if sa < 0:
+                        # All 1-bits within the output width.
+                        if o_sz >= 8:
+                            frame.write_d(o_sp, o_off, o_sz, <uint64_t>0xFFFFFFFFFFFFFFFF)
+                        else:
+                            frame.write_d(o_sp, o_off, o_sz,
+                                (<uint64_t>1 << (o_sz * 8)) - 1)
+                    else:
+                        frame.write_d(o_sp, o_off, o_sz, 0)
+                else:
+                    frame.write_d(o_sp, o_off, o_sz, <uint64_t>(sa >> b))
 
 
         elif oid == OP_INT_LESSEQUAL:

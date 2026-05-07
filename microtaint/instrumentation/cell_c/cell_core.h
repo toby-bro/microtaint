@@ -452,23 +452,48 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
                 frame_read_d(f,op->i0_sp,op->i0_off,op->i0_sz) ? 0 : 1);
             break;
         case OP_INT_LEFT:
+            /* P-code spec: if input1 is >= number of bits in output, result is 0.
+             * (Ghidra pcodedescription.html.)  See cell.pyx for the SHLD/BEXTR
+             * cases (ids 3252, 5337) that motivated this fix.  C undefined-
+             * behaviour for shifts >= type-width also forces the explicit guard. */
             if (op->o_sp != NO_OUT_SPACE) {
-                b = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz) & 0x3F;
-                frame_write_d(f, op->o_sp, op->o_off, op->o_sz,
-                    frame_read_d(f,op->i0_sp,op->i0_off,op->i0_sz) << b);
+                b = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz);
+                if (b >= (uint64_t)(op->o_sz * 8)) {
+                    frame_write_d(f, op->o_sp, op->o_off, op->o_sz, 0);
+                } else {
+                    frame_write_d(f, op->o_sp, op->o_off, op->o_sz,
+                        frame_read_d(f,op->i0_sp,op->i0_off,op->i0_sz) << b);
+                }
             } break;
         case OP_INT_RIGHT:
             if (op->o_sp != NO_OUT_SPACE) {
-                b = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz) & 0x3F;
-                frame_write_d(f, op->o_sp, op->o_off, op->o_sz,
-                    frame_read_d(f,op->i0_sp,op->i0_off,op->i0_sz) >> b);
+                b = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz);
+                if (b >= (uint64_t)(op->o_sz * 8)) {
+                    frame_write_d(f, op->o_sp, op->o_off, op->o_sz, 0);
+                } else {
+                    frame_write_d(f, op->o_sp, op->o_off, op->o_sz,
+                        frame_read_d(f,op->i0_sp,op->i0_off,op->i0_sz) >> b);
+                }
             } break;
         case OP_INT_SRIGHT:
+            /* P-code spec: if input1 is >= bits-in-output, result is 0 if input0
+             * is non-negative, all 1-bits (within output width) if negative. */
             if (op->o_sp != NO_OUT_SPACE) {
+                uint64_t result_sright;
                 sz = op->i0_sz;
                 sa = signed64(frame_read_d(f,op->i0_sp,op->i0_off,op->i0_sz), sz);
-                b  = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz) & 0x3F;
-                frame_write_d(f, op->o_sp, op->o_off, op->o_sz, (uint64_t)(sa>>b));
+                b  = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz);
+                if (b >= (uint64_t)(op->o_sz * 8)) {
+                    if (sa < 0) {
+                        if (op->o_sz >= 8) result_sright = (uint64_t)0xFFFFFFFFFFFFFFFFULL;
+                        else               result_sright = ((uint64_t)1 << (op->o_sz * 8)) - 1;
+                    } else {
+                        result_sright = 0;
+                    }
+                } else {
+                    result_sright = (uint64_t)(sa >> b);
+                }
+                frame_write_d(f, op->o_sp, op->o_off, op->o_sz, result_sright);
             } break;
         case OP_INT_EQUAL:
             if (op->o_sp != NO_OUT_SPACE) frame_write_d(f, op->o_sp, op->o_off, op->o_sz,

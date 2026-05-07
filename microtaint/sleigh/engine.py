@@ -1266,7 +1266,103 @@ def generate_taint_assignments(  # noqa: C901
                                 return True
             return False
 
-        if out_bit_end == out_bit_start and _is_bit_extract_notequal(slice_ops):
+        def _is_bit_extract_via_tainted_shift(ops: list[PcodeOp]) -> bool:
+            """True iff the slice tests one bit of a register selected by a
+            register-derived shift amount — the `bt rax, rbx; setc dl`-class
+            lift, which Sleigh emits as exactly:
+                AND(rbx, 0x3f) -> u0          # mask shift count
+                RIGHT(rax, u0) -> u1          # shift the source by that count
+                AND(u1, 1)     -> u2          # isolate the bottom bit
+                NOTEQUAL(u2, 0) -> CF
+            (Variants with no `AND, 0x3f` mask, or with the shift directly
+            feeding NOTEQUAL, are also accepted.)
+
+            We need the differential floor here because the COND_TRANSPORTABLE
+            path masks both register inputs with `~T_union`, which forces the
+            shift amount to a single concrete value and bit-samples the source
+            at exactly one position.  When the shift amount has a tainted bit,
+            the index can take other values whose corresponding source bits
+            differ — and the masked C_eval is blind to those.  The differential
+            samples V|T vs V&~T, so its XOR captures any disagreement at the
+            two reachable index values.
+
+            The predicate is deliberately tight so that flag computations in
+            `shl`/`sar`/etc. — which contain INT_LEFT internally for unrelated
+            CF/OF chains rather than as a bit-extraction of a register — do
+            not trigger the floor and reintroduce pcode-vs-unicorn divergences
+            on flags whose semantics Intel defines as undefined for count > 1.
+            """
+            # Find the INT_NOTEQUAL — must be the slice's terminal output op.
+            notequal_ops = [op for op in ops if op.opcode.name == 'INT_NOTEQUAL']
+            if len(notequal_ops) != 1:
+                return False
+            ne_op = notequal_ops[0]
+
+            # Exactly one shift in the slice.
+            shift_ops = [op for op in ops if op.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT')]
+            if len(shift_ops) != 1:
+                return False
+            shift_op = shift_ops[0]
+
+            # Shift's source must be a register; shift amount must reach a register.
+            if not shift_op.inputs[0].space.name == 'register':
+                return False
+
+            def _reaches_register(vn: Varnode, visited: set[int] | None = None) -> bool:
+                if visited is None:
+                    visited = set()
+                if vn.space.name == 'register':
+                    return True
+                if vn.space.name == 'const':
+                    return False
+                if vn.space.name == 'unique':
+                    if vn.offset in visited:
+                        return False
+                    visited.add(vn.offset)
+                    for prev in ops:
+                        if (
+                            prev.output is not None
+                            and prev.output.space.name == 'unique'
+                            and prev.output.offset == vn.offset
+                        ):
+                            return any(_reaches_register(inp, visited) for inp in prev.inputs)
+                return False
+
+            if len(shift_op.inputs) < 2 or not _reaches_register(shift_op.inputs[1]):
+                return False
+
+            # NOTEQUAL must read the shift output, optionally through a single
+            # bit-isolating AND-with-constant.
+            ne_value_input = ne_op.inputs[0]
+            if ne_value_input.space.name == 'unique':
+                # Either NOTEQUAL reads the shift output directly...
+                if (
+                    shift_op.output is not None
+                    and shift_op.output.space.name == 'unique'
+                    and shift_op.output.offset == ne_value_input.offset
+                ):
+                    return True
+                # ...or it reads an INT_AND(shift_out, const) bit-isolation.
+                for prev in ops:
+                    if (
+                        prev.output is not None
+                        and prev.output.space.name == 'unique'
+                        and prev.output.offset == ne_value_input.offset
+                        and prev.opcode.name == 'INT_AND'
+                        and any(v.space.name == 'const' for v in prev.inputs)
+                    ):
+                        for inp in prev.inputs:
+                            if (
+                                inp.space.name == 'unique'
+                                and shift_op.output is not None
+                                and inp.offset == shift_op.output.offset
+                            ):
+                                return True
+            return False
+
+        if out_bit_end == out_bit_start and (
+            _is_bit_extract_notequal(slice_ops) or _is_bit_extract_via_tainted_shift(slice_ops)
+        ):
             diff_for_flag = make_differential()
             expr = BinaryExpr(Op.OR, expr, diff_for_flag)
 
