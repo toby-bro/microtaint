@@ -263,9 +263,18 @@ def resolve_ptr_with_offset(  # noqa: C901
     visited_unique: set[int] = set()
     visited_reg: set[int] = set()
 
-    limit_index = stop_op_index if stop_op_index is not None else len(all_ops)
+    initial_limit = stop_op_index if stop_op_index is not None else len(all_ops)
 
-    def _resolve(current_vn: Varnode) -> tuple[RegMapping | None, int]:  # noqa: C901
+    def _resolve(current_vn: Varnode, limit: int) -> tuple[RegMapping | None, int]:  # noqa: C901
+        # `limit` is the exclusive upper bound on op indices that may be
+        # considered as definers of the current varnode. When we follow a
+        # defining op at index `i`, the recursive resolves of its inputs
+        # must use `limit = i`, since those inputs were read at the moment
+        # op[i] fired — any later redefinition of those inputs is irrelevant.
+        # This is essential for instructions like `rep stosb` where SLEIGH
+        # emits a post-store INT_SUB updating RDI within the same op-list:
+        # the STORE's address-input was a unique copied from RDI BEFORE that
+        # update, and we must not chase that update when resolving the input.
         if current_vn.space.name == 'const':
             val = current_vn.offset
             # Handle 64-bit negative offsets
@@ -281,7 +290,7 @@ def resolve_ptr_with_offset(  # noqa: C901
             visited_reg.add(reg_off)
 
             for i, op in enumerate(all_ops):
-                if i >= limit_index:
+                if i >= limit:
                     break
                 if op.opcode.name in ('STORE', 'CALL', 'CALLIND', 'BRANCH', 'BRANCHIND', 'CBRANCH', 'RETURN'):
                     continue
@@ -292,21 +301,23 @@ def resolve_ptr_with_offset(  # noqa: C901
                     and op.output.offset == reg_off
                     and op.output.size == current_vn.size
                 ):
+                    # When we recurse into the inputs of op[i], they must be
+                    # resolved as they were AT op[i], so the inner limit is i.
                     if op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
-                        res = _resolve(op.inputs[0])
+                        res = _resolve(op.inputs[0], i)
                         visited_reg.discard(reg_off)
                         return res
                     if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                        lreg, loff = _resolve(op.inputs[0])
-                        rreg, roff = _resolve(op.inputs[1])
+                        lreg, loff = _resolve(op.inputs[0], i)
+                        rreg, roff = _resolve(op.inputs[1], i)
                         visited_reg.discard(reg_off)
                         if lreg is not None:
                             return lreg, loff + roff
                         if rreg is not None:
                             return rreg, roff + loff
                     elif op.opcode.name == 'INT_SUB':
-                        lreg, loff = _resolve(op.inputs[0])
-                        _, roff = _resolve(op.inputs[1])
+                        lreg, loff = _resolve(op.inputs[0], i)
+                        _, roff = _resolve(op.inputs[1], i)
                         visited_reg.discard(reg_off)
                         if lreg is not None:
                             return lreg, loff - roff
@@ -322,25 +333,29 @@ def resolve_ptr_with_offset(  # noqa: C901
                 return None, 0
             visited_unique.add(key)
 
-            for op in all_ops:
+            for i, op in enumerate(all_ops):
+                if i >= limit:
+                    break
                 if op.output is not None and op.output.space.name == 'unique' and op.output.offset == key:
+                    # Same temporal-resolution rule: inputs are read AT op[i],
+                    # so recurse with limit = i.
                     if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                        lreg, loff = _resolve(op.inputs[0])
-                        rreg, roff = _resolve(op.inputs[1])
+                        lreg, loff = _resolve(op.inputs[0], i)
+                        rreg, roff = _resolve(op.inputs[1], i)
                         if lreg is not None:
                             return lreg, loff + roff
                         if rreg is not None:
                             return rreg, roff + loff
                     elif op.opcode.name == 'INT_SUB':
-                        lreg, loff = _resolve(op.inputs[0])
-                        _, roff = _resolve(op.inputs[1])
+                        lreg, loff = _resolve(op.inputs[0], i)
+                        _, roff = _resolve(op.inputs[1], i)
                         if lreg is not None:
                             return lreg, loff - roff
                     elif op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
-                        return _resolve(op.inputs[0])
+                        return _resolve(op.inputs[0], i)
                     else:
                         for inp in op.inputs:
-                            r, o = _resolve(inp)
+                            r, o = _resolve(inp, i)
                             if r is not None:
                                 return r, o
                     break
@@ -348,7 +363,7 @@ def resolve_ptr_with_offset(  # noqa: C901
             return None, 0
         return None, 0
 
-    return _resolve(vn)
+    return _resolve(vn, initial_limit)
 
 
 def apply_sless_msb_split(
@@ -2032,17 +2047,28 @@ def map_outputs_to_targets(
     mapper: StateMapper,
 ) -> tuple[list[EvalTarget], list[TaintAssignment]]:
     targets_to_evaluate: list[EvalTarget] = []
-    mem_targets: list[tuple[Varnode, Varnode, int]] = []
+    mem_targets: list[tuple[Varnode, Varnode, int, int]] = []
 
     for out_vn in unique_outputs:
         mapped_outs = mapper.map_to_state_all(out_vn.offset, out_vn.size)
         for mapped_out in mapped_outs:
             targets_to_evaluate.append(EvalTarget(out_vn, mapped_out))
 
+    # Build a map from STORE op id() → index in translation.ops, so we can
+    # pass `stop_op_index` to resolve_ptr_with_offset.  This is critical for
+    # `rep`-prefixed string instructions (rep stosb, rep movsb, ...) where
+    # the SLEIGH-lifted P-code increments RDI/RSI *after* the STORE within
+    # the same instruction's op list.  Without stop_op_index, the resolver
+    # walks past the STORE and picks up the post-increment INT_SUB defining
+    # RDI = old_rdi + 1 - 2*DF, attributing a +1 constant offset to the
+    # address that the STORE itself uses.  Result: the static rule writes
+    # taint to [RDI+1] instead of [RDI], so for rep stosb the taint at every
+    # iteration N lands at byte N+1 instead of byte N.
+    store_op_index: dict[int, int] = {id(op): i for i, op in enumerate(translation.ops) if op.opcode.name == 'STORE'}
     for store_op in store_ops:
         ptr_vn = store_op.inputs[1]
         val_vn = store_op.inputs[2]
-        mem_targets.append((val_vn, ptr_vn, val_vn.size))
+        mem_targets.append((val_vn, ptr_vn, val_vn.size, store_op_index[id(store_op)]))
 
     for op in translation.ops:
         op_name = op.opcode.name
@@ -2060,8 +2086,16 @@ def map_outputs_to_targets(
 
     assignments: list[TaintAssignment] = []
 
-    for val_vn, ptr_vn, size in mem_targets:
-        base_reg, const_offset = resolve_ptr_with_offset(ptr_vn, translation.ops, mapper)
+    for val_vn, ptr_vn, size, store_idx in mem_targets:
+        # Resolve the address as it stood AT THE STORE — i.e. ignore any
+        # register-update ops that come later in translation.ops, since those
+        # writes happen after the STORE has already committed its address.
+        base_reg, const_offset = resolve_ptr_with_offset(
+            ptr_vn,
+            translation.ops,
+            mapper,
+            stop_op_index=store_idx,
+        )
         if base_reg is None:
             continue
         mem_map = MemMapping(ptr_vn.offset, size, base_reg, const_offset)
