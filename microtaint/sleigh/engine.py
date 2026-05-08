@@ -1266,7 +1266,7 @@ def generate_taint_assignments(  # noqa: C901
                                 return True
             return False
 
-        def _is_bit_extract_via_tainted_shift(ops: list[PcodeOp]) -> bool:
+        def _is_bit_extract_via_tainted_shift(ops: list[PcodeOp]) -> bool:  # noqa: C901
             """True iff the slice tests one bit of a register selected by a
             register-derived shift amount — the `bt rax, rbx; setc dl`-class
             lift, which Sleigh emits as exactly:
