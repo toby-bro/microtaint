@@ -1,0 +1,17 @@
+[project]
+name = "benchmark"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "angr>=9.2.212",
+    "keystone-engine>=0.9.2",
+    "microtaint",
+    "triton-library>=1.0.0rc4",
+]
+
+[tool.uv.workspace]
+members = [
+    "nftables",
+]
