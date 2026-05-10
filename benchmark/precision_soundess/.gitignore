@@ -2,4 +2,5 @@ external/
 *.log
 *.json
 uv.lock
+results/
 

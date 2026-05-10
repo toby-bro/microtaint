@@ -166,7 +166,7 @@ options = { debug_level = "0" }
 # `artifacts` bypasses the gitignore-derived exclude.
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.sdist]
-exclude = [".gitignore", ".github/"]
+exclude = [".gitignore", ".github/", "benchmark/"]
 include = [
     "/microtaint",
     "/hatch_build.py",
