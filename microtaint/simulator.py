@@ -39,7 +39,7 @@ def _get_pcode_evaluator_class() -> type[PCodeCellEvaluator]:
     return PCodeCellEvaluator
 
 
-_ARCH_MAP = {
+_ARCH_MAP: dict[Architecture, tuple[int, int]] = {
     Architecture.X86: (UC_ARCH_X86, UC_MODE_32),
     Architecture.AMD64: (UC_ARCH_X86, UC_MODE_64),
     Architecture.ARM64: (UC_ARCH_ARM64, UC_MODE_ARM),
@@ -162,38 +162,38 @@ _UC_REGS: dict[Architecture, dict[str, int]] = {
         'PC': uc_riscv_const.UC_RISCV_REG_PC,
         # ABI aliases — same uc IDs as their X-numbered counterparts
         'ZERO': uc_riscv_const.UC_RISCV_REG_X0,
-        'RA':   uc_riscv_const.UC_RISCV_REG_X1,
-        'SP':   uc_riscv_const.UC_RISCV_REG_X2,
-        'GP':   uc_riscv_const.UC_RISCV_REG_X3,
-        'TP':   uc_riscv_const.UC_RISCV_REG_X4,
-        'T0':   uc_riscv_const.UC_RISCV_REG_X5,
-        'T1':   uc_riscv_const.UC_RISCV_REG_X6,
-        'T2':   uc_riscv_const.UC_RISCV_REG_X7,
-        'S0':   uc_riscv_const.UC_RISCV_REG_X8,
-        'FP':   uc_riscv_const.UC_RISCV_REG_X8,  # frame pointer alias of s0
-        'S1':   uc_riscv_const.UC_RISCV_REG_X9,
-        'A0':   uc_riscv_const.UC_RISCV_REG_X10,
-        'A1':   uc_riscv_const.UC_RISCV_REG_X11,
-        'A2':   uc_riscv_const.UC_RISCV_REG_X12,
-        'A3':   uc_riscv_const.UC_RISCV_REG_X13,
-        'A4':   uc_riscv_const.UC_RISCV_REG_X14,
-        'A5':   uc_riscv_const.UC_RISCV_REG_X15,
-        'A6':   uc_riscv_const.UC_RISCV_REG_X16,
-        'A7':   uc_riscv_const.UC_RISCV_REG_X17,
-        'S2':   uc_riscv_const.UC_RISCV_REG_X18,
-        'S3':   uc_riscv_const.UC_RISCV_REG_X19,
-        'S4':   uc_riscv_const.UC_RISCV_REG_X20,
-        'S5':   uc_riscv_const.UC_RISCV_REG_X21,
-        'S6':   uc_riscv_const.UC_RISCV_REG_X22,
-        'S7':   uc_riscv_const.UC_RISCV_REG_X23,
-        'S8':   uc_riscv_const.UC_RISCV_REG_X24,
-        'S9':   uc_riscv_const.UC_RISCV_REG_X25,
-        'S10':  uc_riscv_const.UC_RISCV_REG_X26,
-        'S11':  uc_riscv_const.UC_RISCV_REG_X27,
-        'T3':   uc_riscv_const.UC_RISCV_REG_X28,
-        'T4':   uc_riscv_const.UC_RISCV_REG_X29,
-        'T5':   uc_riscv_const.UC_RISCV_REG_X30,
-        'T6':   uc_riscv_const.UC_RISCV_REG_X31,
+        'RA': uc_riscv_const.UC_RISCV_REG_X1,
+        'SP': uc_riscv_const.UC_RISCV_REG_X2,
+        'GP': uc_riscv_const.UC_RISCV_REG_X3,
+        'TP': uc_riscv_const.UC_RISCV_REG_X4,
+        'T0': uc_riscv_const.UC_RISCV_REG_X5,
+        'T1': uc_riscv_const.UC_RISCV_REG_X6,
+        'T2': uc_riscv_const.UC_RISCV_REG_X7,
+        'S0': uc_riscv_const.UC_RISCV_REG_X8,
+        'FP': uc_riscv_const.UC_RISCV_REG_X8,  # frame pointer alias of s0
+        'S1': uc_riscv_const.UC_RISCV_REG_X9,
+        'A0': uc_riscv_const.UC_RISCV_REG_X10,
+        'A1': uc_riscv_const.UC_RISCV_REG_X11,
+        'A2': uc_riscv_const.UC_RISCV_REG_X12,
+        'A3': uc_riscv_const.UC_RISCV_REG_X13,
+        'A4': uc_riscv_const.UC_RISCV_REG_X14,
+        'A5': uc_riscv_const.UC_RISCV_REG_X15,
+        'A6': uc_riscv_const.UC_RISCV_REG_X16,
+        'A7': uc_riscv_const.UC_RISCV_REG_X17,
+        'S2': uc_riscv_const.UC_RISCV_REG_X18,
+        'S3': uc_riscv_const.UC_RISCV_REG_X19,
+        'S4': uc_riscv_const.UC_RISCV_REG_X20,
+        'S5': uc_riscv_const.UC_RISCV_REG_X21,
+        'S6': uc_riscv_const.UC_RISCV_REG_X22,
+        'S7': uc_riscv_const.UC_RISCV_REG_X23,
+        'S8': uc_riscv_const.UC_RISCV_REG_X24,
+        'S9': uc_riscv_const.UC_RISCV_REG_X25,
+        'S10': uc_riscv_const.UC_RISCV_REG_X26,
+        'S11': uc_riscv_const.UC_RISCV_REG_X27,
+        'T3': uc_riscv_const.UC_RISCV_REG_X28,
+        'T4': uc_riscv_const.UC_RISCV_REG_X29,
+        'T5': uc_riscv_const.UC_RISCV_REG_X30,
+        'T6': uc_riscv_const.UC_RISCV_REG_X31,
     },
 }
 
@@ -484,6 +484,30 @@ class CellSimulator:
         if bytestring != self._last_bytestring:
             self.uc.mem_write(self.CODE_ADDR, bytestring)
             self._last_bytestring = bytestring
+            # CRITICAL: invalidate Unicorn's TCG translation cache for the code
+            # region we just rewrote.  Unicorn caches JIT-compiled translations
+            # of guest basic blocks keyed by guest physical address.  Writing
+            # fresh bytes via mem_write does NOT automatically invalidate the
+            # cached translation, so the next emu_start runs the OLD code's
+            # translation against the new register state — producing nonsense.
+            #
+            # This bug manifests dramatically on multi-instruction sequences
+            # whose last instruction is a memory load (e.g. `mov rax, [rsp-64]`
+            # at the end of a `rep stosb` sequence): the load's translation
+            # may have been resolved against a different RSP/operand layout
+            # in the previous test, and the new sequence loads garbage.
+            # Calling ctl_remove_cache forces a fresh translation pass.
+            try:
+                self.uc.ctl_remove_cache(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
+            except (AttributeError, uc_py3.UcError):
+                # Older Unicorn versions don't have ctl_remove_cache; fall back
+                # to unmap+remap which also drops cached translations.
+                try:
+                    self.uc.mem_unmap(self.CODE_ADDR, 4096)
+                    self.uc.mem_map(self.CODE_ADDR, 4096)
+                    self.uc.mem_write(self.CODE_ADDR, bytestring)
+                except uc_py3.UcError:
+                    pass
 
         try:
             self.uc.emu_start(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
@@ -803,6 +827,16 @@ class CellSimulator:
         if bytestring != self._last_bytestring:
             self.uc.mem_write(self.CODE_ADDR, bytestring)
             self._last_bytestring = bytestring
+            # See _execute for why ctl_remove_cache is critical here.
+            try:
+                self.uc.ctl_remove_cache(self.CODE_ADDR, self.CODE_ADDR + len(bytestring))
+            except (AttributeError, uc_py3.UcError):
+                try:
+                    self.uc.mem_unmap(self.CODE_ADDR, 4096)
+                    self.uc.mem_map(self.CODE_ADDR, 4096)
+                    self.uc.mem_write(self.CODE_ADDR, bytestring)
+                except uc_py3.UcError:
+                    pass
 
         # 4. Run OR: full setup then emu_start.
         # context_save/restore only snapshots CPU registers, NOT memory.
