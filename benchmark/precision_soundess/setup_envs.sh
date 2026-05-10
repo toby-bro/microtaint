@@ -14,7 +14,7 @@ fi
 # 1. Master Orchestrator
 echo "[*] Building Master Env..."
 uv venv .venv_master
-uv pip install --python .venv_master keystone-engine
+uv pip install --python .venv_master keystone-engine unicorn
 
 # 2. Triton
 echo "[*] Building Triton Env..."

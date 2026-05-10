@@ -2906,22 +2906,49 @@ class GroundTruthSimulator:
             try:
                 outputs.append(self._run_unicorn(bytestring, run_vals))
             except Exception:
-                # Sound fallback: treat the failed run as producing zeros.
-                # This can only UNDER-count taint on the GT side, which is
-                # safe (it makes us declare cases "exact" or "over" rather
-                # than "under" in the comparison with bit-precise tools).
-                outputs.append(dict.fromkeys(REGISTERS, 0))
+                # Sound fallback: treat the failed run as a trap.  Trapped
+                # runs are dropped from the aggregation below.
+                outputs.append(dict.fromkeys(REGISTERS, 0) | {'__trapped__': True})
 
         # Per-register taint mask: bits that vary across the enumeration.
+        #
+        # Trapped runs (uc.emu_start raised UcError — divide-by-zero,
+        # invalid opcode, unmapped memory, timeout) are dropped.  Strict
+        # noninterference semantics: a trap is not a defined output value
+        # for this enumeration, so it cannot tell us anything about
+        # input-output dependence.  Including trap-state register values
+        # in the OR/AND aggregation would produce spurious "taint" on
+        # bits that the architecture never wrote to in the trapping
+        # enumeration.
+        #
+        # Concrete example: `cqo; idiv rbx` with RAX=INT64_MIN, RBX=-1
+        # tainted in bit 0.  Bit 0 = 1 -> RBX = -1 -> #DE.  Bit 0 = 0 ->
+        # RBX = -2 -> RAX = 0x4000000000000000.  The trapped run leaves
+        # RAX at its pre-trap value (0x8000000000000000), so the
+        # aggregation sees two "outputs" 0x80... and 0x40... and reports
+        # 0xC000000000000000 as taint.  But architecturally the "output
+        # of running with RBX=-1" is undefined — the program crashed.
+        # Dropping the trap from the aggregation gives the architectural
+        # answer (taint = 0 because only one enumeration produced an
+        # observable output).
+        successful = [o for o in outputs if not o.get('__trapped__', False)]
         gt_mask: dict[str, int] = {}
-        for reg in REGISTERS:
-            agg_or = 0
-            agg_and = MASK64
-            for out in outputs:
-                v = out[reg]
-                agg_or |= v
-                agg_and &= v
-            gt_mask[reg] = (agg_or ^ agg_and) & MASK64
+        if not successful:
+            # Every enumeration trapped.  No information about input
+            # dependence is observable through this register channel.
+            # Report all-zero taint — this is the conservative answer
+            # for noninterference (no observed difference).
+            for reg in REGISTERS:
+                gt_mask[reg] = 0
+        else:
+            for reg in REGISTERS:
+                agg_or = 0
+                agg_and = MASK64
+                for out in successful:
+                    v = out[reg]
+                    agg_or |= v
+                    agg_and &= v
+                gt_mask[reg] = (agg_or ^ agg_and) & MASK64
 
         return {
             'output_taint': gt_mask,
@@ -2974,11 +3001,28 @@ class GroundTruthSimulator:
     )
     _RESET_SEG_REGS = ('CS', 'SS', 'DS', 'ES', 'FS', 'GS')
 
+    # Pre-allocated zero buffer for full-region wipes.  Sized at the
+    # mapped stack region (0x10000 bytes); reused across all test cases
+    # to avoid re-allocating a 64 KB buffer per call.
+    _STACK_ZERO_BUF: bytes = b'\x00' * 0x10000
+    _CODE_ZERO_BUF: bytes = b'\x00' * 0x10000
+
     def _run_unicorn(self, bytestring: bytes, vals: dict[str, int]) -> dict[str, int]:
         unicorn = self._uc_module
         ux = unicorn.x86_const
         uc = self._ensure_uc()
+        # Code region: we must wipe BEFORE writing the new bytestring.
+        # The mapped code region is 0x10000 bytes long.  If the previous
+        # test case left bytes here (the cached _last_bytestring path
+        # below only writes up to len(bytestring)), and the current
+        # bytestring is shorter, RIP can fetch stale instructions from
+        # the tail.  More subtly, an emu_start that overshoots
+        # CODE_BASE+len(bytestring) (jmp/call into the trailing region)
+        # would execute stale opcodes from a prior test.  Wiping the
+        # whole code region at every call costs a single 64 KB memcpy
+        # — negligible compared to ~30 µs of emulation per call.
         if bytestring != self._last_bytestring:
+            uc.mem_write(self._CODE_BASE, self._CODE_ZERO_BUF)
             uc.mem_write(self._CODE_BASE, bytestring)
             self._last_bytestring = bytestring
 
@@ -3000,17 +3044,64 @@ class GroundTruthSimulator:
                 uc.reg_write(getattr(ux, f'UC_X86_REG_{fpu_reg}'), default)
             except Exception:
                 pass
+        # Reset RIP explicitly.  emu_start(begin=...) overrides RIP, but
+        # belt-and-suspenders: an emu_start that fails before any fetch
+        # could leave RIP at a stale value that a future test reads back
+        # via uc.reg_read.  We don't currently read RIP, but a developer
+        # adding an RIP-output instruction (`call`, `ret`) later would
+        # silently hit stale state.
+        try:
+            uc.reg_write(ux.UC_X86_REG_RIP, 0)
+        except Exception:
+            pass
         uc.reg_write(ux.UC_X86_REG_RSP, self._STACK_BASE + 0x8000)
         uc.reg_write(ux.UC_X86_REG_EFLAGS, 0x2)
 
-        # Overlay the test's specific register values.  Comes AFTER the bulk
-        # zero so it isn't clobbered.
+        # Wipe the ENTIRE stack region (0x10000 bytes) before installing
+        # this enumeration's overlay values.  Why the entire region:
+        # a single test's prior enumeration may have written far outside
+        # any fixed window around RSP.  Examples observed in practice:
+        #
+        #   - Sequence test sets RDI = STACK_BASE + 0x4000 then `mov [rdi],
+        #     rax` writes 8 bytes at 0x104000, well outside any window
+        #     centred on RSP=0x108000.  Untainted bits of that 8-byte
+        #     region carry over into the next enumeration's reads.
+        #   - Tainted base+offset addressing (`mov [rax+rcx*8], rdx`)
+        #     can scatter writes across the whole region as the tainted
+        #     bits are flipped through the 2^k enumerations.
+        #   - rep stosb/movsb with a tainted RCX can write up to 0xFFFF
+        #     bytes when the tainted bit makes ECX huge.  The instruction
+        #     timeout halts execution, but the bytes already written
+        #     persist.
+        #
+        # The previous 128-byte wipe at [RSP-64..RSP+64) was the right
+        # idea but the wrong size.  A full-region zero costs one
+        # 64 KB memcpy (~5 µs); negligible vs the ~30 µs emu_start.
+        uc.mem_write(self._STACK_BASE, self._STACK_ZERO_BUF)
+
+        # Overlay the test's specific register values.  Comes AFTER the
+        # bulk zero AND after RSP is set so it can override RSP if the
+        # test wants a different stack location (the test would also
+        # need to ensure that location is mapped — but tests in this
+        # suite do not currently override RSP, so the default holds).
         for reg, v in vals.items():
             uc.reg_write(self._reg_map[reg], v & MASK64)
 
-        # Wipe a 128-byte window around the stack pointer.
-        uc.mem_write(self._STACK_BASE + 0x8000 - 64, b'\x00' * 128)
-
+        # Track whether the run completed without faulting.  Unicorn raises
+        # UcError on every kind of trap: divide-by-zero (#DE), invalid
+        # opcode (#UD), unmapped memory access (#PF), per-instruction
+        # timeout, instruction count exceeded, etc.  In every case the
+        # registers we read back are either the pre-trap state (for
+        # synchronous faults like #DE) or the partially-updated state
+        # (for memory faults that may have completed earlier writes).
+        # Either way the values are NOT the "output of running this
+        # bytestring on these inputs" — they're an artefact of the
+        # abort.  Including them in the noninterference aggregation
+        # produces spurious taint bits on cases where some inputs trap
+        # and others don't.  Returning the trap flag lets the caller
+        # drop trapped enumerations from the aggregation entirely
+        # (strict noninterference semantics: a trap is "no observation").
+        trapped = False
         try:
             uc.emu_start(
                 self._CODE_BASE,
@@ -3019,8 +3110,10 @@ class GroundTruthSimulator:
                 count=self.UC_MAX_COUNT,
             )
         except unicorn.UcError:
-            pass
-        return {r: uc.reg_read(self._reg_map[r]) for r in REGISTERS}
+            trapped = True
+        regs_out = {r: uc.reg_read(self._reg_map[r]) for r in REGISTERS}
+        regs_out['__trapped__'] = trapped
+        return regs_out
 
 
 def _run_ground_truth_batch(
@@ -4483,8 +4576,9 @@ def main():
         #      ≈ 21 cases).  REP-prefixed string instructions are excluded
         #      because the cross-engine semantics of the rep prefix
         #      (repeat-count handling, direction-flag handling, partial-store
-        #      granularity) require harness changes that were not fixed at
-        #      submission time, they are now fixed.
+        #      granularity) require harness changes that we are still working
+        #      through.  Re-enable them by removing the "string" filter once
+        #      that is fixed.
         #
         #   2. div/idiv cases whose noninterference-oracle 2^k enumeration would
         #      trap on #DE divide-overflow.  At the seed level these cases are
@@ -4494,8 +4588,6 @@ def main():
         #      INT64_MIN / -1 = overflow corner.  Cases where any single-bit
         #      flip of a tainted bit produces overflow are skipped.  Empirically
         #      4 cases out of ~143 div/idiv tests at seed 12.
-        #      This is work in progress, as soon as the oracle simulates them
-        #      then they shall be reenabled.
         #
         # The filter is deliberately placed after every `random.*` call so the
         # exclusion does not perturb the RNG sequence.  This is what keeps the
