@@ -163,6 +163,7 @@ cdef class InstructionHook:
         cdef object v_entry
         cdef unsigned long long live_version
         cdef unsigned long long out_version
+        cdef dict input_snapshot
         cdef bint can_cache = (
             self.instr_cache_enabled
             and compiled_circuit is not None
@@ -171,22 +172,38 @@ cdef class InstructionHook:
         )
         if can_cache:
             # Tier 4: version-cache fast path.
+            #
+            # Each entry stores (in_version, out_version, output_state,
+            # input_snapshot).  in_version == taint_version is a fast first
+            # check; input_snapshot equality is the actual correctness
+            # guard.  Versions can collide because taint_version is a
+            # mix of content-hashes (cacheable slow path, Tier-3 hit) and
+            # monotonic increments (has-mem-ops slow path).  A collision
+            # would otherwise replay output computed for a different
+            # register_taint state and corrupt taint propagation; see
+            # test_step3_tier4_cache.py for the concrete failure case.
             v_entry = self.instr_cache_v.get(address)
             live_version = self.taint_version
             if v_entry is not None and (<unsigned long long>(<object>v_entry[0])) == live_version:
-                output_state = <object>v_entry[2]
-                self.instr_cache_hits += 1
-                if self.last_tainted_writes:
-                    self.last_tainted_writes.clear()
-                if PyDict_Size(register_taint):
-                    PyDict_Clear(register_taint)
-                for key, val in output_state.items():
-                    if val:
-                        PyDict_SetItem(register_taint, key, val)
-                # Adopt the cached output_version: register_taint now has
-                # exactly the content that was assigned this version.
-                self.taint_version = <unsigned long long>(<object>v_entry[1])
-                return
+                # Content-equality check: only adopt the cached output if
+                # register_taint matches the snapshot the entry was built
+                # against.  PyObject_RichCompareBool is one Python-level
+                # dict-equality call — cheap relative to the frozenset
+                # construction Tier-4 was built to avoid.
+                if PyObject_RichCompareBool(<object>v_entry[3], register_taint, Py_EQ) == 1:
+                    output_state = <object>v_entry[2]
+                    self.instr_cache_hits += 1
+                    if self.last_tainted_writes:
+                        self.last_tainted_writes.clear()
+                    if PyDict_Size(register_taint):
+                        PyDict_Clear(register_taint)
+                    for key, val in output_state.items():
+                        if val:
+                            PyDict_SetItem(register_taint, key, val)
+                    # Adopt the cached output_version: register_taint now has
+                    # exactly the content that was assigned this version.
+                    self.taint_version = <unsigned long long>(<object>v_entry[1])
+                    return
 
             # Legacy frozenset-keyed cache (still useful for first-visit
             # cold paths and for cross-version equivalence).
@@ -201,6 +218,10 @@ cdef class InstructionHook:
                 self.instr_cache_hits += 1
                 if self.last_tainted_writes:
                     self.last_tainted_writes.clear()
+                # Snapshot register_taint BEFORE clearing, so the Tier-4
+                # entry's input snapshot reflects the actual inputs this
+                # output was computed for.
+                input_snapshot = dict(register_taint)
                 if PyDict_Size(register_taint):
                     PyDict_Clear(register_taint)
                 # Populate the version cache too, so the next visit
@@ -209,7 +230,7 @@ cdef class InstructionHook:
                 # output_state's content.  Use frozenset hash (one-shot
                 # cost; only happens on cold version-cache misses).
                 out_version = (<Py_ssize_t>hash(frozenset(output_state.items())))
-                self.instr_cache_v[address] = (live_version, out_version, output_state)
+                self.instr_cache_v[address] = (live_version, out_version, output_state, input_snapshot)
                 # No-mem-ops circuits never produce MEM_ keys; just refill.
                 for key, val in output_state.items():
                     if val:
@@ -275,7 +296,15 @@ cdef class InstructionHook:
             # Compute output_version once (one frozenset hash; happens
             # ~167k times across the bench, not 1.19M).
             out_version_slow = (<Py_ssize_t>hash(frozenset(output_state.items())))
-            self.instr_cache_v[address] = (self.taint_version, out_version_slow, dict(output_state))
+            # Tier-4 entry includes a snapshot of register_taint as it
+            # was at instruction entry (pre_taint).  On future visits the
+            # hit path verifies this snapshot equals the live register_taint
+            # before adopting the cached output_state — guarding against
+            # taint_version collisions.  See test_step3_tier4_cache.py.
+            self.instr_cache_v[address] = (
+                self.taint_version, out_version_slow,
+                dict(output_state), dict(pre_taint),
+            )
 
         # Post-processing: clear writes set, clear register_taint, walk output.
         # This mutates register_taint to a new state — adopt the deterministic
