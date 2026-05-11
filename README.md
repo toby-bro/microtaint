@@ -1,24 +1,99 @@
 # Microtaint
 
-Microtaint is a strictly typed Python library for generating and evaluating **bit-precise, dynamic Information Flow Tracking (IFT) rules** directly from raw instruction bytestrings.
+## Benchmarks and evaluation
 
-Inspired by the hardware-level methodologies of the **CELLIFT** paper, Microtaint elevates the concept of mathematical "cell properties" to software ISAs. By combining the static analysis power of Ghidra's P-Code with the concrete execution accuracy of the Unicorn Engine, Microtaint computes perfectly precise taint propagation—including complex edge cases like partial register zero-extensions, bitwise arithmetic ripples, and architecture-specific condition flags (like x86's `EFLAGS` and ARM64's `NZCV`).
+The benchmark and evaluation scripts used for the submission are present in the [benchmark](./benchmark/) sub directory.
+To know how to run each script a dedicated [README](./benchmark/README.md) is present in the subdir.
 
-Microtaint serves as a standalone abstract equation generator and evaluator, capable of seamlessly feeding dynamic taint analysis engines or symbolic execution frameworks without requiring manually written semantics for thousands of instructions.
+## Introduction
+
+Microtaint is a strictly typed Python library and command-line engine for performing **bit-precise, dynamic Information Flow Tracking (IFT)** on compiled binaries.
+
+Originally an abstract rule generator based on the **CELLIFT** paradigm, Microtaint has evolved into a complete, out-of-the-box dynamic taint analysis emulator. Built on top of [Qiling](https://github.com/qilingframework/qiling) and [Unicorn](https://github.com/unicorn-engine/unicorn), it dynamically monitors program execution, identifies complex exploitation primitives (Buffer Overflows, Use-After-Frees, Side Channels, and Arbitrary Indexed Writes) and logs them in real-time.
+
+It retains its foundational mathematical precision: behind the scenes, Microtaint still lifts executed instructions using Ghidra's P-Code ([pypcode](https://github.com/angr/pypcode)) and models them as logical ASTs, computing taint propagation rigorously down to individual carry/zero flags and partial register mutations.
 
 ## Features
 
-- **Bit-Precise Taint Rules:** Stop relying on rough block-level or byte-level taints. Microtaint tracks dependencies precisely down to the exact bit, handling shifts, partial registers, and individual flag propagation flawlessly.
-- **CELLIFT Software Paradigm:** Automatically classifies machine instructions into mathematical archetypes (Mapped, Monotonic, Transportable, Translatable, Avalanche, etc.) to apply optimized tracking formulas.
-- **Dual-Engine Architecture:** - Uses [pypcode](https://github.com/angr/pypcode) to lift instructions, compute backwards slices, and extract architectural dependencies statically.
-  - Uses [unicorn](https://github.com/unicorn-engine/unicorn) to natively simulate the generated logical differentials, bypassing the need to build massive shadow-logic ASTs.
-- **Fast & Stateless ASTs:** Pass in instruction bytes and your CPU state format; get back a mathematical AST (`LogicCircuit`) that can be evaluated against any dynamic concrete state.
+- **Out-of-the-box Vulnerability Hunting:** Pre-built command-line flags to instantaneously trace standard input flows and check for vulnerabilities:
+  - **BOF (Buffer Overflow):** Detects when the instruction pointer (RIP/PC) becomes tainted.
+  - **UAF (Use After Free):** Monitors heap operations via a built-in `HeapTracker` and alarms on poisoned mapping accesses.
+  - **AIW (Arbitrary Indexed Write):** Detects store operations executing with tainted pointer addresses.
+  - **SC (Side Channels):** Emits findings when critical conditional branching decisions depend on tainted input.
+- **Qiling-Powered Emulation Wrapper:** Fully integrates with the Qiling Framework. Drop your ELF/PE/Mach-O binaries in with a custom rootfs, and Microtaint wraps the CPU states gracefully.
+- **High-Performance Tracing:** Built-in Cython `BitPreciseShadowMemory`, direct Unicorn state hooks, and custom JIT caching ensure fast execution capabilities.
+- **Bit-Precise Rule Generation:** Still capable of generating mathematical formulas statically (via `generate_static_rule`), treating raw assembly instructions as monolithic logical circuits evaluated using simulated differentials.
 
-## Demo
+## Installation
 
-The tool takes raw architecture bytestrings, lifts them, and maps the output back to your provided logical state (a list of tracked registers).
+Microtaint is available on the [pypi](https://pypi.org/project/microtaint/), so you can use uv/pip/your_favorite_tool to install it.
 
-Check out the `demo.py` file to see it in action, or evaluate a circuit dynamically:
+If you want to build it locally then once you cloned the repo you can use `uv` to build it.
+
+```sh
+uv sync --reinstall-package=microtaint
+```
+
+For performance optimized builds of the leftover python code...
+_(I am not so sure this makes any difference since the Cython and C migration of the hotpath. But before this enabled quite a good improvement)_
+
+```sh
+HATCH_BUILD_HOOKS_ENABLE=1 MYPYC_OPT_LEVEL=3 uv sync --reinstall-package=microtaint
+```
+
+## Command Line Usage
+
+Use the provided `microtaint` command to execute and dynamically analyze a binary. Provide flags before the `--` separator. Any arguments after `--` represent the execution format for your compiled target.
+
+```bash
+# Detect everything, feed stdin automatically from the terminal
+uv run microtaint --check-all -- ./binary arg1 arg2
+
+# Read binary taint source from a specific file instead of stdin
+uv run microtaint --check-bof --input payload.bin -- ./binary
+
+# Pipe raw data directly to the binary while applying the UAF trace
+python -c "print('A'*64)" | uv run microtaint --check-uaf -- ./binary
+
+# Execute quietly and emit structured JSON findings (useful for CI/fuzzers)
+uv run microtaint --check-all --quiet --json -- ./binary 2>/dev/null
+```
+
+## Python API Integration
+
+### 1. Qiling Emulator Integration (High-Level)
+
+The `MicrotaintWrapper` can be integrated manually onto any existing Qiling instance. This provides fine-grained control to programmatically trace or assert bitwise taints seamlessly during full-system/binary emulation.
+
+```python
+from qiling import Qiling
+from microtaint.emulator.wrapper import MicrotaintWrapper
+
+# Setup standard Qiling Environment
+ql = Qiling(["path/to/binary"], rootfs="/custom/rootfs")
+
+# Mount Bit-Precise Taint Engine on top
+wrapper = MicrotaintWrapper(ql)
+
+# Enable active security modules
+wrapper.check_bof = True  # Track instruction pointers
+wrapper.check_aiw = True  # Track memory addresses
+wrapper.check_uaf = True  # Monitor frees
+
+# Taint specific memory regions (e.g. 12 bytes at 0x1000)
+wrapper.taint_region(0x1000, 12, "my_custom_tag")
+
+# Run Emulator
+ql.run()
+
+# Review findings identified by the Reporter
+for finding in wrapper.reporter.findings:
+    print(finding)
+```
+
+### 2. Stateless AST Generation (Low-Level)
+
+For cases where you don't need full emulation but want to analyze the math and formulas of taint propagation for a specific instruction byte string, you can directly interface with the static generator and native evaluator:
 
 ```python
 from microtaint.sleigh.engine import generate_static_rule
@@ -28,54 +103,37 @@ from microtaint.types import Architecture, Register
 
 arch = Architecture.AMD64
 simulator = CellSimulator(arch)
-bytestring = bytes.fromhex("4801D8") # ADD RAX, RBX
 
-# 1. Generate the static Logic Circuit
-circuit = generate_static_rule(arch, bytestring, [Register('RAX', 64), Register('RBX', 64)])
+# 1. Provide an instruction (AND EAX, 0x0F0F)
+bytestring = bytes.fromhex('250f0f0000')
 
-# 2. Evaluate dynamically against concrete Values (V) and Taints (T)
+# 2. Lift it into a stateless logical circuit (AST)
+circuit = generate_static_rule(arch, bytestring, [Register('RAX', 64)])
+
+# 3. Form a concrete runtime execution context
 ctx = EvalContext(
-    input_values={'RAX': 0x0, 'RBX': 0x0},
-    input_taint={'RAX': 0x0, 'RBX': 0x10}, # Bit 4 of RBX is tainted
+    input_values={'RAX': 0xFFFF},
+    input_taint={'RAX': 0xFFFF},
     simulator=simulator
 )
-output_taint = circuit.evaluate(ctx) 
-# output_taint['RAX'] will mathematically evaluate to 0x10
+
+# 4. Mathematically evaluate how the taint propagates bit-by-bit
+output_taint = circuit.evaluate(ctx)
+# output_taint['RAX'] bitmask mathematically evaluates to 0x0F0F
 ```
 
 ## Development & Testing
 
+Run tests and check typings/formatting with:
+
 ```bash
-# Run type checking
 uv run mypy .
-
-# Lint & Format
 uv run ruff check .
-
-# Run Tests
 uv run pytest
 ```
 
-## Understanding the Formulas
+If a C/Cython file has been modified it is necessary to force a rebuild of the .so shared libraries with a
 
-When you generate rules, you receive an abstract syntax tree representing how taints flow constraint-by-constraint. Because we treat each assembly instruction as a monolithic computational "Cell" ($C$), the formulas rely heavily on mathematical differentials.
-
-An output formula assignment looks like this:
-
-```txt
-T_RAX[63:0] = (SimulateCell(instr=0x4801d8, out=RAX[63:0], RAX=(V_RAX[63:0] OR T_RAX[63:0]), RBX=(V_RBX[63:0] OR T_RBX[63:0])) 
-               XOR 
-               SimulateCell(instr=0x4801d8, out=RAX[63:0], RAX=(V_RAX[63:0] AND NOT(T_RAX[63:0])), RBX=(V_RBX[63:0] AND NOT(T_RBX[63:0])))) 
-              OR 
-              (T_RAX[63:0] OR T_RBX[63:0])
+```sh
+uv sync --reinstall-package=microtaint
 ```
-
-Here is how to read the components of Microtaint's engine:
-
-- **`V_REG` and `T_REG`**: Denotes the actual concrete runtime **Value** ($V$) and the **Taint mask** ($T$) of the register at specific bits.
-- **`SimulateCell(...)`**: This node takes the concrete instruction and natively executes it inside the Unicorn Engine using a specialized subset of the state. It acts as a perfect architectural oracle.
-- **The Logical Differential (`XOR`)**:
-  Instead of guessing how an `ADD` or `IMUL` mixes bits, we calculate the differential: $C(V \lor T) \oplus C(V \land \neg T)$.
-  We execute the cell once with all tainted bits forced to `1` (High Replica), and once with all tainted bits forced to `0` (Low Replica). The `XOR` of these two simulations is a strict mathematical proof: if the output changes between the two replicas, *the taint successfully propagated to that specific output bit*.
-- **Polarity ($p$)**: Some instructions (like `SUB`) are *bitwise non-increasing*—meaning forcing an input bit to `0` actually makes the result *higher*. Microtaint's Sleigh backend automatically detects operations that invert polarity and flips their replicas ($V \land \neg T$ becomes the High replica) to ensure the differential accurately captures borrows and underflows.
-- **Transportability Term (`OR (T_RAX ... OR T_RBX)`)**: If Sleigh classifies an instruction as an arithmetic "Transportable" cell (like `ADD`), the differential is combined with the direct bitwise OR of the input taints, guaranteeing that information flowing perfectly column-by-column isn't masked by identical values.
