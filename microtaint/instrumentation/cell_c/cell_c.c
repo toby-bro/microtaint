@@ -153,6 +153,25 @@ static DecodedBundle *get_bundle(EvalC *self, PyObject *bytestring) {
     tmp = PyObject_GetAttrString(decoded_obj, "next_instr_addr");
     bundle->next_instr_addr = (uint64_t)PyLong_AsUnsignedLongLong(tmp); Py_DECREF(tmp);
 
+    /* Copy imark_to_pc dict (addr -> pc) into a C array.  Used by
+     * BRANCH/CBRANCH to translate ram-space targets to pcode pcs. */
+    bundle->n_imarks = 0;
+    PyObject *imark_dict = PyObject_GetAttrString(decoded_obj, "imark_to_pc");
+    if (imark_dict && PyDict_Check(imark_dict)) {
+        PyObject *k, *v;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(imark_dict, &pos, &k, &v)) {
+            if (bundle->n_imarks >= MAX_PCODE_OPS) break;
+            bundle->imarks[bundle->n_imarks].addr =
+                (uint64_t)PyLong_AsUnsignedLongLong(k);
+            bundle->imarks[bundle->n_imarks].pc =
+                (int)PyLong_AsLong(v);
+            if (PyErr_Occurred()) { PyErr_Clear(); continue; }
+            bundle->n_imarks++;
+        }
+    }
+    Py_XDECREF(imark_dict);
+
     Py_buffer view;
     if (PyObject_GetBuffer(buf_bytes, &view, PyBUF_SIMPLE) == 0) {
         Py_ssize_t copy_sz = view.len < (Py_ssize_t)sizeof(bundle->buf)

@@ -267,6 +267,14 @@ cdef class DecodedOps:
     cdef public int       n_ops
     cdef public bint      has_fallback
     cdef public uint64_t  next_instr_addr  # 0x1000 + len(bytestring); used by CBRANCH to detect CMOVxx skip pattern
+    cdef public uint64_t  imark_addr       # 0x1000 — base address used by IMARK; loop-back BRANCH targets this
+    cdef public bint      has_loop         # True iff a backward BRANCH to imark_addr is present (rep stosb / movsb pattern)
+    # Map from in-sequence x86 instruction address (= IMARK ram address) to
+    # the pcode-op index where that IMARK lives.  Populated during predecode.
+    # Used by BRANCH / CBRANCH evaluation to translate a ram-space target
+    # back to a pcode pc.  Also includes ``next_instr_addr`` -> n_ops as a
+    # synthetic "after the last op" entry so forward-skip-to-end works.
+    cdef public dict      imark_to_pc
     cdef public object    input_reg_offsets  # set of SP_REGISTER input offsets
     cdef public object    _uc_arrays         # cached (ids_arr,vals_arr,ptrs_arr,names,needs_eflags)
 
@@ -291,6 +299,9 @@ def _predecode_ops(arch, bytestring):
     # Translation always uses base 0x1000; next x86 instruction is right after the bytes.
     # CMOVxx CBRANCH targets exactly this address; a JL/JE targets a different address.
     result.next_instr_addr = <uint64_t>(0x1000 + len(bytestring))
+    result.imark_addr = <uint64_t>0x1000
+    result.has_loop = False
+    result.imark_to_pc = {}
     result.input_reg_offsets = set()
     has_fallback = False
     # Compact unique-space mapping: raw offset → sequential index 0,1,2,...
@@ -309,6 +320,8 @@ def _predecode_ops(arch, bytestring):
         # Check for fallback conditions
         if oid == OP_BRANCHIND or oid == OP_CALLIND:
             has_fallback = True
+        elif oid == OP_BRANCH:
+            has_fallback = True  # may be cleared after full decode
         elif oid == OP_CBRANCH:
             has_fallback = True  # may be cleared after full decode
         elif oid == OP_CALLOTHER and out is not None:
@@ -366,44 +379,87 @@ def _predecode_ops(arch, bytestring):
             op_ptr.i0_sp = i0_sp; op_ptr.i0_off = i0_off; op_ptr.i0_sz = i0_sz
             op_ptr.i1_sp = i1_sp; op_ptr.i1_off = i1_off; op_ptr.i1_sz = i1_sz
             op_ptr.i2_sp = i2_sp; op_ptr.i2_off = i2_off; op_ptr.i2_sz = i2_sz
+            # Track IMARK ram-address → pc index so BRANCH/CBRANCH can map a
+            # ram destination back to a pcode op.  IMARK input is the x86
+            # instruction's start address in ram space.
+            if oid == OP_IMARK and i0_sp == SP_RAM:
+                result.imark_to_pc[<uint64_t>i0_off] = result.n_ops
             result.n_ops += 1
 
-    # Decide whether this instruction can run in the pcode evaluator without
-    # falling back to Unicorn.  Two pcode CBRANCH patterns are supported:
+    # ── Decide whether this instruction can run in the pcode evaluator ──
+    # without falling back to Unicorn.  The supported control-flow patterns:
     #
-    #   (a) JL / JE / JNE etc.   — exactly one CBRANCH, the last op,
-    #                              dest != next_instr_addr (real branch).
-    #                              _execute_decoded writes RIP = dest or dest+1.
-    #
-    #   (b) CMOVZ / CMOVNZ etc.  — CBRANCH (anywhere) with dest == next_instr_addr.
-    #                              _execute_decoded sets skip_remaining when the
-    #                              condition is true; subsequent ops become no-ops.
+    #   (a) JL / JE / JNE etc.  — exactly one CBRANCH, the last op,
+    #                             dest in ram space, dest != next_instr_addr.
+    #                             The evaluator writes RIP = dest or dest+1 so
+    #                             the differential XOR detects tainted control
+    #                             flow as RIP taint.
+    #   (b) CMOVZ / CMOVNZ etc. — CBRANCH (anywhere) with dest == next_instr_addr.
+    #                             ``skip_remaining`` is set when the condition
+    #                             is true; subsequent ops become no-ops.
+    #   (c) BSF / BSR / RCL etc. — internal pcode-relative loops.  BRANCH and
+    #                             CBRANCH with dest in const space — interpreter
+    #                             follows them as signed relative jumps (capped
+    #                             to a small iteration budget for safety).
+    #   (d) REP STOSB / MOVSB    — a CBRANCH to next_instr_addr (loop exit) plus
+    #                             a backward BRANCH to imark_addr (loop top).
+    #                             Iteration count is bounded by the per-cell
+    #                             iteration budget.
     #
     # Anything else stays has_fallback=True:
-    #   - BSF/BSR (BRANCH op + pcode-relative CBRANCH dests in CONST space)
     #   - BRANCHIND/CALLIND (indirect control flow)
     #   - CALLOTHER with output, FLOAT, UNKNOWN (already flagged earlier)
+    #   - BRANCH to ram[X] where X is neither imark_addr nor next_instr_addr.
     if has_fallback:
         _ok = 1
         _cb_total = 0
         for _ii in range(result.n_ops):
             _oid = result.buf[_ii].oid
-            if _oid == OP_BRANCH or _oid == OP_BRANCHIND or _oid == OP_CALLIND:
+            if _oid == OP_BRANCHIND or _oid == OP_CALLIND:
+                _ok = 0; break
+            if _oid == OP_BRANCH:
+                # const-space target: pcode-relative signed offset.  Always
+                # supported — interpreter follows it as a relative jump.
+                if result.buf[_ii].i0_sp == SP_CONST:
+                    continue
+                # ram-space target: valid iff it lands on an IMARK address
+                # already in this sequence (loop-back or in-sequence jump),
+                # or equals next_instr_addr (forward skip to the end).
+                # Anything else is a real x86 jump out of the cell, which we
+                # don't model — fall back.
+                if result.buf[_ii].i0_sp == SP_RAM:
+                    _cb_dest = <uint64_t>result.buf[_ii].i0_off
+                    if _cb_dest == result.next_instr_addr:
+                        continue
+                    if _cb_dest in result.imark_to_pc:
+                        # Backward jump => loop; flag for the iteration cap.
+                        if (<int>result.imark_to_pc[_cb_dest]) <= _ii:
+                            result.has_loop = True
+                        continue
                 _ok = 0; break
             if _oid == OP_CBRANCH:
                 _cb_total += 1
-                # CBRANCH dest must be in ram space (absolute x86 address).
-                # const-space dests are pcode-relative offsets (BSF/BSR pattern).
+                if result.buf[_ii].i0_sp == SP_CONST:
+                    # const-space pcode-relative CBRANCH (BSF/BSR pattern) —
+                    # interpreter follows it as a signed relative jump.
+                    continue
                 if result.buf[_ii].i0_sp != SP_RAM:
                     _ok = 0; break
                 _cb_dest = <uint64_t>result.buf[_ii].i0_off
-                # Pattern (b): forward skip to end of cell — handled by skip_remaining.
+                # Forward skip to end of sequence (CMOVxx, rep-loop exit).
                 if _cb_dest == result.next_instr_addr:
                     continue
-                # Pattern (a): real branch — only valid if this is the last op.
+                # Any in-sequence IMARK address — a forward or backward
+                # conditional jump within this cell is fine.
+                if _cb_dest in result.imark_to_pc:
+                    if (<int>result.imark_to_pc[_cb_dest]) <= _ii:
+                        result.has_loop = True
+                    continue
+                # Pattern (a): real x86 conditional branch out of cell —
+                # only valid if this is the last op (exit pattern).
                 if _ii != result.n_ops - 1:
                     _ok = 0; break
-        if _ok and _cb_total >= 1:
+        if _ok:
             has_fallback = False
 
     for _ii in range(result.n_ops):
@@ -676,26 +732,39 @@ cdef void _execute_decoded(
     cdef int          i2_sp, i2_sz
     cdef unsigned long i2_off
     cdef uint64_t  a, b, c, result, u_result, dest, cond
-    cdef int64_t   sa, sb, sresult
-    cdef int       sz, bits, i
+    cdef int64_t   sa, sb, sresult, rel
+    cdef int       sz, bits, i, pc, new_pc
     cdef PCodeOp*  op
     cdef PCodeOp*  ops_base
     cdef int       n_ops
     cdef bint      skip_remaining = 0   # set by an internal CBRANCH (CMOVxx skip)
     cdef uint64_t  next_instr_addr = decoded.next_instr_addr
+    cdef uint64_t  imark_addr      = decoded.imark_addr
+    cdef dict      imark_to_pc     = decoded.imark_to_pc
+    cdef object    _pc_obj
+    # Bound back-edges to keep wild differential-evaluator inputs (eg ECX
+    # under V|T polarity could be huge) from running forever.  256 covers
+    # every realistic ``rep stosb`` / ``rep movsb`` case in the benchmark
+    # suite (bytes copied is bounded by stack scratch size, ≤ 64 in
+    # practice).  Exceeding the budget triggers a Unicorn fallback —
+    # which is also bounded by Unicorn's guest-fuel mechanism.
+    cdef int       loop_iters       = 0
+    cdef int       MAX_LOOP_ITERS   = 256
 
     # Hoist out of loop: one Python object access total, then pure C
     ops_base = decoded.buf
     n_ops    = decoded.n_ops
+    pc = 0
 
-    for i in range(n_ops):
-        op = ops_base + i                    # pure C pointer arithmetic
+    while pc < n_ops:
+        op = ops_base + pc                    # pure C pointer arithmetic
         oid            = op.oid
         # CMOVxx skip: an internal CBRANCH (dest == next x86 instruction)
         # branched over the remaining ops in this cell.  Treat them as no-ops.
         # IMARK is allowed through (it has no semantic effect, and pcode never
         # contains another IMARK after the first).
         if skip_remaining and oid != OP_IMARK:
+            pc += 1
             continue
         o_sp           = op.o_sp
         o_off          = op.o_off
@@ -707,8 +776,42 @@ cdef void _execute_decoded(
         i2_sp          = op.i2_sp;  i2_off = op.i2_off;  i2_sz = op.i2_sz
 
         # ── Hot path: most frequent pcode ops first ─────────────────
-        if oid == OP_IMARK or oid == OP_BRANCH or oid == OP_RETURN or oid == OP_CALL:
+        if oid == OP_IMARK or oid == OP_RETURN or oid == OP_CALL:
             pass
+        elif oid == OP_BRANCH:
+            # Three accepted BRANCH patterns (others fall back during predecode):
+            #   (1) const-space target: pcode-relative signed offset.
+            #   (2) ram-space target == any in-sequence IMARK: jump to that op.
+            #   (3) ram-space target == next_instr_addr: forward skip to end.
+            if i0_sp == SP_CONST:
+                # Sign-extend offset based on size (i0_sz bytes).
+                rel = _signed64(<uint64_t>i0_off, i0_sz)
+                pc = pc + <int>rel
+                if pc < 0 or pc > n_ops:
+                    raise PCodeFallbackNeeded('BRANCH out of pcode range')
+                if rel <= 0:
+                    loop_iters += 1
+                    if loop_iters > MAX_LOOP_ITERS:
+                        raise PCodeFallbackNeeded('iteration budget exceeded (const BRANCH)')
+                continue
+            if i0_sp == SP_RAM:
+                dest = <uint64_t>i0_off
+                if dest == next_instr_addr:
+                    pc = n_ops  # exit the cell
+                    continue
+                _pc_obj = imark_to_pc.get(dest)
+                if _pc_obj is not None:
+                    new_pc = <int>_pc_obj
+                    # Backward jump => loop iteration; cap to keep wild
+                    # taint-polarity inputs from looping forever.
+                    if new_pc <= pc:
+                        loop_iters += 1
+                        if loop_iters > MAX_LOOP_ITERS:
+                            raise PCodeFallbackNeeded('iteration budget exceeded (rep loop)')
+                    pc = new_pc
+                    continue
+                raise PCodeFallbackNeeded('BRANCH to unsupported ram target')
+            raise PCodeFallbackNeeded('BRANCH to unsupported space')
         elif oid == OP_INT_XOR:
             if o_sp != NO_OUT_SPACE:
                 frame.write_d(o_sp, o_off, o_sz,
@@ -773,24 +876,53 @@ cdef void _execute_decoded(
         # ── Less frequent ops ────────────────────────────────────────
         elif oid == OP_CBRANCH:
             cond = frame.read_d(i1_sp, i1_off, i1_sz)
-            dest = <uint64_t>i0_off  # branch target from ram varnode
-            if dest == next_instr_addr:
-                # Internal forward skip (CMOVxx pattern): if condition is true,
-                # branch over the rest of the cell — subsequent ops do nothing.
-                # No RIP write: control flow stays within this x86 instruction.
-                # Taint propagates through the destination register naturally
-                # via the C1/C2 differential: the two runs take different paths,
-                # producing different values and thus tainting the destination.
+            # CBRANCH semantics: if cond is true, go to dest; else fall through.
+            # Accepted dest patterns:
+            #   (1) const-space: pcode-relative signed offset (BSF/BSR).
+            #   (2) ram-space == next_instr_addr: forward skip-to-end (CMOVxx,
+            #       rep-loop exit when ECX==0).
+            #   (3) ram-space == any in-sequence IMARK address: in-cell jump
+            #       (forward or backward).  Backward => loop iteration.
+            #   (4) ram-space, other: real x86 conditional jump out of cell
+            #       (JL/JE/JNE) — write RIP so the differential XOR sees the
+            #       taken/not-taken decision as RIP taint.
+            if i0_sp == SP_CONST:
                 if cond:
-                    skip_remaining = 1
+                    rel = _signed64(<uint64_t>i0_off, i0_sz)
+                    pc = pc + <int>rel
+                    if pc < 0 or pc > n_ops:
+                        raise PCodeFallbackNeeded('CBRANCH out of pcode range')
+                    if rel <= 0:
+                        loop_iters += 1
+                        if loop_iters > MAX_LOOP_ITERS:
+                            raise PCodeFallbackNeeded('iteration budget exceeded (const CBRANCH)')
+                    continue
+                # not taken: fall through (pc += 1 at the end)
+            elif i0_sp == SP_RAM:
+                dest = <uint64_t>i0_off
+                if dest == next_instr_addr:
+                    if cond:
+                        skip_remaining = 1
+                else:
+                    _pc_obj = imark_to_pc.get(dest)
+                    if _pc_obj is not None:
+                        if cond:
+                            new_pc = <int>_pc_obj
+                            if new_pc <= pc:
+                                loop_iters += 1
+                                if loop_iters > MAX_LOOP_ITERS:
+                                    raise PCodeFallbackNeeded('iteration budget exceeded (CBRANCH loop)')
+                            pc = new_pc
+                            continue
+                        # not taken: fall through
+                    else:
+                        # Pattern (4): real x86 conditional branch.
+                        result = dest if cond else dest + 1
+                        pc_tup = _ARCH_PC.get(str(frame._arch))
+                        if pc_tup is not None:
+                            frame.write_d(SP_REGISTER, pc_tup[0], pc_tup[1], result)
             else:
-                # Real conditional branch (JL/JE/JNE pattern): write RIP to a
-                # value that differs between taken/not-taken so the C1/C2
-                # differential detects tainted control flow as RIP taint.
-                result = dest if cond else dest + 1
-                pc_tup = _ARCH_PC.get(str(frame._arch))
-                if pc_tup is not None:
-                    frame.write_d(SP_REGISTER, pc_tup[0], pc_tup[1], result)
+                raise PCodeFallbackNeeded('CBRANCH to unsupported space')
         elif oid == OP_BRANCHIND or oid == OP_CALLIND:
             raise PCodeFallbackNeeded('Control-flow opcode')
         elif oid == OP_CALLOTHER:
@@ -1023,6 +1155,24 @@ cdef void _execute_decoded(
             if o_sp != NO_OUT_SPACE:
                 frame.write_d(o_sp, o_off, o_sz,
                     0 if frame.read_d(i0_sp, i0_off, i0_sz) else 1)
+
+        # Default fall-through: advance to next pcode op.
+        pc += 1
+
+    # Note on end-of-cell RIP behavior:
+    #
+    # Unicorn's emu_start always advances RIP past the executed bytes.  For
+    # the JL/JE pattern (Pattern (4) above), the CBRANCH handler already
+    # writes a dest-dependent RIP so the differential XOR sees taken vs
+    # not-taken as RIP taint.  For all other instructions the pcode
+    # interpreter does not write RIP — the architectural register stays
+    # whatever the caller loaded.  Static-rule generation handles
+    # incrementing RIP through normal instruction sequencing.
+    #
+    # In particular, an in-cell loop (rep stosb/movsb, BSF/BSR) does NOT
+    # produce RIP taint here — Unicorn's apparent RIP taint for these
+    # instructions comes from a different layer of the rule generator,
+    # not from per-cell evaluation, and is over-conservative.
 
 
 # ---------------------------------------------------------------------------
