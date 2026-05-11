@@ -200,6 +200,58 @@ static void emit_call_cell(CompiledCircuit *cc, BCEmit *e, PyObject *cell_obj) {
     for (i = 0; i < (int)n; i++) emit(e, (uint32_t)name_idxs[i]);
 }
 
+/* Walk a Python Expr tree looking for memory-reading leaves.  Returns 1
+ * iff any subexpression's class name is in MEMORY_READING_EXPR_CLASSES.
+ *
+ * Used to fix the `has_mem_ops` contract: when an assignment's expression
+ * contains an expression class that `compile_expr` cannot emit (and the
+ * whole assignment becomes a Python fallback), we still need to know if
+ * the *Python* evaluation will read shadow memory.  If it will, the
+ * wrapper's per-instruction cache must not treat the circuit as
+ * cache-eligible — otherwise stale taint replay across iterations.
+ *
+ * The walk is conservative: any class name match anywhere in the tree
+ * sets has_mem_ops.  Refcounting: borrowed references only; we never
+ * own anything past the function boundary.
+ *
+ * Recursion depth is bounded by the depth of the AST, which is small
+ * for static rules — typical ~10 levels, hard cap below as safety.
+ */
+static int expr_tree_reads_memory(PyObject *expr, int depth) {
+    if (depth > 64) return 0;   /* safety: pathological depth */
+    if (!expr || expr == Py_None) return 0;
+    PyObject *cls = PyObject_GetAttrString(expr, "__class__");
+    if (!cls) { PyErr_Clear(); return 0; }
+    PyObject *name_obj = PyObject_GetAttrString(cls, "__name__");
+    Py_DECREF(cls);
+    if (!name_obj) { PyErr_Clear(); return 0; }
+    const char *name = PyUnicode_AsUTF8(name_obj);
+    int hit = 0;
+    if (name) {
+        if (strcmp(name, "MemoryOperand") == 0
+            || strcmp(name, "MemoryDifferentialExpr") == 0) {
+            hit = 1;
+        }
+    }
+    Py_DECREF(name_obj);
+    if (hit) return 1;
+
+    /* Recurse through common child slots.  We don't know the exact set of
+     * Expr shapes here, but each known kind uses one of: lhs+rhs (BinaryExpr),
+     * expr (UnaryExpr / AvalancheExpr), address_expr (MemoryOperand — already
+     * matched above), or no children (TaintOperand / Constant). */
+    static const char *child_attrs[] = {"lhs", "rhs", "expr", "address_expr", NULL};
+    for (int i = 0; child_attrs[i]; i++) {
+        if (!PyObject_HasAttrString(expr, child_attrs[i])) continue;
+        PyObject *child = PyObject_GetAttrString(expr, child_attrs[i]);
+        if (!child) { PyErr_Clear(); continue; }
+        int sub = expr_tree_reads_memory(child, depth + 1);
+        Py_DECREF(child);
+        if (sub) return 1;
+    }
+    return 0;
+}
+
 /* Compile one Expr subtree into bytecode (post-order walk: emit operands first). */
 static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
     if (e->fallback || e->overflow) return;
@@ -480,19 +532,53 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
         PyObject *expr = PyObject_GetAttrString(a, "expression");
         if (!expr || expr == Py_None) {
             Py_XDECREF(expr);
-            /* Dependencies fallback — uncommon, keep Python */
+            /* Dependencies fallback — uncommon, keep Python.
+             * has_mem_ops contract: walk the *assignment*'s expression
+             * (even if None we also check dependencies through it via
+             * the python_assignment path at runtime).  The expr is None
+             * here so we can only conservatively trust the existing
+             * has_mem_ops; the deps will be evaluated in Python and
+             * could reference memory, so re-check via target/deps. */
             p->python_assignment = a; Py_INCREF(a);
             cc->has_python_fallback = 1;
+            /* Pessimistic: dependency-only fallback assignments may read
+             * memory through MemoryOperand deps even with expression=None. */
+            PyObject *deps = PyObject_GetAttrString(a, "dependencies");
+            if (deps) {
+                if (PyList_Check(deps) || PyTuple_Check(deps)) {
+                    Py_ssize_t n = PySequence_Size(deps);
+                    for (Py_ssize_t i = 0; i < n; i++) {
+                        PyObject *d = PySequence_GetItem(deps, i);
+                        if (d) {
+                            if (expr_tree_reads_memory(d, 0)) {
+                                cc->has_mem_ops = 1;
+                            }
+                            Py_DECREF(d);
+                        }
+                    }
+                }
+                Py_DECREF(deps);
+            } else {
+                PyErr_Clear();
+            }
             continue;
         }
         BCEmit emit_buf = {{0}, 0, 0, 0};
         compile_expr(cc, &emit_buf, expr);
-        Py_DECREF(expr);
         if (emit_buf.fallback || emit_buf.overflow) {
+            /* Bytecode compile failed.  Conservatively check whether the
+             * *Python* fallback evaluation will read shadow memory.  If it
+             * will, `has_mem_ops` must reflect that, otherwise the
+             * wrapper's per-instruction cache will replay stale taint. */
+            if (expr_tree_reads_memory(expr, 0)) {
+                cc->has_mem_ops = 1;
+            }
+            Py_DECREF(expr);
             p->python_assignment = a; Py_INCREF(a);
             cc->has_python_fallback = 1;
             continue;
         }
+        Py_DECREF(expr);
         emit(&emit_buf, OP_END);
         p->bc_len = emit_buf.len;
         p->bc = (uint32_t *)malloc(sizeof(uint32_t) * emit_buf.len);
