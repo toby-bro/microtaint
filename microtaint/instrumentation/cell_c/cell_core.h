@@ -753,7 +753,21 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
             }
             return EXEC_FALLBACK;
             }
-        case OP_BRANCHIND: case OP_CALLIND: return EXEC_FALLBACK;
+        case OP_BRANCHIND: case OP_CALLIND:
+            /* Write the jump target into the architectural PC register so that
+             * SimCell read-back produces the correct concrete value: SimH and
+             * SimL will differ exactly when the target depends on a tainted
+             * register, matching the AVALANCHE expression the engine generates.
+             *
+             * Without this write PC stays 0 (pristine), making SimH == SimL
+             * and collapsing the differential to 0.  All other register writes
+             * for the instruction (link-register save, RSP adjustment, etc.)
+             * were already handled by the preceding pcode ops. */
+            if (f->arch_pc_off && f->arch_pc_sz) {
+                frame_write_reg(f, (long)f->arch_pc_off, f->arch_pc_sz,
+                    frame_read_d(f, op->i0_sp, op->i0_off, op->i0_sz));
+            }
+            break;
         case OP_CALLOTHER: if (op->callother_out) return EXEC_FALLBACK; break;
         case OP_FLOAT_ANY: case OP_TRUNC_FLOAT: case OP_UNKNOWN: return EXEC_FALLBACK;
         default: break;

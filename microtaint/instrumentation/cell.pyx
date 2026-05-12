@@ -318,9 +318,7 @@ def _predecode_ops(arch, bytestring):
         ins    = op.inputs
 
         # Check for fallback conditions
-        if oid == OP_BRANCHIND or oid == OP_CALLIND:
-            has_fallback = True
-        elif oid == OP_BRANCH:
+        if oid == OP_BRANCH:
             has_fallback = True  # may be cleared after full decode
         elif oid == OP_CBRANCH:
             has_fallback = True  # may be cleared after full decode
@@ -407,16 +405,21 @@ def _predecode_ops(arch, bytestring):
     #                             iteration budget.
     #
     # Anything else stays has_fallback=True:
-    #   - BRANCHIND/CALLIND (indirect control flow)
     #   - CALLOTHER with output, FLOAT, UNKNOWN (already flagged earlier)
     #   - BRANCH to ram[X] where X is neither imark_addr nor next_instr_addr.
+    #
+    # Note: BRANCHIND and CALLIND are NOT in this list.  They have no output
+    # varnode and are treated as no-ops in execute_decoded (same as RETURN):
+    # all register writes produced by the instruction appear in pcode ops that
+    # precede the terminal CALLIND/BRANCHIND, and T_PC is handled by the
+    # engine's map_outputs_to_targets → AVALANCHE floor path.  Routing to
+    # Unicorn for these ops is never necessary and always slower (SimH with
+    # extreme polarity inputs causes an immediate FETCH_UNMAPPED fault anyway).
     if has_fallback:
         _ok = 1
         _cb_total = 0
         for _ii in range(result.n_ops):
             _oid = result.buf[_ii].oid
-            if _oid == OP_BRANCHIND or _oid == OP_CALLIND:
-                _ok = 0; break
             if _oid == OP_BRANCH:
                 # const-space target: pcode-relative signed offset.  Always
                 # supported — interpreter follows it as a relative jump.
@@ -1111,7 +1114,25 @@ cdef void _execute_decoded(
             else:
                 raise PCodeFallbackNeeded('CBRANCH to unsupported space')
         elif oid == OP_BRANCHIND or oid == OP_CALLIND:
-            raise PCodeFallbackNeeded('Control-flow opcode')
+            # Write the jump target into the architectural PC register so that
+            # SimCell read-back gives the correct concrete value for the
+            # differential: SimH and SimL will differ exactly when the target
+            # varnode (i0) depends on a tainted register, which is what
+            # map_outputs_to_targets expects to see via the AVALANCHE expression.
+            #
+            # Without this write PC stays at its pristine value (0), making
+            # SimH = SimL = 0 and collapsing the differential to 0.  Then only
+            # the AVALANCHE floor term (T_input) would cover taint, which is
+            # sound but loses the bit-precise differential for BRANCHIND targets
+            # that are simple register reads (e.g. JMP rax, BR x0).
+            #
+            # Note: all OTHER register writes for the instruction (link-register
+            # save, RSP adjustment) are already emitted as pcode ops that precede
+            # this terminal op and were executed above.
+            pc_tup = _ARCH_PC.get(str(frame._arch))
+            if pc_tup is not None:
+                frame.write_d(SP_REGISTER, pc_tup[0], pc_tup[1],
+                              frame.read_d(i0_sp, i0_off, i0_sz))
         elif oid == OP_CALLOTHER:
             if callother_out:
                 raise PCodeFallbackNeeded('CALLOTHER with output')

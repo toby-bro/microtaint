@@ -126,13 +126,12 @@ def _has_fallback(asm: str) -> bool:
 # ---------------------------------------------------------------------------
 
 # Instructions known to require Unicorn due to indirect control flow.
-# jalr lifts to CALLIND (indirect call to a data-dependent target), which
-# the pcode engine cannot resolve without executing concretely in Unicorn.
-_KNOWN_UNICORN_FALLBACKS: frozenset[str] = frozenset({
-    'jalr t0, t1, 0',
-})
+# As of the CALLIND/BRANCHIND no-op fix, ALL jalr forms are handled natively:
+# the pcode evaluator writes the jump target into the PC register and treats
+# the terminal CALLIND/BRANCHIND as a no-op, exactly like RETURN.
+_KNOWN_UNICORN_FALLBACKS: frozenset[str] = frozenset()
 
-_KNOWN_NATIVE: list[str] = [i for i in ALL_INSTRUCTIONS if i not in _KNOWN_UNICORN_FALLBACKS]
+_KNOWN_NATIVE: list[str] = list(ALL_INSTRUCTIONS)
 
 
 @pytest.mark.parametrize('asm', _KNOWN_NATIVE, ids=lambda s: s.replace(' ', '_'))
@@ -149,8 +148,10 @@ def test_instruction_is_native(asm: str) -> None:
 def test_instruction_requires_unicorn(asm: str) -> None:
     """Instructions in the known-fallback set must still require Unicorn.
 
-    If this test starts failing it means the pcode engine gained native
-    support for this instruction — remove it from _KNOWN_UNICORN_FALLBACKS.
+    This set is currently empty: the CALLIND/BRANCHIND no-op fix means all
+    canonical RV64GC instructions are handled natively.  This test is kept
+    as a sentinel — if it ever gets a new entry it means a new instruction
+    genuinely cannot be evaluated without Unicorn.
     """
     assert _has_fallback(asm), (
         f'"{asm}" no longer requires Unicorn fallback — pcode engine now handles it.  '
