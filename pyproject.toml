@@ -205,7 +205,7 @@ artifacts = [
 source = "vcs"
 
 [tool.ruff]
-exclude = [".venv", "__pycache__", "pyproject.toml"]
+exclude = [".venv", "__pycache__", "pyproject.toml", "benchmark"]
 line-length = 120
 target-version = "py312"
 format.quote-style = "single"
@@ -298,6 +298,7 @@ exclude = [
     "peekaboo/",
     "tools/",
     "hatch_build.py",
+    "benchmark/",
 ]
 
 # pypcode and unicorn are C extensions with no bundled stubs
@@ -309,6 +310,7 @@ ignore_missing_imports = true
 filterwarnings = ["ignore::DeprecationWarning:multiprocessing.popen_fork"]
 addopts = "--cov=microtaint --cov-report=xml --cov-report=term-missing"
 testpaths = ["microtaint", "tests"]
+norecursedirs = ["benchmark"]
 
 [tool.coverage.run]
 omit = [
