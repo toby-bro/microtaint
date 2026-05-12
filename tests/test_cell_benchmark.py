@@ -680,6 +680,24 @@ CORPUS: list[tuple[str, str, dict, dict, str | None, int | None, str]] = [
         'BSF RAX,RBX — bit-index result bounded to 7 bits',
     ),
     (
+        'BSF r64,r64 AX',
+        '480FBCC3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AX',
+        0x7F,  # sub-register view: same 7-bit cap, derived from 64-bit source operand not from AX width
+        'BSF RAX,RBX — AX sub-register gets same 7-bit cap as RAX (regression: was 0x1f)',
+    ),
+    (
+        'BSF r64,r64 AL',
+        '480FBCC3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AL',
+        0x7F,  # sub-register view: same 7-bit cap, derived from 64-bit source operand not from AL width
+        'BSF RAX,RBX — AL sub-register gets same 7-bit cap as RAX (regression: was 0x0f)',
+    ),
+    (
         'BSR r64,r64',
         '480FBDC3',
         {'RBX': 0x40},
@@ -687,6 +705,117 @@ CORPUS: list[tuple[str, str, dict, dict, str | None, int | None, str]] = [
         'RAX',
         0x7F,
         'BSR RAX,RBX — bit-index result bounded to 7 bits',
+    ),
+    (
+        'BSR r64,r64 AX',
+        '480FBDC3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AX',
+        0x7F,  # sub-register view: same 7-bit cap (regression: was 0x1f)
+        'BSR RAX,RBX — AX sub-register gets same 7-bit cap as RAX (regression: was 0x1f)',
+    ),
+    (
+        'BSR r64,r64 AL',
+        '480FBDC3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AL',
+        0x7F,  # sub-register view: same 7-bit cap (regression: was 0x0f)
+        'BSR RAX,RBX — AL sub-register gets same 7-bit cap as RAX (regression: was 0x0f)',
+    ),
+    # 32-bit BSF/BSR: source is 32-bit, so cap is 6 bits (0x3f covers 0..31 for BSF/BSR,
+    # 0..32 for TZCNT/LZCNT/POPCNT). Sub-register views AX and AL must use the same
+    # source-derived cap, not the narrower view-width cap.
+    (
+        'BSF r32,r32 AX',
+        '0FBCC3',
+        {'EBX': 0x4},
+        {'EBX': FULL_TAINT_32},
+        'AX',
+        0x3F,  # 6-bit cap from 32-bit source (regression: was 0x0f for AX width=16)
+        'BSF EAX,EBX — AX sub-register gets 6-bit cap from 32-bit source (regression: was 0x0f)',
+    ),
+    (
+        'BSF r32,r32 AL',
+        '0FBCC3',
+        {'EBX': 0x4},
+        {'EBX': FULL_TAINT_32},
+        'AL',
+        0x3F,  # 6-bit cap from 32-bit source (regression: was 0x07 for AL width=8)
+        'BSF EAX,EBX — AL sub-register gets 6-bit cap from 32-bit source (regression: was 0x07)',
+    ),
+    (
+        'BSR r32,r32 AX',
+        '0FBDC3',
+        {'EBX': 0x4},
+        {'EBX': FULL_TAINT_32},
+        'AX',
+        0x3F,
+        'BSR EAX,EBX — AX sub-register gets 6-bit cap from 32-bit source (regression: was 0x0f)',
+    ),
+    (
+        'BSR r32,r32 AL',
+        '0FBDC3',
+        {'EBX': 0x4},
+        {'EBX': FULL_TAINT_32},
+        'AL',
+        0x3F,
+        'BSR EAX,EBX — AL sub-register gets 6-bit cap from 32-bit source (regression: was 0x07)',
+    ),
+    (
+        'TZCNT r64,r64 AX',
+        'F3480FBCC3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AX',
+        0x7F,
+        'TZCNT RAX,RBX — AX sub-register gets same 7-bit cap as RAX (regression: was 0x1f)',
+    ),
+    (
+        'TZCNT r64,r64 AL',
+        'F3480FBCC3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AL',
+        0x7F,
+        'TZCNT RAX,RBX — AL sub-register gets same 7-bit cap as RAX (regression: was 0x0f)',
+    ),
+    (
+        'LZCNT r64,r64 AX',
+        'F3480FBDC3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AX',
+        0x7F,
+        'LZCNT RAX,RBX — AX sub-register gets same 7-bit cap as RAX (regression: was 0x1f)',
+    ),
+    (
+        'LZCNT r64,r64 AL',
+        'F3480FBDC3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AL',
+        0x7F,
+        'LZCNT RAX,RBX — AL sub-register gets same 7-bit cap as RAX (regression: was 0x0f)',
+    ),
+    (
+        'POPCNT r64,r64 AX',
+        'F3480FB8C3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AX',
+        0x7F,
+        'POPCNT RAX,RBX — AX sub-register gets same 7-bit cap as RAX (regression: was 0x1f)',
+    ),
+    (
+        'POPCNT r64,r64 AL',
+        'F3480FB8C3',
+        {'RBX': 0x40},
+        {'RBX': FULL_TAINT_64},
+        'AL',
+        0x7F,
+        'POPCNT RAX,RBX — AL sub-register gets same 7-bit cap as RAX (regression: was 0x0f)',
     ),
     # -----------------------------------------------------------------------
     # PUSH / POP (memory taint)
@@ -1054,22 +1183,12 @@ def test_pcode_matches_unicorn(
 
     # 2. Full dict comparison for all keys that unicorn produced.
     #
-    # Some instructions are EXEMPT from Unicorn-parity checks on specific
-    # keys where the pcode-native path is demonstrably MORE precise:
-    #
-    #   BSF / BSR — Unicorn over-taints RIP (it sees the in-cell P-code loop
-    #   and conservatively propagates all input taint to RIP, even though the
-    #   architectural semantics of BSF/BSR never write RIP).  Pcode-native
-    #   correctly produces RIP=0 for these instructions.  Similarly Unicorn
-    #   over-taints AL/AX/EAX for BSR because it propagates the full RAX
-    #   taint slice to sub-registers without the bit-precise narrowing that
-    #   the pcode interpreter applies.
-    #
-    # In both cases pcode is the ground truth; Unicorn is over-conservative.
-    PCODE_PRECISE_EXEMPTIONS: dict[str, set[str]] = {
-        'BSF r64,r64': {'RIP'},
-        'BSR r64,r64': {'RIP', 'AX', 'AL'},
-    }
+    # Previously this dict held exemptions for BSF/BSR RIP (unicorn over-tainting
+    # due to pcode-internal CBRANCHes being mistakenly treated as architectural
+    # branches) and for BSR AL/AX (pcode under-tainting from the cap formula using
+    # output view width instead of source operand width).  Both are now fixed at
+    # the engine level, so no exemptions are needed.
+    PCODE_PRECISE_EXEMPTIONS: dict[str, set[str]] = {}
     exempt_keys = PCODE_PRECISE_EXEMPTIONS.get(mnemonic, set())
 
     differing = {}
@@ -1582,14 +1701,22 @@ def test_diagnostic_print_all_diffs(
 ) -> None:
     """
     Diagnostic helper: runs every corpus entry through both backends and
-    prints a side-by-side diff of their outputs.  Always passes.
+    prints a side-by-side diff of their outputs.  Fails only on unexpected
+    divergences — known backend asymmetries listed in DIAGNOSTIC_EXEMPTIONS
+    are silently skipped.
     Run with:  pytest -s -k test_diagnostic_print_all_diffs
 
     Output format per entry:
       [MATCH]  or  [DIFF]  mnemonic: description
         KEY : unicorn=0x...  pcode=0x...  (only for differing keys)
     """
-    any_diff = False
+    # Previously this dict exempted BSF/BSR RIP (pcode-internal CBRANCHes were
+    # mistakenly generating T_RIP assignments) and BSR AL/AX (cap formula used
+    # output view width instead of source operand width).  Both are now fixed,
+    # so no exemptions are needed and any divergence is a genuine regression.
+    DIAGNOSTIC_EXEMPTIONS: dict[str, set[str]] = {}
+
+    any_unexpected_diff = False
     lines = []
 
     for mnemonic, hex_bytes, input_values, input_taint, _check_reg, _, description in CORPUS:
@@ -1598,17 +1725,20 @@ def test_diagnostic_print_all_diffs(
             out_u = _run(sim_unicorn, circuit, input_values, input_taint)
             out_p = _run(sim_pcode, circuit, input_values, input_taint)
         except Exception as exc:
-            any_diff = True
+            any_unexpected_diff = True
             lines.append(f'[ERR]   {mnemonic}: {description}')
             lines.append(f'        EXCEPTION: {type(exc).__name__}: {exc}')
             continue
 
+        exempt = DIAGNOSTIC_EXEMPTIONS.get(mnemonic, set())
         diffs = {
-            k: (out_u.get(k, 0), out_p.get(k, 0)) for k in set(out_u) | set(out_p) if out_u.get(k, 0) != out_p.get(k, 0)
+            k: (out_u.get(k, 0), out_p.get(k, 0))
+            for k in set(out_u) | set(out_p)
+            if k not in exempt and out_u.get(k, 0) != out_p.get(k, 0)
         }
 
         if diffs:
-            any_diff = True
+            any_unexpected_diff = True
             lines.append(f'[DIFF]  {mnemonic}: {description}')
             lines.append(f'        input_values = {input_values}')
             lines.append(f'        input_taint  = {input_taint}')
@@ -1619,13 +1749,12 @@ def test_diagnostic_print_all_diffs(
 
     output = '\n'.join(lines)
     with capsys.disabled():
-        if any_diff:
+        if any_unexpected_diff:
             print('\n\n=== BACKEND COMPARISON DIAGNOSTIC ===')
             print(output)
             print(f"\n*** {sum(1 for lll in lines if lll.startswith('[DIFF]'))} entries differ ***")
 
-    # Always pass — this is a diagnostic tool only.
-    assert not any_diff, 'Backends differ on one or more entries.  Run with -s to see details.'
+    assert not any_unexpected_diff, 'Backends differ on one or more entries.  Run with -s to see details.'
 
 
 def test_diagnostic_pcode_register_map(

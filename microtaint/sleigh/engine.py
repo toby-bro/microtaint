@@ -1054,10 +1054,20 @@ def generate_taint_assignments(  # noqa: C901
             expr = BinaryExpr(Op.OR, expr, dep)
         out_width = out_bit_end - out_bit_start + 1
         if is_bit_count and out_width >= 8:
-            # The result is a count bounded by the operand width: at most ⌈log2(width+1)⌉
-            # bits can be tainted.  For any 8+-bit GP register the count fits in 7 bits.
-            # Avalanche to MASK over 7 bits, then zero-extend to the output width.
-            count_width = max(1, (out_width).bit_length())  # ⌈log2(width+1)⌉, e.g. 7 for 64-bit
+            # The result is a count bounded by the SOURCE OPERAND width, not by the
+            # output sub-register view width.  For example, BSR RAX,RBX produces a
+            # result in 0..63 regardless of whether we are computing taint for RAX
+            # (64-bit), AX (16-bit), or AL (8-bit).  Using out_width gives a cap
+            # that is too narrow for sub-register views (e.g. cap=0x0f for AL when
+            # the correct bound is 0x3f for a 64-bit source operand).
+            # The source width is available in dep_set: for all bit-count instructions
+            # there is exactly one value dependency whose bit span equals the source
+            # operand width.
+            _src_width = next(
+                (k.bit_end - k.bit_start + 1 for k in dep_set.value_deps if isinstance(k, RegMapping)),
+                out_width,  # safe fallback: never reached for well-formed bit-count slices
+            )
+            count_width = max(1, _src_width.bit_length())  # ⌈log2(src_width)⌉, e.g. 7 for 64-bit
             cap_mask = (1 << count_width) - 1
             avalanche = AvalancheExpr(expr, count_width)
             expr = BinaryExpr(Op.AND, avalanche, Constant(cap_mask, 8))
@@ -1466,11 +1476,18 @@ def generate_taint_assignments(  # noqa: C901
                 transport_term = BinaryExpr(Op.OR, transport_term, dep)
             out_width = out_bit_end - out_bit_start + 1
             if is_bit_count and out_width >= 8:
-                # tzcnt/bsf/bsr lift as software loops with INT_ADD counter.
-                # The output is the count, bounded by ⌈log2(width+1)⌉ bits
-                # (e.g. 7 for 64-bit operands).  Cap the union term to that
-                # width: avalanche over 7 bits zero-extended to full width.
-                count_width = max(1, (out_width).bit_length())
+                # tzcnt/bsf/bsr lift as software loops with INT_ADD/SUB counter.
+                # The output is a bit-index or bit-count bounded by the SOURCE operand
+                # width, not by the output sub-register view width.  Using out_width
+                # gives an incorrect (too-narrow) cap for sub-register views: e.g.
+                # T_AL gets cap=0x0f for BSR RAX,RBX, but the result spans 0..63 (6
+                # bits, cap=0x3f).  Instead derive the cap from the source operand
+                # width, which is available as the single dep_set entry's bit span.
+                _src_width = next(
+                    (k.bit_end - k.bit_start + 1 for k in dep_set.value_deps if isinstance(k, RegMapping)),
+                    out_width,  # safe fallback: never reached for well-formed bit-count slices
+                )
+                count_width = max(1, _src_width.bit_length())
                 cap_mask = (1 << count_width) - 1
                 transport_term = BinaryExpr(
                     Op.AND,
@@ -2141,6 +2158,24 @@ def map_outputs_to_targets(
             if not pc_reg:
                 continue
 
+            # For CBRANCH:  inputs[0] = branch destination, inputs[1] = condition predicate.
+            # For BRANCHIND/CALLIND: inputs[0] = target address.
+            #
+            # Skip pcode-internal CBRANCH ops: Sleigh emits these as const-space targets
+            # to implement multi-exit instructions (BSF/BSR/TZCNT bit-scan loops, CMOVcc
+            # skip patterns, REPNE loop exits, etc.).  A const-space target is a relative
+            # pcode-PC offset — it can never be an x86 architectural branch and must NOT
+            # contribute a T_RIP assignment.  The old code checked inputs[1] (the condition),
+            # which is always unique-space, so the check was a no-op and BSF/BSR/TZCNT
+            # incorrectly generated T_RIP assignments from their loop CBRANCHes.
+            dest = op.inputs[0]
+            if op_name == 'CBRANCH' and dest.space.name == 'const':
+                continue
+
+            # The varnode whose taint flows into RIP:
+            # - CBRANCH: the condition predicate (inputs[1]); when it is tainted, the
+            #   taken/not-taken decision is uncertain, so RIP is tainted.
+            # - BRANCHIND/CALLIND: the target address (inputs[0]).
             varnode = op.inputs[1] if op_name == 'CBRANCH' else op.inputs[0]
             if varnode.space.name == 'const':
                 continue
