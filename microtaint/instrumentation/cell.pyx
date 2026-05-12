@@ -492,9 +492,15 @@ cdef class _PCodeFrame:
     # Dirty-slot tracker: only zero written slots in clear() instead of scanning all 1104
     cdef int dirty[48]   # offsets of written regs_arr slots (48 > max flags+regs written)
     cdef int dirty_count
-    # Compact unique-space array: indices 0..15 replacing the uniq dict
+    # Compact unique-space array: indices 0..31 for ≤8-byte unique varnodes.
     cdef uint64_t uniq_arr[32]
     cdef uint8_t  uniq_set[32]  # which slots are written
+    # High-half companion for 16-byte (128-bit) unique varnodes.
+    # uniq_arr[slot] holds the low 64 bits; uniq_hi[slot] holds bits 64..127.
+    # Only populated for instructions with 16-byte pcode intermediates
+    # (CQO/INT_SEXT, MUL/IMUL widening, DIV/IDIV 128-bit dividend).
+    cdef uint64_t uniq_hi[32]
+    cdef uint8_t  uniq_hi_set[32]
     # Cold fallback for offsets >= REGS_ARR_SIZE
     cdef public dict regs
     cdef public dict reg_sizes
@@ -508,6 +514,7 @@ cdef class _PCodeFrame:
             self.regs_set[i] = 0
         for i in range(32):
             self.uniq_set[i] = 0
+            self.uniq_hi_set[i] = 0
         self.dirty_count = 0
         self.regs      = {}
         self.reg_sizes = {}
@@ -667,10 +674,12 @@ cdef class _PCodeFrame:
         for i in range(self.dirty_count):
             self.regs_set[self.dirty[i]] = 0
         self.dirty_count = 0
-        # Clear compact unique array
+        # Clear compact unique array (both low and high halves)
         for i in range(32):
             if self.uniq_set[i]:
                 self.uniq_set[i] = 0
+            if self.uniq_hi_set[i]:
+                self.uniq_hi_set[i] = 0
         if self.regs:
             self.regs.clear()
         if self.reg_sizes:
@@ -742,6 +751,7 @@ cdef void _execute_decoded(
     cdef uint64_t  imark_addr      = decoded.imark_addr
     cdef dict      imark_to_pc     = decoded.imark_to_pc
     cdef object    _pc_obj
+    cdef object    _wide_val   # Python int (arbitrary precision) for 128-bit intermediates
     # Bound back-edges to keep wild differential-evaluator inputs (eg ECX
     # under V|T polarity could be huge) from running forever.  256 covers
     # every realistic ``rep stosb`` / ``rep movsb`` case in the benchmark
@@ -774,6 +784,183 @@ cdef void _execute_decoded(
         i0_sp          = op.i0_sp;  i0_off = op.i0_off;  i0_sz = op.i0_sz
         i1_sp          = op.i1_sp;  i1_off = op.i1_off;  i1_sz = op.i1_sz
         i2_sp          = op.i2_sp;  i2_off = op.i2_off;  i2_sz = op.i2_sz
+
+        # ── Wide-op path: 16-byte (128-bit) unique intermediates ────────
+        # Pcode lifts CQO, widening MUL/IMUL, DIV/IDIV with 16-byte unique
+        # varnodes to represent 128-bit values.  The C-typed hot path below
+        # only manipulates uint64_t, so we intercept these ops here.
+        #
+        # _wide_val is a cdef object (arbitrary-precision Python int) that
+        # carries the full 128 bits without truncation.  Storage uses the
+        # existing uniq_arr[slot] for the low 64 bits and the new
+        # uniq_hi[slot] for the high 64 bits.
+        #
+        # fast-path guard: o_sz <= 8 AND NOT a wide-source SUBPIECE.
+        # This is False for >99.9% of ops → zero overhead on the hot path.
+        if o_sz > 8 or (oid == OP_SUBPIECE and i0_sz > 8):
+
+            if oid == OP_INT_SEXT and o_sp == SP_UNIQUE and o_sz > 8:
+                # Sign-extend source (≤8 bytes) to 16 bytes.
+                a = frame.read_d(i0_sp, i0_off, i0_sz)
+                if (a >> (i0_sz * 8 - 1)) & 1:
+                    # Sign bit set: fill upper bits with 1s
+                    _wide_val = a | ((((<object>1) << (o_sz * 8 - i0_sz * 8)) - 1) << (i0_sz * 8))
+                else:
+                    _wide_val = <object>a
+                if o_off < 32:
+                    frame.uniq_arr[o_off]    = _wide_val & 0xFFFFFFFFFFFFFFFF
+                    frame.uniq_set[o_off]    = 1
+                    frame.uniq_hi[o_off]     = (_wide_val >> 64) & 0xFFFFFFFFFFFFFFFF
+                    frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            if oid == OP_INT_ZEXT and o_sp == SP_UNIQUE and o_sz > 8:
+                # Zero-extend: high half is always 0.
+                a = frame.read_d(i0_sp, i0_off, i0_sz)
+                if o_off < 32:
+                    frame.uniq_arr[o_off]    = a
+                    frame.uniq_set[o_off]    = 1
+                    frame.uniq_hi[o_off]     = 0
+                    frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            if oid == OP_SUBPIECE and i0_sz > 8:
+                # Extract o_sz bytes from a 128-bit unique source.
+                b = frame.read_d(i1_sp, i1_off, i1_sz)  # byte offset (0 or 8)
+                if b >= 8:
+                    # Want high half: read uniq_hi[slot]
+                    a = frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0
+                    a = a >> ((b - 8) * 8)
+                else:
+                    # Want low half (or straddle): low half is uniq_arr[slot]
+                    a = frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0
+                    a = a >> (b * 8)
+                if o_sp != NO_OUT_SPACE:
+                    frame.write_d(o_sp, o_off, o_sz, _mask64(a, o_sz))
+                pc += 1
+                continue
+
+            if oid == OP_INT_LEFT and o_sp == SP_UNIQUE and o_sz > 8:
+                # 128-bit left shift.  Build Python int from both halves.
+                _wide_val = (<object>(frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0))
+                _wide_val = _wide_val | ((<object>(frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0)) << 64)
+                b = frame.read_d(i1_sp, i1_off, i1_sz)
+                _wide_val = (_wide_val << b) & (((<object>1) << (o_sz * 8)) - 1)
+                if o_off < 32:
+                    frame.uniq_arr[o_off]    = _wide_val & 0xFFFFFFFFFFFFFFFF
+                    frame.uniq_set[o_off]    = 1
+                    frame.uniq_hi[o_off]     = (_wide_val >> 64) & 0xFFFFFFFFFFFFFFFF
+                    frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            if oid == OP_INT_OR and o_sp == SP_UNIQUE and o_sz > 8:
+                # 128-bit OR.
+                if o_off < 32:
+                    frame.uniq_arr[o_off] = (frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0) | \
+                                            (frame.uniq_arr[i1_off] if (i1_off < 32 and frame.uniq_set[i1_off]) else 0)
+                    frame.uniq_set[o_off] = 1
+                    frame.uniq_hi[o_off]  = (frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0) | \
+                                            (frame.uniq_hi[i1_off] if (i1_off < 32 and frame.uniq_hi_set[i1_off]) else 0)
+                    frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            if oid == OP_INT_AND and o_sp == SP_UNIQUE and o_sz > 8:
+                if o_off < 32:
+                    frame.uniq_arr[o_off] = (frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0) & \
+                                            (frame.uniq_arr[i1_off] if (i1_off < 32 and frame.uniq_set[i1_off]) else 0)
+                    frame.uniq_set[o_off] = 1
+                    frame.uniq_hi[o_off]  = (frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0) & \
+                                            (frame.uniq_hi[i1_off] if (i1_off < 32 and frame.uniq_hi_set[i1_off]) else 0)
+                    frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            if oid == OP_INT_XOR and o_sp == SP_UNIQUE and o_sz > 8:
+                if o_off < 32:
+                    frame.uniq_arr[o_off] = (frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0) ^ \
+                                            (frame.uniq_arr[i1_off] if (i1_off < 32 and frame.uniq_set[i1_off]) else 0)
+                    frame.uniq_set[o_off] = 1
+                    frame.uniq_hi[o_off]  = (frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0) ^ \
+                                            (frame.uniq_hi[i1_off] if (i1_off < 32 and frame.uniq_hi_set[i1_off]) else 0)
+                    frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            if oid == OP_COPY and o_sp == SP_UNIQUE and o_sz > 8:
+                if o_off < 32:
+                    frame.uniq_arr[o_off]    = frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0
+                    frame.uniq_set[o_off]    = 1
+                    frame.uniq_hi[o_off]     = frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0
+                    frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            if oid == OP_INT_MULT and o_sp == SP_UNIQUE and o_sz > 8:
+                # 128-bit multiply (widening MUL/IMUL).
+                _wide_val = (<object>(frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0))
+                _wide_val = _wide_val | ((<object>(frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0)) << 64)
+                _wide_val = _wide_val * (<object>(frame.uniq_arr[i1_off] if (i1_off < 32 and frame.uniq_set[i1_off]) else 0) | \
+                                        ((<object>(frame.uniq_hi[i1_off] if (i1_off < 32 and frame.uniq_hi_set[i1_off]) else 0)) << 64))
+                _wide_val = _wide_val & (((<object>1) << (o_sz * 8)) - 1)
+                if o_off < 32:
+                    frame.uniq_arr[o_off]    = _wide_val & 0xFFFFFFFFFFFFFFFF
+                    frame.uniq_set[o_off]    = 1
+                    frame.uniq_hi[o_off]     = (_wide_val >> 64) & 0xFFFFFFFFFFFFFFFF
+                    frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            if oid == OP_INT_DIV and o_sz <= 8:
+                # 128-bit / 64-bit unsigned divide (DIV quotient).
+                _wide_val = (<object>(frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0))
+                _wide_val = _wide_val | ((<object>(frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0)) << 64)
+                b = frame.read_d(i1_sp, i1_off, i1_sz)
+                if b == 0:
+                    frame.write_d(o_sp, o_off, o_sz, 0)
+                else:
+                    frame.write_d(o_sp, o_off, o_sz, <uint64_t>(_wide_val // <object>b))
+                pc += 1
+                continue
+
+            if oid == OP_INT_REM and o_sz <= 8:
+                # 128-bit % 64-bit unsigned remainder (DIV remainder).
+                _wide_val = (<object>(frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0))
+                _wide_val = _wide_val | ((<object>(frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0)) << 64)
+                b = frame.read_d(i1_sp, i1_off, i1_sz)
+                if b == 0:
+                    frame.write_d(o_sp, o_off, o_sz, 0)
+                else:
+                    frame.write_d(o_sp, o_off, o_sz, <uint64_t>(_wide_val % <object>b))
+                pc += 1
+                continue
+
+            if oid == OP_INT_SDIV and o_sz <= 8:
+                # 128-bit signed / 64-bit signed divide (IDIV quotient).
+                _wide_val = (<object>(frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0))
+                _wide_val = _wide_val | ((<object>(frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0)) << 64)
+                if _wide_val >> (i0_sz * 8 - 1):  # sign bit set
+                    _wide_val = _wide_val - ((<object>1) << (i0_sz * 8))
+                _wide_val = _wide_val // <object><int64_t>_signed64(frame.read_d(i1_sp, i1_off, i1_sz), i1_sz)
+                frame.write_d(o_sp, o_off, o_sz, <uint64_t>(_wide_val & 0xFFFFFFFFFFFFFFFF))
+                pc += 1
+                continue
+
+            if oid == OP_INT_SREM and o_sz <= 8:
+                # 128-bit signed % 64-bit signed remainder (IDIV remainder).
+                _wide_val = (<object>(frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0))
+                _wide_val = _wide_val | ((<object>(frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0)) << 64)
+                if _wide_val >> (i0_sz * 8 - 1):
+                    _wide_val = _wide_val - ((<object>1) << (i0_sz * 8))
+                _wide_val = _wide_val % <object><int64_t>_signed64(frame.read_d(i1_sp, i1_off, i1_sz), i1_sz)
+                frame.write_d(o_sp, o_off, o_sz, <uint64_t>(_wide_val & 0xFFFFFFFFFFFFFFFF))
+                pc += 1
+                continue
+
+            # Unrecognised wide op — fall through to normal (narrow) dispatch.
 
         # ── Hot path: most frequent pcode ops first ─────────────────
         if oid == OP_IMARK or oid == OP_RETURN or oid == OP_CALL:

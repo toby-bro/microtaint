@@ -347,7 +347,8 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
         if (op->o_sp != NO_OUT_SPACE && op->o_sz > 8) {
             int splittable = (oid == OP_INT_XOR || oid == OP_INT_AND
                               || oid == OP_INT_OR || oid == OP_COPY
-                              || oid == OP_INT_ZEXT);
+                              || oid == OP_INT_ZEXT
+                              || oid == OP_INT_SEXT);
             if (splittable) {
                 int total_sz = op->o_sz;
                 int lo_sz = 8;
@@ -364,19 +365,29 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
                         case OP_INT_AND: r = v0 & v1; break;
                         case OP_INT_OR:  r = v0 | v1; break;
                         case OP_COPY:
-                        case OP_INT_ZEXT: r = v0; break;
+                        case OP_INT_ZEXT:
+                        case OP_INT_SEXT: r = v0; break;
                         default: r = 0;  /* unreachable */
                     }
                     frame_write_d(f, op->o_sp, op->o_off, lo_sz, r);
                 }
-                /* High bytes (offset+8 ... offset+total_sz).  For
-                 * INT_ZEXT widening from a smaller input we emit zero
-                 * for the high half — that's the zero-extension. */
+                /* High bytes (offset+8 ... offset+total_sz).
+                 * For INT_ZEXT widening from a smaller input: high is zero.
+                 * For INT_SEXT: high is all-ones if the source sign bit is set,
+                 *               all-zeros otherwise.  Source is op->i0_sz bytes;
+                 *               its MSB is at bit (i0_sz*8-1) of the low half. */
                 {
                     uint64_t v0, v1, r;
-                    if (oid == OP_INT_ZEXT && op->i0_sz <= lo_sz) {
-                        /* Input fits in the low half; high is zero. */
-                        v0 = 0;
+                    if ((oid == OP_INT_ZEXT || oid == OP_INT_SEXT)
+                            && op->i0_sz <= lo_sz) {
+                        if (oid == OP_INT_SEXT) {
+                            /* Sign-extend: replicate MSB of source into all high bits */
+                            uint64_t src_lo = frame_read_d(f, op->i0_sp, op->i0_off, op->i0_sz);
+                            uint64_t msb = (src_lo >> (op->i0_sz * 8 - 1)) & 1;
+                            v0 = msb ? UINT64_MAX : 0;
+                        } else {
+                            v0 = 0;
+                        }
                     } else {
                         v0 = frame_read_d(f, op->i0_sp, op->i0_off + lo_sz, hi_sz);
                     }
@@ -390,7 +401,8 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
                         case OP_INT_AND: r = v0 & v1; break;
                         case OP_INT_OR:  r = v0 | v1; break;
                         case OP_COPY:
-                        case OP_INT_ZEXT: r = v0; break;
+                        case OP_INT_ZEXT:
+                        case OP_INT_SEXT: r = v0; break;
                         default: r = 0;  /* unreachable */
                     }
                     frame_write_d(f, op->o_sp, op->o_off + lo_sz, hi_sz, r);
@@ -612,9 +624,21 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
             } break;
         case OP_SUBPIECE:
             if (op->o_sp != NO_OUT_SPACE) {
-                a = frame_read_d(f,op->i0_sp,op->i0_off,op->i0_sz);
-                b = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz);
-                frame_write_d(f, op->o_sp, op->o_off, op->o_sz, a >> (b*8));
+                b = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz); /* byte offset */
+                if (op->i0_sz > 8 && b >= 8) {
+                    /* Source is a 128-bit unique slot written by the splittable block.
+                     * The splittable block stores the high 8 bytes at compact index
+                     * i0_off+8 (it calls frame_write_d with offset+8, so uniq_arr[i0_off+8]
+                     * holds the high half).  Read from there and shift by (b-8) bytes. */
+                    unsigned long hi_slot = op->i0_off + 8;
+                    uint64_t hi_val = (hi_slot < MAX_UNIQ && f->uniq_set[hi_slot])
+                                      ? f->uniq_arr[hi_slot] : 0;
+                    frame_write_d(f, op->o_sp, op->o_off, op->o_sz,
+                                  hi_val >> ((b - 8) * 8));
+                } else {
+                    a = frame_read_d(f,op->i0_sp,op->i0_off,op->i0_sz);
+                    frame_write_d(f, op->o_sp, op->o_off, op->o_sz, a >> (b*8));
+                }
             } break;
         case OP_POPCOUNT:
             if (op->o_sp != NO_OUT_SPACE) {
