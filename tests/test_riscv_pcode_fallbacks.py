@@ -20,14 +20,16 @@ Run:
     pytest tests/test_riscv_pcode_fallbacks.py -v
 """
 
+# mypy: disable-error-code="attr-defined"
+
 from __future__ import annotations
 
 import sys
 
 import pytest
 
-sys.path.insert(0, 'tests')   # riscv_encoder lives in tests/
-from riscv_encoder import encode  # noqa: E402
+sys.path.insert(0, 'tests')  # riscv_encoder lives in tests/
+from riscv_encoder import encode
 
 from microtaint.instrumentation.cell import _get_decoded
 from microtaint.types import Architecture
@@ -37,41 +39,59 @@ from microtaint.types import Architecture
 # ---------------------------------------------------------------------------
 
 _RV64I_R = [
-    'add t0, t1, t2', 'sub t0, t1, t2',
-    'sll t0, t1, t2', 'srl t0, t1, t2', 'sra t0, t1, t2',
-    'and t0, t1, t2', 'or  t0, t1, t2', 'xor t0, t1, t2',
-    'slt t0, t1, t2', 'sltu t0, t1, t2',
+    'add t0, t1, t2',
+    'sub t0, t1, t2',
+    'sll t0, t1, t2',
+    'srl t0, t1, t2',
+    'sra t0, t1, t2',
+    'and t0, t1, t2',
+    'or  t0, t1, t2',
+    'xor t0, t1, t2',
+    'slt t0, t1, t2',
+    'sltu t0, t1, t2',
 ]
 
 _RV64I_W = [
-    'addw t0, t1, t2', 'subw t0, t1, t2',
-    'sllw t0, t1, t2', 'srlw t0, t1, t2', 'sraw t0, t1, t2',
+    'addw t0, t1, t2',
+    'subw t0, t1, t2',
+    'sllw t0, t1, t2',
+    'srlw t0, t1, t2',
+    'sraw t0, t1, t2',
 ]
 
 _RV64M_R = [
-    'mul t0, t1, t2', 'mulh t0, t1, t2', 'mulhsu t0, t1, t2', 'mulhu t0, t1, t2',
-    'div t0, t1, t2', 'divu t0, t1, t2', 'rem t0, t1, t2', 'remu t0, t1, t2',
+    'mul t0, t1, t2',
+    'mulh t0, t1, t2',
+    'mulhsu t0, t1, t2',
+    'mulhu t0, t1, t2',
+    'div t0, t1, t2',
+    'divu t0, t1, t2',
+    'rem t0, t1, t2',
+    'remu t0, t1, t2',
 ]
 
 _RV64M_W = [
-    'mulw t0, t1, t2', 'divw t0, t1, t2', 'divuw t0, t1, t2',
-    'remw t0, t1, t2', 'remuw t0, t1, t2',
+    'mulw t0, t1, t2',
+    'divw t0, t1, t2',
+    'divuw t0, t1, t2',
+    'remw t0, t1, t2',
+    'remuw t0, t1, t2',
 ]
 
 _IMM_TEMPLATES: list[tuple[str, list[int]]] = [
-    ('addi t0, t1, {imm}',  [0, 1, -1, 100, -100, 2047, -2048]),
-    ('xori t0, t1, {imm}',  [0, -1, 0xFF, -2048]),
-    ('ori  t0, t1, {imm}',  [0, -1, 0xFF, 0x555]),
-    ('andi t0, t1, {imm}',  [0, -1, 0xFF, 0x555, 0x800]),
-    ('slti t0, t1, {imm}',  [0, 1, -1, 100, -100]),
+    ('addi t0, t1, {imm}', [0, 1, -1, 100, -100, 2047, -2048]),
+    ('xori t0, t1, {imm}', [0, -1, 0xFF, -2048]),
+    ('ori  t0, t1, {imm}', [0, -1, 0xFF, 0x555]),
+    ('andi t0, t1, {imm}', [0, -1, 0xFF, 0x555, 0x800]),
+    ('slti t0, t1, {imm}', [0, 1, -1, 100, -100]),
     ('sltiu t0, t1, {imm}', [0, 1, -1, 100, 2047]),
     ('addiw t0, t1, {imm}', [0, 1, -1, 100, 2047, -2048]),
 ]
 
 _SHIFTI_TEMPLATES: list[tuple[str, list[int]]] = [
-    ('slli t0, t1, {imm}',  [0, 1, 4, 31, 32, 63]),
-    ('srli t0, t1, {imm}',  [0, 1, 4, 31, 32, 63]),
-    ('srai t0, t1, {imm}',  [0, 1, 4, 31, 32, 63]),
+    ('slli t0, t1, {imm}', [0, 1, 4, 31, 32, 63]),
+    ('srli t0, t1, {imm}', [0, 1, 4, 31, 32, 63]),
+    ('srai t0, t1, {imm}', [0, 1, 4, 31, 32, 63]),
     ('slliw t0, t1, {imm}', [0, 1, 4, 15, 31]),
     ('srliw t0, t1, {imm}', [0, 1, 4, 15, 31]),
     ('sraiw t0, t1, {imm}', [0, 1, 4, 15, 31]),
@@ -80,16 +100,24 @@ _SHIFTI_TEMPLATES: list[tuple[str, list[int]]] = [
 _U_TYPE = ['lui t0, 0x12345', 'auipc t0, 0x12345']
 
 _LOADS = [
-    'lb t0, 8(t1)', 'lh t0, 8(t1)', 'lw t0, 8(t1)', 'ld t0, 8(t1)',
-    'lbu t0, 8(t1)', 'lhu t0, 8(t1)', 'lwu t0, 8(t1)',
+    'lb t0, 8(t1)',
+    'lh t0, 8(t1)',
+    'lw t0, 8(t1)',
+    'ld t0, 8(t1)',
+    'lbu t0, 8(t1)',
+    'lhu t0, 8(t1)',
+    'lwu t0, 8(t1)',
 ]
 
 _STORES = ['sb t2, 8(t1)', 'sh t2, 8(t1)', 'sw t2, 8(t1)', 'sd t2, 8(t1)']
 
 _BRANCHES = [
-    'beq t1, t2, 4', 'bne t1, t2, 4',
-    'blt t1, t2, 4', 'bge t1, t2, 4',
-    'bltu t1, t2, 4', 'bgeu t1, t2, 4',
+    'beq t1, t2, 4',
+    'bne t1, t2, 4',
+    'blt t1, t2, 4',
+    'bge t1, t2, 4',
+    'bltu t1, t2, 4',
+    'bgeu t1, t2, 4',
     'jal t0, 4',
     'jalr t0, t1, 0',
 ]
@@ -102,19 +130,24 @@ def _expand(templates: list[tuple[str, list[int]]]) -> list[str]:
 
 
 ALL_INSTRUCTIONS: list[str] = (
-    _RV64I_R + _RV64I_W
-    + _RV64M_R + _RV64M_W
+    _RV64I_R
+    + _RV64I_W
+    + _RV64M_R
+    + _RV64M_W
     + _expand(_IMM_TEMPLATES)
     + _expand(_SHIFTI_TEMPLATES)
     + _U_TYPE
-    + _LOADS + _STORES
-    + _BRANCHES + _SYSTEM
+    + _LOADS
+    + _STORES
+    + _BRANCHES
+    + _SYSTEM
 )
 
 
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def _has_fallback(asm: str) -> bool:
     """Return True if the pcode predecoder marks this instruction as requiring Unicorn."""
@@ -163,13 +196,14 @@ def test_instruction_requires_unicorn(asm: str) -> None:
 # Summary test: enumerate all fallbacks and print a human-readable report
 # ---------------------------------------------------------------------------
 
+
 def test_fallback_summary(capsys: pytest.CaptureFixture) -> None:  # type: ignore[type-arg]
     """Print a complete fallback/native breakdown for all canonical instructions.
 
     Always passes — informational only.  Run with -s to see the output.
     """
     fallback_instrs = [i for i in ALL_INSTRUCTIONS if _has_fallback(i)]
-    native_instrs   = [i for i in ALL_INSTRUCTIONS if not _has_fallback(i)]
+    native_instrs = [i for i in ALL_INSTRUCTIONS if not _has_fallback(i)]
 
     with capsys.disabled():
         print(f'\n=== RV64GC pcode fallback report ({len(ALL_INSTRUCTIONS)} instructions) ===')
@@ -185,13 +219,17 @@ def test_fallback_summary(capsys: pytest.CaptureFixture) -> None:  # type: ignor
         print()
         # Group native instructions by mnemonic family for readability
         for group, instrs in [
-            ('RV64I-R', _RV64I_R), ('RV64I-W', _RV64I_W),
-            ('RV64M-R', _RV64M_R), ('RV64M-W', _RV64M_W),
-            ('IMM',     _expand(_IMM_TEMPLATES)),
-            ('SHIFTI',  _expand(_SHIFTI_TEMPLATES)),
-            ('U-type',  _U_TYPE),
-            ('Loads',   _LOADS), ('Stores',  _STORES),
-            ('Branches',_BRANCHES), ('System', _SYSTEM),
+            ('RV64I-R', _RV64I_R),
+            ('RV64I-W', _RV64I_W),
+            ('RV64M-R', _RV64M_R),
+            ('RV64M-W', _RV64M_W),
+            ('IMM', _expand(_IMM_TEMPLATES)),
+            ('SHIFTI', _expand(_SHIFTI_TEMPLATES)),
+            ('U-type', _U_TYPE),
+            ('Loads', _LOADS),
+            ('Stores', _STORES),
+            ('Branches', _BRANCHES),
+            ('System', _SYSTEM),
         ]:
             n_native = sum(1 for i in instrs if not _has_fallback(i))
             marker = '' if n_native == len(instrs) else f'  ← {len(instrs)-n_native} fallback(s)'

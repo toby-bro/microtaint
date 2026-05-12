@@ -48,8 +48,10 @@ from unicorn.x86_const import (
     UC_X86_REG_RSP,
 )
 
-from microtaint.instrumentation.ast import EvalContext
-from microtaint.instrumentation.ast import ChainedCircuit  # noqa: F401 (import to assert type)
+from microtaint.instrumentation.ast import (
+    ChainedCircuit,  # noqa: F401 (import to assert type)
+    EvalContext,
+)
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, Register
@@ -78,7 +80,8 @@ _STACK_BASE = 0x500000
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _brute_force_gt(
+
+def _brute_force_gt(  # noqa: C901
     bytestring: bytes,
     state: dict[str, int],
     taint: dict[str, int],
@@ -149,12 +152,9 @@ def _assert_sound(
         under = gv & ~tv & MASK64
         if under:
             misses.append(
-                f'{reg}: missed=0x{under:016x}  GT=0x{gv:016x}  microtaint=0x{tv:016x}'
+                f'{reg}: missed=0x{under:016x}  GT=0x{gv:016x}  microtaint=0x{tv:016x}',
             )
-    assert not misses, (
-        f'[{label}] microtaint under-taints — must cover all GT taint bits.\n  '
-        + '\n  '.join(misses)
-    )
+    assert not misses, f'[{label}] microtaint under-taints — must cover all GT taint bits.\n  ' + '\n  '.join(misses)
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +184,7 @@ _XOR_CMP_MOV_CMOVZ = bytes.fromhex('31d24839d848c7c101000000480f44d1')
 # Structural regression: the sequence must use ChainedCircuit, not monolithic
 # ---------------------------------------------------------------------------
 
+
 def test_cmovl_sequence_uses_chained_circuit() -> None:
     """The sequence must be split into a ChainedCircuit, not a monolithic LogicCircuit.
 
@@ -193,7 +194,8 @@ def test_cmovl_sequence_uses_chained_circuit() -> None:
     CMOVcc skips are recognised as intra-instruction and the sequence is correctly
     wrapped in a ChainedCircuit.
     """
-    from microtaint.instrumentation.ast import ChainedCircuit as CC  # local import for clarity
+    from microtaint.instrumentation.ast import ChainedCircuit as CC  # local import for clarity  # noqa: PLC0415
+
     circuit = generate_static_rule(Architecture.AMD64, _XOR_CMP_MOV_CMOVL, _REGS_GP)
     assert isinstance(circuit, CC), (
         f'Expected ChainedCircuit, got {type(circuit).__name__}.  '
@@ -204,6 +206,7 @@ def test_cmovl_sequence_uses_chained_circuit() -> None:
 # ---------------------------------------------------------------------------
 # Soundness: report id=7665 exact case
 # ---------------------------------------------------------------------------
+
 
 def test_cmovl_after_cmp_report_exact() -> None:
     """Report id=7665: xor edx,edx; cmp rax,rbx; mov rcx,1; cmovl rdx,rcx.
@@ -217,16 +220,16 @@ def test_cmovl_after_cmp_report_exact() -> None:
         'cmovl_report_exact',
         _XOR_CMP_MOV_CMOVL,
         state={
-            'RAX': 8016027559179816196,   # 0x6f3ea69826a78d04
-            'RBX': 7926627367857641452,   # 0x6e010998100b57ec
+            'RAX': 8016027559179816196,  # 0x6f3ea69826a78d04
+            'RBX': 7926627367857641452,  # 0x6e010998100b57ec
             'RCX': 13702379345388424796,
             'RDX': 2122900774596652732,
         },
         taint={
-            'RAX': 4611686018427387904,   # 0x4000000000000000 — bit 62
+            'RAX': 4611686018427387904,  # 0x4000000000000000 — bit 62
             'RBX': 0,
-            'RCX': 17179869184,           # 0x400000000 — irrelevant for RDX output
-            'RDX': 2199023255616,         # 0x20000000000 — irrelevant for RDX output
+            'RCX': 17179869184,  # 0x400000000 — irrelevant for RDX output
+            'RDX': 2199023255616,  # 0x20000000000 — irrelevant for RDX output
         },
         check_regs=('RDX',),
     )
@@ -304,6 +307,7 @@ def test_cmovl_clean_flags_clean_output() -> None:
 # Other CMOVcc conditions: the fix must work for all of them
 # ---------------------------------------------------------------------------
 
+
 def test_cmovg_after_cmp_flag_taint_propagates() -> None:
     """CMOVG: condition is G = (ZF==0 AND SF==OF). T_RAX taints SF -> T_RDX."""
     _assert_sound(
@@ -350,6 +354,7 @@ def test_cmovz_after_cmp_flag_taint_propagates() -> None:
 # Regression: real architectural branches must still be monolithic
 # ---------------------------------------------------------------------------
 
+
 def test_real_branch_still_monolithic() -> None:
     """A sequence containing a genuine JNE must remain a monolithic LogicCircuit.
 
@@ -360,7 +365,6 @@ def test_real_branch_still_monolithic() -> None:
     We use a backward JNE (target == start of the sequence) to ensure the CBRANCH
     destination is well outside [start, next_instr_addr).
     """
-    from microtaint.instrumentation.ast import LogicCircuit
 
     # cmp rax, rbx  (48 39 d8)  — 3 bytes at 0x1000
     # jne -5        (75 fb)     — 2 bytes at 0x1003; target = 0x1003+2-5 = 0x1000

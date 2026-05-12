@@ -76,7 +76,7 @@ _REGS_GP = [
 ]
 _SIM = CellSimulator(Architecture.AMD64)
 _SIM_PY = CellSimulator(Architecture.AMD64, use_unicorn=False, use_c=False)
-_SIM_C  = CellSimulator(Architecture.AMD64, use_unicorn=False, use_c=True)
+_SIM_C = CellSimulator(Architecture.AMD64, use_unicorn=False, use_c=True)
 
 _UC_REGS = {
     'RAX': UC_X86_REG_RAX,
@@ -84,8 +84,8 @@ _UC_REGS = {
     'RCX': UC_X86_REG_RCX,
     'RDX': UC_X86_REG_RDX,
 }
-_BASE_ADDR  = 0x400000
-_PAGE_SIZE  = 0x1000
+_BASE_ADDR = 0x400000
+_PAGE_SIZE = 0x1000
 _STACK_BASE = 0x500000
 
 
@@ -93,7 +93,8 @@ _STACK_BASE = 0x500000
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _brute_force_gt(
+
+def _brute_force_gt(  # noqa: C901
     bytestring: bytes,
     state: dict[str, int],
     taint: dict[str, int],
@@ -126,10 +127,10 @@ def _brute_force_gt(
 
     output_taint: dict[str, int] = {}
     for reg in ('RAX', 'RBX', 'RCX', 'RDX'):
-        all_or  = 0
+        all_or = 0
         all_and = MASK64
         for r in results:
-            all_or  |= r[reg]
+            all_or |= r[reg]
             all_and &= r[reg]
         output_taint[reg] = all_or ^ all_and
     return output_taint
@@ -164,30 +165,33 @@ def _assert_sound(
         under = gv & ~tv & MASK64
         if under:
             misses.append(
-                f'{reg}: missed=0x{under:016x}  GT=0x{gv:016x}  microtaint=0x{tv:016x}'
+                f'{reg}: missed=0x{under:016x}  GT=0x{gv:016x}  microtaint=0x{tv:016x}',
             )
-    assert not misses, (
-        f'[{label}] microtaint under-taints.\n  ' + '\n  '.join(misses)
-    )
+    assert not misses, f'[{label}] microtaint under-taints.\n  ' + '\n  '.join(misses)
 
 
 class _CellProxy:
     """Minimal cell-like object for evaluate_concrete / evaluate_differential."""
+
     def __init__(self, instr_hex: str, out_reg: str) -> None:
-        self.instruction   = instr_hex
-        self.out_reg       = out_reg
+        self.instruction = instr_hex
+        self.out_reg = out_reg
         self.out_bit_start = 0
-        self.out_bit_end   = 63
+        self.out_bit_end = 63
 
 
 # ---------------------------------------------------------------------------
 # Evaluator-level unit tests: CQO concrete simulation
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize('sim_label,sim', [
-    ('cython', _SIM_PY),
-    ('c',      _SIM_C),
-])
+
+@pytest.mark.parametrize(
+    ('sim_label', 'sim'),
+    [
+        ('cython', _SIM_PY),
+        ('c', _SIM_C),
+    ],
+)
 def test_cqo_concrete_sign_positive(sim_label: str, sim: CellSimulator) -> None:
     """CQO with MSB=0: RDX must be 0x0000...0000."""
     cell = _CellProxy('4899', 'RDX')
@@ -198,10 +202,13 @@ def test_cqo_concrete_sign_positive(sim_label: str, sim: CellSimulator) -> None:
     )
 
 
-@pytest.mark.parametrize('sim_label,sim', [
-    ('cython', _SIM_PY),
-    ('c',      _SIM_C),
-])
+@pytest.mark.parametrize(
+    ('sim_label', 'sim'),
+    [
+        ('cython', _SIM_PY),
+        ('c', _SIM_C),
+    ],
+)
 def test_cqo_concrete_sign_negative(sim_label: str, sim: CellSimulator) -> None:
     """CQO with MSB=1: RDX must be 0xFFFF...FFFF."""
     cell = _CellProxy('4899', 'RDX')
@@ -212,17 +219,20 @@ def test_cqo_concrete_sign_negative(sim_label: str, sim: CellSimulator) -> None:
     )
 
 
-@pytest.mark.parametrize('sim_label,sim', [
-    ('cython', _SIM_PY),
-    ('c',      _SIM_C),
-])
+@pytest.mark.parametrize(
+    ('sim_label', 'sim'),
+    [
+        ('cython', _SIM_PY),
+        ('c', _SIM_C),
+    ],
+)
 def test_cqo_differential(sim_label: str, sim: CellSimulator) -> None:
     """CQO differential (SimH XOR SimL) must be 0xFFFF...FFFF when T_RAX[63]=1."""
     cell = _CellProxy('4899', 'RDX')
     # High polarity: RAX = V | T = 0x4E... | 0x8000... = 0xCE...  (MSB=1 → RDX=0xFFFF)
     # Low  polarity: RAX = V & ~T = 0x4E... & ~0x8000... = 0x4E... (MSB=0 → RDX=0x0)
     h = sim.evaluate_concrete(cell, MachineState(regs={'RAX': 0xCE4C2BA4E3ABA41E}, mem={}))
-    l = sim.evaluate_concrete(cell, MachineState(regs={'RAX': 0x4E4C2BA4E3ABA41E}, mem={}))
+    l = sim.evaluate_concrete(cell, MachineState(regs={'RAX': 0x4E4C2BA4E3ABA41E}, mem={}))  # noqa: E741
     assert h ^ l == MASK64, (
         f'[{sim_label}] CQO differential: expected 0xffffffffffffffff, got {h^l:#018x}. '
         'All 64 bits of RDX depend on RAX bit 63 via sign-extension.'
@@ -232,6 +242,7 @@ def test_cqo_differential(sim_label: str, sim: CellSimulator) -> None:
 # ---------------------------------------------------------------------------
 # Circuit-level soundness: report id=7675 exact case
 # ---------------------------------------------------------------------------
+
 
 def test_cqo_xor_report_exact() -> None:
     """Report id=7675: cqo; xor rdx, rcx.
@@ -243,7 +254,7 @@ def test_cqo_xor_report_exact() -> None:
     """
     _assert_sound(
         'cqo_xor_report_exact',
-        bytes.fromhex('48994831ca'),   # cqo ; xor rdx, rcx
+        bytes.fromhex('48994831ca'),  # cqo ; xor rdx, rcx
         state={
             'RAX': 5641932420382696478,
             'RBX': 4898647517017922326,
@@ -251,10 +262,10 @@ def test_cqo_xor_report_exact() -> None:
             'RDX': 1148298835101224732,
         },
         taint={
-            'RAX': 9223372036854775808,    # 0x8000000000000000 — bit 63
+            'RAX': 9223372036854775808,  # 0x8000000000000000 — bit 63
             'RBX': 0,
             'RCX': 0,
-            'RDX': 72057594037927936,      # 0x100000000000000 — bit 56
+            'RDX': 72057594037927936,  # 0x100000000000000 — bit 56
         },
         check_regs=('RDX',),
     )
@@ -264,7 +275,7 @@ def test_cqo_sign_bit_propagates_to_all_rdx_bits() -> None:
     """CQO alone: T_RAX[63]=1 must produce T_RDX=0xFFFF...FFFF."""
     _assert_sound(
         'cqo_sign_bit_alone',
-        bytes.fromhex('4899'),   # cqo
+        bytes.fromhex('4899'),  # cqo
         state={'RAX': 0x8000000000000000, 'RBX': 0, 'RCX': 0, 'RDX': 0},
         taint={'RAX': 1 << 63, 'RBX': 0, 'RCX': 0, 'RDX': 0},
         check_regs=('RDX',),
@@ -292,8 +303,7 @@ def test_cqo_low_bits_do_not_taint_rdx() -> None:
     )
     under = gt.get('RDX', 0) & ~mt.get('RDX', 0) & MASK64
     assert under == 0, (
-        f'T_RDX under-tainted: missed=0x{under:016x} '
-        f'GT=0x{gt.get("RDX",0):016x} MT=0x{mt.get("RDX",0):016x}'
+        f'T_RDX under-tainted: missed=0x{under:016x} GT=0x{gt.get("RDX",0):016x} MT=0x{mt.get("RDX",0):016x}'
     )
 
 
@@ -301,7 +311,7 @@ def test_cqo_followed_by_and() -> None:
     """cqo; and rdx, rax — T_RAX[63] taints RDX, then AND propagates it."""
     _assert_sound(
         'cqo_and_rdx_rax',
-        bytes.fromhex('489921c2'),   # cqo ; and rdx, rax
+        bytes.fromhex('489921c2'),  # cqo ; and rdx, rax
         state={'RAX': 0xFF00FF00FF00FF00, 'RBX': 0, 'RCX': 0, 'RDX': 0},
         taint={'RAX': 1 << 63, 'RBX': 0, 'RCX': 0, 'RDX': 0},
         check_regs=('RDX',),
@@ -312,7 +322,7 @@ def test_cqo_followed_by_neg() -> None:
     """cqo; neg rdx — T_RAX[63] taints RDX, negation propagates it."""
     _assert_sound(
         'cqo_neg_rdx',
-        bytes.fromhex('489948f7da'),   # cqo ; neg rdx
+        bytes.fromhex('489948f7da'),  # cqo ; neg rdx
         state={'RAX': 0xA000000000000000, 'RBX': 0, 'RCX': 0, 'RDX': 0},
         taint={'RAX': 1 << 63, 'RBX': 0, 'RCX': 0, 'RDX': 0},
         check_regs=('RDX',),

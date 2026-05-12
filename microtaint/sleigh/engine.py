@@ -2145,7 +2145,7 @@ def extract_dependencies(  # noqa: C901
     return DependencySet(value_deps=value_deps, addr_deps=addr_deps)
 
 
-def map_outputs_to_targets(
+def map_outputs_to_targets(  # noqa: C901
     arch: Architecture,
     state_format: list[Register],
     translation: Translation,

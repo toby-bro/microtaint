@@ -4,7 +4,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import unicorn.unicorn_py3.unicorn as _uu
 import unicorn.x86_const as _uc_x86_const
@@ -1055,6 +1055,8 @@ class MicrotaintWrapper:
         # a register-taint mapping.
         cache_key = None
         compiled_circuit = circuit._compiled
+        if TYPE_CHECKING:
+            assert compiled_circuit is not True
         if (
             self._instr_cache_enabled
             and compiled_circuit is not None

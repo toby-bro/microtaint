@@ -15,19 +15,35 @@ We probe the failing instruction directly:
 This instruction reads memory.  The compiled circuit's `has_mem_ops`
 attribute MUST be true.
 """
+
+# ruff: noqa: PT018
+# mypy: disable-error-code=no-untyped-def
 import pytest
 
-from microtaint.sleigh.engine import _cached_generate_static_rule
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
+from microtaint.sleigh.engine import _cached_generate_static_rule
 from microtaint.types import Architecture, Register
-
 
 X86_64_STATE = tuple(
     (n, 64)
     for n in (
-        'RAX', 'RBX', 'RCX', 'RDX', 'RSI', 'RDI', 'RSP', 'RBP',
-        'R8', 'R9', 'R10', 'R11', 'R12', 'R13', 'R14', 'R15',
+        'RAX',
+        'RBX',
+        'RCX',
+        'RDX',
+        'RSI',
+        'RDI',
+        'RSP',
+        'RBP',
+        'R8',
+        'R9',
+        'R10',
+        'R11',
+        'R12',
+        'R13',
+        'R14',
+        'R15',
     )
 )
 
@@ -36,7 +52,9 @@ def _compile(bs_hex: str):
     """Build a LogicCircuit, trigger lazy compile-to-C, return the compiled object."""
     _cached_generate_static_rule.cache_clear()
     c = _cached_generate_static_rule(
-        Architecture.AMD64, bytes.fromhex(bs_hex), X86_64_STATE,
+        Architecture.AMD64,
+        bytes.fromhex(bs_hex),
+        X86_64_STATE,
     )
     # First evaluate() triggers compile_circuit() inside ast.pyx
     sim = CellSimulator(Architecture.AMD64, use_c=True)
@@ -63,12 +81,10 @@ MEMORY_INSTRUCTIONS = [
 ]
 
 
-@pytest.mark.parametrize('bs_hex,desc', MEMORY_INSTRUCTIONS)
+@pytest.mark.parametrize(('bs_hex', 'desc'), MEMORY_INSTRUCTIONS)
 def test_has_mem_ops_set_for_memory_reading_instruction(bs_hex, desc):
     compiled = _compile(bs_hex)
-    assert compiled is not None and compiled is not False, (
-        f'instruction {bs_hex} ({desc}) failed to compile to C VM'
-    )
+    assert compiled is not None and compiled is not False, f'instruction {bs_hex} ({desc}) failed to compile to C VM'
     assert compiled.has_mem_ops == 1, (
         f'has_mem_ops must be 1 for {bs_hex} ({desc}); '
         f'this instruction reads memory and its cached taint output '
@@ -82,9 +98,7 @@ def test_has_mem_ops_zero_for_pure_register_instruction():
     """Sanity: pure-register instructions correctly report has_mem_ops=0."""
     # movzbl %al, %edx — no memory access
     compiled = _compile('0fb6d0')
-    assert compiled.has_mem_ops == 0, (
-        'pure-register movzbl wrongly flagged as having memory ops'
-    )
+    assert compiled.has_mem_ops == 0, 'pure-register movzbl wrongly flagged as having memory ops'
     # xor %rdx, %rax — no memory access
     compiled = _compile('4831d0')
     assert compiled.has_mem_ops == 0

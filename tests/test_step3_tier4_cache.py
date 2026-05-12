@@ -37,6 +37,29 @@ store time) in every Tier-4 entry.  On a version hit, additionally verify
 ``register_taint == input_snapshot`` before adopting the cached output.
 """
 
+# ruff: noqa: S603,PLW1510,PLC0415,C901,S607,ARG001,S110
+# mypy: disable-error-code="no-untyped-def,import-untyped,attr-defined,call-overload,no-untyped-call"
+
+# ---------------------------------------------------------------------------
+# Imports
+# ---------------------------------------------------------------------------
+
+import io
+import logging
+import subprocess
+import textwrap
+
+import pytest
+from qiling import Qiling
+from qiling.const import QL_INTERCEPT, QL_VERBOSE
+from unicorn import UC_HOOK_CODE
+
+from microtaint.emulator.reporter import Reporter
+from microtaint.emulator.wrapper import MicrotaintWrapper
+from microtaint.sleigh.engine import _cached_generate_static_rule
+
+logging.disable(logging.CRITICAL)
+
 # ---------------------------------------------------------------------------
 # Embedded C reproducer
 # ---------------------------------------------------------------------------
@@ -55,31 +78,10 @@ int main(void) {
     return 0;
 }
 """
-
-# ---------------------------------------------------------------------------
-# Imports
-# ---------------------------------------------------------------------------
-
-import io
-import logging
-import subprocess
-import textwrap
-
-import pytest
-
-logging.disable(logging.CRITICAL)
-
-from microtaint.emulator.reporter import Reporter
-from microtaint.emulator.wrapper import MicrotaintWrapper
-from microtaint.sleigh.engine import _cached_generate_static_rule
-from qiling import Qiling
-from qiling.const import QL_INTERCEPT, QL_VERBOSE
-from unicorn import UC_HOOK_CODE
-
-
 # ---------------------------------------------------------------------------
 # Session fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope='session')
 def min_loop_binary(tmp_path_factory):
@@ -90,11 +92,10 @@ def min_loop_binary(tmp_path_factory):
     src.write_text(textwrap.dedent(_MIN_LOOP_C))
     result = subprocess.run(
         ['gcc', '-O0', '-g', '-static', str(src), '-o', str(binary)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
-    assert result.returncode == 0, (
-        f'gcc failed to compile the embedded C source:\n{result.stderr}'
-    )
+    assert result.returncode == 0, f'gcc failed to compile the embedded C source:\n{result.stderr}'
     return str(binary)
 
 
@@ -116,13 +117,14 @@ def loop_addrs(min_loop_binary):
     Fails loudly if the loop pattern cannot be found.
     """
     try:
-        from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+        from capstone import CS_ARCH_X86, CS_MODE_64, Cs
     except ImportError:
         pytest.skip('capstone not available — needed for address discovery')
 
     r = subprocess.run(
         ['objdump', '-d', '-M', 'intel', min_loop_binary],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0, f'objdump failed:\n{r.stderr}'
 
@@ -161,30 +163,29 @@ def loop_addrs(min_loop_binary):
     #          and followed by  movzx edx, al
     addrs = {}
     for i, ins in enumerate(insns):
-        if (ins.mnemonic == 'movzx'
-                and 'eax' in ins.op_str
-                and 'byte ptr [rax]' in ins.op_str
-                and i > 0
-                and insns[i - 1].mnemonic == 'mov'
-                and 'rax' in insns[i - 1].op_str
-                and i + 1 < len(insns)
-                and insns[i + 1].mnemonic == 'movzx'
-                and 'edx' in insns[i + 1].op_str
-                and 'al' in insns[i + 1].op_str
-                and i + 2 < len(insns)):
-            addrs['loop_head']    = insns[i - 1].address
-            addrs['load_byte']    = ins.address
+        if (
+            ins.mnemonic == 'movzx'
+            and 'eax' in ins.op_str
+            and 'byte ptr [rax]' in ins.op_str
+            and i > 0
+            and insns[i - 1].mnemonic == 'mov'
+            and 'rax' in insns[i - 1].op_str
+            and i + 1 < len(insns)
+            and insns[i + 1].mnemonic == 'movzx'
+            and 'edx' in insns[i + 1].op_str
+            and 'al' in insns[i + 1].op_str
+            and i + 2 < len(insns)
+        ):
+            addrs['loop_head'] = insns[i - 1].address
+            addrs['load_byte'] = ins.address
             addrs['movzx_edx_al'] = insns[i + 1].address
-            addrs['observe']      = insns[i + 2].address
+            addrs['observe'] = insns[i + 2].address
             break
 
-    missing = [k for k in ('loop_head', 'load_byte', 'movzx_edx_al', 'observe')
-               if k not in addrs]
+    missing = [k for k in ('loop_head', 'load_byte', 'movzx_edx_al', 'observe') if k not in addrs]
     assert not missing, (
         f'Could not find loop instruction(s) {missing} in {min_loop_binary}.\n'
-        'Full <main> disassembly:\n'
-        + '\n'.join(f'  0x{i.address:x}  {i.mnemonic} {i.op_str}'
-                    for i in insns)
+        'Full <main> disassembly:\n' + '\n'.join(f'  0x{i.address:x}  {i.mnemonic} {i.op_str}' for i in insns)
     )
     return addrs
 
@@ -192,6 +193,7 @@ def loop_addrs(min_loop_binary):
 # ---------------------------------------------------------------------------
 # Core helper
 # ---------------------------------------------------------------------------
+
 
 def _gather_observations(binary, addrs, taint_offset):
     """Emulate ``binary`` with bit-0 of input byte ``taint_offset`` tainted.
@@ -231,8 +233,10 @@ def _gather_observations(binary, addrs, taint_offset):
     r = Reporter(json_mode=True, stream=io.StringIO())
     w = MicrotaintWrapper(
         ql,
-        check_sc=False, check_bof=False,
-        check_uaf=False, check_aiw=False,
+        check_sc=False,
+        check_bof=False,
+        check_uaf=False,
+        check_aiw=False,
         reporter=r,
     )
     wrapper_ref[0] = w
@@ -246,8 +250,8 @@ def _gather_observations(binary, addrs, taint_offset):
 
     ql.os.set_syscall(0, read_hook, QL_INTERCEPT.CALL)
 
-    loop_head_addr  = addrs['loop_head']
-    observe_addr    = addrs['observe']
+    loop_head_addr = addrs['loop_head']
+    observe_addr = addrs['observe']
     state = {'iter': 0}
 
     def watcher(uc, address, size, user_data):
@@ -280,6 +284,7 @@ def _gather_observations(binary, addrs, taint_offset):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_tier4_cache_does_not_corrupt_register_taint(min_loop_binary, loop_addrs):
     """The Tier-4 cache must not replay output computed for a different state.
 
@@ -302,7 +307,9 @@ def test_tier4_cache_does_not_corrupt_register_taint(min_loop_binary, loop_addrs
     """
     _cached_generate_static_rule.cache_clear()
     _, tainted_iter, obs = _gather_observations(
-        min_loop_binary, loop_addrs, taint_offset=5
+        min_loop_binary,
+        loop_addrs,
+        taint_offset=5,
     )
 
     assert tainted_iter is not None, (
@@ -337,8 +344,7 @@ def test_min_loop_end_to_end(min_loop_binary, loop_addrs):
     _cached_generate_static_rule.cache_clear()
     failures = []
     for offset in range(16):
-        final, _, _ = _gather_observations(min_loop_binary, loop_addrs,
-                                           taint_offset=offset)
+        final, _, _ = _gather_observations(min_loop_binary, loop_addrs, taint_offset=offset)
         if final == 0:
             failures.append(offset)
 

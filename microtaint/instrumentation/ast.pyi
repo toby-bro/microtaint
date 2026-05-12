@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Any, Callable
 
+from microtaint.instrumentation.cell_c.circuit_c import CompiledCircuit
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
@@ -110,6 +111,7 @@ class LogicCircuit:
     architecture: Architecture
     instruction: str
     state_format: list[Register]
+    _compiled: CompiledCircuit | None | bool
 
     def __init__(
         self,

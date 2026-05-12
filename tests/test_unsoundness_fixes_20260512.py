@@ -72,7 +72,7 @@ _PAGE_SIZE = 0x1000
 _STACK_BASE = 0x500000
 
 
-def _brute_force_gt(
+def _brute_force_gt(  # noqa: C901
     bytestring: bytes,
     state: dict[str, int],
     taint: dict[str, int],
@@ -110,7 +110,7 @@ def _brute_force_gt(
             out[reg] = uc.reg_read(uc_id)
         results.append(out)
 
-    gt: dict[str, int] = {r: 0 for r in _UC_REGS}
+    gt: dict[str, int] = dict.fromkeys(_UC_REGS, 0)
     if len(results) > 1:
         baseline = results[0]
         for res in results[1:]:
@@ -188,8 +188,8 @@ def test_btc_imm5_cf_into_dl_report_exact() -> None:
         },
         taint={
             'RAX': 72057594037927968,  # 0x0100000000000020 — bits 5 and 56 tainted
-            'RBX': 2147483648,         # 0x80000000
-            'RCX': 1073741824,         # 0x40000000
+            'RBX': 2147483648,  # 0x80000000
+            'RCX': 1073741824,  # 0x40000000
             'RDX': 0,
         },
     )

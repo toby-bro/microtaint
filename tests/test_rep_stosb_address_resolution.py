@@ -52,7 +52,8 @@ Fix
 These tests would FAIL on the pre-fix engine and PASS on the fixed one.
 """
 
-# mypy: disable-error-code="no-untyped-def, no-untyped-call"
+# mypy: disable-error-code="no-untyped-def, no-untyped-call,import-untyped"
+# ruff: noqa: PT018
 
 from __future__ import annotations
 
@@ -67,7 +68,6 @@ from microtaint.sleigh.engine import (
 from microtaint.sleigh.lifter import get_context
 from microtaint.types import Architecture, Register
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -79,10 +79,22 @@ def regs() -> list[Register]:
     return [
         Register(n, 8)
         for n in (
-            'RAX', 'RBX', 'RCX', 'RDX',
-            'RSI', 'RDI', 'RSP', 'RBP',
-            'R8', 'R9', 'R10', 'R11',
-            'R12', 'R13', 'R14', 'R15',
+            'RAX',
+            'RBX',
+            'RCX',
+            'RDX',
+            'RSI',
+            'RDI',
+            'RSP',
+            'RBP',
+            'R8',
+            'R9',
+            'R10',
+            'R11',
+            'R12',
+            'R13',
+            'R14',
+            'R15',
         )
     ]
 
@@ -130,7 +142,10 @@ class TestResolvePtrTemporalOrdering:
         # Resolve, mirroring exactly what map_outputs_to_targets does after
         # the fix: pass stop_op_index=store_idx.
         base_reg, const_offset = resolve_ptr_with_offset(
-            ptr_vn, list(translation.ops), mapper, stop_op_index=store_idx,
+            ptr_vn,
+            list(translation.ops),
+            mapper,
+            stop_op_index=store_idx,
         )
 
         assert base_reg is not None, 'resolver returned None — should resolve to RDI'
@@ -162,15 +177,15 @@ class TestResolvePtrTemporalOrdering:
         assert ptr_vn is not None
 
         base_reg, const_offset = resolve_ptr_with_offset(
-            ptr_vn, list(translation.ops), mapper, stop_op_index=store_idx,
+            ptr_vn,
+            list(translation.ops),
+            mapper,
+            stop_op_index=store_idx,
         )
 
         assert base_reg is not None
         assert base_reg.name == 'RDI'
-        assert const_offset == 0, (
-            f'rep movsb STORE address resolved to RDI + {const_offset}, '
-            f'expected RDI + 0.'
-        )
+        assert const_offset == 0, f'rep movsb STORE address resolved to RDI + {const_offset}, expected RDI + 0.'
 
     def test_rep_movsq_store_addr_is_rdi_with_zero_offset(self, regs) -> None:
         """rep movsq (f3 48 a5) — qword version, same bug pattern."""
@@ -190,7 +205,10 @@ class TestResolvePtrTemporalOrdering:
         assert ptr_vn is not None
 
         base_reg, const_offset = resolve_ptr_with_offset(
-            ptr_vn, list(translation.ops), mapper, stop_op_index=store_idx,
+            ptr_vn,
+            list(translation.ops),
+            mapper,
+            stop_op_index=store_idx,
         )
 
         assert base_reg is not None
@@ -221,9 +239,7 @@ class TestRepStosbStaticRule:
         # Find the memory-write assignment.  It's the only one whose target
         # carries an address_expr (T_MEM[...]).
         mem_assigns = [a for a in circuit.assignments if hasattr(a.target, 'address_expr')]
-        assert len(mem_assigns) == 1, (
-            f'expected exactly 1 memory-write assignment, got {len(mem_assigns)}'
-        )
+        assert len(mem_assigns) == 1, f'expected exactly 1 memory-write assignment, got {len(mem_assigns)}'
 
         target_str = str(mem_assigns[0].target)
 
@@ -246,9 +262,7 @@ class TestRepStosbStaticRule:
         mem_assigns = [a for a in circuit.assignments if hasattr(a.target, 'address_expr')]
         assert len(mem_assigns) == 1
         expr_str = str(mem_assigns[0].expression)
-        assert 'T_RAX' in expr_str, (
-            f'STORE value taint should mention T_RAX (AL is part of RAX), got: {expr_str}'
-        )
+        assert 'T_RAX' in expr_str, f'STORE value taint should mention T_RAX (AL is part of RAX), got: {expr_str}'
 
 
 # ---------------------------------------------------------------------------
@@ -283,9 +297,7 @@ class TestOrdinaryStoresStillWork:
         """Plain [RDI] — must still resolve to V_RDI with no offset."""
         t = self._store_target(ks, regs, 'mov [rdi], al')
         assert 'V_RDI' in t, t
-        assert 'ADD 0x1' not in t and ' ADD 1' not in t, (
-            f'plain mov [rdi], al got a spurious +1 offset: {t}'
-        )
+        assert 'ADD 0x1' not in t and ' ADD 1' not in t, f'plain mov [rdi], al got a spurious +1 offset: {t}'
 
     def test_mov_rdi_plus_4(self, ks, regs) -> None:
         """[RDI + 4] is the legitimate +4 case — must keep its real offset."""

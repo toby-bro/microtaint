@@ -65,8 +65,7 @@ _REGS = (
 _DEFAULT_RSP = 0x80000000
 
 
-def _run(sim: CellSimulator, bs_hex: str, state: dict[str, int],
-         taint: dict[str, int]) -> int:
+def _run(sim: CellSimulator, bs_hex: str, state: dict[str, int], taint: dict[str, int]) -> int:
     """Run one taint analysis through the given simulator and return the
     RAX bit-mask of the resulting taint dict.  Mirrors what the worker
     does, including the RSP=0 → 0x80000000 fallback."""
@@ -84,14 +83,14 @@ def _run(sim: CellSimulator, bs_hex: str, state: dict[str, int],
 # Backend matrix — the bug must be fixed across all three.  Each
 # parameter is a kwargs dict for ``CellSimulator``.
 BACKENDS: list[tuple[str, dict[str, Any]]] = [
-    ('unicorn', dict(use_unicorn=True, use_c=False)),
-    ('cython', dict(use_unicorn=False, use_c=False)),
-    ('c', dict(use_unicorn=False, use_c=True)),
+    ('unicorn', {'use_unicorn': True, 'use_c': False}),
+    ('cython', {'use_unicorn': False, 'use_c': False}),
+    ('c', {'use_unicorn': False, 'use_c': True}),
 ]
 
 
 @pytest.fixture(autouse=True)
-def _clear_circuit_cache():
+def _clear_circuit_cache() -> Any:
     """Ensure each test starts with an empty static-rule cache so prior
     test runs cannot affect the LogicCircuit identity used here."""
     _cached_generate_static_rule.cache_clear()
@@ -109,12 +108,16 @@ def _clear_circuit_cache():
 # of the fully-tainted RAX through the memory copy.
 T7989_BYTES = 'fc48894424e0488d7424e0488d7c24c0b908000000f3a4488b4424c0'
 T7989_STATE: dict[str, int] = {
-    'RAX': 15470179137417423390, 'RBX': 5284306197202325960,
-    'RCX': 91, 'RDX': 13740211632721712556,
+    'RAX': 15470179137417423390,
+    'RBX': 5284306197202325960,
+    'RCX': 91,
+    'RDX': 13740211632721712556,
 }
 T7989_TAINT: dict[str, int] = {
-    'RAX': 18446744073709551615, 'RBX': 35184372088832,
-    'RCX': 12207444339575697730, 'RDX': 1828153273910131988,
+    'RAX': 18446744073709551615,
+    'RBX': 35184372088832,
+    'RCX': 12207444339575697730,
+    'RDX': 1828153273910131988,
 }
 
 # Test 7990: mov al, bl ; mov ah, cl  — tiny ChainedCircuit of two
@@ -127,11 +130,16 @@ T7989_TAINT: dict[str, int] = {
 # RAX bytes — without recording those writes in _dirtied_memory.
 T7990_BYTES = '88d888cc'
 T7990_STATE: dict[str, int] = {
-    'RAX': 7314663058932324252, 'RBX': 14501752426502692987,
-    'RCX': 2069826156496372160, 'RDX': 8251849794471225177,
+    'RAX': 7314663058932324252,
+    'RBX': 14501752426502692987,
+    'RCX': 2069826156496372160,
+    'RDX': 8251849794471225177,
 }
 T7990_TAINT: dict[str, int] = {
-    'RAX': 2097152, 'RBX': 1073741824, 'RCX': 0, 'RDX': 0,
+    'RAX': 2097152,
+    'RBX': 1073741824,
+    'RCX': 0,
+    'RDX': 0,
 }
 
 # Test 8009: rep stosb — spills RAX to [rsp-64], then stores 8 copies of
@@ -145,11 +153,16 @@ T7990_TAINT: dict[str, int] = {
 # garbage value that betrays cross-test memory pollution.
 T8009_BYTES = 'fc48894424c0488d7c24c04889d8b908000000f3aa488b4424c0'
 T8009_STATE: dict[str, int] = {
-    'RAX': 10940498380929573403, 'RBX': 1830928842394036844,
-    'RCX': 19, 'RDX': 5767559093351484470,
+    'RAX': 10940498380929573403,
+    'RBX': 1830928842394036844,
+    'RCX': 19,
+    'RDX': 5767559093351484470,
 }
 T8009_TAINT: dict[str, int] = {
-    'RAX': 4352, 'RBX': 2, 'RCX': 0, 'RDX': 8796093022208,
+    'RAX': 4352,
+    'RBX': 2,
+    'RCX': 0,
+    'RDX': 8796093022208,
 }
 
 # Soundness invariants for the rep-stosb taint output.
@@ -190,8 +203,8 @@ def _is_byte_repeated(mask: int) -> bool:
 # ---------------------------------------------------------------------------
 # Core regression tests — the 3-test poisoning sequence
 
-@pytest.mark.parametrize('backend_name,backend_kwargs', BACKENDS,
-                         ids=[name for name, _ in BACKENDS])
+
+@pytest.mark.parametrize(('backend_name', 'backend_kwargs'), BACKENDS, ids=[name for name, _ in BACKENDS])
 class TestThreeTestPoisoningSequence:
     """The 3-test sequence (7989, 7990, 8009) that originally exposed the
     bug.  All three backends must produce the architecturally-correct
@@ -199,7 +212,10 @@ class TestThreeTestPoisoningSequence:
     known-broken value 0x7706aa7ab587952e."""
 
     def test_full_sequence_produces_byte_repeated_taint(
-            self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+        self,
+        backend_name: str,
+        backend_kwargs: dict[str, Any],
+    ) -> None:
         sim = CellSimulator(Architecture.AMD64, **backend_kwargs)
         _run(sim, T7989_BYTES, T7989_STATE, T7989_TAINT)
         _run(sim, T7990_BYTES, T7990_STATE, T7990_TAINT)
@@ -212,11 +228,10 @@ class TestThreeTestPoisoningSequence:
             f'Backend {backend_name}: rep-stosb taint 0x{rax_8009:016x} '
             f'is missing the per-byte BL-bit-1 floor 0x{REP_STOSB_TAINT_FLOOR:016x}; '
             f'rep stosb stores the same byte 8x, so every output byte must '
-            f'inherit BL\'s taint at bit 1.'
+            f"inherit BL's taint at bit 1."
         )
 
-    def test_full_sequence_matches_known_sound_value(
-            self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_full_sequence_matches_known_sound_value(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
         """Sharp-but-fragile pin against the exact value microtaint
         produces today.  Update this only when an intentional taint-
         precision change (more or less overtaint) is committed."""
@@ -227,12 +242,11 @@ class TestThreeTestPoisoningSequence:
         assert rax_8009 == SOUND_8009_TAINT, (
             f'Backend {backend_name}: expected 0x{SOUND_8009_TAINT:016x}, '
             f'got 0x{rax_8009:016x}.  Either a TCG-cache-invalidation '
-            f'regression has reappeared, or microtaint\'s overtaint pattern '
+            f"regression has reappeared, or microtaint's overtaint pattern "
             f'changed (intentional? then update this test).'
         )
 
-    def test_full_sequence_matches_isolated_8009(
-            self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_full_sequence_matches_isolated_8009(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
         """Test 8009 alone produces the correct taint; running the
         poisoning sequence before it must not change that result."""
         sim_alone = CellSimulator(Architecture.AMD64, **backend_kwargs)
@@ -249,51 +263,50 @@ class TestThreeTestPoisoningSequence:
             f'— prior tests must not affect 8009.  TCG cache invalidation regression.'
         )
 
-    def test_repeated_evaluation_is_stable(
-            self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_repeated_evaluation_is_stable(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
         """Running 8009 multiple times after the poisoning sequence must
         produce the SAME taint each time.  The bug originally produced
         a different broken value on the first call vs. subsequent calls."""
         sim = CellSimulator(Architecture.AMD64, **backend_kwargs)
         _run(sim, T7989_BYTES, T7989_STATE, T7989_TAINT)
         _run(sim, T7990_BYTES, T7990_STATE, T7990_TAINT)
-        outputs = [_run(sim, T8009_BYTES, T8009_STATE, T8009_TAINT)
-                   for _ in range(5)]
+        outputs = [_run(sim, T8009_BYTES, T8009_STATE, T8009_TAINT) for _ in range(5)]
         assert len(set(outputs)) == 1, (
             f'Backend {backend_name}: repeated 8009 evaluations gave '
             f'different results: {[hex(v) for v in outputs]} — first-call '
             f'TCG-cache-leak bug regression.'
         )
 
-    @pytest.mark.parametrize('order', [
-        pytest.param([T7989_BYTES, T7990_BYTES, T8009_BYTES], id='7989_7990_8009'),
-        pytest.param([T7990_BYTES, T7989_BYTES, T8009_BYTES], id='7990_7989_8009'),
-        pytest.param([T7989_BYTES, T8009_BYTES], id='7989_8009'),
-        pytest.param([T7990_BYTES, T8009_BYTES], id='7990_8009'),
-        pytest.param([T8009_BYTES], id='8009_alone'),
-    ])
+    @pytest.mark.parametrize(
+        'order',
+        [
+            pytest.param([T7989_BYTES, T7990_BYTES, T8009_BYTES], id='7989_7990_8009'),
+            pytest.param([T7990_BYTES, T7989_BYTES, T8009_BYTES], id='7990_7989_8009'),
+            pytest.param([T7989_BYTES, T8009_BYTES], id='7989_8009'),
+            pytest.param([T7990_BYTES, T8009_BYTES], id='7990_8009'),
+            pytest.param([T8009_BYTES], id='8009_alone'),
+        ],
+    )
     def test_8009_taint_satisfies_floor_under_all_orderings(
-            self,
-            backend_name: str,
-            backend_kwargs: dict[str, Any],
-            order: list[str]) -> None:
+        self,
+        backend_name: str,
+        backend_kwargs: dict[str, Any],
+        order: list[str],
+    ) -> None:
         """Whatever the prior-test sequence, 8009's output must keep
         every byte's bit-1 set (the BL-taint floor).  The differential
         evaluation of rep-stosb mandates this regardless of preceding
         instructions."""
-        states = {T7989_BYTES: T7989_STATE, T7990_BYTES: T7990_STATE,
-                  T8009_BYTES: T8009_STATE}
-        taints = {T7989_BYTES: T7989_TAINT, T7990_BYTES: T7990_TAINT,
-                  T8009_BYTES: T8009_TAINT}
+        states = {T7989_BYTES: T7989_STATE, T7990_BYTES: T7990_STATE, T8009_BYTES: T8009_STATE}
+        taints = {T7989_BYTES: T7989_TAINT, T7990_BYTES: T7990_TAINT, T8009_BYTES: T8009_TAINT}
         sim = CellSimulator(Architecture.AMD64, **backend_kwargs)
         last_rax = 0
         for bs in order:
             last_rax = _run(sim, bs, states[bs], taints[bs])
         assert order[-1] == T8009_BYTES, 'test misconfigured'
-        assert last_rax != KNOWN_BROKEN_8009, (
-            f'Backend {backend_name}: order {order!r} reproduces the '
-            f'known-broken value.'
-        )
+        assert (
+            last_rax != KNOWN_BROKEN_8009
+        ), f'Backend {backend_name}: order {order!r} reproduces the known-broken value.'
         assert _has_rep_stosb_taint_floor(last_rax), (
             f'Backend {backend_name}: order {order!r} gave 0x{last_rax:016x} '
             f'for 8009 — missing rep-stosb BL-bit-1 floor.'
@@ -304,16 +317,15 @@ class TestThreeTestPoisoningSequence:
 # Generic byte-rewrite-at-CODE_ADDR regression — synthetic, decoupled
 # from the specific 3-test sequence.
 
-@pytest.mark.parametrize('backend_name,backend_kwargs', BACKENDS,
-                         ids=[name for name, _ in BACKENDS])
+
+@pytest.mark.parametrize(('backend_name', 'backend_kwargs'), BACKENDS, ids=[name for name, _ in BACKENDS])
 class TestCodeRewriteSemantics:
     """Sanity checks: when the simulator's code region is rewritten with
     a new bytestring, ``emu_start`` must execute the NEW bytes.  These
     tests would all fail catastrophically if the TCG translation cache
     were not invalidated."""
 
-    def test_long_then_short_bytestring(
-            self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_long_then_short_bytestring(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
         """A long bytestring followed by a SHORTER one — the classic
         cache-invalidation hazard.  The short bytestring's emu_start
         must not dispatch to the cached long-bytestring translation."""
@@ -336,8 +348,7 @@ class TestCodeRewriteSemantics:
             f'partial-register write.  TCG cache regression.'
         )
 
-    def test_short_then_long_bytestring(
-            self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_short_then_long_bytestring(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
         """Reverse order — a 4-byte bytestring then a 28-byte one.  The
         long bytestring's emu_start must translate ALL its bytes
         afresh, not start with the cached short translation."""
@@ -350,8 +361,7 @@ class TestCodeRewriteSemantics:
             f'TCG cache regression.'
         )
 
-    def test_alternating_bytestrings(
-            self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_alternating_bytestrings(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
         """Alternate between two bytestrings repeatedly.  Each switch
         must invalidate the cache; if it doesn't, errors will accumulate
         and at least one run will produce an output missing the
@@ -360,23 +370,19 @@ class TestCodeRewriteSemantics:
         for _ in range(5):
             _run(sim, T7989_BYTES, T7989_STATE, T7989_TAINT)
             rax = _run(sim, T8009_BYTES, T8009_STATE, T8009_TAINT)
-            assert _has_rep_stosb_taint_floor(rax), (
-                f'Backend {backend_name}: alternating runs produced '
-                f'0x{rax:016x} for 8009, missing BL-bit-1 floor.'
-            )
+            assert _has_rep_stosb_taint_floor(
+                rax,
+            ), f'Backend {backend_name}: alternating runs produced 0x{rax:016x} for 8009, missing BL-bit-1 floor.'
 
 
 # ---------------------------------------------------------------------------
 # Internal-state probes — assert the simulator's memory-tracking invariants
 
-@pytest.mark.parametrize('backend_name,backend_kwargs', BACKENDS,
-                         ids=[name for name, _ in BACKENDS])
+
+@pytest.mark.parametrize(('backend_name', 'backend_kwargs'), BACKENDS, ids=[name for name, _ in BACKENDS])
 class TestMemoryStateInvariants:
 
-    def test_8009_memory_does_not_leak_prior_test_rax(
-            self,
-            backend_name: str,
-            backend_kwargs: dict[str, Any]) -> None:
+    def test_8009_memory_does_not_leak_prior_test_rax(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
         """After running the poisoning sequence and reading the spill
         location [rsp-64] = 0x7FFFFFC0 in Unicorn memory, the bytes
         there must be the rep-stosb output (AL of post-mov RAX), NOT
