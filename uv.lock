@@ -778,7 +778,7 @@ wheels = [
 [[package]]
 name = "pypcode"
 version = "3.3.4.dev0"
-source = { git = "https://github.com/angr/pypcode.git?branch=master#5bc15cf895f8e6d74d19b603d671b2a191f31adf" }
+source = { git = "https://github.com/angr/pypcode.git?branch=master#333138738827d5af78870b58234c4b0709813caa" }
 
 [[package]]
 name = "pyperclip"
