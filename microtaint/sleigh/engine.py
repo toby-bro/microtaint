@@ -1001,8 +1001,8 @@ def generate_taint_assignments(  # noqa: C901
             # address-only register values.  Performance: ~2x faster than
             # the BinaryExpr(XOR, C1_cell, C2_cell) path because it shares
             # cell.pyx's _frame_a/_frame_b buffers via evaluate_differential.
-            _reg_inputs = []
-            _mem_inputs = []
+            _reg_inputs: list[tuple[str, int, int]] = []
+            _mem_inputs: list[tuple[str, int, int]] = []
             for d in dep_set.value_deps.keys():
                 if isinstance(d, MemMapping):
                     _mem_inputs.append((d.addr_reg.name, d.addr_const_offset, d.size_bytes))
@@ -1375,8 +1375,71 @@ def generate_taint_assignments(  # noqa: C901
                                 return True
             return False
 
+        def _is_const_shift_bit_extract(ops: list[PcodeOp]) -> bool:  # noqa: C901
+            """True iff the CF slice is a constant-index bit extraction from a register.
+
+            Matches the pattern emitted by BTC/BTR/BTS with an *immediate* bit
+            index (e.g. ``btc rax, 5``).  Sleigh lifts these as:
+
+                AND(const_imm, 0x3f) -> u0     # fold the immediate into a unique
+                RIGHT(register, u0)  -> u1     # shift register by that constant
+                AND(u1, 1)           -> u2     # isolate bit 0
+                NOTEQUAL(u2, 0)      -> CF
+
+            The _is_bit_extract_notequal predicate requires len(ops) <= 2 and a
+            direct register read inside the NOTEQUAL chain, so it misses this
+            4-op form.  The _is_bit_extract_via_tainted_shift predicate requires
+            the shift amount to reach a register, so it correctly rejects this
+            case (the shift amount is a compile-time constant, not a register).
+
+            The COND_TRANSPORTABLE C_eval for this pattern evaluates to 0:
+            masking RAX with ~T zeros bit 5 when T[5]=1, so
+            NOTEQUAL(AND(RIGHT(0,5),1),0) = 0 even though T_RAX[5]=1.  The
+            differential restores soundness: the high replica (V|T) has bit 5
+            set, so XOR(SimCell(V|T), SimCell(V&~T)) = 1 XOR 0 = 1 = T_CF.
+
+            Safety: requires exactly one shift whose amount is derived purely from
+            constants (no register involvement).  This excludes shl/sar/etc. whose
+            CF slices either use a different opcode (SLESS) or reach a register in
+            the shift-amount chain.
+            """
+            if len(ops) > 4:
+                return False
+            ne_ops = [op for op in ops if op.opcode.name == 'INT_NOTEQUAL']
+            if len(ne_ops) != 1:
+                return False
+            shift_ops_local = [op for op in ops if op.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT')]
+            if len(shift_ops_local) != 1:
+                return False
+            shift_op = shift_ops_local[0]
+            # Shift source must be a plain register (the bit-test operand).
+            if shift_op.inputs[0].space.name != 'register':
+                return False
+
+            # Shift amount must be entirely constant-derived (no register input).
+            def _is_const_derived(vn: Varnode) -> bool:
+                if vn.space.name == 'const':
+                    return True
+                if vn.space.name == 'register':
+                    return False
+                if vn.space.name == 'unique':
+                    for prev in ops:
+                        if (
+                            prev.output is not None
+                            and prev.output.space.name == 'unique'
+                            and prev.output.offset == vn.offset
+                        ):
+                            return all(_is_const_derived(inp) for inp in prev.inputs)
+                return False
+
+            if len(shift_op.inputs) < 2 or not _is_const_derived(shift_op.inputs[1]):
+                return False
+            return True
+
         if out_bit_end == out_bit_start and (
-            _is_bit_extract_notequal(slice_ops) or _is_bit_extract_via_tainted_shift(slice_ops)
+            _is_bit_extract_notequal(slice_ops)
+            or _is_bit_extract_via_tainted_shift(slice_ops)
+            or _is_const_shift_bit_extract(slice_ops)
         ):
             diff_for_flag = make_differential()
             expr = BinaryExpr(Op.OR, expr, diff_for_flag)
