@@ -613,9 +613,22 @@ def generate_static_rule(
     # the output taint of each step into the input taint of the next.
     #
     # Exceptions — keep as a single monolithic circuit when:
-    #   1. BRANCH/CBRANCH present: backward slice from PC correctly traces
-    #      through intermediate flags (e.g. `test rdi,1; jz` finds RDI→ZF→RIP).
-    #      Splitting loses the cross-instruction data path through ZF.
+    #   1. Architectural BRANCH/CBRANCH present: a real conditional jump (JNE, JL …)
+    #      or indirect branch creates a cross-instruction ZF/SF/… → RIP dependency
+    #      that the backward slicer can trace only in the monolithic block.
+    #      Splitting loses it.
+    #
+    #      IMPORTANT: CMOVcc instructions also emit a CBRANCH internally, but their
+    #      target is always exactly next_instr_addr (a forward skip to skip the
+    #      register write).  That is NOT an architectural branch — RIP always
+    #      advances unconditionally — so it must NOT suppress chaining.  Chaining
+    #      is precisely what allows flag taint from a preceding CMP to flow into
+    #      the CMOV's condition gate (e.g. `cmp rax,rbx; cmovl rdx,rcx` would
+    #      otherwise lose T_SF/T_OF between the two instructions).
+    #
+    #      Const-space CBRANCH targets are pcode-internal (BSF/BSR bit-scan loops,
+    #      repeat-string prefixes) and also never exit the sequence — safe to chain.
+    #
     #   2. STORE/LOAD present: shadow memory is not threaded between steps,
     #      so memory-taint would be silently lost (push/pop, load-then-store).
     ctx = get_context(arch)
@@ -624,19 +637,33 @@ def generate_static_rule(
     if len(imarks) <= 1:
         return circuit  # single instruction — no chaining needed
 
-    _skip_chain_opcodes = frozenset(
-        {
-            'STORE',
-            'LOAD',
-            'BRANCH',
-            'BRANCHIND',
-            'CBRANCH',
-            'CALL',
-            'CALLIND',
-            'RETURN',
-        },
-    )
-    if any(op.opcode.name in _skip_chain_opcodes for op in translation.ops):
+    _next_instr_addr = 0x1000 + len(bytestring)
+
+    def _is_architectural_branch(op: PcodeOp) -> bool:
+        """True iff this op is a real architectural branch that exits the sequence.
+
+        Pcode emits CBRANCH for two very different purposes:
+          - CMOVcc skip: target == next_instr_addr (forward skip, RIP unconditional)
+          - Real JNE/JL/...: target is a ram-space address outside the sequence
+        Const-space targets are always pcode-internal (loop bodies, early exits).
+
+        We only suppress chaining for the second category.
+        """
+        name = op.opcode.name
+        if name == 'BRANCHIND':
+            return True  # indirect branch: target is always data-dependent, always exits
+        if name not in ('BRANCH', 'CBRANCH'):
+            return False
+        dest = op.inputs[0]
+        if dest.space.name == 'const':
+            return False  # pcode-internal (BSF loops, CMOVcc uses const offset internally)
+        if dest.space.name == 'ram':
+            # CMOVcc skip: target == very next instruction after the whole sequence
+            return dest.offset != _next_instr_addr
+        return True  # unknown space: conservative, treat as architectural
+
+    _non_branch_skip = frozenset({'STORE', 'LOAD', 'CALL', 'CALLIND', 'RETURN'})
+    if any(op.opcode.name in _non_branch_skip or _is_architectural_branch(op) for op in translation.ops):
         return circuit  # monolithic circuit preserves cross-instruction deps
 
     # Build one sub-circuit per instruction, using a state_format augmented
