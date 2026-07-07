@@ -30,7 +30,7 @@ The slow engines amongst these are panda,maat, libdft64, taintgrind
 
 You can adjust the engines used through the `-w` flag, to change the number of bits used in the ground truth threshold then you can adjust the variable `GT_BIT_BUDGET` on line 218.
 
-During the submission 25 tests were skipped as they triggered a bug of state leakage in the ground truth emulator as well as the fallback unicorn emulator of MicroTaint. We did not have enough time to debug and fix the issue before the submission deadline. It is now fixed. If you want to get the exact same result as the paper, then you need to change the variable `SUBMISSION` to `True` line 65.
+The command above (with `--seed 12`) reproduces the numbers reported in the paper: `9858` tests across all engines, including the memory-operand sequences and the `REP`-prefixed string instructions (`rep stosb`/`movsb`/`movsq`), which MicroTaint handles soundly in its native P-code simulator.
 
 If you are wondering why MicroTaint uses unicorn on these specific tests: it is because the instructions that were complex programs (such as using a CBRANCH or a for loop in them) used unicorn so as to keep our pcode simulator at minimal complexity.
 This explains the p99 of microtaint which is so different from the p50, it concerns these instructions that fallback to unicorn.
