@@ -960,6 +960,40 @@ INSTRUCTION_SEQUENCES: list[tuple[str, list[str], str]] = [
         ['mov rsi, rsp', 'sub rsi, 16', 'mov qword ptr [rsi], rax', 'mov rbx, qword ptr [rsi]'],
         'memory',
     ),
+    # ── Memory-operand data movement (load / store / ALU-with-memory) ─────
+    # These exercise taint flow *through* a memory operand rather than only
+    # register-to-register. Memory contents are made deterministic (a tainted
+    # register is stored to an RSP-relative slot first), so every engine and
+    # the ground truth agree on both the address and the initial bytes; taint
+    # stays register-anchored and is therefore scoreable on RAX-RDX, exactly
+    # like the stack round-trips above.
+    # ALU with a memory *source* operand (load path):
+    ('mem_add_src', ['mov qword ptr [rsp - 16], rbx', 'add rax, qword ptr [rsp - 16]'], 'memory'),
+    ('mem_sub_src', ['mov qword ptr [rsp - 16], rbx', 'sub rax, qword ptr [rsp - 16]'], 'memory'),
+    ('mem_and_src', ['mov qword ptr [rsp - 16], rbx', 'and rax, qword ptr [rsp - 16]'], 'memory'),
+    ('mem_or_src', ['mov qword ptr [rsp - 16], rbx', 'or rax, qword ptr [rsp - 16]'], 'memory'),
+    ('mem_xor_src', ['mov qword ptr [rsp - 16], rbx', 'xor rax, qword ptr [rsp - 16]'], 'memory'),
+    ('mem_test_flag', ['mov qword ptr [rsp - 16], rbx', 'test rax, qword ptr [rsp - 16]', 'setnz cl'], 'memory'),
+    ('mem_cmp_flag', ['mov qword ptr [rsp - 16], rbx', 'cmp rax, qword ptr [rsp - 16]', 'setl cl'], 'memory'),
+    # ALU with a memory *destination* operand (read-modify-write, then reload):
+    ('mem_add_dst', ['mov qword ptr [rsp - 16], rax', 'add qword ptr [rsp - 16], rbx', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
+    ('mem_xor_dst', ['mov qword ptr [rsp - 16], rax', 'xor qword ptr [rsp - 16], rbx', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
+    ('mem_and_dst', ['mov qword ptr [rsp - 16], rax', 'and qword ptr [rsp - 16], rbx', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
+    # Sub-register / narrow memory access — bit-precision discriminators.
+    # Register-level engines coalesce these to the whole destination.
+    ('mem_byte_load_zx', ['mov qword ptr [rsp - 16], rax', 'movzx rbx, byte ptr [rsp - 16]'], 'memory'),
+    ('mem_word_load_zx', ['mov qword ptr [rsp - 16], rax', 'movzx rbx, word ptr [rsp - 16]'], 'memory'),
+    ('mem_dword_load_ze', ['mov qword ptr [rsp - 16], rax', 'mov ebx, dword ptr [rsp - 16]'], 'memory'),
+    # Sign-extended loads exercise the transportable sign-extension term.
+    ('mem_byte_load_sx', ['mov qword ptr [rsp - 16], rax', 'movsx rbx, byte ptr [rsp - 16]'], 'memory'),
+    ('mem_dword_load_sx', ['mov qword ptr [rsp - 16], rax', 'movsxd rbx, dword ptr [rsp - 16]'], 'memory'),
+    # Partial memory overwrite: low bytes from one source, high bytes from another.
+    ('mem_byte_store', ['mov qword ptr [rsp - 16], rbx', 'mov byte ptr [rsp - 16], al', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
+    ('mem_high_byte_store', ['mov qword ptr [rsp - 16], rbx', 'mov byte ptr [rsp - 15], ah', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
+    ('mem_dword_partial_overwrite', ['mov qword ptr [rsp - 16], rax', 'mov dword ptr [rsp - 16], ebx', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
+    # Indexed / base+index+disp addressing through memory.
+    ('mem_indexed_rmw', ['mov rsi, rsp', 'mov qword ptr [rsi - 8], rax', 'add rbx, qword ptr [rsi - 8]'], 'memory'),
+    ('mem_base_index_disp', ['mov rsi, rsp', 'mov rdi, 8', 'mov qword ptr [rsi + rdi - 32], rax', 'mov rbx, qword ptr [rsi + rdi - 32]'], 'memory'),
     # ── Function preamble/epilogue (existing) ────────────────────────────
     ('func_preamble', ['push rbx', 'mov rbx, rax', 'imul rbx, rcx', 'mov rax, rbx', 'pop rbx'], 'func_skeleton'),
     # ── MUL 128-bit result (existing, expanded) ──────────────────────────
