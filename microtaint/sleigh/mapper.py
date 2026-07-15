@@ -275,6 +275,17 @@ def determine_category(  # noqa: C901
     if not slice_ops:
         return InstructionCategory.MAPPED
 
+    # An opaque CALLOTHER intrinsic (VEX packed SIMD such as vpaddb/vpshufb,
+    # legacy pshufb/psadbw, AES/SHA, ...) is not decomposable into modelled
+    # primitives, so any slice containing one is AVALANCHE: taint the whole
+    # output whenever any input is tainted. This is a sound over-approximation
+    # and matches the paper's opcode table. Without this the CALLOTHER is
+    # filtered out as an ignored control-flow op, core_ops comes up empty, and
+    # the slice is mis-classified MAPPED -> bare differential -> under-taint on
+    # shared tainted lanes (e.g. vpaddb, pshufb).
+    if any(op.opcode.name == 'CALLOTHER' for op in slice_ops):
+        return InstructionCategory.AVALANCHE
+
     if is_mapped_permutation(slice_ops):
         return InstructionCategory.MAPPED
 
