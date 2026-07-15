@@ -592,6 +592,70 @@ def _cached_generate_static_rule(  # noqa: C901
     )
 
 
+def _branch_forces_monolithic(
+    op: PcodeOp,
+    cur_off: int,
+    instr_offsets: frozenset[int],
+    next_instr_addr: int,
+) -> bool:
+    """True iff this branch op must keep a multi-instruction sequence monolithic.
+
+    Pcode emits CBRANCH for several purposes; only some force the monolithic
+    block. ``cur_off`` is the byte offset (relative to BASE=0x1000) of the
+    branch's own instruction.
+
+      - CMOVcc skip (target == next_instr_addr) and const-space targets
+        (pcode-internal BSF/BSR loops, CMOV internals): chainable.
+      - Intra-sequence FORWARD skip (ram target on an instruction boundary
+        strictly after this instruction): chaining applies the skipped
+        instruction anyway, which only OVER-approximates taint (sound) and stays
+        deterministic -> chainable.
+      - Backward branch/loop, out-of-sequence jump, or indirect branch: keep the
+        monolithic circuit, which preserves the cross-instruction flag->RIP
+        dependency the backward slicer needs.
+    """
+    name = op.opcode.name
+    if name == 'BRANCHIND':
+        return True  # indirect branch: target is data-dependent, always exits
+    if name not in ('BRANCH', 'CBRANCH'):
+        return False
+    dest = op.inputs[0]
+    if dest.space.name == 'const':
+        return False  # pcode-internal (BSF loops, CMOVcc uses const offset internally)
+    if dest.space.name == 'ram':
+        if dest.offset == next_instr_addr:
+            return False  # CMOVcc skip to just after the sequence
+        tgt = dest.offset - 0x1000
+        if tgt in instr_offsets and tgt > cur_off:
+            return False  # intra-sequence forward skip: safe to chain
+        return True  # backward (loop) or out-of-sequence branch
+    return True  # unknown space: conservative, treat as architectural
+
+
+def _sequence_needs_monolithic(
+    ops: list[PcodeOp],
+    instr_offsets: frozenset[int],
+    next_instr_addr: int,
+) -> bool:
+    """A multi-instruction sequence must be kept as one monolithic circuit
+    (not split into a per-instruction ChainedCircuit) if it contains memory/call
+    ops or any branch that is not an intra-sequence forward skip. Forward-skip-
+    only and straight-line sequences are chained.
+    """
+    non_branch_skip = frozenset({'STORE', 'LOAD', 'CALL', 'CALLIND', 'RETURN'})
+    cur_off = 0
+    for op in ops:
+        name = op.opcode.name
+        if name == 'IMARK':
+            cur_off = op.inputs[0].offset - 0x1000
+            continue
+        if name in non_branch_skip:
+            return True
+        if _branch_forces_monolithic(op, cur_off, instr_offsets, next_instr_addr):
+            return True
+    return False
+
+
 def generate_static_rule(
     arch: Architecture,
     bytestring: bytes,
@@ -638,32 +702,8 @@ def generate_static_rule(
         return circuit  # single instruction — no chaining needed
 
     _next_instr_addr = 0x1000 + len(bytestring)
-
-    def _is_architectural_branch(op: PcodeOp) -> bool:
-        """True iff this op is a real architectural branch that exits the sequence.
-
-        Pcode emits CBRANCH for two very different purposes:
-          - CMOVcc skip: target == next_instr_addr (forward skip, RIP unconditional)
-          - Real JNE/JL/...: target is a ram-space address outside the sequence
-        Const-space targets are always pcode-internal (loop bodies, early exits).
-
-        We only suppress chaining for the second category.
-        """
-        name = op.opcode.name
-        if name == 'BRANCHIND':
-            return True  # indirect branch: target is always data-dependent, always exits
-        if name not in ('BRANCH', 'CBRANCH'):
-            return False
-        dest = op.inputs[0]
-        if dest.space.name == 'const':
-            return False  # pcode-internal (BSF loops, CMOVcc uses const offset internally)
-        if dest.space.name == 'ram':
-            # CMOVcc skip: target == very next instruction after the whole sequence
-            return dest.offset != _next_instr_addr
-        return True  # unknown space: conservative, treat as architectural
-
-    _non_branch_skip = frozenset({'STORE', 'LOAD', 'CALL', 'CALLIND', 'RETURN'})
-    if any(op.opcode.name in _non_branch_skip or _is_architectural_branch(op) for op in translation.ops):
+    _instr_offsets = frozenset(off for off, _ in imarks)
+    if _sequence_needs_monolithic(translation.ops, _instr_offsets, _next_instr_addr):
         return circuit  # monolithic circuit preserves cross-instruction deps
 
     # Build one sub-circuit per instruction, using a state_format augmented
