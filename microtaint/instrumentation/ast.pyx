@@ -1003,6 +1003,7 @@ cdef class MemoryDifferentialExpr(Expr):
     cdef public list reg_inputs
     cdef public list mem_inputs
     cdef public list addr_only_regs
+    cdef public object neg_inputs        # frozenset of negatively-polarised input keys
     cdef public str _instr_hex           # cached hex form of bytestring
     cdef public str _target_out_reg      # cached out_reg string for cell
     cdef public int _target_bit_start
@@ -1015,6 +1016,7 @@ cdef class MemoryDifferentialExpr(Expr):
         list reg_inputs,
         list mem_inputs,
         list addr_only_regs,
+        list neg_inputs=None,
     ):
         cdef str kind, name, addr_reg
         cdef int b_start, b_end
@@ -1025,6 +1027,11 @@ cdef class MemoryDifferentialExpr(Expr):
         self.reg_inputs     = reg_inputs
         self.mem_inputs     = mem_inputs
         self.addr_only_regs = addr_only_regs
+        # Keys (register names and MEM_<reg>_<off>_<sz> strings) of value-deps
+        # that are subtracted operands and must be polarised oppositely so the
+        # differential captures the sound D^{+-} borrow chain, not a lossy
+        # D^{++}.  Empty -> all inputs positive (legacy behaviour).
+        self.neg_inputs     = frozenset(neg_inputs) if neg_inputs else frozenset()
         self._instr_hex     = bytestring.hex()
 
         # Pre-compute the cell out_reg string.  Both formats use the same
@@ -1071,23 +1078,35 @@ cdef class MemoryDifferentialExpr(Expr):
         cdef object base, addr
         cdef object v_val, t_val
         cdef str mem_key
+        cdef bint neg
 
         if sim is None:
             return 0
 
         # ---- Register VALUE-deps: full V|T / V&~T polarisation ----
+        # A negatively-polarised (subtracted) operand gets the opposite images
+        # (or := V&~T, and := V|T) so the differential is the sound D^{+-}.
         for name, b_start, b_end in self.reg_inputs:
             v = input_values.get(name, 0)
             t = input_taint.get(name, 0)
+            neg = name in self.neg_inputs
             if b_start == 0 and b_end >= 63:
-                or_inputs[name]  = v | t
-                and_inputs[name] = v & ~t
+                if neg:
+                    or_inputs[name]  = v & ~t
+                    and_inputs[name] = v | t
+                else:
+                    or_inputs[name]  = v | t
+                    and_inputs[name] = v & ~t
             else:
                 # Polarise only the slice bits; preserve other bits as V.
                 slice_mask = (((<object>1) << (b_end - b_start + 1)) - 1) << b_start
                 t_slice = t & slice_mask
-                or_inputs[name]  = (v & ~t_slice) | t_slice
-                and_inputs[name] = v & ~t_slice
+                if neg:
+                    or_inputs[name]  = v & ~t_slice
+                    and_inputs[name] = (v & ~t_slice) | t_slice
+                else:
+                    or_inputs[name]  = (v & ~t_slice) | t_slice
+                    and_inputs[name] = v & ~t_slice
 
         # ---- Address-only registers: same value in both runs ----
         for name in self.addr_only_regs:
@@ -1116,8 +1135,12 @@ cdef class MemoryDifferentialExpr(Expr):
             else:
                 t_val = 0
             mem_key = f'MEM_{addr_reg}_{offset}_{size_bytes}'
-            or_inputs[mem_key]  = v_val | t_val
-            and_inputs[mem_key] = v_val & ~t_val
+            if mem_key in self.neg_inputs:
+                or_inputs[mem_key]  = v_val & ~t_val
+                and_inputs[mem_key] = v_val | t_val
+            else:
+                or_inputs[mem_key]  = v_val | t_val
+                and_inputs[mem_key] = v_val & ~t_val
 
         # ---- Run the differential through cell.pyx's native path ----
         # Direct dispatch to the C kernel: skip the

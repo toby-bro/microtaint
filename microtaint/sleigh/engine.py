@@ -819,6 +819,9 @@ def generate_taint_assignments(  # noqa: C901
         reg_inputs: list[tuple[str, int, int]] = []
         mem_inputs: list[tuple[str, int, int]] = []
         addr_only_regs_set: set[str] = set()
+        # Subtracted operands must be polarised oppositely (D^{+-}); see the
+        # register-target make_differential path for the detailed rationale.
+        neg_inputs: list[str] = []
 
         # Always add the destination's own address register as address-only.
         addr_only_regs_set.add(mapping.addr_reg.name)
@@ -833,8 +836,14 @@ def generate_taint_assignments(  # noqa: C901
                     ),
                 )
                 addr_only_regs_set.add(dep_map.addr_reg.name)
+                if dep_set.value_deps[dep_map] <= 0:
+                    neg_inputs.append(
+                        f'MEM_{dep_map.addr_reg.name}_{dep_map.addr_const_offset}_{dep_map.size_bytes}',
+                    )
             else:
                 reg_inputs.append((dep_map.name, dep_map.bit_start, dep_map.bit_end))
+                if dep_set.value_deps[dep_map] <= 0:
+                    neg_inputs.append(dep_map.name)
 
         # Remove from addr_only_regs any register that is also a value dep.
         value_reg_names = {r[0] for r in reg_inputs}
@@ -853,6 +862,7 @@ def generate_taint_assignments(  # noqa: C901
             reg_inputs=reg_inputs,
             mem_inputs=mem_inputs,
             addr_only_regs=addr_only_regs,
+            neg_inputs=neg_inputs,
         )
 
         # Build the explicit value-taint OR fallback (transport term).
@@ -1030,17 +1040,26 @@ def generate_taint_assignments(  # noqa: C901
             # cell.pyx's _frame_a/_frame_b buffers via evaluate_differential.
             _reg_inputs: list[tuple[str, int, int]] = []
             _mem_inputs: list[tuple[str, int, int]] = []
+            # Inputs whose value-dep polarity is negative (subtracted operand)
+            # must be polarised oppositely in the differential so it captures the
+            # sound D^{+-} borrow chain rather than a lossy D^{++}.
+            _neg_inputs: list[str] = []
             for d in dep_set.value_deps.keys():
                 if isinstance(d, MemMapping):
                     _mem_inputs.append((d.addr_reg.name, d.addr_const_offset, d.size_bytes))
+                    if dep_set.value_deps[d] <= 0:
+                        _neg_inputs.append(f'MEM_{d.addr_reg.name}_{d.addr_const_offset}_{d.size_bytes}')
                 else:
                     _reg_inputs.append((d.name, d.bit_start, d.bit_end))
+                    if dep_set.value_deps[d] <= 0:
+                        _neg_inputs.append(d.name)
             return MemoryDifferentialExpr(
                 bytestring=bytestring,
                 target=('REG', out_name, out_bit_start, out_bit_end),
                 reg_inputs=_reg_inputs,
                 mem_inputs=_mem_inputs,
                 addr_only_regs=sorted(_addr_only_regs_set),
+                neg_inputs=_neg_inputs,
             )
         # Pure-register fast path: cell.pyx's static-cell evaluation.
         C1_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep1)
@@ -2141,6 +2160,66 @@ def extract_dependencies(  # noqa: C901
                 if mapped_dep in value_deps:
                     value_deps[mapped_dep] = p
                 # addr_deps polarity left at default 1
+
+    # Subtractive-memory soundness: forward a LOAD's negative polarity across
+    # the STORE->LOAD (memory) edge.  compute_polarity works on the varnode
+    # def-use graph and cannot see a value that transits memory (e.g.
+    # `mov [rsp-16], rbx ; sub rax, [rsp-16]`): it correctly marks the LOAD's
+    # output varnode as subtracted (polarity 0), but that polarity never reaches
+    # the memory value-dep (hardcoded to 1 above) nor the register that supplied
+    # the stored value (added to value_deps with default polarity 1).  Left
+    # uncorrected, MemoryDifferentialExpr builds a uniform-polarity D^{++}
+    # differential instead of the sound D^{+-}, which under-taints the borrow
+    # chain.  We recover the polarity by matching LOAD and STORE addresses.
+    load_pol: dict[tuple[str, int], int] = {}
+    for op in _slice_ops:
+        if op.opcode.name == 'LOAD' and op.output is not None:
+            base, off = resolve_ptr_with_offset(op.inputs[1], all_ops, mapper, stop_op_index=load_op_index)
+            if base is not None:
+                key = (base.name, off)
+                load_pol[key] = min(load_pol.get(key, 1), polarities.get(get_varnode_id(op.output), 1))
+    if load_pol:
+
+        def _trace_store_value(vn: Varnode, seen: set[int] | None = None) -> list[RegMapping]:
+            """Trace a STORE value varnode back to its source register(s),
+            through the COPY/extension chain SLEIGH emits for `mov [mem], reg`."""
+            if seen is None:
+                seen = set()
+            if vn.space.name == 'register':
+                m = mapper.map_to_state(vn.offset, vn.size)
+                return [m] if m is not None else []
+            if vn.space.name == 'unique' and vn.offset not in seen:
+                seen.add(vn.offset)
+                for op in all_ops:
+                    if op.output is not None and op.output.space.name == 'unique' and op.output.offset == vn.offset:
+                        if op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT', 'SUBPIECE'):
+                            traced: list[RegMapping] = []
+                            for inp in op.inputs:
+                                if inp.space.name != 'const':
+                                    traced += _trace_store_value(inp, seen)
+                            return traced
+                        break
+            return []
+
+        # (a) memory value-deps inherit the polarity of the LOAD at their address.
+        for dep_map in list(value_deps.keys()):
+            if isinstance(dep_map, MemMapping):
+                key = (dep_map.addr_reg.name, dep_map.addr_const_offset)
+                if key in load_pol:
+                    value_deps[dep_map] = min(value_deps[dep_map], load_pol[key])
+        # (b) store-forwarding source registers inherit the polarity of the
+        #     memory location they feed.
+        for op in all_ops:
+            if op.opcode.name == 'STORE':
+                base, off = resolve_ptr_with_offset(op.inputs[1], all_ops, mapper)
+                if base is None:
+                    continue
+                key = (base.name, off)
+                if key not in load_pol:
+                    continue
+                for md in _trace_store_value(op.inputs[2]):
+                    if md in value_deps:
+                        value_deps[md] = min(value_deps[md], load_pol[key])
 
     return DependencySet(value_deps=value_deps, addr_deps=addr_deps)
 
