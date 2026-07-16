@@ -308,6 +308,32 @@ def test_signed_compare_through_memory_sound():
     _assert_sound('signed-cmp-through-memory', bs, state, taint)
 
 
+def test_signed_compare_through_memory_both_operands_tainted():
+    """`mov [rsp-16],rbx; cmp rax,[rsp-16]; setl cl` with BOTH operands tainted.
+
+    Two polarity bugs conspired here, and only showed up once the MEMORY value was
+    itself tainted (T_RBX != 0):
+
+      1. compute_polarity: INT_SBORROW(a,b) is the overflow of a - b, so its RHS is
+         SUBTRACTED exactly like INT_SUB's -- but it fell to the default branch and
+         marked the RHS positive, CLOBBERING the negative polarity INT_SUB had just
+         assigned to that same varnode (SBORROW computes OF, SUB computes the result
+         feeding SF; both read the loaded value).  The LOAD then looked positive, so
+         the STORE->LOAD forwarding had nothing to forward.
+      2. apply_sless_msb_split hardcoded the split to (+1 magnitude, -1 sign),
+         ignoring the operand's own polarity -- so the SUBTRACTED operand got the
+         same pattern as the positive one.
+
+    Either way both operands ended up polarised identically, degrading the
+    differential to a lossy D^{++} that cancels.  Correct polarities are mirrored:
+    RAX (+1 magnitude, -1 sign) vs RBX (-1 magnitude, +1 sign).
+    """
+    bs = bytes.fromhex('48895c24f0483b4424f00f9cc1')
+    state = {'RAX': 0x7FFFFFFFFFFFFFFF, 'RBX': 0x8000000000000000, 'RCX': 0, 'RDX': 0}
+    taint = {'RAX': 0b101, 'RBX': 0b11, 'RCX': 0, 'RDX': 0}
+    _assert_sound('signed-cmp-mem-both-tainted', bs, state, taint)
+
+
 def test_signed_compare_memory_matches_register_form():
     """The memory and register forms of the same signed compare must agree:
     routing an operand through memory must not lose the sign-split polarity."""

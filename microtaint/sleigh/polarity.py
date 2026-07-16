@@ -44,7 +44,17 @@ def compute_polarity(  # noqa: C901
         # Mapped bitwise logic functions generally act as 1 (unless NOT is involved)
         # Arithmetic logic passes through the polarity, except subtraction
 
-        if op_name == 'INT_SUB':
+        # INT_SBORROW(a, b) is the signed overflow of a - b: its RHS is SUBTRACTED,
+        # exactly like INT_SUB's.  Without this it fell to the default branch below
+        # and marked the RHS positive, CLOBBERING the negative polarity INT_SUB had
+        # just assigned to the same varnode (both ops read it -- SBORROW computes OF
+        # while SUB computes the result feeding SF).  The loaded value of
+        # `cmp rax,[rsp-16]` then looked positive, so the STORE->LOAD forwarding
+        # below had nothing to forward and the stored register kept polarity +1 --
+        # polarising both comparison operands identically into a lossy D^{++} that
+        # cancels.  INT_CARRY/INT_SCARRY are the a + b carries, so both their
+        # operands stay positive and they belong with INT_ADD.
+        if op_name in ('INT_SUB', 'INT_SBORROW'):
             # LHS maintains current polarity
             lhs = get_varnode_id(op.inputs[0])
             node_polarities[lhs] = current_polarity
@@ -58,7 +68,18 @@ def compute_polarity(  # noqa: C901
             if op.inputs[1].space.name != 'const':
                 polarity_map[rhs] = inv_polarity
 
-        elif op_name in ('INT_MULT', 'INT_ADD', 'INT_ZEXT', 'INT_SEXT', 'INT_AND', 'INT_OR', 'INT_XOR', 'COPY'):
+        elif op_name in (
+            'INT_MULT',
+            'INT_ADD',
+            'INT_CARRY',
+            'INT_SCARRY',
+            'INT_ZEXT',
+            'INT_SEXT',
+            'INT_AND',
+            'INT_OR',
+            'INT_XOR',
+            'COPY',
+        ):
             # Operations where polarity is directly propagated to operands
             for inp in op.inputs:
                 if inp.space.name != 'const':

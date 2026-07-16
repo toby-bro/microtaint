@@ -404,11 +404,21 @@ def apply_sless_msb_split(
         )
 
         if matched_msb is not None:
+            # The split is RELATIVE to the operand's own polarity.  A signed compare
+            # is monotone only in the sign-biased representation, so the sign bit
+            # always carries the OPPOSITE polarity to the magnitude bits -- but for a
+            # SUBTRACTED operand the whole pattern flips.  Hardcoding (+1 magnitude,
+            # -1 sign) polarised both operands of `cmp rax,[rsp-16]` identically,
+            # degrading the differential to a lossy D^{++} that cancels and
+            # under-taints the comparison once the memory value is itself tainted.
+            # Convention: > 0 positive, <= 0 negative.
+            mag_pol = 1 if p > 0 else -1
+            sign_pol = -mag_pol
             if matched_msb > dep_map.bit_start:
-                new_deps[RegMapping(dep_map.name, dep_map.bit_start, matched_msb - 1)] = 1
-            new_deps[RegMapping(dep_map.name, matched_msb, matched_msb)] = -1
+                new_deps[RegMapping(dep_map.name, dep_map.bit_start, matched_msb - 1)] = mag_pol
+            new_deps[RegMapping(dep_map.name, matched_msb, matched_msb)] = sign_pol
             if dep_map.bit_end > matched_msb:
-                new_deps[RegMapping(dep_map.name, matched_msb + 1, dep_map.bit_end)] = 1
+                new_deps[RegMapping(dep_map.name, matched_msb + 1, dep_map.bit_end)] = mag_pol
         else:
             new_deps[dep_map] = p
 
@@ -2247,8 +2257,17 @@ def extract_dependencies(  # noqa: C901
                     mapped_addr,
                     const_offset,
                 )
-                # LOAD memory content is a *value* dependency.
-                value_deps[mem_map] = 1
+                # LOAD memory content is a *value* dependency, and it carries the
+                # polarity compute_polarity derived for the LOADED VALUE -- keyed by
+                # the LOAD's own output varnode.  Hardcoding +1 here silently
+                # discarded it: in `cmp rax,[rsp-16]` the loaded value is the
+                # SUBTRACTED operand, so its polarity is negative.  Losing that
+                # polarised both operands identically, degrading the differential to
+                # a lossy D^{++} that cancels -- under-tainting the comparison
+                # whenever the memory value itself is tainted.
+                value_deps[mem_map] = (
+                    polarities.get(get_varnode_id(op.output), 1) if op.output is not None else 1
+                )
 
         for vn in op.inputs:
             if vn.space.name == 'register':
