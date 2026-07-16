@@ -194,3 +194,37 @@ def test_shl_cf_bit_extract_reaches_setc():
     taint = {'RAX': bit60, 'RBX': 0, 'RCX': 0, 'RDX': 0}
     _assert_sound('shl-cf-bit-extract', bs, state, taint)
     assert _eval(bs, state, taint)['RDX'] & 1, 'CF (= bit 60 of RAX) must reach DL[0]'
+
+
+# --------------------------------------------------------------------------- #
+# Fix 5 — signed overflow (INT_SBORROW): exact sign decomposition              #
+# --------------------------------------------------------------------------- #
+# Inputs on which the engine's POLARISED 2-replica differential coincidentally
+# cancels -- OF(a|Ta, b&~Tb) == OF(a&~Ta, b|Tb) == 0 -- yet flipping an interior
+# tainted bit DOES change OF.  Signed overflow is non-monotone, so no 2-corner
+# sample can see this.  Only the sign decomposition recovers it:
+#     OF  = (a_s ^ b_s) & (b_s ^ Bor),   Bor = [ a[0:63] <u b[0:63] ]  (monotone)
+# a_s, b_s and Bor read DISJOINT bits, so they vary independently and the <=2^3
+# enumeration is exact.  Machine-checked in benchmark/soundness/prove_signed_overflow.py
+# (identity + no-under-taint PROVED for w=2..64).
+_SUB_OF_BYTES = bytes.fromhex('4829d80f90c2')  # sub rax, rbx ; seto dl
+_SUB_OF_STATE = {'RAX': 2678491694169162878, 'RBX': 9449111174765093383, 'RCX': 0, 'RDX': 0}
+_SUB_OF_TAINT = {'RAX': 9225623836668592128, 'RBX': 4611686018427387904, 'RCX': 0, 'RDX': 0}
+
+
+def test_sub_signed_overflow_sound_when_differential_cancels():
+    """OF must be tainted even though both differential corners agree."""
+    _assert_sound('sub-of-sign-decomp', _SUB_OF_BYTES, _SUB_OF_STATE, _SUB_OF_TAINT)
+    out = _eval(_SUB_OF_BYTES, _SUB_OF_STATE, _SUB_OF_TAINT)
+    assert out['RDX'] & 1, 'OF must reach DL[0] on inputs where the differential cancels'
+
+
+def test_sub_signed_overflow_is_exact_not_a_floor():
+    """The sign decomposition is EXACT, not a soundness floor: the taint must
+    EQUAL ground truth.  An avalanche/any-taint floor would over-taint here."""
+    gt = _brute_force_gt(_SUB_OF_BYTES, _SUB_OF_STATE, _SUB_OF_TAINT)
+    mt = _eval(_SUB_OF_BYTES, _SUB_OF_STATE, _SUB_OF_TAINT)
+    for reg, gt_bits in gt.items():
+        assert mt.get(reg, 0) == gt_bits, (
+            f'signed-overflow rule not exact in {reg}: mt={mt.get(reg, 0):#018x} gt={gt_bits:#018x}'
+        )

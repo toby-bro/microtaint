@@ -398,6 +398,113 @@ cdef class FullMaskAvalancheExpr(Expr):
         return 0
 
 
+cdef class SignedOverflowTaintExpr(Expr):
+    """EXACT taint of signed overflow (P-code INT_SBORROW / INT_SCARRY).
+
+    Signed overflow is NON-MONOTONE, so the 2-replica differential -- which samples
+    only the extremal corners V|T and V&~T -- can miss it: the corners coincidentally
+    agree while an interior flip of a tainted bit toggles OF.  That is the
+    ``sub rax,rbx; seto dl`` under-taint class.
+
+    Rule (sign decomposition).  For width w with sign bit s = w-1::
+
+        Bor = [ a[0:w-1] <u b[0:w-1] ]                 borrow INTO the msb   (a-b)
+        Car = [ a[0:w-1] +u b[0:w-1] >= 2^(w-1) ]      carry  INTO the msb   (a+b)
+        r_s = a_s ^ b_s ^ Bor
+        OF  = (a_s ^ b_s) & (b_s ^ Bor)      (sub)
+        OF  = ~(a_s ^ b_s) & (b_s ^ Car)     (add)
+
+    Exactness rests on two facts:
+
+    1. ``a_s`` (bit w-1 of a), ``b_s`` (bit w-1 of b) and ``Bor``/``Car`` (bits
+       0..w-2 of both) read DISJOINT input bits, hence vary INDEPENDENTLY -- so
+       enumerating their reachable values is exact, not a product over-approximation.
+    2. ``Bor``/``Car`` is MONOTONE (``<u`` is decreasing in a, increasing in b; carry
+       is increasing in both), so its reachable set over the taint cube is exactly
+       {polarised-min, polarised-max} and its taint is the polarised differential
+       XOR -- the paper's existing D^{+-} polarity, applied to the sign split.
+
+    T_OF is then the non-constancy of a 3-input boolean function over <= 2^3
+    assignments: exact, never a floor.  Machine-checked in
+    ``benchmark/soundness/prove_signed_overflow.py``: identity and no-under-taint
+    are PROVED for w = 2..64 (complete for the deployed engine); no-over-taint is
+    PROVED for w <= 6 (beyond that the ForAll query is intractable for Z3, which is
+    a solver limit -- the argument itself is width-independent).
+    """
+    cdef public Expr a_val
+    cdef public Expr a_taint
+    cdef public Expr b_val
+    cdef public Expr b_taint
+    cdef public int width
+    cdef public bint is_sub
+
+    def __init__(self, Expr a_val, Expr a_taint, Expr b_val, Expr b_taint, int width, bint is_sub):
+        self.a_val = a_val
+        self.a_taint = a_taint
+        self.b_val = b_val
+        self.b_taint = b_taint
+        self.width = width
+        self.is_sub = is_sub
+
+    def __str__(self):
+        op = 'SBORROW' if self.is_sub else 'SCARRY'
+        return f'SIGNED_OVF_TAINT[{op},w={self.width}]({self.a_val}, {self.b_val})'
+
+    def __repr__(self):
+        return (
+            f'SignedOverflowTaintExpr(a_val={repr(self.a_val)}, b_val={repr(self.b_val)}, '
+            f'width={self.width}, is_sub={self.is_sub})'
+        )
+
+    cpdef object evaluate(self, EvalContext context):
+        cdef int w = self.width
+        cdef object mask = ((<object>1) << w) - 1
+        cdef object lowmask = ((<object>1) << (w - 1)) - 1
+
+        cdef object a = self.a_val.evaluate(context) & mask
+        cdef object ta = self.a_taint.evaluate(context) & mask
+        cdef object b = self.b_val.evaluate(context) & mask
+        cdef object tb = self.b_taint.evaluate(context) & mask
+
+        cdef int a_s = <int>((a >> (w - 1)) & 1)
+        cdef int b_s = <int>((b >> (w - 1)) & 1)
+        cdef int ta_s = <int>((ta >> (w - 1)) & 1)
+        cdef int tb_s = <int>((tb >> (w - 1)) & 1)
+
+        cdef object al = a & lowmask
+        cdef object bl = b & lowmask
+        cdef object tal = ta & lowmask
+        cdef object tbl = tb & lowmask
+
+        cdef int base_c, hi, lo, t_c
+        if self.is_sub:
+            # [al <u bl] is DECREASING in al, INCREASING in bl -> opposite polarity.
+            base_c = 1 if al < bl else 0
+            hi = 1 if (al & ~tal & lowmask) < (bl | tbl) else 0
+            lo = 1 if (al | tal) < (bl & ~tbl & lowmask) else 0
+        else:
+            # carry into msb is INCREASING in both operands -> same polarity.
+            base_c = 1 if (al + bl) > lowmask else 0
+            hi = 1 if ((al | tal) + (bl | tbl)) > lowmask else 0
+            lo = 1 if ((al & ~tal & lowmask) + (bl & ~tbl & lowmask)) > lowmask else 0
+        t_c = hi ^ lo
+
+        cdef int base = self._g(a_s, b_s, base_c)
+        cdef int da, db, dc
+        for da in range(2 if ta_s else 1):
+            for db in range(2 if tb_s else 1):
+                for dc in range(2 if t_c else 1):
+                    if self._g(a_s ^ da, b_s ^ db, base_c ^ dc) != base:
+                        return 1
+        return 0
+
+    cdef int _g(self, int x, int y, int z):
+        """OF as a function of (a_s, b_s, Bor|Car)."""
+        if self.is_sub:
+            return (x ^ y) & (y ^ z)
+        return (1 - (x ^ y)) & (y ^ z)
+
+
 cdef class TaintOperand(Expr):
     cdef public str name
     cdef public int bit_start

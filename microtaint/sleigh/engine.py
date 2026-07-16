@@ -19,6 +19,7 @@ from microtaint.instrumentation.ast import (
     MemoryDifferentialExpr,
     MemoryOperand,
     Op,
+    SignedOverflowTaintExpr,
     TaintAssignment,
     TaintOperand,
     UnaryExpr,
@@ -740,6 +741,66 @@ def generate_static_rule(
     )
 
 
+def _build_signed_overflow_taint(
+    slice_ops: list[PcodeOp],
+    mapper: StateMapper,
+) -> Expr | None:
+    """EXACT taint for a signed-overflow flag (INT_SBORROW / INT_SCARRY), or None.
+
+    Signed overflow is NON-MONOTONE, so the 2-replica differential can miss it: the
+    two extremal corners coincidentally agree while an interior flip of a tainted bit
+    toggles OF (the `sub rax,rbx; seto dl` under-taint).  The FullMask/pairwise floors
+    do not cover it either, since they assume the differential is exact whenever a
+    single operand is only PARTIALLY tainted -- false for signed overflow.
+
+    Instead of a floor (which would over-taint), route the flag to the exact sign
+    decomposition -- see SignedOverflowTaintExpr and the Z3 proof in
+    benchmark/soundness/prove_signed_overflow.py (identity + no-under-taint PROVED for
+    w=2..64; no-over-taint PROVED for w<=6).
+
+    Returns None -- so the caller keeps the differential + floor -- whenever the slice
+    is not a plain two-operand signed-overflow flag (memory/unique operands, several
+    overflow ops, ...).
+    """
+    ovf = [op for op in slice_ops if op.opcode.name in ('INT_SBORROW', 'INT_SCARRY')]
+    if len(ovf) != 1 or ovf[0] is not slice_ops[-1]:
+        return None
+    op = ovf[0]
+    if len(op.inputs) != 2:
+        return None
+
+    operands: list[tuple[Expr, Expr]] = []
+    width = 0
+    for vn in op.inputs:
+        if vn.space.name == 'register':
+            m = mapper.map_to_state(vn.offset, vn.size)
+            if m is None:
+                return None
+            operands.append(
+                (
+                    _get_taint_operand(m.name, m.bit_start, m.bit_end, False),
+                    _get_taint_operand(m.name, m.bit_start, m.bit_end, True),
+                ),
+            )
+        elif vn.space.name == 'const':
+            operands.append((Constant(vn.offset, vn.size * 8), Constant(0, vn.size * 8)))
+        else:
+            return None  # memory / intra-slice unique: not a plain 2-operand flag
+        width = max(width, vn.size * 8)
+
+    if width < 2:
+        return None
+    (a_val, a_taint), (b_val, b_taint) = operands
+    return SignedOverflowTaintExpr(
+        a_val,
+        a_taint,
+        b_val,
+        b_taint,
+        width,
+        op.opcode.name == 'INT_SBORROW',
+    )
+
+
 def generate_taint_assignments(  # noqa: C901
     arch: Architecture,
     bytestring: bytes,
@@ -1456,6 +1517,24 @@ def generate_taint_assignments(  # noqa: C901
             expr = _get_zero_constant(out_bit_end - out_bit_start + 1)
 
     elif cat == InstructionCategory.MONOTONIC:
+        # Signed overflow (INT_SBORROW / INT_SCARRY) is NON-monotone despite living
+        # in this category: the differential's two extremal corners can agree while
+        # an interior tainted-bit flip toggles OF, and the floors below assume the
+        # differential is exact for a single partially-tainted operand -- which is
+        # false here.  Route it to the EXACT sign decomposition instead of a floor
+        # (proved, and does not over-taint).  Returns None for anything that is not
+        # a plain two-operand overflow flag, in which case we fall through.
+        _signed_ovf_expr = _build_signed_overflow_taint(slice_ops, mapper)
+        if _signed_ovf_expr is not None and not _slice_has_constant_dominator(slice_ops):
+            assignments.append(
+                TaintAssignment(
+                    target=out_target,
+                    dependencies=dependencies,
+                    expression=_signed_ovf_expr,
+                ),
+            )
+            return
+
         diff_expr = make_differential()
 
         # 1-bit flag soundness floor for MONOTONIC.

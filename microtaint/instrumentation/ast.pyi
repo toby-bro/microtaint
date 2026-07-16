@@ -53,6 +53,32 @@ class FullMaskAvalancheExpr(Expr):
     def __init__(self, dep: Expr, dep_bits: int) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 
+class SignedOverflowTaintExpr(Expr):
+    """EXACT taint of signed overflow (INT_SBORROW / INT_SCARRY) via the sign
+    decomposition OF = (a_s ^ b_s) & (b_s ^ Bor)  [sub] / ~(a_s ^ b_s) & (b_s ^ Car)
+    [add], where Bor/Car is the monotone borrow/carry into the msb.
+
+    Proved in benchmark/soundness/prove_signed_overflow.py.
+    """
+
+    a_val: Expr
+    a_taint: Expr
+    b_val: Expr
+    b_taint: Expr
+    width: int
+    is_sub: bool
+
+    def __init__(
+        self,
+        a_val: Expr,
+        a_taint: Expr,
+        b_val: Expr,
+        b_taint: Expr,
+        width: int,
+        is_sub: bool,
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
 class TaintOperand(Expr):
     name: str
     bit_start: int
