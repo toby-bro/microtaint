@@ -254,6 +254,43 @@ def test_bt_variable_index_sound_when_extremal_indices_agree():
     )
 
 
+# --------------------------------------------------------------------------- #
+# Fix 7 — cmpxchg conditional select; software loops must stay excluded        #
+# --------------------------------------------------------------------------- #
+def test_cmpxchg_conditional_select_sound():
+    """`cmpxchg rbx, rcx` is a data-dependent select:
+
+        RBX_out = ZF ? RCX : RBX_old        ZF = (RAX == RBX_old)
+
+    The backward slice of RBX sees only the equal-path `COPY RBX, RCX`, so the
+    not-equal path (RBX keeps its old value) and the ZF-dependence are invisible.
+    The old-dest passthrough covers exactly this, but never fired: cmpxchg lifts
+    its select as a CONST-relative forward CBRANCH, which the absolute-only
+    has_cbranch check missed.
+    """
+    bs = bytes.fromhex('480fb1cb')
+    state = {'RAX': 0x1111, 'RBX': 0x2222, 'RCX': 0x3333, 'RDX': 0}
+    taint = {'RAX': 0b11, 'RBX': 0b11, 'RCX': 0, 'RDX': 0}
+    _assert_sound('cmpxchg-select', bs, state, taint)
+
+
+def test_tzcnt_software_loop_no_old_dest_leak():
+    """Guard for the discriminator that makes fix 7 safe.
+
+    tzcnt/bsf/bsr also emit a forward CONST CBRANCH -- but theirs is the loop
+    zero-check, not a select, and their destination is written unconditionally on
+    the loop-exit path.  Injecting old-dest there leaks the destination's previous
+    taint.  Software loops are identified by a BACKWARD branch (the loop
+    back-edge); cmpxchg is straight-line and has none.
+    """
+    bs = bytes.fromhex('f3480fbcc3')  # tzcnt rax, rbx
+    out = _eval(bs, {'RAX': 0, 'RBX': 0x1234, 'RCX': 0, 'RDX': 0}, {'RAX': MASK64, 'RBX': 0, 'RCX': 0, 'RDX': 0})
+    assert out.get('RAX', 0) == 0, (
+        f'tzcnt: untainted RBX must give untainted RAX; old T_RAX leaked through '
+        f'(got {out.get("RAX", 0):#x})'
+    )
+
+
 def test_signed_compare_through_memory_sound():
     """`mov [rsp-16],rbx; cmp rax,[rsp-16]; setl cl` — CL = [rax <s mem].
 

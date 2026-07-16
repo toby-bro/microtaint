@@ -478,10 +478,40 @@ def _cached_generate_static_rule(  # noqa: C901
         # Heuristic: a CBRANCH is "forward" when its target address is greater than
         # the instruction base address (0x1000 in our lifted translation). A backward
         # branch target is smaller (loops back).
+        # A SOFTWARE LOOP (tzcnt/bsf/bsr/PEXT) is identified by a BACKWARD branch --
+        # the loop back-edge.  Its const-space forward CBRANCH is the zero-check
+        # guarding the loop, not a conditional select: the output is written on the
+        # loop-exit path and always executes, so the old-dest passthrough must NOT
+        # apply (it would leak the destination's previous taint).  cmpxchg, by
+        # contrast, is straight-line and has no backward branch.
         _BASE_ADDR = 0x1000
-        has_cbranch = any(
-            op.opcode.name == 'CBRANCH' and op.inputs and op.inputs[0].offset > _BASE_ADDR for op in translation.ops
+        _has_backward_branch = any(
+            op.opcode.name in ('BRANCH', 'CBRANCH')
+            and op.inputs
+            and op.inputs[0].space.name == 'const'
+            and (op.inputs[0].offset & 0x80000000)
+            for op in translation.ops
         )
+
+        def _is_forward_cbranch(op: PcodeOp) -> bool:
+            """True for a CBRANCH that skips forward over a CONDITIONAL WRITE.
+
+            Two target encodings occur:
+              * ram/absolute  -> forward when the target is beyond the instruction
+                base (the CMOVcc skip).
+              * const/p-code-relative -> a signed op-index delta.  A positive delta
+                is a forward skip; cmpxchg lifts its `ZF ? src : dst` select exactly
+                this way, and the absolute-only check used to miss it.  Excluded in
+                a software loop, where the const CBRANCHes are loop machinery.
+            """
+            if op.opcode.name != 'CBRANCH' or not op.inputs:
+                return False
+            tgt = op.inputs[0]
+            if tgt.space.name == 'const':
+                return not (tgt.offset & 0x80000000) and not _has_backward_branch  # noqa: B023
+            return tgt.offset > _BASE_ADDR  # noqa: B023 -- loop-invariant constant
+
+        has_cbranch = any(_is_forward_cbranch(op) for op in translation.ops)
 
         # Walk back from the CBRANCH condition to find the 1-bit flag registers
         # that determine the branch.  These are needed to gate the cmov old-dest
@@ -491,11 +521,7 @@ def _cached_generate_static_rule(  # noqa: C901
         # concrete flags), and the old-dest passthrough only adds spurious bits.
         cbranch_flag_deps: list[tuple[int, int]] = []
         if has_cbranch:
-            cbranch_op = next(
-                op
-                for op in translation.ops
-                if op.opcode.name == 'CBRANCH' and op.inputs and op.inputs[0].offset > _BASE_ADDR
-            )
+            cbranch_op = next(op for op in translation.ops if _is_forward_cbranch(op))
             _worklist = [cbranch_op.inputs[1]]  # condition input
             _seen: set[tuple[str, int, int]] = set()
             while _worklist:
@@ -514,6 +540,39 @@ def _cached_generate_static_rule(  # noqa: C901
                             for _inp in _prev.inputs:
                                 if _inp.space.name in ('register', 'unique'):
                                     _worklist.append(_inp)
+
+        # A condition flag DEFINED inside this same instruction (cmpxchg computes ZF
+        # from RAX vs the destination, then selects on it) is not a tracked state
+        # register: its threaded taint is always 0 and cannot gate the passthrough.
+        # Detect that so the gate can fall back to the taint of this instruction's
+        # own value inputs.  A live-in flag (the chained `cmp; cmovcc` pattern) has
+        # no defining op here and keeps the precise flag-register gate.
+        cbranch_cond_internal = any(
+            any(
+                p.output is not None
+                and p.output.space.name == 'register'
+                and p.output.offset == _foff
+                and p.output.size == _fsz
+                for p in translation.ops
+            )
+            for _foff, _fsz in cbranch_flag_deps
+        )
+
+        # The old-dest passthrough must fire ONLY when THIS output can actually
+        # retain its previous value, i.e. its write is guarded by the CBRANCH.  A
+        # conditional write is defined AFTER the CBRANCH in the linear P-code; an
+        # unconditional one (rol/ror's data output, whose CBRANCH only guards an
+        # undefined OF) precedes it, and injecting old-dest there would over-taint.
+        output_cond_written = False
+        if has_cbranch:
+            _cb_idx = next((i for i, op in enumerate(translation.ops) if _is_forward_cbranch(op)), -1)
+            output_cond_written = any(
+                i > _cb_idx
+                and op.output is not None
+                and op.output.space.name == out_vn.space.name
+                and op.output.offset == out_vn.offset
+                for i, op in enumerate(translation.ops)
+            )
 
         # Detect bit-counting patterns whose result is bounded by the operand
         # width.  For tzcnt/lzcnt/bsf/bsr/popcnt the count fits in
@@ -582,6 +641,8 @@ def _cached_generate_static_rule(  # noqa: C901
             mapping,
             has_cbranch=has_cbranch,
             cbranch_flag_deps=cbranch_flag_deps,
+            cbranch_cond_internal=cbranch_cond_internal,
+            output_cond_written=output_cond_written,
             is_bit_count=is_bit_count,
             is_software_loop=is_software_loop,
         )
@@ -906,6 +967,8 @@ def generate_taint_assignments(  # noqa: C901
     mapping: RegMapping | MemMapping | None = None,
     has_cbranch: bool = False,
     cbranch_flag_deps: list[tuple[int, int]] | None = None,
+    cbranch_cond_internal: bool = False,
+    output_cond_written: bool = False,
     is_bit_count: bool = False,
     is_software_loop: bool = False,
 ) -> None:
@@ -1860,7 +1923,12 @@ def generate_taint_assignments(  # noqa: C901
     # gives the exact answer.
     #
     # Excluded: PC/IP (branch targets) and memory outputs (no prior value).
-    if not isinstance(mapping, MemMapping) and out_name not in ('EIP', 'RIP', 'PC') and has_cbranch:
+    if (
+        not isinstance(mapping, MemMapping)
+        and out_name not in ('EIP', 'RIP', 'PC')
+        and has_cbranch
+        and output_cond_written
+    ):
         old_dest_taint = _get_taint_operand(out_name, out_bit_start, out_bit_end, True)
         _FLAG_OFFSET_TO_NAME = {
             0x200: 'CF',
@@ -1877,6 +1945,35 @@ def generate_taint_assignments(  # noqa: C901
                 continue
             flag_taint = _get_taint_operand(flag_name, 0, flag_size - 1, True)
             flag_taint_or = flag_taint if flag_taint_or is None else BinaryExpr(Op.OR, flag_taint_or, flag_taint)
+
+        # When the selector flag is computed INSIDE this instruction (cmpxchg's ZF
+        # from RAX vs the destination), it is not a tracked register, so its threaded
+        # taint is 0 and cannot gate anything.  Gate on the taint of this
+        # instruction's own value inputs instead: any tainted input can make the
+        # data-dependent select diverge.
+        if cbranch_cond_internal:
+            for dep_map in dep_set.value_deps.keys():
+                if isinstance(dep_map, RegMapping):
+                    cond_taint: Expr = _get_taint_operand(
+                        dep_map.name,
+                        dep_map.bit_start,
+                        dep_map.bit_end,
+                        True,
+                    )
+                else:
+                    _cond_base = _get_taint_operand(
+                        dep_map.addr_reg.name,
+                        dep_map.addr_reg.bit_start,
+                        dep_map.addr_reg.bit_end,
+                        False,
+                    )
+                    _cond_addr: Expr = (
+                        BinaryExpr(Op.ADD, _cond_base, Constant(dep_map.addr_const_offset, 8))
+                        if dep_map.addr_const_offset != 0
+                        else _cond_base
+                    )
+                    cond_taint = MemoryOperand(_cond_addr, dep_map.size_bytes, is_taint=True)
+                flag_taint_or = cond_taint if flag_taint_or is None else BinaryExpr(Op.OR, flag_taint_or, cond_taint)
         if flag_taint_or is not None:
             # Build T_source = OR of all dependency taints EXCEPT the injected
             # old-dest (which corresponds to out_name with full output slice).
