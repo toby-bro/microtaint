@@ -111,8 +111,23 @@ CONTROL_FLOW_OPCODES: set[str] = {
     'CBRANCH',
     'CALL',
     'CALLIND',
-    'CALLOTHER',
     'RETURN',
+}
+
+# Opaque operations SLEIGH cannot decompose into modelled primitives.  P-code
+# emits CALLOTHER for two kinds of instruction, neither of which is control
+# transfer (real jumps/calls use BRANCH/CALL/RETURN):
+#   * opaque vector / crypto ops — pshufb, psadbw, pmaddwd, vpaddb, vpshufb,
+#     aesenc, crc32, ...
+#   * opaque system ops — syscall, cpuid, rdtsc, int3, ud2, ...
+# Their effect on the output is unknown, so any slice touching one must be
+# AVALANCHE (taint the whole output whenever any input is tainted) — the sound
+# over-approximation, matching the paper's opcode table.  These must NOT be
+# ignored by the core_ops filter (that would leave core_ops empty and
+# mis-classify the slice as MAPPED -> bare differential -> under-taint on shared
+# tainted lanes, e.g. pshufb).
+OPAQUE_OPCODES: set[str] = {
+    'CALLOTHER',
 }
 
 IGNORED_OPCODES: set[str] = {
@@ -275,15 +290,10 @@ def determine_category(  # noqa: C901
     if not slice_ops:
         return InstructionCategory.MAPPED
 
-    # An opaque CALLOTHER intrinsic (VEX packed SIMD such as vpaddb/vpshufb,
-    # legacy pshufb/psadbw, AES/SHA, ...) is not decomposable into modelled
-    # primitives, so any slice containing one is AVALANCHE: taint the whole
-    # output whenever any input is tainted. This is a sound over-approximation
-    # and matches the paper's opcode table. Without this the CALLOTHER is
-    # filtered out as an ignored control-flow op, core_ops comes up empty, and
-    # the slice is mis-classified MAPPED -> bare differential -> under-taint on
-    # shared tainted lanes (e.g. vpaddb, pshufb).
-    if any(op.opcode.name == 'CALLOTHER' for op in slice_ops):
+    # Opaque, undecomposable ops (CALLOTHER: pshufb/psadbw/aesenc/syscall/...)
+    # dominate the whole slice — see OPAQUE_OPCODES.  Checked first, before the
+    # core_ops filter that would otherwise drop them.
+    if any(op.opcode.name in OPAQUE_OPCODES for op in slice_ops):
         return InstructionCategory.AVALANCHE
 
     if is_mapped_permutation(slice_ops):

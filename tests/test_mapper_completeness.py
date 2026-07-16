@@ -11,6 +11,7 @@ def test_all_pcode_ops_are_categorized() -> None:
     # 1. Combine all your defined category sets from mapper.py
     all_categorized = (
         mapper.AVALANCHE_OPCODES
+        | mapper.OPAQUE_OPCODES
         | mapper.TRANSLATABLE_OPCODES
         | mapper.TRANSPORTABLE_OPCODES
         | mapper.COND_TRANSPORTABLE_OPCODES
@@ -22,14 +23,14 @@ def test_all_pcode_ops_are_categorized() -> None:
     )
 
     # 2. Add ops that we intentionally IGNORE (Control flow, SSA, etc.)
-    # You should add this set to mapper.py!
+    # CALLOTHER is NOT here: it is an opaque *data/system* op (pshufb, syscall,
+    # ...), handled via mapper.OPAQUE_OPCODES (AVALANCHE), not ignored.
     IGNORED_OPCODES = {
         'BRANCH',
         'BRANCHIND',
         'CBRANCH',
         'CALL',
         'CALLIND',
-        'CALLOTHER',
         'RETURN',
         'IMARK',
         'INDIRECT',
