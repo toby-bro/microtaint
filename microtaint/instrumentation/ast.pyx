@@ -505,6 +505,86 @@ cdef class SignedOverflowTaintExpr(Expr):
         return (1 - (x ^ y)) & (y ^ z)
 
 
+cdef class VariableBitSelectTaintExpr(Expr):
+    """EXACT taint of a bit SELECTED by a data-dependent index (`bt r,r` -> CF).
+
+    `bt rax, rbx` lifts to CF = bit[(rbx & (w-1))] of rax.  Selection by a tainted
+    index is NON-MONOTONE, so the 2-replica differential -- which samples only the
+    corners V|T and V&~T -- reads the source at exactly TWO index values and misses
+    every other reachable index: the `bt rax,rbx; setc dl` under-taint.
+
+    Avalanching CF would be sound but would OVER-taint.  Enumerate the reachable
+    index set instead::
+
+        I = { i : i agrees with b on every UNTAINTED index bit }      (|I| <= w)
+
+        CF tainted  <=>  (exists i in I: T_a[i] = 1)
+                     or  (exists i,j in I: T_a[i]=T_a[j]=0 and a_i != a_j)
+
+    Justification: for a fixed index i, CF = a_i.  Over the cube the reachable CF
+    values are { a_i : i in I, T_a[i]=0 } union ({0,1} if some i in I has T_a[i]=1);
+    CF is tainted exactly when that set contains both 0 and 1.  Index bits and source
+    bits live in different registers, so they vary independently and the enumeration
+    is exact -- no approximation.
+
+    Machine-checked in benchmark/soundness/prove_variable_bit_select.py.
+    Cost: <= w iterations, short-circuiting on the first tainted reachable bit.
+    """
+    cdef public Expr src_val
+    cdef public Expr src_taint
+    cdef public Expr idx_val
+    cdef public Expr idx_taint
+    cdef public int width
+
+    def __init__(self, Expr src_val, Expr src_taint, Expr idx_val, Expr idx_taint, int width):
+        self.src_val = src_val
+        self.src_taint = src_taint
+        self.idx_val = idx_val
+        self.idx_taint = idx_taint
+        self.width = width
+
+    def __str__(self):
+        return f'VAR_BIT_SELECT_TAINT[w={self.width}]({self.src_val}[{self.idx_val}])'
+
+    def __repr__(self):
+        return (
+            f'VariableBitSelectTaintExpr(src_val={repr(self.src_val)}, '
+            f'idx_val={repr(self.idx_val)}, width={self.width})'
+        )
+
+    cpdef object evaluate(self, EvalContext context):
+        cdef int w = self.width
+        cdef object mask = ((<object>1) << w) - 1
+        cdef object a = self.src_val.evaluate(context) & mask
+        cdef object ta = self.src_taint.evaluate(context) & mask
+        cdef object b = self.idx_val.evaluate(context) & mask
+        cdef object tb = self.idx_taint.evaluate(context) & mask
+
+        # index uses log2(w) low bits (bt masks the offset by the operand width)
+        cdef int nbits = (w - 1).bit_length()
+        cdef object low = ((<object>1) << nbits) - 1
+        cdef object b_idx = b & low
+        cdef object t_idx = tb & low
+        cdef object fixed = b_idx & ~t_idx & low
+
+        cdef int i
+        cdef int seen0 = 0
+        cdef int seen1 = 0
+        for i in range(w):
+            # reachable iff i agrees with b on every UNTAINTED index bit
+            if (i & ~t_idx & low) != fixed:
+                continue
+            if (ta >> i) & 1:
+                return 1  # (a) a reachable index selects a tainted source bit
+            if (a >> i) & 1:
+                seen1 = 1
+            else:
+                seen0 = 1
+            if seen0 and seen1:
+                return 1  # (b) two reachable clean bits differ
+        return 0
+
+
 cdef class TaintOperand(Expr):
     cdef public str name
     cdef public int bit_start

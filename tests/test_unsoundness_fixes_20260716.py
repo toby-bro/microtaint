@@ -228,3 +228,43 @@ def test_sub_signed_overflow_is_exact_not_a_floor():
         assert mt.get(reg, 0) == gt_bits, (
             f'signed-overflow rule not exact in {reg}: mt={mt.get(reg, 0):#018x} gt={gt_bits:#018x}'
         )
+
+
+# --------------------------------------------------------------------------- #
+# Fix 6 — variable bit-selection (`bt r,r` -> CF): exact reachable-index rule  #
+# --------------------------------------------------------------------------- #
+# `bt rax,rbx` -> CF = bit[(rbx & 63)] of rax.  With TWO tainted index bits the
+# reachable index set is {0,1,2,3}, but the differential samples only the extremal
+# indices (rbx|T)&63 = 3 and (rbx&~T)&63 = 0.  Choosing RAX = 0b0010 makes those two
+# agree (bit3 = bit0 = 0) while the interior index 1 selects bit1 = 1 -- so the
+# differential reports CF clean although CF is genuinely tainted.  The exact rule
+# enumerates every reachable index, and is proved in
+# benchmark/soundness/prove_variable_bit_select.py (no-under-taint PROVED w=2..64).
+_BT_BYTES = bytes.fromhex('480fa3d80f92c2')  # bt rax, rbx ; setc dl
+_BT_STATE = {'RAX': 0b0010, 'RBX': 0, 'RCX': 0, 'RDX': 0}
+_BT_TAINT = {'RAX': 0, 'RBX': 0b0011, 'RCX': 0, 'RDX': 0}  # only the index is tainted
+
+
+def test_bt_variable_index_sound_when_extremal_indices_agree():
+    """CF must be tainted even though both extremal indices select equal bits."""
+    _assert_sound('bt-variable-index', _BT_BYTES, _BT_STATE, _BT_TAINT)
+    assert _eval(_BT_BYTES, _BT_STATE, _BT_TAINT)['RDX'] & 1, (
+        'CF must reach DL[0]: index bit 1 selects RAX[1]=1 while the extremal '
+        'indices 0 and 3 both select 0'
+    )
+
+
+def test_bt_variable_index_is_exact_not_a_floor():
+    """The reachable-index rule is EXACT: an avalanche over the index would
+    over-taint CF whenever every reachable index selects the same bit value."""
+    # RAX = 0 -> every reachable index selects 0, so CF is CONSTANT despite the
+    # tainted index.  An avalanche-on-tainted-index floor would wrongly taint DL.
+    state = {'RAX': 0, 'RBX': 0, 'RCX': 0, 'RDX': 0}
+    taint = {'RAX': 0, 'RBX': 0b0011, 'RCX': 0, 'RDX': 0}
+    gt = _brute_force_gt(_BT_BYTES, state, taint)
+    mt = _eval(_BT_BYTES, state, taint)
+    assert gt['RDX'] == 0, 'sanity: CF is constant when RAX is all zeros'
+    assert mt.get('RDX', 0) == 0, (
+        f'bt rule over-tainted DL: mt={mt.get("RDX", 0):#x} but CF is constant '
+        f'(every reachable index selects RAX bit = 0)'
+    )

@@ -23,6 +23,7 @@ from microtaint.instrumentation.ast import (
     TaintAssignment,
     TaintOperand,
     UnaryExpr,
+    VariableBitSelectTaintExpr,
 )
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import EXTENSION_OPCODES, TRANSLATABLE_OPCODES, determine_category
@@ -801,6 +802,96 @@ def _build_signed_overflow_taint(
     )
 
 
+def _build_variable_bit_select_taint(  # noqa: C901
+    slice_ops: list[PcodeOp],
+    mapper: StateMapper,
+) -> Expr | None:
+    """EXACT taint for a bit selected by a data-dependent index, or None.
+
+    `bt rax, rbx` lifts to exactly::
+
+        INT_AND      u0 <- [rbx, w-1]     # mask the bit offset by the operand width
+        INT_RIGHT    u1 <- [rax, u0]      # shift the source down by that offset
+        INT_AND      u2 <- [u1, 1]        # isolate bit 0
+        INT_NOTEQUAL CF <- [u2, 0]
+
+    Selection by a TAINTED index is non-monotone, so the 2-replica differential reads
+    the source at only TWO index values and misses every other reachable index --
+    the `bt rax,rbx; setc dl` under-taint.  Avalanching CF would be sound but would
+    over-taint; VariableBitSelectTaintExpr is exact (see its docstring and
+    benchmark/soundness/prove_variable_bit_select.py).
+
+    We match on SEMANTICS, not on a byte pattern: a lone shift whose SOURCE is a
+    register and whose AMOUNT is register-derived, feeding the terminal
+    INT_NOTEQUAL through an optional bit-isolating AND.  Returns None otherwise, so
+    the caller keeps the differential (which is exact for a CONSTANT index, e.g.
+    `bt rax, 5`, where the shift amount is const-derived).
+    """
+    ne_ops = [op for op in slice_ops if op.opcode.name == 'INT_NOTEQUAL']
+    shifts = [op for op in slice_ops if op.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT')]
+    if len(ne_ops) != 1 or len(shifts) != 1 or ne_ops[0] is not slice_ops[-1]:
+        return None
+    shift = shifts[0]
+    if len(shift.inputs) < 2 or shift.inputs[0].space.name != 'register':
+        return None
+
+    def _defining(vn: Varnode) -> PcodeOp | None:
+        for op in slice_ops:
+            if op.output is not None and op.output.space.name == 'unique' and op.output.offset == vn.offset:
+                return op
+        return None
+
+    def _sole_register(vn: Varnode) -> Varnode | None:
+        """The single register the index derives from, or None if it is
+        constant-derived (differential already exact) or more complex."""
+        if vn.space.name == 'register':
+            return vn
+        if vn.space.name == 'const':
+            return None
+        if vn.space.name != 'unique':
+            return None
+        d = _defining(vn)
+        if d is None:
+            return None
+        regs = [r for r in (_sole_register(i) for i in d.inputs) if r is not None]
+        return regs[0] if len(regs) == 1 else None
+
+    idx_vn = _sole_register(shift.inputs[1])
+    if idx_vn is None:
+        return None  # constant-derived index: the differential is already exact
+
+    # NOTEQUAL must consume the shift result, optionally via a bit-isolating AND.
+    consumed = ne_ops[0].inputs[0]
+    if consumed.space.name != 'unique':
+        return None
+    if shift.output is None or consumed.offset != shift.output.offset:
+        d = _defining(consumed)
+        if d is None or d.opcode.name != 'INT_AND':
+            return None
+        if not any(v.space.name == 'const' for v in d.inputs):
+            return None
+        if not any(
+            v.space.name == 'unique' and shift.output is not None and v.offset == shift.output.offset
+            for v in d.inputs
+        ):
+            return None
+
+    src_map = mapper.map_to_state(shift.inputs[0].offset, shift.inputs[0].size)
+    idx_map = mapper.map_to_state(idx_vn.offset, idx_vn.size)
+    if src_map is None or idx_map is None:
+        return None
+    width = shift.inputs[0].size * 8
+    if width < 2:
+        return None
+    return VariableBitSelectTaintExpr(
+        _get_taint_operand(src_map.name, src_map.bit_start, src_map.bit_end, False),
+        _get_taint_operand(src_map.name, src_map.bit_start, src_map.bit_end, True),
+        _get_taint_operand(idx_map.name, idx_map.bit_start, idx_map.bit_end, False),
+        _get_taint_operand(idx_map.name, idx_map.bit_start, idx_map.bit_end, True),
+        width,
+    )
+
+
 def generate_taint_assignments(  # noqa: C901
     arch: Architecture,
     bytestring: bytes,
@@ -1280,6 +1371,19 @@ def generate_taint_assignments(  # noqa: C901
             expr = diff_expr
 
     elif cat == InstructionCategory.COND_TRANSPORTABLE:
+        # A bit SELECTED by a data-dependent index (`bt rax, rbx` -> CF) is
+        # non-monotone in the index: the differential reads the source at only the
+        # two extremal index values and misses every other reachable one.  Derive it
+        # exactly by enumerating the reachable index set instead of avalanching
+        # (which would be sound but would over-taint).  Returns None -- so we fall
+        # through -- for a constant-derived index, where the differential is exact.
+        _bitsel_expr = _build_variable_bit_select_taint(slice_ops, mapper)
+        if _bitsel_expr is not None and not _slice_has_constant_dominator(slice_ops):
+            assignments.append(
+                TaintAssignment(target=out_target, dependencies=dependencies, expression=_bitsel_expr),
+            )
+            return
+
         # Short-circuit: if the backward slice contains a constant-dominating op
         # (AND with 0, OR with -1, XOR-self), the output is always a constant
         # regardless of any tainted input.  T_flag = 0 always.

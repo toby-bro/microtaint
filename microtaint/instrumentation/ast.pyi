@@ -79,6 +79,32 @@ class SignedOverflowTaintExpr(Expr):
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 
+class VariableBitSelectTaintExpr(Expr):
+    """EXACT taint of a bit selected by a data-dependent index (`bt r,r` -> CF).
+
+    Enumerates the reachable index set I (indices agreeing with the index operand on
+    every untainted index bit); CF is tainted iff some i in I selects a tainted source
+    bit, or two reachable indices select clean source bits with different values.
+
+    Proved in benchmark/soundness/prove_variable_bit_select.py.
+    """
+
+    src_val: Expr
+    src_taint: Expr
+    idx_val: Expr
+    idx_taint: Expr
+    width: int
+
+    def __init__(
+        self,
+        src_val: Expr,
+        src_taint: Expr,
+        idx_val: Expr,
+        idx_taint: Expr,
+        width: int,
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
 class TaintOperand(Expr):
     name: str
     bit_start: int
