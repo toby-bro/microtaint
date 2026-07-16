@@ -163,6 +163,7 @@ class MemoryDifferentialExpr(Expr):
     reg_inputs: list[tuple[str, int, int]]
     mem_inputs: list[tuple[str, int, int]]
     addr_only_regs: list[str]
+    neg_inputs: list[str]
 
     _instr_hex: str
     _target_out_reg: str
@@ -176,6 +177,7 @@ class MemoryDifferentialExpr(Expr):
         reg_inputs: list[tuple[str, int, int]],
         mem_inputs: list[tuple[str, int, int]],
         addr_only_regs: list[str],
+        neg_inputs: list[str] | None = ...,
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
     @property

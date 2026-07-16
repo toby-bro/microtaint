@@ -174,3 +174,23 @@ def test_forward_skip_branch_deterministic():
         _eval(bytes.fromhex(poll), state, taint)
     second = _eval(_BRANCH_N2, state, taint)['RAX']
     assert first == second == MASK64, f'non-deterministic/unsound: {first:#x} vs {second:#x}'
+
+
+# --------------------------------------------------------------------------- #
+# Fix 4 — COND_TRANSPORTABLE flags must OR in the 2-replica differential       #
+# --------------------------------------------------------------------------- #
+def test_shl_cf_bit_extract_reaches_setc():
+    """`shl rax,4; setc dl` — CF is bit 60 of RAX, a monotone bit-copy.
+
+    COND_TRANSPORTABLE derives a flag from a SINGLE masked replica (C_eval on
+    V&~T).  Masking the tainted bit 60 to 0 makes CF=0, so `C_eval AND T_any`
+    yields T_CF=0 — an under-taint, even though CF *is* exactly that tainted bit.
+    The 2-replica differential XOR(C_eval(V|T), C_eval(V&~T)) = 1^0 = 1 is exact,
+    and is now OR-ed into every 1-bit flag output.
+    """
+    bs = bytes.fromhex('48c1e0040f92c2')  # shl rax, 4 ; setc dl
+    bit60 = 1 << 60
+    state = {'RAX': bit60, 'RBX': 0, 'RCX': 0, 'RDX': 0}
+    taint = {'RAX': bit60, 'RBX': 0, 'RCX': 0, 'RDX': 0}
+    _assert_sound('shl-cf-bit-extract', bs, state, taint)
+    assert _eval(bs, state, taint)['RDX'] & 1, 'CF (= bit 60 of RAX) must reach DL[0]'
