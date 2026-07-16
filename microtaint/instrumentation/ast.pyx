@@ -1270,30 +1270,37 @@ cdef class MemoryDifferentialExpr(Expr):
         if sim is None:
             return 0
 
-        # ---- Register VALUE-deps: full V|T / V&~T polarisation ----
+        # ---- Register VALUE-deps: per-SLICE polarisation ----
         # A negatively-polarised (subtracted) operand gets the opposite images
         # (or := V&~T, and := V|T) so the differential is the sound D^{+-}.
+        #
+        # Polarity is a property of the dependency SLICE, not of the register
+        # name: apply_sless_msb_split deliberately splits ONE register into two
+        # slices with OPPOSITE polarity (sign bit -1, magnitude +1), because a
+        # signed comparison is monotone only in the sign-biased representation.
+        # So look the polarity up per (name, bit_start, bit_end), and ACCUMULATE
+        # each slice into the images -- starting from V and rewriting only that
+        # slice's tainted bits.  Keying by name (and overwriting the whole entry
+        # per slice) mis-polarised the magnitude half and dropped the first slice,
+        # under-tainting `cmp rax,[mem]; setl cl`.  This mirrors what
+        # build_polarized_reg already does on the pure-register path.
         for name, b_start, b_end in self.reg_inputs:
-            v = input_values.get(name, 0)
+            if name not in or_inputs:
+                v = input_values.get(name, 0)
+                or_inputs[name]  = v
+                and_inputs[name] = v
+
+        for name, b_start, b_end in self.reg_inputs:
             t = input_taint.get(name, 0)
-            neg = name in self.neg_inputs
-            if b_start == 0 and b_end >= 63:
-                if neg:
-                    or_inputs[name]  = v & ~t
-                    and_inputs[name] = v | t
-                else:
-                    or_inputs[name]  = v | t
-                    and_inputs[name] = v & ~t
+            neg = (name, b_start, b_end) in self.neg_inputs
+            slice_mask = (((<object>1) << (b_end - b_start + 1)) - 1) << b_start
+            t_slice = t & slice_mask
+            if neg:
+                or_inputs[name]  = or_inputs[name] & ~t_slice
+                and_inputs[name] = and_inputs[name] | t_slice
             else:
-                # Polarise only the slice bits; preserve other bits as V.
-                slice_mask = (((<object>1) << (b_end - b_start + 1)) - 1) << b_start
-                t_slice = t & slice_mask
-                if neg:
-                    or_inputs[name]  = v & ~t_slice
-                    and_inputs[name] = (v & ~t_slice) | t_slice
-                else:
-                    or_inputs[name]  = (v & ~t_slice) | t_slice
-                    and_inputs[name] = v & ~t_slice
+                or_inputs[name]  = or_inputs[name] | t_slice
+                and_inputs[name] = and_inputs[name] & ~t_slice
 
         # ---- Address-only registers: same value in both runs ----
         for name in self.addr_only_regs:

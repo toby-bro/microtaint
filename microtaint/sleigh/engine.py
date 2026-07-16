@@ -1013,7 +1013,10 @@ def generate_taint_assignments(  # noqa: C901
         addr_only_regs_set: set[str] = set()
         # Subtracted operands must be polarised oppositely (D^{+-}); see the
         # register-target make_differential path for the detailed rationale.
-        neg_inputs: list[str] = []
+        # Registers are keyed per SLICE (name, bit_start, bit_end); memory keys stay
+        # strings.  See MemoryDifferentialExpr: polarity belongs to the dependency
+        # slice, not the register name.
+        neg_inputs: list[object] = []
 
         # Always add the destination's own address register as address-only.
         addr_only_regs_set.add(mapping.addr_reg.name)
@@ -1035,7 +1038,9 @@ def generate_taint_assignments(  # noqa: C901
             else:
                 reg_inputs.append((dep_map.name, dep_map.bit_start, dep_map.bit_end))
                 if dep_set.value_deps[dep_map] <= 0:
-                    neg_inputs.append(dep_map.name)
+                    # Per-SLICE key: apply_sless_msb_split gives one register two
+                    # slices with opposite polarity (see MemoryDifferentialExpr).
+                    neg_inputs.append((dep_map.name, dep_map.bit_start, dep_map.bit_end))
 
         # Remove from addr_only_regs any register that is also a value dep.
         value_reg_names = {r[0] for r in reg_inputs}
@@ -1235,7 +1240,13 @@ def generate_taint_assignments(  # noqa: C901
             # Inputs whose value-dep polarity is negative (subtracted operand)
             # must be polarised oppositely in the differential so it captures the
             # sound D^{+-} borrow chain rather than a lossy D^{++}.
-            _neg_inputs: list[str] = []
+            # Polarity is a property of the dependency SLICE, not the register
+            # name: apply_sless_msb_split splits ONE register into two slices with
+            # OPPOSITE polarity (sign bit -1, magnitude +1).  Key the negative set
+            # per (name, bit_start, bit_end) so MemoryDifferentialExpr can polarise
+            # each slice independently, exactly as build_polarized_reg does on the
+            # pure-register path.
+            _neg_inputs: list[object] = []
             for d in dep_set.value_deps.keys():
                 if isinstance(d, MemMapping):
                     _mem_inputs.append((d.addr_reg.name, d.addr_const_offset, d.size_bytes))
@@ -1244,7 +1255,7 @@ def generate_taint_assignments(  # noqa: C901
                 else:
                     _reg_inputs.append((d.name, d.bit_start, d.bit_end))
                     if dep_set.value_deps[d] <= 0:
-                        _neg_inputs.append(d.name)
+                        _neg_inputs.append((d.name, d.bit_start, d.bit_end))
             return MemoryDifferentialExpr(
                 bytestring=bytestring,
                 target=('REG', out_name, out_bit_start, out_bit_end),
@@ -1520,7 +1531,16 @@ def generate_taint_assignments(  # noqa: C901
         # (_is_bit_extract_{notequal,via_tainted_shift,const_shift}), which OR-ed
         # this same differential for three hand-matched patterns only — `shl` CF
         # matched none of them and silently under-tainted.
-        if out_bit_end == out_bit_start:
+        # The same reasoning covers setcc-style BYTE outputs: they are the 0/1
+        # results of these very conditions.  `cmp rax,[mem]; setl cl` computes
+        # CL = [rax <s mem] -- a SIGNED comparison, which apply_sless_msb_split
+        # already polarises (the sign bit gets the opposite polarity to the
+        # magnitude bits, making the comparison monotone in the biased
+        # representation, so the polarised differential is exact).  Its flag is
+        # INTERNAL to the monolithic block -- STORE/LOAD forces monolithic -- so no
+        # flag-output rule can see it; only the differential on the byte output can.
+        # Hence gate on <= 8-bit outputs rather than strictly 1-bit.
+        if out_bit_end - out_bit_start <= 7:
             expr = BinaryExpr(Op.OR, expr, make_differential())
 
         # CMOV not-taken passthrough: when the condition is false the destination

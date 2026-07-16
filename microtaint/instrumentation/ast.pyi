@@ -215,7 +215,10 @@ class MemoryDifferentialExpr(Expr):
     reg_inputs: list[tuple[str, int, int]]
     mem_inputs: list[tuple[str, int, int]]
     addr_only_regs: list[str]
-    neg_inputs: list[str]
+    # Negatively-polarised (subtracted) inputs.  Registers are keyed per SLICE --
+    # (name, bit_start, bit_end) -- because apply_sless_msb_split gives one register
+    # two slices with opposite polarity.  Memory keys stay strings.
+    neg_inputs: list[object]
 
     _instr_hex: str
     _target_out_reg: str
@@ -229,7 +232,7 @@ class MemoryDifferentialExpr(Expr):
         reg_inputs: list[tuple[str, int, int]],
         mem_inputs: list[tuple[str, int, int]],
         addr_only_regs: list[str],
-        neg_inputs: list[str] | None = ...,
+        neg_inputs: list[object] | None = ...,
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
     @property

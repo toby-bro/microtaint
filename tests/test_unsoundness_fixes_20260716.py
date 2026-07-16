@@ -254,6 +254,36 @@ def test_bt_variable_index_sound_when_extremal_indices_agree():
     )
 
 
+def test_signed_compare_through_memory_sound():
+    """`mov [rsp-16],rbx; cmp rax,[rsp-16]; setl cl` — CL = [rax <s mem].
+
+    A signed comparison is monotone only in the SIGN-BIASED representation, which
+    apply_sless_msb_split encodes by splitting ONE register into two slices with
+    OPPOSITE polarity (sign bit -1, magnitude +1).  MemoryDifferentialExpr looked
+    the polarity up by register NAME and overwrote its image once per slice, so it
+    mis-polarised the magnitude half and dropped a slice -> the differential
+    cancelled and CL under-tainted.  Polarity is a property of the dependency
+    SLICE; the register path (build_polarized_reg) always did this correctly.
+    """
+    bs = bytes.fromhex('48895c24f0483b4424f00f9cc1')
+    state = {'RAX': 0x8000000000000000, 'RBX': 0x10, 'RCX': 0, 'RDX': 0}
+    taint = {'RAX': 0x8000000000000003, 'RBX': 0, 'RCX': 0, 'RDX': 0}
+    _assert_sound('signed-cmp-through-memory', bs, state, taint)
+
+
+def test_signed_compare_memory_matches_register_form():
+    """The memory and register forms of the same signed compare must agree:
+    routing an operand through memory must not lose the sign-split polarity."""
+    state = {'RAX': 6985654534196529349, 'RBX': 2912746707901123493, 'RCX': 0, 'RDX': 0}
+    taint = {'RAX': 6357918159524151502, 'RBX': 0, 'RCX': 0, 'RDX': 0}
+    via_mem = _eval(bytes.fromhex('48895c24f0483b4424f00f9cc1'), state, taint)  # cmp rax,[rsp-16]; setl cl
+    via_reg = _eval(bytes.fromhex('483bc30f9cc1'), state, taint)  # cmp rax,rbx ; setl cl
+    assert via_mem.get('RCX', 0) & 1, 'CL must be tainted through the memory operand'
+    assert (via_mem.get('RCX', 0) & 1) == (via_reg.get('RCX', 0) & 1), (
+        f'memory form {via_mem.get("RCX", 0):#x} disagrees with register form {via_reg.get("RCX", 0):#x}'
+    )
+
+
 def test_bt_variable_index_is_exact_not_a_floor():
     """The reachable-index rule is EXACT: an avalanche over the index would
     over-taint CF whenever every reachable index selects the same bit value."""
