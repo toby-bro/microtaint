@@ -1430,8 +1430,15 @@ def generate_taint_assignments(  # noqa: C901
             return origins
 
         offset_names: set[str] = set()
+        _offset_is_const_derived = False
         if shift_op and len(shift_op.inputs) > 1:
             offset_names = trace_origins(shift_op.inputs[1])
+            # trace_origins yields NOTHING exactly when the shift amount is derived
+            # purely from constants (`ror rax, 8` lifts its count as
+            # INT_AND(const:8, const:0x3f)).  That means there is no data-dependent
+            # offset at all, so no avalanche is warranted -- an empty result here is
+            # "constant", not "unknown".
+            _offset_is_const_derived = not offset_names
 
         primary_input_name = None
         if shift_op and shift_op.inputs[0].space.name == 'register':
@@ -1439,7 +1446,14 @@ def generate_taint_assignments(  # noqa: C901
             if m:
                 primary_input_name = m.name
 
-        if not offset_names:
+        # Conservative fallback for a slice whose shift amount we could not resolve.
+        # It must NOT run for a constant amount: extract_dependencies collects the
+        # register reads of the WHOLE instruction, so a rotate's flag-preservation
+        # ops (`ror` reads the old CF/OF to keep them when count==0) leave CF/OF in
+        # the data output's dep list.  Treating those as the "offset" avalanched RAX
+        # to all-ones whenever the incoming flags were tainted -- breaking the
+        # rol;ror round-trip identity once rol's CF became (correctly) tainted.
+        if not offset_names and not _offset_is_const_derived:
             offset_names = {name for name in dependency_names if name not in (out_name, primary_input_name)}
 
         offset_taints = [dep for dep, name in zip(dependencies, dependency_names, strict=True) if name in offset_names]
