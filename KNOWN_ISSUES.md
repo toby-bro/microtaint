@@ -32,6 +32,14 @@ multi-instruction carry handling is NOT yet ported. It is a coverage gap in the
 flag machinery, not a failure of the method (the SAME categories, applied to the
 SAME classes, are already sound on x86).
 
+**General fix (proposed):** these are all instances of ONE structural limitation
+-- classification is per-output-slice, single-category, so a slice that mixes an
+arithmetic core with a flag extractor is forced into one rule, and the current
+patch is ISA-specific (`_X86_FLAG_OFFSETS` in `mapper.py`). Materializing taint
+on the intermediate arithmetic result and letting flag circuits consume it makes
+flags fall out of ordinary dataflow, ISA-independently. See
+`docs/design/intermediate-taint-materialization.md`.
+
 ---
 
 ## 0. The native C p-code cell evaluator is LITTLE-ENDIAN only
