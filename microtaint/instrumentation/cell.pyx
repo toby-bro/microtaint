@@ -277,6 +277,14 @@ cdef class DecodedOps:
     cdef public dict      imark_to_pc
     cdef public object    input_reg_offsets  # set of SP_REGISTER input offsets
     cdef public object    _uc_arrays         # cached (ids_arr,vals_arr,ptrs_arr,names,needs_eflags)
+    # Intermediate-taint materialization (see docs/design/intermediate-taint-materialization.md):
+    #   uniq_map    — raw SP_UNIQUE Sleigh offset -> compact slot index 0..31.  The compact
+    #                 index is what the op buffer stores; this recovers the slot from the raw
+    #                 offset the engine knows, so a caller can seed/read an intermediate.
+    #   uniq_def_pc — compact slot -> pc index of its FIRST defining op.  A seeded-partial run
+    #                 starts just past this so the arithmetic core is not recomputed.
+    cdef public dict      uniq_map
+    cdef public dict      uniq_def_pc
 
     def get_buf_bytes(self):
         """Return the raw PCodeOp struct array as a bytes object.
@@ -303,6 +311,7 @@ def _predecode_ops(arch, bytestring):
     result.has_loop = False
     result.imark_to_pc = {}
     result.input_reg_offsets = set()
+    result.uniq_def_pc = {}
     has_fallback = False
     # Compact unique-space mapping: raw offset → sequential index 0,1,2,...
     cdef dict uniq_map = {}
@@ -382,7 +391,15 @@ def _predecode_ops(arch, bytestring):
             # instruction's start address in ram space.
             if oid == OP_IMARK and i0_sp == SP_RAM:
                 result.imark_to_pc[<uint64_t>i0_off] = result.n_ops
+            # Record the first defining op index for each unique compact slot
+            # (o_off is already the compact index after the remap above).
+            if o_sp == SP_UNIQUE and o_off not in result.uniq_def_pc:
+                result.uniq_def_pc[o_off] = result.n_ops
             result.n_ops += 1
+
+    # Expose the raw-offset -> compact-slot map so callers can name an
+    # intermediate unique varnode for seeding / reading (materialization).
+    result.uniq_map = uniq_map
 
     # ── Decide whether this instruction can run in the pcode evaluator ──
     # without falling back to Unicorn.  The supported control-flow patterns:
@@ -504,6 +521,10 @@ cdef class _PCodeFrame:
     # (CQO/INT_SEXT, MUL/IMUL widening, DIV/IDIV 128-bit dividend).
     cdef uint64_t uniq_hi[32]
     cdef uint8_t  uniq_hi_set[32]
+    # Seeded/protected unique slots (intermediate-taint materialization): a
+    # protected slot holds a caller-supplied value that a re-executed defining
+    # op must NOT clobber (see seed_uniq / write_d).
+    cdef uint8_t  uniq_protected[32]
     # Cold fallback for offsets >= REGS_ARR_SIZE
     cdef public dict regs
     cdef public dict reg_sizes
@@ -518,6 +539,7 @@ cdef class _PCodeFrame:
         for i in range(32):
             self.uniq_set[i] = 0
             self.uniq_hi_set[i] = 0
+            self.uniq_protected[i] = 0
         self.dirty_count = 0
         self.regs      = {}
         self.reg_sizes = {}
@@ -671,18 +693,28 @@ cdef class _PCodeFrame:
                 result |= (<uint64_t><int>b) << (i * 8)
         return _mask64(result, size)
 
+    cdef inline void seed_uniq(self, int slot, uint64_t val) noexcept:
+        """Materialize an intermediate: set its value, mark it live and protected
+        so a re-executed defining op will not clobber the caller-supplied value."""
+        if slot >= 0 and slot < 32:
+            self.uniq_arr[slot] = val
+            self.uniq_set[slot] = 1
+            self.uniq_protected[slot] = 1
+
     cdef inline void clear(self) noexcept:
         cdef int i
         # Only zero the slots that were actually written (dirty list vs scanning all 1104)
         for i in range(self.dirty_count):
             self.regs_set[self.dirty[i]] = 0
         self.dirty_count = 0
-        # Clear compact unique array (both low and high halves)
+        # Clear compact unique array (both low and high halves) + protection.
         for i in range(32):
             if self.uniq_set[i]:
                 self.uniq_set[i] = 0
             if self.uniq_hi_set[i]:
                 self.uniq_hi_set[i] = 0
+            if self.uniq_protected[i]:
+                self.uniq_protected[i] = 0
         if self.regs:
             self.regs.clear()
         if self.reg_sizes:
@@ -714,8 +746,10 @@ cdef class _PCodeFrame:
         if sp == SP_REGISTER:
             self._write_reg(off, sz, val)
         elif sp == SP_UNIQUE:
-            # off is a compact index (0..31) — direct C array write, no dict
-            if off < 32:
+            # off is a compact index (0..31) — direct C array write, no dict.
+            # A protected (seeded) slot keeps its materialized value: the
+            # defining op that would overwrite it is a no-op in a seeded run.
+            if off < 32 and not self.uniq_protected[off]:
                 self.uniq_arr[off] = val
                 self.uniq_set[off] = 1
         elif sp == SP_RAM:
@@ -729,11 +763,17 @@ cdef class _PCodeFrame:
 cdef void _execute_decoded(
     _PCodeFrame frame,
     DecodedOps decoded,
+    int start_pc = 0,
 ) except *:
     """
-    Execute all pre-decoded ops on frame using the C struct buffer.
-    No Python tuple unpacking — all field access is direct C struct reads.
-    Raises PCodeFallbackNeeded if any op requires Unicorn.
+    Execute pre-decoded ops on frame using the C struct buffer, from start_pc
+    to the end.  No Python tuple unpacking — all field access is direct C struct
+    reads.  Raises PCodeFallbackNeeded if any op requires Unicorn.
+
+    start_pc > 0 runs only a suffix of the op list: used by seeded partial
+    re-execution (intermediate-taint materialization).  The caller MUST have
+    seeded every unique varnode that ops in [start_pc, n_ops) read but whose
+    defining op lies before start_pc; otherwise those reads see zero.
     """
     cdef int          oid, o_sp, o_sz, callother_out, n_ins
     cdef unsigned long o_off
@@ -767,7 +807,7 @@ cdef void _execute_decoded(
     # Hoist out of loop: one Python object access total, then pure C
     ops_base = decoded.buf
     n_ops    = decoded.n_ops
-    pc = 0
+    pc = start_pc
 
     while pc < n_ops:
         op = ops_base + pc                    # pure C pointer arithmetic
@@ -1666,6 +1706,42 @@ cdef class PCodeCellEvaluator:
         mask   = (<uint64_t>1 << width) - 1
         return (val >> bit_start) & mask
 
+    # --- intermediate (unique) varnode read/seed for materialization ---
+
+    cdef uint64_t _read_uniq(self, _PCodeFrame frame, DecodedOps decoded,
+                             unsigned long raw_off, int bit_start, int bit_end):
+        """Read a materialized intermediate by its RAW Sleigh unique offset."""
+        cdef object   slot_obj = decoded.uniq_map.get(raw_off)
+        cdef int      slot, width
+        cdef uint64_t val, mask
+        if slot_obj is None:
+            return 0
+        slot = <int>slot_obj
+        if slot < 0 or slot >= 32 or not frame.uniq_set[slot]:
+            return 0
+        val   = frame.uniq_arr[slot]
+        width = bit_end - bit_start + 1
+        if width >= 64:
+            return val >> bit_start
+        mask = (<uint64_t>1 << width) - 1
+        return (val >> bit_start) & mask
+
+    cdef uint64_t _read_output_any(self, _PCodeFrame frame, DecodedOps decoded,
+                                   str out_reg, int bit_start, int bit_end):
+        """Read a register / MEM_ / UNIQ_<rawoffset> output."""
+        if out_reg[:5] == 'UNIQ_':
+            return self._read_uniq(frame, decoded,
+                                   <unsigned long>int(out_reg[5:]), bit_start, bit_end)
+        return self._read_output(frame, out_reg, bit_start, bit_end)
+
+    cdef void _seed(self, _PCodeFrame frame, DecodedOps decoded,
+                    object raw_off_obj, object val_obj):
+        """Seed one intermediate (raw unique offset -> value) into a frame."""
+        cdef object slot_obj = decoded.uniq_map.get(raw_off_obj)
+        if slot_obj is None:
+            return
+        frame.seed_uniq(<int>slot_obj, <uint64_t>(val_obj & 0xFFFFFFFFFFFFFFFF))
+
     def evaluate_concrete(self, cell, flat_inputs):
         cdef _PCodeFrame frame = self._frame_a
         decoded = _get_decoded(self.arch, bytes.fromhex(cell.instruction))
@@ -1704,6 +1780,75 @@ cdef class PCodeCellEvaluator:
         self._load(fb, and_inputs)
         _execute_decoded(fb, decoded)
         out_and = self._read_output(fb, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
+        self.native_calls += 1
+        return out_or ^ out_and
+
+    # ------------------------------------------------------------------
+    # Intermediate-taint materialization API
+    # (docs/design/intermediate-taint-materialization.md)
+    # ------------------------------------------------------------------
+
+    def evaluate_uniq_concrete(self, instruction_hex, flat_inputs,
+                               unsigned long raw_off, int bit_start, int bit_end):
+        """Run the full instruction and read an intermediate (unique) varnode
+        named by its RAW Sleigh offset.  Used to obtain value(t) and, via two
+        replicas, the taint T(t) of a cut intermediate."""
+        cdef _PCodeFrame frame = self._frame_a
+        decoded = _get_decoded(self.arch, bytes.fromhex(instruction_hex))
+        if decoded.has_fallback:
+            raise PCodeFallbackNeeded('instruction requires Unicorn')
+        self._load(frame, flat_inputs)
+        _execute_decoded(frame, decoded)
+        self.native_calls += 1
+        return self._read_uniq(frame, decoded, raw_off, bit_start, bit_end)
+
+    def uniq_start_pc(self, instruction_hex, unsigned long raw_off):
+        """pc just past an intermediate's defining op (for a seeded suffix run),
+        or 0 if the offset is not a known unique."""
+        decoded = _get_decoded(self.arch, bytes.fromhex(instruction_hex))
+        cdef object slot_obj = decoded.uniq_map.get(raw_off)
+        if slot_obj is None:
+            return 0
+        cdef object pc_obj = decoded.uniq_def_pc.get(slot_obj)
+        if pc_obj is None:
+            return 0
+        return <int>pc_obj + 1
+
+    def evaluate_differential_seeded(self, instruction_hex, or_inputs, and_inputs,
+                                     seeds_or, seeds_and, out_reg,
+                                     int bit_start, int bit_end, int start_pc=0):
+        """Differential over a downstream segment with materialized intermediates.
+
+        or_inputs / and_inputs give the register+memory V|T and V&~T replicas.
+        seeds_or / seeds_and map a raw unique offset -> that intermediate's value
+        in each replica (already lifted by the intermediate's own taint mask, i.e.
+        t|T(t) and t&~T(t)).  Execution starts at start_pc so the arithmetic core
+        that produced the intermediate is not recomputed.  out_reg may be a
+        register, MEM_..., or 'UNIQ_<rawoffset>'.  Returns out_or ^ out_and."""
+        cdef _PCodeFrame fa = self._frame_a
+        cdef _PCodeFrame fb = self._frame_b
+        cdef uint64_t out_or, out_and
+        cdef object off_obj, val_obj
+        decoded = _get_decoded(self.arch, bytes.fromhex(instruction_hex))
+        if decoded.has_fallback:
+            raise PCodeFallbackNeeded('instruction requires Unicorn')
+        if seeds_or is None:
+            seeds_or = {}
+        if seeds_and is None:
+            seeds_and = {}
+
+        self._load(fa, or_inputs)
+        for off_obj, val_obj in seeds_or.items():
+            self._seed(fa, decoded, off_obj, val_obj)
+        _execute_decoded(fa, decoded, start_pc)
+        out_or = self._read_output_any(fa, decoded, out_reg, bit_start, bit_end)
+
+        self._load(fb, and_inputs)
+        for off_obj, val_obj in seeds_and.items():
+            self._seed(fb, decoded, off_obj, val_obj)
+        _execute_decoded(fb, decoded, start_pc)
+        out_and = self._read_output_any(fb, decoded, out_reg, bit_start, bit_end)
+
         self.native_calls += 1
         return out_or ^ out_and
 
