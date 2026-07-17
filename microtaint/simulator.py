@@ -6,11 +6,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import unicorn.arm64_const as uc_arm64_const
+import unicorn.mips_const as uc_mips_const
+import unicorn.ppc_const as uc_ppc_const
 import unicorn.riscv_const as uc_riscv_const
 import unicorn.unicorn_py3 as uc_py3
 import unicorn.x86_const as uc_x86_const
 from unicorn import (
     UC_ARCH_ARM64,
+    UC_ARCH_MIPS,
+    UC_ARCH_PPC,
     UC_ARCH_RISCV,
     UC_ARCH_X86,
     UC_ERR_FETCH_UNMAPPED,
@@ -22,6 +26,9 @@ from unicorn import (
     UC_MODE_32,
     UC_MODE_64,
     UC_MODE_ARM,
+    UC_MODE_BIG_ENDIAN,
+    UC_MODE_MIPS64,
+    UC_MODE_PPC32,
     UC_MODE_RISCV64,
 )
 
@@ -44,7 +51,18 @@ _ARCH_MAP: dict[Architecture, tuple[int, int]] = {
     Architecture.AMD64: (UC_ARCH_X86, UC_MODE_64),
     Architecture.ARM64: (UC_ARCH_ARM64, UC_MODE_ARM),
     Architecture.RISCV64: (UC_ARCH_RISCV, UC_MODE_RISCV64),
+    Architecture.MIPS64BE: (UC_ARCH_MIPS, UC_MODE_MIPS64 | UC_MODE_BIG_ENDIAN),
+    Architecture.PPC32BE: (UC_ARCH_PPC, UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN),
 }
+
+# MIPS o32/n64 ABI register names, in SLEIGH's ordering ($0..$31).  SLEIGH's MIPS
+# model names them exactly like this, so the state names match the lifter 1:1.
+_MIPS_GPR: tuple[str, ...] = (
+    'zero', 'at', 'v0', 'v1', 'a0', 'a1', 'a2', 'a3',
+    't0', 't1', 't2', 't3', 't4', 't5', 't6', 't7',
+    's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
+    't8', 't9', 'k0', 'k1', 'gp', 'sp', 's8', 'ra',
+)
 
 _UC_REGS: dict[Architecture, dict[str, int]] = {
     Architecture.X86: {
@@ -195,6 +213,23 @@ _UC_REGS: dict[Architecture, dict[str, int]] = {
         'T5': uc_riscv_const.UC_RISCV_REG_X30,
         'T6': uc_riscv_const.UC_RISCV_REG_X31,
     },
+    # MIPS64 big-endian.  Unicorn exposes the GPRs as UC_MIPS_REG_0..31, which are
+    # positional; SLEIGH names them by ABI mnemonic, so map mnemonic -> index.
+    # No sub-registers and NO condition flags (SLEIGH reports none): compares
+    # write GPRs (`slt`), so none of the x86 flag machinery applies here.
+    Architecture.MIPS64BE: {
+        **{name.upper(): getattr(uc_mips_const, f'UC_MIPS_REG_{i}') for i, name in enumerate(_MIPS_GPR)},
+        'PC': uc_mips_const.UC_MIPS_REG_PC,
+        'HI': uc_mips_const.UC_MIPS_REG_HI,
+        'LO': uc_mips_const.UC_MIPS_REG_LO,
+    },
+    # PowerPC 32-bit big-endian.  r0..r31 plus the condition/carry registers:
+    # unlike x86's flat 1-bit flags, PPC keeps carry/overflow in XER and the
+    # condition fields in cr0..cr7.
+    Architecture.PPC32BE: {
+        **{f'R{i}': getattr(uc_ppc_const, f'UC_PPC_REG_{i}') for i in range(32)},
+        'PC': uc_ppc_const.UC_PPC_REG_PC,
+    },
 }
 
 
@@ -279,6 +314,10 @@ class CellSimulator:
             self._pc_reg = uc_x86_const.UC_X86_REG_RIP
         elif arch == Architecture.RISCV64:
             self._pc_reg = uc_riscv_const.UC_RISCV_REG_PC
+        elif arch == Architecture.MIPS64BE:
+            self._pc_reg = uc_mips_const.UC_MIPS_REG_PC
+        elif arch == Architecture.PPC32BE:
+            self._pc_reg = uc_ppc_const.UC_PPC_REG_PC
         else:
             self._pc_reg = uc_arm64_const.UC_ARM64_REG_PC
         # Bytestring cache — skip redundant mem_write when code hasn't changed

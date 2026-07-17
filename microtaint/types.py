@@ -9,6 +9,17 @@ class Architecture(StrEnum):
     ARM64 = 'ARM64'
     AMD64 = 'AMD64'
     RISCV64 = 'RISCV64'
+    # RISC targets. Neither needs an entry in ast.pyx's _ARCH_PARENT_REGS /
+    # _ARCH_CHILD_REGS: they have no sub-register aliasing (x86 needs 37 alias
+    # rows), and those tables are read with .get(arch, {}).
+    #   MIPS64BE -- SLEIGH reports NO condition-flag registers at all: compares
+    #     write GPRs (`slt`), so the whole x86 flag apparatus is inapplicable.
+    #   PPC32BE  -- carry lives in XER (xer_ca) and conditions in cr0..cr7,
+    #     rather than in a flat set of 1-bit flags at fixed offsets.
+    # Unicorn 2.1.4 executes PPC32 but NOT PPC64 (UC_ERR_EXCEPTION), so there is
+    # no ground-truth oracle for PPC64 -- hence 32-bit here.
+    MIPS64BE = 'MIPS64BE'
+    PPC32BE = 'PPC32BE'
 
 
 @dataclass(slots=True)
