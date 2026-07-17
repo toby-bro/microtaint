@@ -4,6 +4,36 @@ Tracked soundness-relevant divergences that are understood but not yet fixed.
 
 ---
 
+## -1. New ISAs under-taint on flag-extract and borrow-chain sequences
+
+**Status:** open (2026-07-17). Affects ARM64, PPC32BE (and by inspection
+SPARC32BE); MIPS64BE has no condition flags so is not affected.
+
+The deterministic cross-ISA oracle (multiarch_oracle.py) reports 0 under-taints
+on all five ISAs -- but its corpus is REGISTER-ARITHMETIC ONLY (no flags, no
+conditional/carry sequences). The randomised fuzzer (multiarch_fuzz.py) adds
+flag/carry/conditional SEQUENCES with random states and correlated taint masks,
+and immediately finds under-taints:
+
+    ARM64   cmp x1,x2; cset x0, lt        missed the flag bit (0x1)
+    ARM64   subs x3,x1,x2; sbc x0,x1,x2   missed borrow-chain bits
+    PPC32BE subfc 6,4,5; subfe 3,4,5      missed borrow-chain bits
+    PPC32BE cmpw 0,4,5; mfcr 3            missed the CR0 field (0xe0000000)
+
+These are the SAME classes fixed on x86 (flag-extract, borrow chains,
+conditional select). The x86 fixes do NOT generalise: they key on x86's flat
+1-bit flags (CF/OF/SF/ZF/PF/AF at fixed SLEIGH offsets) and on x86-specific
+lifted patterns. ARM64 keeps its condition codes in NZCV, PPC in XER/CR fields,
+SPARC in icc -- lifted to different p-code the current rules don't recognise.
+
+So the defensible claim for the new ISAs is: rule SYNTHESIS is ISA-independent
+and register-arithmetic is sound on all four, but flag/condition and
+multi-instruction carry handling is NOT yet ported. It is a coverage gap in the
+flag machinery, not a failure of the method (the SAME categories, applied to the
+SAME classes, are already sound on x86).
+
+---
+
 ## 0. The native C p-code cell evaluator is LITTLE-ENDIAN only
 
 **Status:** WORKED AROUND (2026-07-17). Big-endian architectures (MIPS64BE,
