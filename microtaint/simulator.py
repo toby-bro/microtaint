@@ -271,6 +271,17 @@ class CellSimulator:
         if arch not in _ARCH_MAP:
             raise ValueError(f'Architecture {arch} is not supported by CellSimulator.')
         self.arch = arch
+        # The native p-code cell evaluators (C and Cython) index the register file
+        # by BYTE OFFSET and place byte d of a register at bit d*8 -- correct on
+        # little-endian for any register width, but WRONG on big-endian, where byte
+        # d of an N-byte register is at bit (N-d-size)*8.  On a BE target they
+        # silently read the wrong bytes and the differential collapses to 0
+        # (see KNOWN_ISSUES.md).  Until the register model is made width-aware
+        # (option B), evaluate BE architectures through Unicorn, which models the
+        # full CPU and gets byte order right.
+        self._is_big_endian = str(arch).upper().endswith('BE')
+        if self._is_big_endian:
+            use_unicorn = True
         self.use_unicorn = use_unicorn
         # Default: use the C kernel when available.  Pass use_c=False to
         # force the Cython evaluator (e.g. for differential testing).  Set

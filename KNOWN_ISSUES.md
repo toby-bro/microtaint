@@ -4,10 +4,21 @@ Tracked soundness-relevant divergences that are understood but not yet fixed.
 
 ---
 
-## 0. The C p-code cell evaluator is LITTLE-ENDIAN only -> BE ISAs under-taint
+## 0. The native C p-code cell evaluator is LITTLE-ENDIAN only
 
-**Status:** open (2026-07-17). Blocks any soundness claim on MIPS64BE / PPC32BE /
-SPARC32BE. Does NOT affect x86-64, ARM64 or RISCV64 (all little-endian).
+**Status:** WORKED AROUND (2026-07-17). Big-endian architectures (MIPS64BE,
+PPC32BE, SPARC32BE) now evaluate through Unicorn instead of the native p-code
+kernel (`CellSimulator` forces `use_unicorn=True` when the arch name ends `BE`);
+the cross-ISA oracle then reports 0 under-taints on all five ISAs. The native
+kernel itself is still LE-only -- making it endianness-aware (option B below) is
+the proper fix and remains open. Does NOT affect x86-64/ARM64/RISCV64 (LE).
+
+One honesty caveat for any BE soundness claim: on x86 soundness rests on TWO
+independent implementations agreeing -- the native C p-code evaluator
+cross-checked against Unicorn. Under this workaround the BE engine *uses*
+Unicorn, and the oracle also uses Unicorn, so there is no independent second
+opinion: the BE claim is "sound relative to Unicorn", a weaker guarantee. That
+is the reason option B (native, independently checkable) is the real endgame.
 
 ### Symptom
 With `use_unicorn=False` (the default, the fast C p-code path) the cell evaluator

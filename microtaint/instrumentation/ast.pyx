@@ -1346,8 +1346,13 @@ cdef class MemoryDifferentialExpr(Expr):
         # wrong, we drop into the OR-of-input-taints fallback below.
         cdef object pcode = sim._pcode if sim is not None else None
         cdef object fallback_exc = sim._pcode_fallback_exc if sim is not None else Exception
+        # The native C kernel indexes registers little-endian, so on a big-endian
+        # target (sim.use_unicorn is forced True there) it reads the wrong bytes.
+        # Skip it and let sim.evaluate_differential run the two replicas through
+        # Unicorn, which models byte order correctly.
+        cdef bint use_unicorn = sim.use_unicorn if sim is not None else False
         try:
-            if pcode is not None:
+            if pcode is not None and not use_unicorn:
                 try:
                     return pcode.evaluate_differential(self, or_inputs, and_inputs)
                 except fallback_exc:

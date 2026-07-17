@@ -321,6 +321,25 @@ def determine_category(  # noqa: C901
         if op.opcode.name in TRANSLATABLE_OPCODES:
             return InstructionCategory.TRANSLATABLE
 
+    # XOR makes the monotonic differential UNSOUND.  D^{++} for XOR computes
+    #   (a|Ta ^ b|Tb) ^ (a&~Ta ^ b&~Tb) = Ta ^ Tb,
+    # which is 0 wherever a bit is tainted in BOTH operands, while the true taint
+    # is Ta | Tb.  So a slice whose combining op is XOR must be WELDABLE (the OR
+    # of input taints), not monotonic.  SPARC's `xnor` lifts to
+    # NEGATE(b); XOR(a, ~b), and the affine NEGATE (a MONOTONIC_OPCODES member)
+    # otherwise steals the slice into MONOTONIC and drops the shared-bit taint.
+    #
+    # Guarded so it only pre-empts MONOTONIC, never the cross-bit categories:
+    # a carry op (ADD/SUB/2COMP) must stay TRANSPORTABLE and a shift must stay
+    # TRANSLATABLE (both already checked above / excluded here), because weldable
+    # would under-taint their bit mixing.  For the remaining position-wise-affine
+    # case (XOR with NEGATE/AND/OR/routing) weldable is sound -- it never
+    # under-taints -- and exact for plain xor/xnor.
+    if any(op.opcode.name in ORABLE_OPCODES for op in core_ops) and not any(
+        op.opcode.name in TRANSPORTABLE_OPCODES for op in core_ops
+    ):
+        return InstructionCategory.ORABLE
+
     for op in core_ops:
         if op.opcode.name in MONOTONIC_OPCODES:
             # Soundness fix for blsi/blsr-like patterns: if the slice ALSO contains
