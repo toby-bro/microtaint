@@ -23,7 +23,7 @@ result lives in a discarded `unique` varnode.  Two independent guarantees:
     rather than hard-coding it.
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,union-attr"
+# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,union-attr,arg-type"
 
 from __future__ import annotations
 
@@ -31,6 +31,14 @@ import random
 
 import pytest
 
+from microtaint.instrumentation.ast import (
+    EvalContext,
+    IntermediateTaintExpr,
+    IntermediateValueExpr,
+    LogicCircuit,
+    TaintAssignment,
+    TaintOperand,
+)
 from microtaint.instrumentation.cell import PCodeCellEvaluator
 from microtaint.sleigh.lifter import get_context
 from microtaint.types import Architecture
@@ -38,6 +46,15 @@ from microtaint.types import Architecture
 ARCH = Architecture.AMD64
 HEX = '4839d8'  # cmp rax, rbx
 MASK64 = (1 << 64) - 1
+
+
+class _StubSim:
+    """Minimal simulator exposing what the intermediate Exprs read at runtime."""
+
+    def __init__(self):
+        self.arch = ARCH
+        self._pcode = PCodeCellEvaluator(ARCH)
+        self.use_unicorn = False
 
 
 def _setup():
@@ -120,6 +137,64 @@ def test_seeded_matches_whole_slice_differential():
                     HEX, or_in, and_in, seeds_a, seeds_b, nm, 0, 0, start_pc,
                 )
                 assert suffix == full, f'seeded suffix diverged on {nm}'
+
+
+def test_two_phase_circuit_threads_intermediate_and_hides_uniq():
+    """M2: a two-phase LogicCircuit materializes an intermediate (value + taint)
+    and threads it to downstream assignments; UNIQ_ keys never leak to output.
+
+    Downstream SF is read as bit (W-1) of the materialized taint -- SF is literally
+    the result's sign bit -- so it must equal the whole-slice differential T(SF).
+    """
+    sim = _StubSim()
+    ev = sim._pcode
+    _e2, sub_off, sub_size, _flags, _rd = _setup()
+    w = sub_size * 8
+    srcs = ['RAX', 'RBX']
+    uniq = f'UNIQ_{sub_off}'
+
+    inter = TaintAssignment(
+        target=TaintOperand(uniq, 0, w - 1, True),
+        dependencies=[],
+        expression=IntermediateTaintExpr(HEX, sub_off, 0, w - 1, srcs),
+        is_intermediate=True,
+        value_expression=IntermediateValueExpr(HEX, sub_off, 0, w - 1, srcs),
+    )
+    sf_assign = TaintAssignment(
+        target=TaintOperand('SF', 0, 0, True),
+        dependencies=[],
+        expression=TaintOperand(uniq, w - 1, w - 1, True),
+    )
+    rcx_assign = TaintAssignment(
+        target=TaintOperand('RCX', 0, w - 1, True),
+        dependencies=[],
+        expression=TaintOperand(uniq, 0, w - 1, True),
+    )
+    circuit = LogicCircuit([inter, sf_assign, rcx_assign], ARCH, HEX, [])
+    assert circuit.has_intermediates
+    assert len(circuit.intermediate_assignments) == 1
+    assert len(circuit.regular_assignments) == 2
+
+    rng = random.Random(99)
+    for _ in range(3000):
+        a, b = rng.getrandbits(64), rng.getrandbits(64)
+        ta = rng.getrandbits(64) & rng.getrandbits(64)
+        tb = rng.getrandbits(64) & rng.getrandbits(64)
+        ctx = EvalContext(
+            input_taint={'RAX': ta, 'RBX': tb},
+            input_values={'RAX': a, 'RBX': b},
+            simulator=sim,
+        )
+        out = circuit.evaluate(ctx)
+
+        or_in = {'RAX': (a | ta) & MASK64, 'RBX': (b | tb) & MASK64}
+        and_in = {'RAX': (a & ~ta) & MASK64, 'RBX': (b & ~tb) & MASK64}
+        t_t = ev.evaluate_differential_seeded(HEX, or_in, and_in, {}, {}, uniq, 0, w - 1, 0)
+        sf_gt = ev.evaluate_differential_seeded(HEX, or_in, and_in, {}, {}, 'SF', 0, 0, 0)
+
+        assert out.get('SF', 0) == sf_gt, 'SF via materialized taint diverged from whole-slice'
+        assert out.get('RCX', 0) == t_t, 'full T(t) threading error'
+        assert not any(k.startswith('UNIQ_') for k in out), 'UNIQ_ leaked into output'
 
 
 if __name__ == '__main__':
