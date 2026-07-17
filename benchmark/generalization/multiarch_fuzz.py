@@ -149,7 +149,7 @@ def _fuzz_arch(  # noqa: C901
         try:
             lb = O.bitflip_lower_bound(spec, code, state, taint)
             mt = O.microtaint(spec, code, state, taint)
-        except Exception:  # noqa: BLE001, S112 -- a bad random case must not kill the fuzzer
+        except Exception:  # noqa: S112 -- a bad random case must not kill the fuzzer
             continue
         n += 1
         missed = 0
