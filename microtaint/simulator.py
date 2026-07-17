@@ -9,6 +9,7 @@ import unicorn.arm64_const as uc_arm64_const
 import unicorn.mips_const as uc_mips_const
 import unicorn.ppc_const as uc_ppc_const
 import unicorn.riscv_const as uc_riscv_const
+import unicorn.sparc_const as uc_sparc_const
 import unicorn.unicorn_py3 as uc_py3
 import unicorn.x86_const as uc_x86_const
 from unicorn import (
@@ -16,6 +17,7 @@ from unicorn import (
     UC_ARCH_MIPS,
     UC_ARCH_PPC,
     UC_ARCH_RISCV,
+    UC_ARCH_SPARC,
     UC_ARCH_X86,
     UC_ERR_FETCH_UNMAPPED,
     UC_ERR_MAP,
@@ -30,6 +32,7 @@ from unicorn import (
     UC_MODE_MIPS64,
     UC_MODE_PPC32,
     UC_MODE_RISCV64,
+    UC_MODE_SPARC32,
 )
 
 from microtaint.instrumentation.cell import PCodeCellEvaluator, PCodeFallbackNeeded
@@ -53,7 +56,19 @@ _ARCH_MAP: dict[Architecture, tuple[int, int]] = {
     Architecture.RISCV64: (UC_ARCH_RISCV, UC_MODE_RISCV64),
     Architecture.MIPS64BE: (UC_ARCH_MIPS, UC_MODE_MIPS64 | UC_MODE_BIG_ENDIAN),
     Architecture.PPC32BE: (UC_ARCH_PPC, UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN),
+    Architecture.SPARC32BE: (UC_ARCH_SPARC, UC_MODE_SPARC32 | UC_MODE_BIG_ENDIAN),
 }
+
+# SPARC register-window file, in SLEIGH's naming: 8 global + 8 out + 8 local +
+# 8 in.  Within a single window these are plain GPRs; save/restore rotates the
+# o/l/i banks, which affects sequences, not the data semantics of one
+# instruction.  %g0 reads as zero.
+_SPARC_GPR: tuple[str, ...] = tuple(
+    [f'g{i}' for i in range(8)]
+    + [f'o{i}' for i in range(8)]
+    + [f'l{i}' for i in range(8)]
+    + [f'i{i}' for i in range(8)],
+)
 
 # MIPS o32/n64 ABI register names, in SLEIGH's ordering ($0..$31).  SLEIGH's MIPS
 # model names them exactly like this, so the state names match the lifter 1:1.
@@ -230,6 +245,13 @@ _UC_REGS: dict[Architecture, dict[str, int]] = {
         **{f'R{i}': getattr(uc_ppc_const, f'UC_PPC_REG_{i}') for i in range(32)},
         'PC': uc_ppc_const.UC_PPC_REG_PC,
     },
+    # SPARC 32-bit big-endian.  SLEIGH names the window file g0..g7/o0..o7/
+    # l0..l7/i0..i7 and Unicorn exposes UC_SPARC_REG_{G,O,L,I}<n>, so the state
+    # names map 1:1.  No sub-register aliasing within a window.
+    Architecture.SPARC32BE: {
+        **{n.upper(): getattr(uc_sparc_const, f'UC_SPARC_REG_{n.upper()}') for n in _SPARC_GPR},
+        'PC': uc_sparc_const.UC_SPARC_REG_PC,
+    },
 }
 
 
@@ -318,6 +340,8 @@ class CellSimulator:
             self._pc_reg = uc_mips_const.UC_MIPS_REG_PC
         elif arch == Architecture.PPC32BE:
             self._pc_reg = uc_ppc_const.UC_PPC_REG_PC
+        elif arch == Architecture.SPARC32BE:
+            self._pc_reg = uc_sparc_const.UC_SPARC_REG_PC
         else:
             self._pc_reg = uc_arm64_const.UC_ARM64_REG_PC
         # Bytestring cache — skip redundant mem_write when code hasn't changed

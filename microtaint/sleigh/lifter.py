@@ -15,6 +15,7 @@ def get_context(arch: str) -> pypcode.Context:
             'RISCV64': 'RISCV:LE:64:default',
             'MIPS64BE': 'MIPS:BE:64:default',
             'PPC32BE': 'PowerPC:BE:32:default',
+            'SPARC32BE': 'sparc:BE:32:default',
         }
 
         if arch not in arch_map:

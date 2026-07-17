@@ -20,6 +20,12 @@ class Architecture(StrEnum):
     # no ground-truth oracle for PPC64 -- hence 32-bit here.
     MIPS64BE = 'MIPS64BE'
     PPC32BE = 'PPC32BE'
+    #   SPARC32BE -- condition codes live in CCR/icc.  SPARC has REGISTER WINDOWS
+    #     (%g/%o/%l/%i, rotated by save/restore) and branch delay slots, but
+    #     neither affects the DATA semantics of a single instruction, which is
+    #     what rule synthesis operates on: within one window the GPRs are plain
+    #     registers with no sub-register aliasing.
+    SPARC32BE = 'SPARC32BE'
 
 
 @dataclass(slots=True)

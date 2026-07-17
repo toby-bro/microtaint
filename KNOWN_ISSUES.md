@@ -4,6 +4,67 @@ Tracked soundness-relevant divergences that are understood but not yet fixed.
 
 ---
 
+## 0. The C p-code cell evaluator is LITTLE-ENDIAN only -> BE ISAs under-taint
+
+**Status:** open (2026-07-17). Blocks any soundness claim on MIPS64BE / PPC32BE /
+SPARC32BE. Does NOT affect x86-64, ARM64 or RISCV64 (all little-endian).
+
+### Symptom
+With `use_unicorn=False` (the default, the fast C p-code path) the cell evaluator
+returns **0** for a big-endian target instead of executing the instruction. It does
+not raise -- it silently yields zero:
+
+```
+MIPS64BE  addu $2,$4,$5   A0=A1=0x0F0F0F0F
+  C p-code : f(V|T)=0x0         f(V&~T)=0x0         D=0x0    <-- WRONG
+  Unicorn  : f(V|T)=0x1e1e1e1e  f(V&~T)=0x1e1e1e1c  D=0x2    <-- correct
+```
+
+### Why it under-taints
+Every differential-based rule computes `D = f(V|T) XOR f(V&~T)`. If both runs
+return 0 then `D = 0` and the differential contributes nothing:
+
+* TRANSPORTABLE (`D v T`) collapses to `T` -- the operand taint still shows, but
+  the CARRY is lost. `addu` with `T=0b1` reports `0x1` instead of `0x3`.
+* MAPPED / MONOTONIC, whose rule *is* the differential, collapse to **0** --
+  i.e. total under-taint.
+
+Measured with the per-ISA single-bit-flip oracle
+(`benchmark/generalization/multiarch_oracle.py`):
+
+    ISA          cases  under-taints  exact
+    AMD64          162             0    91%     little-endian
+    ARM64          288             0    76%     little-endian
+    MIPS64BE       234            57    58%     BIG-endian
+    PPC32BE        252            12    63%     BIG-endian
+    SPARC32BE      252            27    66%     BIG-endian
+
+Every under-taint is on a big-endian target; both little-endian ISAs are clean.
+This is an EVALUATOR limitation, not a rule/category/polarity failure: the rules
+are fed zeros.
+
+### Note on an earlier, WRONG measurement
+Commit 8821591 reported "no under-tainting on any ISA; MIPS64BE and PPC32BE are
+100% EXACT". That was an artifact of a vacuous test: the oracle tainted a
+POSITIONAL slice of the register list (`regs[1:3]`) while the MIPS programs read
+`$4/$5` and the PPC programs read `R4/R5`. No taint flowed through the
+instruction at all, so nothing could be got wrong. The oracle now declares each
+program's real source operands and taints those.
+
+### Options
+1. Force `use_unicorn=True` for big-endian architectures. Correct, and known to
+   work (see the table above), but gives up the native p-code fast path.
+2. Make the C p-code evaluator endianness-aware (register packing / state build).
+   The real fix; largest blast radius.
+3. Keep the BE ports as lift+synthesis only and do not claim soundness for them.
+
+Related, already fixed: `StateMapper.map_to_state` did byte->bit arithmetic
+little-endian-only, so any SUB-register read on a BE target mapped to the wrong
+bits (SPARC's `sll %g1,%g2,%g3` reads `register:0xb:1` = g2's least-significant
+byte, reported as bits 24..31 instead of 0..7). See `_sub_reg_bit_start`.
+
+---
+
 ## 1. `OF` after multi-bit shift/rotate: SLEIGH preserves, silicon recomputes
 
 **Status:** open, deliberately deferred (2026-07-16). Narrow; no known corpus/fuzzer case hits it.

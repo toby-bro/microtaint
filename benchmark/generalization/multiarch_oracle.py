@@ -46,29 +46,34 @@ from typing import Callable
 import unicorn.arm64_const as uc_arm64
 import unicorn.mips_const as uc_mips
 import unicorn.ppc_const as uc_ppc
+import unicorn.sparc_const as uc_sparc
 import unicorn.x86_const as uc_x86
 from keystone import (
     KS_ARCH_ARM64,
     KS_ARCH_MIPS,
     KS_ARCH_PPC,
+    KS_ARCH_SPARC,
     KS_ARCH_X86,
     KS_MODE_64,
     KS_MODE_BIG_ENDIAN,
     KS_MODE_LITTLE_ENDIAN,
     KS_MODE_MIPS64,
     KS_MODE_PPC32,
+    KS_MODE_SPARC32,
     Ks,
 )
 from unicorn import (
     UC_ARCH_ARM64,
     UC_ARCH_MIPS,
     UC_ARCH_PPC,
+    UC_ARCH_SPARC,
     UC_ARCH_X86,
     UC_MODE_64,
     UC_MODE_ARM,
     UC_MODE_BIG_ENDIAN,
     UC_MODE_MIPS64,
     UC_MODE_PPC32,
+    UC_MODE_SPARC32,
     Uc,
 )
 
@@ -94,8 +99,11 @@ class IsaSpec:
     # state-register names we seed/score, and their Unicorn ids
     regs: list[str]
     uc_regs: dict[str, int]
-    # (assembly, scored-output-register) pairs
-    prog: list[tuple[str, str]] = field(default_factory=list)
+    # (assembly, scored-output-register, SOURCE registers the instruction
+    # actually reads).  Sources must be declared per-program: tainting a
+    # positional slice of `regs` silently taints registers the instruction
+    # never reads, making the whole check vacuous.
+    prog: list[tuple[str, str, list[str]]] = field(default_factory=list)
 
     @property
     def mask(self) -> int:
@@ -124,21 +132,21 @@ def _mips() -> IsaSpec:
         regs=gpr,
         uc_regs=uc_regs,
         prog=[
-            ('addu $2, $4, $5', 'V0'),
-            ('subu $2, $4, $5', 'V0'),
-            ('and $2, $4, $5', 'V0'),
-            ('or $2, $4, $5', 'V0'),
-            ('xor $2, $4, $5', 'V0'),
-            ('nor $2, $4, $5', 'V0'),
-            ('sll $2, $4, 4', 'V0'),
-            ('srl $2, $4, 4', 'V0'),
-            ('sra $2, $4, 4', 'V0'),
-            ('slt $2, $4, $5', 'V0'),   # compare -> GPR, no flags
-            ('sltu $2, $4, $5', 'V0'),
-            ('movz $2, $4, $5', 'V0'),  # conditional move
-            ('movn $2, $4, $5', 'V0'),
-            ('sllv $2, $4, $5', 'V0'),  # variable shift
-            ('srlv $2, $4, $5', 'V0'),
+            ('addu $2, $4, $5', 'V0', ['A0', 'A1']),
+            ('subu $2, $4, $5', 'V0', ['A0', 'A1']),
+            ('and $2, $4, $5', 'V0', ['A0', 'A1']),
+            ('or $2, $4, $5', 'V0', ['A0', 'A1']),
+            ('xor $2, $4, $5', 'V0', ['A0', 'A1']),
+            ('nor $2, $4, $5', 'V0', ['A0', 'A1']),
+            ('sll $2, $4, 4', 'V0', ['A0']),
+            ('srl $2, $4, 4', 'V0', ['A0']),
+            ('sra $2, $4, 4', 'V0', ['A0']),
+            ('slt $2, $4, $5', 'V0', ['A0', 'A1']),   # compare -> GPR, no flags
+            ('sltu $2, $4, $5', 'V0', ['A0', 'A1']),
+            ('movz $2, $4, $5', 'V0', ['A0', 'A1']),  # conditional move
+            ('movn $2, $4, $5', 'V0', ['A0', 'A1']),
+            ('sllv $2, $4, $5', 'V0', ['A0', 'A1']),  # variable shift
+            ('srlv $2, $4, $5', 'V0', ['A0', 'A1']),
         ],
     )
 
@@ -156,20 +164,20 @@ def _ppc() -> IsaSpec:
         regs=gpr,
         uc_regs=uc_regs,
         prog=[
-            ('add 3, 4, 5', 'R3'),
-            ('subf 3, 4, 5', 'R3'),   # rD = rB - rA
-            ('and 3, 4, 5', 'R3'),
-            ('or 3, 4, 5', 'R3'),
-            ('xor 3, 4, 5', 'R3'),
-            ('nand 3, 4, 5', 'R3'),
-            ('slw 3, 4, 5', 'R3'),    # variable shift
-            ('srw 3, 4, 5', 'R3'),
-            ('sraw 3, 4, 5', 'R3'),
-            ('slwi 3, 4, 4', 'R3'),
-            ('mullw 3, 4, 5', 'R3'),
-            ('neg 3, 4', 'R3'),
-            ('extsb 3, 4', 'R3'),     # sign-extend byte
-            ('cntlzw 3, 4', 'R3'),
+            ('add 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('subf 3, 4, 5', 'R3', ['R4', 'R5']),   # rD = rB - rA
+            ('and 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('or 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('xor 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('nand 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('slw 3, 4, 5', 'R3', ['R4', 'R5']),    # variable shift
+            ('srw 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('sraw 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('slwi 3, 4, 4', 'R3', ['R4']),
+            ('mullw 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('neg 3, 4', 'R3', ['R4']),
+            ('extsb 3, 4', 'R3', ['R4']),     # sign-extend byte
+            ('cntlzw 3, 4', 'R3', ['R4']),
         ],
     )
 
@@ -187,22 +195,61 @@ def _arm64() -> IsaSpec:
         regs=gpr,
         uc_regs=uc_regs,
         prog=[
-            ('add x0, x1, x2', 'X0'),
-            ('sub x0, x1, x2', 'X0'),
-            ('and x0, x1, x2', 'X0'),
-            ('orr x0, x1, x2', 'X0'),
-            ('eor x0, x1, x2', 'X0'),
-            ('bic x0, x1, x2', 'X0'),
-            ('lsl x0, x1, #4', 'X0'),
-            ('lsr x0, x1, #4', 'X0'),
-            ('asr x0, x1, #4', 'X0'),
-            ('lslv x0, x1, x2', 'X0'),   # variable shift
-            ('mul x0, x1, x2', 'X0'),
-            ('madd x0, x1, x2, x3', 'X0'),
-            ('sxtb x0, w1', 'X0'),
-            ('clz x0, x1', 'X0'),
-            ('rbit x0, x1', 'X0'),       # bit reverse -- pure routing
-            ('rev x0, x1', 'X0'),        # byte reverse
+            ('add x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('sub x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('and x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('orr x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('eor x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('bic x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('lsl x0, x1, #4', 'X0', ['X1']),
+            ('lsr x0, x1, #4', 'X0', ['X1']),
+            ('asr x0, x1, #4', 'X0', ['X1']),
+            ('lslv x0, x1, x2', 'X0', ['X1', 'X2']),   # variable shift
+            ('mul x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('madd x0, x1, x2, x3', 'X0', ['X1', 'X2', 'X3']),
+            ('sxtb x0, w1', 'X0', ['X1']),
+            ('clz x0, x1', 'X0', ['X1']),
+            ('rbit x0, x1', 'X0', ['X1']),       # bit reverse -- pure routing
+            ('rev x0, x1', 'X0', ['X1']),        # byte reverse
+        ],
+    )
+
+
+def _sparc() -> IsaSpec:
+    # %g0 is hardwired to zero -- never seed or score it, or every "flip" of it is
+    # silently discarded by the hardware and the oracle compares nonsense.
+    gpr = ['G1', 'G2', 'G3', 'G4', 'G5', 'O0', 'O1', 'O2']
+    names = (
+        [f'g{i}' for i in range(8)]
+        + [f'o{i}' for i in range(8)]
+        + [f'l{i}' for i in range(8)]
+        + [f'i{i}' for i in range(8)]
+    )
+    uc_regs = {n.upper(): getattr(uc_sparc, f'UC_SPARC_REG_{n.upper()}') for n in names}
+    return IsaSpec(
+        label='SPARC32BE',
+        arch=Architecture.SPARC32BE,
+        bits=32,
+        ks=Ks(KS_ARCH_SPARC, KS_MODE_SPARC32 | KS_MODE_BIG_ENDIAN),
+        uc_arch=UC_ARCH_SPARC,
+        uc_mode=UC_MODE_SPARC32 | UC_MODE_BIG_ENDIAN,
+        regs=gpr,
+        uc_regs=uc_regs,
+        prog=[
+            ('add %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('sub %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('and %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('or %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('xor %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('andn %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('xnor %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('sll %g1, %g2, %g3', 'G3', ['G1', 'G2']),   # variable shift
+            ('srl %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('sra %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('sll %g1, 4, %g3', 'G3', ['G1']),     # constant shift
+            ('addcc %g1, %g2, %g3', 'G3', ['G1', 'G2']),  # writes the icc condition codes
+            ('subcc %g1, %g2, %g3', 'G3', ['G1', 'G2']),
+            ('umul %g1, %g2, %g3', 'G3', ['G1', 'G2']),
         ],
     )
 
@@ -225,15 +272,15 @@ def _amd64() -> IsaSpec:
         regs=gpr,
         uc_regs=uc_regs,
         prog=[
-            ('add rax, rbx', 'RAX'),
-            ('sub rax, rbx', 'RAX'),
-            ('and rax, rbx', 'RAX'),
-            ('or rax, rbx', 'RAX'),
-            ('xor rax, rbx', 'RAX'),
-            ('shl rax, 4', 'RAX'),
-            ('shr rax, 4', 'RAX'),
-            ('imul rax, rbx', 'RAX'),
-            ('neg rax', 'RAX'),
+            ('add rax, rbx', 'RAX', ['RAX', 'RBX']),
+            ('sub rax, rbx', 'RAX', ['RAX', 'RBX']),
+            ('and rax, rbx', 'RAX', ['RAX', 'RBX']),
+            ('or rax, rbx', 'RAX', ['RAX', 'RBX']),
+            ('xor rax, rbx', 'RAX', ['RAX', 'RBX']),
+            ('shl rax, 4', 'RAX', ['RAX']),
+            ('shr rax, 4', 'RAX', ['RAX']),
+            ('imul rax, rbx', 'RAX', ['RAX', 'RBX']),
+            ('neg rax', 'RAX', ['RAX']),
         ],
     )
 
@@ -243,6 +290,7 @@ ISAS: dict[str, Callable[[], IsaSpec]] = {
     'arm64': _arm64,
     'mips': _mips,
     'ppc': _ppc,
+    'sparc': _sparc,
 }
 
 
@@ -268,7 +316,7 @@ def bitflip_lower_bound(spec: IsaSpec, code: bytes, state: dict[str, int], taint
                 s2[r] = (s2[r] ^ (1 << b)) & spec.mask
                 try:
                     out = _run(spec, code, s2)
-                except Exception:  # noqa: BLE001 -- a trapping flip just shrinks the bound
+                except Exception:
                     continue
                 for rr in spec.regs:
                     lb[rr] |= base[rr] ^ out[rr]
@@ -289,7 +337,7 @@ def exact_gt(spec: IsaSpec, code: bytes, state: dict[str, int], taint: dict[str,
                 s[r] = (s[r] ^ (1 << b)) & spec.mask
         try:
             out = _run(spec, code, s)
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
         if base is None:
             base = out
@@ -329,23 +377,23 @@ def main() -> int:  # noqa: C901
     for key in targets:
         spec = ISAS[key]()
         n = unsound = exact_n = exact_ok = 0
-        for asm, out_reg in spec.prog:
+        for asm, out_reg, srcs in spec.prog:
             try:
                 code = bytes(spec.ks.asm(asm, CODE_ADDR)[0])
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 print(f'  [{spec.label}] SKIP {asm!r}: assemble: {e}')
                 continue
             for vals in rng_states:
                 state = {r: (vals[i % len(vals)] & spec.mask) for i, r in enumerate(spec.regs)}
                 for tm in taint_masks:
                     taint = dict.fromkeys(spec.regs, 0)
-                    # taint the two source operands
-                    for r in spec.regs[1:3]:
+                    # taint the operands the instruction ACTUALLY reads
+                    for r in srcs:
                         taint[r] = tm & spec.mask
                     try:
                         lb = bitflip_lower_bound(spec, code, state, taint)
                         mt = microtaint(spec, code, state, taint)
-                    except Exception as e:  # noqa: BLE001
+                    except Exception as e:
                         if args.verbose:
                             print(f'  [{spec.label}] ERR {asm!r}: {type(e).__name__}: {e}')
                         continue

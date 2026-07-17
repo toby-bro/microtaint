@@ -145,6 +145,11 @@ class StateMapper:
         arch_upper = str(arch).upper()
         self.is_x86 = 'X86' in arch_upper or 'AMD64' in arch_upper
         self.is_arm = 'ARM' in arch_upper
+        # Byte->bit arithmetic for SUB-register reads depends on endianness: on a
+        # big-endian target byte 0 of a register is its MOST significant one.  The
+        # BE architectures name themselves with a `BE` suffix (MIPS64BE, PPC32BE,
+        # SPARC32BE); x86/ARM64/RISCV64 are little-endian and keep the LE path.
+        self.is_big_endian = arch_upper.endswith('BE')
 
         self.sf_resolved: list[tuple[Register, Varnode | _SynthVarnode]] = []
         for sf_reg in state_format:
@@ -187,6 +192,23 @@ class StateMapper:
         sub_offset = 0 if half == 'LO' else 8
         return _SynthVarnode(offset=0x1200 + n * 0x40 + sub_offset, size=8)
 
+    def _sub_reg_bit_start(self, rel_byte: int, size: int, reg_bytes: int) -> int:
+        """Bit offset, within a state register, of a `size`-byte read at byte
+        `rel_byte` from the register's base.
+
+        Endianness-dependent.  On a BIG-ENDIAN target byte 0 of a register is its
+        MOST significant one, so byte `rel_byte` of an N-byte register holds bits
+        [(N - rel_byte - size)*8 ..].  Applying the little-endian `rel_byte * 8`
+        maps a sub-register read to the WRONG bits: SPARC's `sll %g1,%g2,%g3` lifts
+        its shift amount as register:0xb:1 -- g2's LAST byte, i.e. its
+        LEAST-significant one -- which LE arithmetic reported as bits 24..31 rather
+        than 0..7.  The rule then read the wrong taint bits, found none, and
+        under-tainted a variable shift by a tainted amount.
+        """
+        if self.is_big_endian:
+            return max((reg_bytes - rel_byte - size) * 8, 0)
+        return rel_byte * 8
+
     def map_to_state(self, offset: int, size: int) -> RegMapping | None:
         if self.is_x86 and 512 <= offset < 560:
             bit_idx = offset - 512
@@ -205,8 +227,7 @@ class StateMapper:
         end_offset = offset + size
         for sf_reg, s_r in self.sf_resolved:
             if s_r.offset <= offset and end_offset <= (s_r.offset + s_r.size):
-                rel_byte = offset - s_r.offset
-                bit_start = rel_byte * 8
+                bit_start = self._sub_reg_bit_start(offset - s_r.offset, size, s_r.size)
                 bit_end = min(bit_start + (size * 8) - 1, sf_reg.bits - 1)
                 mapping = RegMapping(sf_reg.name, bit_start, bit_end)
 
@@ -1429,16 +1450,39 @@ def generate_taint_assignments(  # noqa: C901
                         break
             return origins
 
+        def _amount_is_const_derived(vn: Varnode, seen: set[int] | None = None) -> bool:
+            """True only if the shift amount provably derives from constants ALONE.
+
+            We must PROVE constness, never infer it from an empty trace_origins():
+            that returns nothing both for a constant amount AND when the trace
+            reaches an operand the mapper cannot resolve.  SPARC's `sll %g1,%g2,%g3`
+            lifts its amount as COPY(register:0xb:1) -- G2's low byte -- which
+            map_to_state cannot map, so trace_origins comes back empty even though
+            the amount is fully data-dependent.  Treating that as "constant" drops
+            the avalanche and under-taints a variable shift.
+            """
+            if seen is None:
+                seen = set()
+            space = vn.space.name
+            if space == 'const':
+                return True
+            if space != 'unique':
+                return False  # register / memory operand: data-dependent
+            if vn.offset in seen:
+                return False  # cycle: cannot prove constness
+            seen.add(vn.offset)
+            for op in slice_ops:
+                if op.output is not None and op.output.space.name == 'unique' and op.output.offset == vn.offset:
+                    if op.opcode.name == 'LOAD':
+                        return False
+                    return all(_amount_is_const_derived(i, seen) for i in op.inputs)
+            return False  # no definition found: cannot prove constness
+
         offset_names: set[str] = set()
         _offset_is_const_derived = False
         if shift_op and len(shift_op.inputs) > 1:
             offset_names = trace_origins(shift_op.inputs[1])
-            # trace_origins yields NOTHING exactly when the shift amount is derived
-            # purely from constants (`ror rax, 8` lifts its count as
-            # INT_AND(const:8, const:0x3f)).  That means there is no data-dependent
-            # offset at all, so no avalanche is warranted -- an empty result here is
-            # "constant", not "unknown".
-            _offset_is_const_derived = not offset_names
+            _offset_is_const_derived = _amount_is_const_derived(shift_op.inputs[1])
 
         primary_input_name = None
         if shift_op and shift_op.inputs[0].space.name == 'register':
