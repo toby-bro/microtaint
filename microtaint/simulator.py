@@ -300,19 +300,37 @@ def _maximal_register_varnodes(arch: Architecture) -> frozenset[tuple[str, int, 
     return frozenset(maximal)
 
 
+@functools.lru_cache(maxsize=None)
+def _narrow_maximal_parents(arch: Architecture) -> tuple[tuple[int, int], ...]:
+    """``(offset, size)`` of every MAXIMAL register at most 4 bytes wide.  A
+    sub-window of such a register is byte-order-safe on the native kernel *and*
+    free of the undefined-high-bits hazard, because a 32-bit register has no
+    partial-width convention -- its whole value is always defined.  A 64-bit
+    register does (MIPS64 32-bit ops require a sign-extended value), so its
+    sub-windows are excluded."""
+    return tuple(
+        (off, size)
+        for space, off, size in _maximal_register_varnodes(arch)
+        if space == 'register' and size <= 4
+    )
+
+
 @functools.lru_cache(maxsize=8192)
 def _native_be_safe(arch: Architecture, instruction_hex: str) -> bool:
-    """True iff the native little-endian p-code kernel evaluates this instruction
-    correctly on a big-endian target.  That holds iff the instruction (a) performs
-    no memory access, and (b) touches register-space varnodes only as MAXIMAL named
-    registers -- never a sub-register byte slice nor a byte-window alias of a wider
-    register (see ``_maximal_register_varnodes``).
+    """True iff the native (byte-order-aware) p-code kernel evaluates this
+    instruction correctly on a big-endian target.  That holds iff the instruction
+    (a) performs no memory access, and (b) touches every register-space varnode
+    either as a MAXIMAL named register or as a sub-window of a <=4-byte maximal
+    register.
 
-    Under those conditions every register access moves a whole integer value, which
-    round-trips regardless of the kernel's byte layout, and every remaining p-code
-    op works on integer values (endianness independent).  Anything reading a
-    byte-offset window -- MIPS64's 32-bit register halves, PPC ``extsb``'s low byte
-    -- reads the wrong bytes under the kernel's LE layout, so it stays on Unicorn."""
+    The kernel is endianness-aware for sub-register byte layout (see
+    `_PCodeFrame._is_big_endian`), so a sub-window read is byte-correct.  The one
+    remaining hazard is a sub-window of a *wider-than-32-bit* register whose
+    out-of-window bits are architecturally undefined -- MIPS64's 32-bit ops on
+    64-bit GPRs, which require a canonical (sign-extended) value and diverge from
+    Unicorn on non-canonical inputs.  Restricting sub-windows to <=4-byte parents
+    excludes exactly that case while admitting PPC `extsb` / SPARC sub-register
+    ops (32-bit GPRs, always fully defined)."""
     from microtaint.sleigh.lifter import get_context  # noqa: PLC0415
 
     try:
@@ -320,6 +338,7 @@ def _native_be_safe(arch: Architecture, instruction_hex: str) -> bool:
     except Exception:
         return False
     maximal = _maximal_register_varnodes(arch)
+    narrow_parents = _narrow_maximal_parents(arch)
     for op in ops:
         if op.opcode.name in ('LOAD', 'STORE'):
             return False
@@ -327,8 +346,14 @@ def _native_be_safe(arch: Architecture, instruction_hex: str) -> bool:
         if op.output is not None:
             varnodes.append(op.output)
         for v in varnodes:
-            if v.space.name == 'register' and (v.space.name, v.offset, v.size) not in maximal:
-                return False
+            if v.space.name != 'register':
+                continue
+            if (v.space.name, v.offset, v.size) in maximal:
+                continue  # whole register -- byte order immaterial
+            # sub-window: safe only inside a <=4-byte (fully-defined) parent
+            if any(o <= v.offset and v.offset + v.size <= o + s for o, s in narrow_parents):
+                continue
+            return False
     return True
 
 

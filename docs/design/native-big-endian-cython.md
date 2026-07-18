@@ -11,12 +11,18 @@
   (`tests/test_native_be_kernel.py`; PPC differential 0/840, MIPS differential
   0/1040 on canonical inputs, sub-register concrete 0/500), and the little-endian
   path is byte-identical (`tests/test_cell_benchmark.py` unchanged).
-- **Not yet done:** relaxing `_native_be_safe` to route sub-register / memory BE
-  instructions to the (now-correct) native kernel, and removing the
-  `use_unicorn=True` force.  Blocked on the canonical-input caveat below; until
-  then the BE byte math is correct but reachable only through the maximal-register
-  routing (which never exercises a sub-register byte offset), i.e. validated
-  infrastructure ahead of its routing.
+- **Routing now relaxed for sub-registers of <=4-byte parents.** `_native_be_safe`
+  admits a sub-window register access when its containing maximal register is at
+  most 4 bytes wide (a 32-bit register is always fully defined).  This routes PPC
+  `extsb`/`srawi`/`extsh`/… (and SPARC-class 32-bit sub-register ops) to the native
+  kernel -- measured **~15x faster** per instruction than Unicorn, with no fuzzer
+  regression (PPC unchanged/slightly better, amd64/ARM64 untouched).  It is
+  soundness-neutral: the survivors are backend-independent 2-corner precision
+  limits.
+- **Still on Unicorn:** MIPS64 32-bit ops (sub-window of a 64-bit GPR -- the
+  canonical-input hazard below), all LOAD/STORE (memory BE byte math is done but
+  routing it needs the canonical work too), and the `use_unicorn=True` force
+  itself.  Removing that force is the endgame.
 
 ## Why
 

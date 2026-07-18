@@ -71,13 +71,14 @@ def _taint(code: str, values: dict[str, int], taint: dict[str, int], out: str = 
 
 
 def test_native_be_safe_predicate():
-    """Whole (maximal) register arithmetic is native-BE-safe; a sub-register slice
-    (``extsb``) and a memory access (``lwz``) are not.  PPC GPRs are maximal (no
-    wider container), so their carry arithmetic stays on the native path."""
+    """PPC register arithmetic is native-BE-safe: whole-GPR ops (`adde`, `subfc`,
+    `subfe`) and sub-register ops (`extsb` reads a byte of a 32-bit GPR -- a
+    sub-window of a <=4-byte, always-defined parent, handled by the kernel's
+    BE byte math).  A memory access (`lwz`) is not."""
     assert _native_be_safe(ARCH, _ADDE) is True
     assert _native_be_safe(ARCH, _SUBFC_SUBFE[:8]) is True  # subfc
     assert _native_be_safe(ARCH, _SUBFC_SUBFE[8:]) is True  # subfe
-    assert _native_be_safe(ARCH, _EXTSB) is False  # reads byte 3 of a GPR
+    assert _native_be_safe(ARCH, _EXTSB) is True  # byte of a 32-bit GPR
     assert _native_be_safe(ARCH, _LWZ) is False  # LOAD
 
 

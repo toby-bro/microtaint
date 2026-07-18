@@ -72,20 +72,21 @@ ARM64/PPC fuzzer under-taints was wrong; see design doc §10.3.
 
 ## 0. The native C p-code cell evaluator is LITTLE-ENDIAN only
 
-**Status:** WORKED AROUND (2026-07-17); native kernel now BE-aware, routing
-relaxation pending (2026-07-18). Big-endian architectures (MIPS64BE, PPC32BE,
-SPARC32BE) evaluate through Unicorn instead of the native p-code kernel
-(`CellSimulator` forces `use_unicorn=True` when the arch name ends `BE`). Two
-increments have since chipped at option B: (1) *maximal-register* BE instructions
-route to the native Cython kernel (the PPC carry fix; see the subsection below);
-(2) the Cython kernel's register-file and memory **byte math is now
-endianness-aware** and validated byte-for-byte against Unicorn on BE sub-register
-instructions -- but the routing is not yet relaxed to use it for sub-register /
-memory accesses (a canonical-input caveat on 64-bit-alias arches; the native fast
-path and independent cross-check are the payoff, not under-taint reduction). Full
-plan, formulas, validation, and the caveat: `docs/design/native-big-endian-cython.md`.
-The C kernel (`cell_c`) stays LE-only -- it is selected only for LE targets. Does
-NOT affect x86-64/ARM64/RISCV64 (LE).
+**Status:** WORKED AROUND (2026-07-17); native kernel BE-aware + partially routed
+(2026-07-18). Big-endian architectures (MIPS64BE, PPC32BE, SPARC32BE) evaluate
+through Unicorn instead of the native p-code kernel (`CellSimulator` forces
+`use_unicorn=True` when the arch name ends `BE`). Three increments have since
+chipped at option B: (1) *maximal-register* BE instructions route to the native
+Cython kernel (the PPC carry fix); (2) the Cython kernel's register-file and memory
+**byte math is now endianness-aware**, validated byte-for-byte against Unicorn;
+(3) the routing now also sends **sub-register ops of <=4-byte parents** (PPC
+`extsb`/`srawi`, SPARC-class 32-bit sub-register ops) to the native kernel -- ~15x
+faster than Unicorn per instruction, no regression. Still on Unicorn: MIPS64 32-bit
+ops (64-bit-GPR sub-window; the canonical-input caveat), memory, and the
+`use_unicorn` force itself. Payoff so far is the native fast path + independent
+cross-check, not under-taint reduction. Full plan, formulas, validation, and the
+caveat: `docs/design/native-big-endian-cython.md`. The C kernel (`cell_c`) stays
+LE-only -- it is selected only for LE targets. Does NOT affect x86-64/ARM64/RISCV64 (LE).
 
 One honesty caveat for any BE soundness claim: on x86 soundness rests on TWO
 independent implementations agreeing -- the native C p-code evaluator
