@@ -207,7 +207,7 @@ def _ppc() -> IsaSpec:
         # PPC XER carry/overflow + CR0..CR7 condition fields.
         flag_regs=(
             [('XER_SO', 1), ('XER_OV', 1), ('XER_CA', 1)]
-            + [(f'CR{i}', 1) for i in range(8)]
+            + [(f'CR{i}', 4) for i in range(8)]
         ),
         prog=[
             ('add 3, 4, 5', 'R3', ['R4', 'R5']),

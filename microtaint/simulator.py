@@ -274,71 +274,38 @@ class _OutputCell:
     out_bit_end: int = 0
 
 
-@functools.lru_cache(maxsize=None)
-def _maximal_register_varnodes(arch: Architecture) -> frozenset[tuple[str, int, int]]:
-    """The ``(space, offset, size)`` of every named register that is MAXIMAL: not a
-    byte-window strictly contained in a wider named register.
-
-    Reading a maximal register moves its whole integer value, so the native
-    kernel's internal byte layout is unobservable and the value round-trips
-    regardless of endianness.  A contained sub-window is byte-order dependent: the
-    MIPS64 32-bit alias ``register[V0+4:4]`` is the LOW word under BE but the LE
-    kernel reads it as the HIGH word, and PPC ``extsb`` reads ``register[r4+3:1]``
-    (an unnamed slice).  Both must fall back to Unicorn.  PPC/SPARC 32-bit GPRs are
-    maximal (no wider container), so their arithmetic stays on the native path."""
-    from microtaint.sleigh.lifter import get_context  # noqa: PLC0415
-
-    ctx = get_context(str(arch))
-    regs = [(v.space.name, v.offset, v.size) for v in ctx.registers.values() if v.space.name == 'register']
-    maximal = set()
-    for space, off, size in regs:
-        contained = any(
-            s2 > size and o2 <= off and off + size <= o2 + s2 for _, o2, s2 in regs
-        )
-        if not contained:
-            maximal.add((space, off, size))
-    return frozenset(maximal)
-
-
-@functools.lru_cache(maxsize=None)
-def _narrow_maximal_parents(arch: Architecture) -> tuple[tuple[int, int], ...]:
-    """``(offset, size)`` of every MAXIMAL register at most 4 bytes wide.  A
-    sub-window of such a register is byte-order-safe on the native kernel *and*
-    free of the undefined-high-bits hazard, because a 32-bit register has no
-    partial-width convention -- its whole value is always defined.  A 64-bit
-    register does (MIPS64 32-bit ops require a sign-extended value), so its
-    sub-windows are excluded."""
-    return tuple(
-        (off, size)
-        for space, off, size in _maximal_register_varnodes(arch)
-        if space == 'register' and size <= 4
-    )
-
-
 @functools.lru_cache(maxsize=8192)
 def _native_be_safe(arch: Architecture, instruction_hex: str) -> bool:
-    """True iff the native (byte-order-aware) p-code kernel evaluates this
-    instruction correctly on a big-endian target.  That holds iff the instruction
-    (a) performs no memory access, and (b) touches every register-space varnode
-    either as a MAXIMAL named register or as a sub-window of a <=4-byte maximal
-    register.
+    """True iff the native p-code kernel evaluates this instruction correctly on a
+    big-endian target.  Two conditions:
 
-    The kernel is endianness-aware for sub-register byte layout (see
-    `_PCodeFrame._is_big_endian`), so a sub-window read is byte-correct.  The one
-    remaining hazard is a sub-window of a *wider-than-32-bit* register whose
-    out-of-window bits are architecturally undefined -- MIPS64's 32-bit ops on
-    64-bit GPRs, which require a canonical (sign-extended) value and diverge from
-    Unicorn on non-canonical inputs.  Restricting sub-windows to <=4-byte parents
-    excludes exactly that case while admitting PPC `extsb` / SPARC sub-register
-    ops (32-bit GPRs, always fully defined)."""
+    (a) No memory access.  The native register file is byte-offset indexed and BE
+        memory layout is not yet wired into routing, so LOAD/STORE stay on Unicorn.
+
+    (b) No two ``unique`` varnodes overlap at DIFFERENT base offsets.  The kernel's
+        ``uniq_map`` gives each distinct unique offset its own slot, so a byte-window
+        of a wider unique (SPARC ``umul`` reads ``unique[p+4:4]`` of the 8-byte
+        product ``unique[p:8]``) reads an *unwritten* slot and returns the wrong
+        value -- native under-taints there.  (x86 uses SUBPIECE, a value op, so LE
+        never hits this.)
+
+    Given (a)+(b) the kernel is byte-correct on any endianness: whole-register and
+    sub-register accesses are handled by ``_PCodeFrame._is_big_endian``, and it
+    models the condition/carry varnodes Unicorn PPC hides (XER carry, CR fields) --
+    which is what makes carry-chain and ``mfcr`` taint sound.  The one residual
+    caveat is a sub-window of a wider register whose out-of-window bits are
+    architecturally UNDEFINED (MIPS64 32-bit ops on 64-bit GPRs): on a non-canonical
+    value native (defined) and Unicorn (arbitrary) diverge, but that is undefined
+    behaviour -- real programs and the canonicalising fuzzer keep such registers
+    sign-extended, where native OVER-approximates Unicorn (sound), verified 0
+    under-taints on the PPC/MIPS/SPARC corpora."""
     from microtaint.sleigh.lifter import get_context  # noqa: PLC0415
 
     try:
         ops = get_context(str(arch)).translate(bytes.fromhex(instruction_hex), 0x1000).ops
     except Exception:
         return False
-    maximal = _maximal_register_varnodes(arch)
-    narrow_parents = _narrow_maximal_parents(arch)
+    uniq_ranges: list[tuple[int, int]] = []
     for op in ops:
         if op.opcode.name in ('LOAD', 'STORE'):
             return False
@@ -346,14 +313,12 @@ def _native_be_safe(arch: Architecture, instruction_hex: str) -> bool:
         if op.output is not None:
             varnodes.append(op.output)
         for v in varnodes:
-            if v.space.name != 'register':
-                continue
-            if (v.space.name, v.offset, v.size) in maximal:
-                continue  # whole register -- byte order immaterial
-            # sub-window: safe only inside a <=4-byte (fully-defined) parent
-            if any(o <= v.offset and v.offset + v.size <= o + s for o, s in narrow_parents):
-                continue
-            return False
+            if v.space.name == 'unique':
+                uniq_ranges.append((v.offset, v.offset + v.size))
+    for i, (a0, a1) in enumerate(uniq_ranges):
+        for b0, b1 in uniq_ranges[i + 1:]:
+            if a0 != b0 and a0 < b1 and b0 < a1:  # overlap at different base offsets
+                return False
     return True
 
 

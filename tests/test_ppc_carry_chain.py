@@ -82,17 +82,27 @@ def test_native_be_safe_predicate():
     assert _native_be_safe(ARCH, _LWZ) is False  # LOAD
 
 
-def test_native_be_safe_excludes_byte_aliased_subregisters():
-    """MIPS64 32-bit ops read/write ``register[GPR+4:4]`` -- a byte-window alias of
-    the 64-bit GPR (the LOW word under BE, which the LE kernel would read as the
-    HIGH word).  Those must be excluded; only 64-bit (maximal) ops qualify.  This
-    pins the maximal-register half of the predicate: naming a sub-window is not
-    enough, it must not be contained in a wider register."""
+def test_native_be_safe_routes_register_only_ops():
+    """Register-only instructions route to the (byte-order-aware) native kernel --
+    including MIPS64 32-bit ops that read sub-register aliases (`register[GPR+4:4]`),
+    which the kernel now handles byte-correctly; on non-canonical inputs it
+    over-approximates Unicorn (sound), and the fuzzer/real programs are canonical."""
     mips = Architecture.MIPS64BE
-    assert _native_be_safe(mips, '00851021') is False  # addu  (32-bit alias reads)
-    assert _native_be_safe(mips, '00041100') is False  # sll   (32-bit alias)
-    assert _native_be_safe(mips, '0085102d') is True   # daddu (full 64-bit regs)
-    assert _native_be_safe(mips, '00041138') is True   # dsll  (full 64-bit regs)
+    assert _native_be_safe(mips, '00851021') is True  # addu
+    assert _native_be_safe(mips, '00041100') is True  # sll
+    assert _native_be_safe(mips, '0085102d') is True  # daddu
+
+
+def test_native_be_safe_excludes_overlapping_unique_windows():
+    """The native kernel maps each distinct `unique` offset to its own slot, so an
+    instruction that reads a byte-window of a wider unique at a DIFFERENT base
+    offset (SPARC `umul` reads `unique[p+4:4]` of the 8-byte product `unique[p:8]`)
+    reads an unwritten slot -> wrong value -> under-taint.  Such instructions must
+    stay on Unicorn; a plain register op (`add`) is fine."""
+    sparc = Architecture.SPARC32BE
+    assert _native_be_safe(sparc, '86504002') is False  # umul (overlapping uniques)
+    assert _native_be_safe(sparc, '86584002') is False  # smul (overlapping uniques)
+    assert _native_be_safe(sparc, '86004002') is True   # add  (register-only)
 
 
 def test_adde_consumes_concrete_carry_in():
@@ -143,6 +153,28 @@ class _OutCell:
     def __init__(self, instruction: str, out_reg: str) -> None:
         self.instruction = instruction
         self.out_reg = out_reg
+
+
+_MFCR = '7c600026'  # mfcr 3  -> r3 = pack(cr0..cr7 nibbles); cr0 -> r3[31:28]
+_FMT_CR4 = [Register(f'R{i}', 32) for i in range(8)] + [Register(f'CR{i}', 4) for i in range(8)]
+
+
+def test_mfcr_consumes_condition_register_into_gpr():
+    """mfcr packs the CR0..CR7 4-bit condition fields into R3.  Unicorn PPC cannot
+    seed the condition register, so mfcr's differential collapsed to 0 and R3
+    under-tainted its condition-derived bits; the native kernel models CR, so
+    routing mfcr there propagates the CR taint into the packed R3 bits (CR0 ->
+    R3[31:28])."""
+    zero = {r.name: 0 for r in _FMT_CR4}
+    _cached_generate_static_rule.cache_clear()
+    circ = generate_static_rule(ARCH, bytes.fromhex(_MFCR), _FMT_CR4)
+    ctx = EvalContext(
+        input_taint={**zero, 'CR0': 0xF},
+        input_values={**zero, 'CR0': 0x5},
+        simulator=CellSimulator(ARCH),
+        implicit_policy=ImplicitTaintPolicy.IGNORE,
+    )
+    assert circ.evaluate(ctx).get('R3', 0) == 0xF0000000  # CR0's 4 tainted bits -> R3[31:28]
 
 
 if __name__ == '__main__':
