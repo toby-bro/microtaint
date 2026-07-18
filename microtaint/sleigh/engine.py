@@ -2002,6 +2002,42 @@ def generate_taint_assignments(  # noqa: C901
                     _floor = AvalancheExpr(_floor, _out_width)
                 expr = BinaryExpr(Op.OR, expr, _floor)
 
+        # Packed OPPOSITE-polarity comparisons.  PPC `cmpw` writes CR0 = LT(r4<r5) |
+        # GT(r5<r4) | EQ into one field: a single polarity split (apply_sless_msb_split)
+        # can make the differential exact for LT *or* GT but not both, so with both
+        # operands sharing a partial taint mask the 2-corner differential under-taints
+        # whichever comparison got the wrong polarity (measured: the LT/GT bits of the
+        # CR0 field consumed by `mfcr`).  When the slice contains a comparison and its
+        # OPERAND-SWAPPED twin -- `c(a,b)` and `c(b,a)` -- OR in the pairwise avalanche
+        # (fires when >=2 deps are simultaneously tainted), the same floor the MONOTONIC
+        # symmetric-comparison branch uses.  x86 `setcc` reads a SINGLE flag / one
+        # comparison direction, so it has no swapped twin and stays bit-exact.
+        _cmp_ops = frozenset({
+            'INT_LESS', 'INT_LESSEQUAL', 'INT_SLESS', 'INT_SLESSEQUAL',
+            'INT_EQUAL', 'INT_NOTEQUAL',
+        })
+        _cmps = [
+            op for op in slice_ops
+            if op.opcode.name in _cmp_ops and len(op.inputs) == 2
+        ]
+        _has_swapped_cmp = any(
+            get_varnode_id(a.inputs[0]) == get_varnode_id(b.inputs[1])
+            and get_varnode_id(a.inputs[1]) == get_varnode_id(b.inputs[0])
+            for i, a in enumerate(_cmps) for b in _cmps[i + 1:]
+        )
+        if _has_swapped_cmp:
+            _pw = [
+                AvalancheExpr(_get_taint_operand(dm.name, dm.bit_start, dm.bit_end, True), 1)
+                for dm in dep_set.value_deps if isinstance(dm, RegMapping)
+            ]
+            _ow = out_bit_end - out_bit_start + 1
+            for _i in range(len(_pw)):
+                for _j in range(_i + 1, len(_pw)):
+                    _pair: Expr = BinaryExpr(Op.AND, _pw[_i], _pw[_j])
+                    if _ow > 1:
+                        _pair = AvalancheExpr(_pair, _ow)
+                    expr = BinaryExpr(Op.OR, expr, _pair)
+
     # For non-stack LOAD pointers in non-load-like instructions (e.g. ADD RAX, [RBX]),
     # OR in the pointer avalanche. Stack pointer excluded for the same reason.
     if not is_load_like and has_tainted_non_stack_pointer:

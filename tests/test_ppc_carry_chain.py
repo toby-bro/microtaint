@@ -188,6 +188,28 @@ def test_mfcr_consumes_condition_register_into_gpr():
     assert circ.evaluate(ctx).get('R3', 0) == 0xF0000000  # CR0's 4 tainted bits -> R3[31:28]
 
 
+_CMPW_MFCR = '7c0428007c600026'  # cmpw 0,4,5 ; mfcr 3
+
+
+def test_cmpw_mfcr_packed_lt_gt_comparison():
+    """cmpw writes CR0 = LT(r4<r5)<<3 | GT(r5<r4)<<2 | EQ<<1 | SO -- two
+    OPPOSITE-polarity signed comparisons packed into one field.  A single polarity
+    split makes the differential exact for LT or GT but not both, so with the two
+    operands sharing a partial taint mask the 2-corner differential under-taints one
+    of LT/GT; `mfcr` then packs the under-tainted field into R3[31:28].  The
+    swapped-comparison-pair floor must taint the LT/GT bits (R3[31:30])."""
+    zero = {r.name: 0 for r in _FMT_CR4}
+    _cached_generate_static_rule.cache_clear()
+    circ = generate_static_rule(ARCH, bytes.fromhex(_CMPW_MFCR), _FMT_CR4)
+    ctx = EvalContext(
+        input_taint={**zero, 'R4': 0x34D7D284, 'R5': 0x34D7D284},  # same partial mask
+        input_values={**zero, 'R4': 0xF71086F6, 'R5': 0xDED57EEF},
+        simulator=CellSimulator(ARCH),
+        implicit_policy=ImplicitTaintPolicy.IGNORE,
+    )
+    assert circ.evaluate(ctx).get('R3', 0) & 0xC0000000 == 0xC0000000  # LT,GT bits tainted
+
+
 if __name__ == '__main__':
     import pytest
 
