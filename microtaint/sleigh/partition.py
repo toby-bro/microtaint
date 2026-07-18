@@ -154,6 +154,16 @@ def _compute_cutset(
             cutset.add(vid)
             continue
 
+        # CONSERVATIVE only cuts at a DISCARDED intermediate (a `unique`), never a
+        # register/memory result.  A register result (e.g. `sub`/`xor` writing RAX,
+        # then flags reading it) is itself an architectural output whose taint is
+        # already produced by its own assignment; cutting there would split the
+        # producing op from the flag and re-derive it under the wrong category
+        # (the XOR->sign-test over-taint).  The materialization target is exactly
+        # the compare-style discarded result (`cmp`, ARM64 `subs`).
+        if prod.output is None or prod.output.space.name != 'unique':
+            continue
+
         # CONSERVATIVE: cut only at a genuine category boundary.
         prod_is_condition = prod.opcode.name in CONDITION_OPCODES
         cons_cats = {_op_category(c) for c in cons}
