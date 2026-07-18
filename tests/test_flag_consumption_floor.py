@@ -67,6 +67,35 @@ def test_cset_hi_taints_wide_output_from_its_flags():
     assert _x0_taint(_CSET_HI, {'V': 1}) == 0
 
 
+# csel x0, x1, x2, lt  -- a 2-way select gated by NZCV
+_CSEL_LT = b'\x20\xb0\x82\x9a'
+_FMT_SEL = [
+    Register('X0', 64), Register('X1', 64), Register('X2', 64),
+    Register('N', 1), Register('Z', 1), Register('C', 1), Register('V', 1),
+]
+_ZERO_SEL = {r.name: 0 for r in _FMT_SEL}
+
+
+def test_csel_tainted_condition_uses_isa_general_passthrough():
+    """The cmov/select gated-passthrough resolves its condition flags through the
+    mapper (ISA-general), not a hardcoded x86 flag-offset table -- so a tainted
+    ARM64 NZCV condition OR-s in the operand union.  With x1==x2 in value the
+    differential cancels to 0; only the passthrough (fed by the tainted flag)
+    recovers the operand taint."""
+    engine._SEGMENTED = False
+    engine._cached_generate_static_rule.cache_clear()
+    circ = engine.generate_static_rule(ARCH, _CSEL_LT, _FMT_SEL)
+    ctx = EvalContext(
+        input_taint={**_ZERO_SEL, 'N': 1, 'X1': 0xF},
+        input_values={**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xF, 'X2': 0xF},
+        simulator=CellSimulator(ARCH, use_unicorn=False, use_c=False),
+        implicit_policy=ImplicitTaintPolicy.IGNORE,
+    )
+    # tainted condition + cancelling operands: differential alone -> 0; the
+    # passthrough must recover x1's taint.
+    assert circ.evaluate(ctx).get('X0', 0) & 0xF == 0xF
+
+
 if __name__ == '__main__':
     import pytest
 

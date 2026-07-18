@@ -2142,20 +2142,17 @@ def generate_taint_assignments(  # noqa: C901
         and output_cond_written
     ):
         old_dest_taint = _get_taint_operand(out_name, out_bit_start, out_bit_end, True)
-        _FLAG_OFFSET_TO_NAME = {
-            0x200: 'CF',
-            0x202: 'PF',
-            0x203: 'AF',
-            0x206: 'ZF',
-            0x207: 'SF',
-            0x20B: 'OF',
-        }
+        # Resolve the branch-condition flag registers through the mapper rather than
+        # a hardcoded x86 flag-offset table: the gated-passthrough must fire on
+        # every ISA (ARM64 `csel`/`cset` read NZCV at offsets 256..259, PPC reads
+        # CR bits, etc.).  A hardcoded x86 map left those unresolved, so a tainted
+        # condition never OR-ed the source/old-dest union in and `csel` under-tainted.
         flag_taint_or: Expr | None = None
         for flag_off, flag_size in cbranch_flag_deps or []:
-            flag_name = _FLAG_OFFSET_TO_NAME.get(flag_off)
-            if flag_name is None:
+            _fm = mapper.map_to_state(flag_off, flag_size)
+            if _fm is None:
                 continue
-            flag_taint = _get_taint_operand(flag_name, 0, flag_size - 1, True)
+            flag_taint = _get_taint_operand(_fm.name, _fm.bit_start, _fm.bit_end, True)
             flag_taint_or = flag_taint if flag_taint_or is None else BinaryExpr(Op.OR, flag_taint_or, flag_taint)
 
         # When the selector flag is computed INSIDE this instruction (cmpxchg's ZF
