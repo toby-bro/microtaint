@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import functools
-import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable
 
@@ -16,7 +15,6 @@ from microtaint.instrumentation.ast import (
     Expr,
     FullMaskAvalancheExpr,
     InstructionCellExpr,
-    IntermediateValueExpr,
     LogicCircuit,
     MemoryDifferentialExpr,
     MemoryOperand,
@@ -29,14 +27,9 @@ from microtaint.instrumentation.ast import (
 )
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import EXTENSION_OPCODES, TRANSLATABLE_OPCODES, determine_category
-from microtaint.sleigh.partition import CutPolicy, Segment, partition_slice
 from microtaint.sleigh.polarity import compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
-
-# Intermediate-taint materialization (docs/design/intermediate-taint-materialization.md).
-# Opt-in during bring-up; the default path is byte-for-byte unchanged.
-_SEGMENTED = os.environ.get('MICROTAINT_SEGMENTED') == '1'
 
 _CONST_CACHE: dict[int, Constant] = {}
 
@@ -453,89 +446,6 @@ def apply_sless_msb_split(
     return new_deps
 
 
-def _emit_one_intermediate(
-    arch: Architecture,
-    bytestring: bytes,
-    translation: Translation,
-    ctx: Context,
-    state_format: list[Register],
-    cut: Varnode,
-    assignments: list[TaintAssignment],
-    mapper: StateMapper,
-) -> None:
-    """Materialize one cut result's taint T(t) and value(t) as an ``is_intermediate``
-    assignment targeting the ``UNIQ_<off>`` pseudo-register.  T(t) is the existing
-    polarity-aware differential over the CORE slice (reading the unique as output);
-    value(t) is threaded so downstream segments can seed the cut."""
-    width = cut.size * 8
-    name = f'UNIQ_{cut.offset}'
-    mapping = RegMapping(name=name, bit_start=0, bit_end=width - 1)
-
-    core_slice = slice_backward(translation.ops, cut)
-    if not core_slice:
-        return
-    polarities = compute_polarity(core_slice)
-    dep_set = extract_dependencies(cut, core_slice, polarities, translation.ops, mapper)
-    split = apply_sless_msb_split(dep_set.value_deps, core_slice, ctx, arch, state_format)
-    dep_set = DependencySet(value_deps=split, addr_deps=dep_set.addr_deps)
-    out_target, out_name, out_bs, out_be = generate_output_target(mapping)
-
-    before = len(assignments)
-    generate_taint_assignments(
-        arch, bytestring, assignments, core_slice, dep_set,
-        out_target, out_name, out_bs, out_be, mapper, mapping,
-    )
-    input_regs = sorted({d.name for d in dep_set.value_deps if isinstance(d, RegMapping)})
-    for a in assignments[before:]:
-        a.is_intermediate = True
-        a.value_expression = IntermediateValueExpr(bytestring.hex(), cut.offset, 0, width - 1, input_regs)
-
-
-def _emit_segmented_target(
-    arch: Architecture,
-    bytestring: bytes,
-    translation: Translation,
-    ctx: Context,
-    state_format: list[Register],
-    out_vn: Varnode,
-    mapping: RegMapping | MemMapping,
-    segments: list[Segment],
-    assignments: list[TaintAssignment],
-    mapper: StateMapper,
-    seen_cuts: set[str],
-) -> None:
-    """Emit a cut-derived output as a segmented rule: materialize each cut it
-    depends on (once), then generate the OUTPUT segment's rule with the cuts as
-    ``UNIQ_<off>`` deps -- so the existing category floors and (now seeded) cells
-    apply to the materialized cut instead of re-deriving it from the sources."""
-    # 1. Materialize the cuts this output depends on (dedup across the instruction).
-    for seg in segments[:-1]:
-        cut = seg.output
-        cut_id = get_varnode_id(cut)
-        if cut_id in seen_cuts or cut.space.name != 'unique':
-            continue
-        seen_cuts.add(cut_id)
-        _emit_one_intermediate(arch, bytestring, translation, ctx, state_format, cut, assignments, mapper)
-
-    # 2. Generate the output segment's rule, with its cut inputs as UNIQ deps.
-    out_seg = segments[-1]
-    seg_ops = out_seg.ops
-    if not seg_ops:
-        return
-    polarities = compute_polarity(seg_ops)
-    dep_set = extract_dependencies(out_vn, seg_ops, polarities, translation.ops, mapper)
-    for cut in out_seg.cut_inputs:
-        if cut.space.name != 'unique':
-            continue
-        cw = cut.size * 8
-        dep_set.value_deps[RegMapping(f'UNIQ_{cut.offset}', 0, cw - 1)] = polarities.get(get_varnode_id(cut), 1)
-    out_target, out_name, out_bs, out_be = generate_output_target(mapping)
-    generate_taint_assignments(
-        arch, bytestring, assignments, seg_ops, dep_set,
-        out_target, out_name, out_bs, out_be, mapper, mapping,
-    )
-
-
 @functools.lru_cache(maxsize=16384)
 def _cached_generate_static_rule(  # noqa: C901
     arch: Architecture,
@@ -561,39 +471,9 @@ def _cached_generate_static_rule(  # noqa: C901
         mapper,
     )
 
-    seen_cuts: set[str] = set()
     for target in targets_to_evaluate:
         out_vn = target.varnode
         mapping = target.mapping
-
-        # Segmented path: a cut-derived output consumes the materialized cut
-        # instead of re-deriving it from the sources through one whole-slice rule.
-        if _SEGMENTED:
-            segments = partition_slice(translation.ops, out_vn, CutPolicy.CONSERVATIVE)
-            _whole = slice_backward(translation.ops, out_vn)
-            # Do NOT segment an output that already has an EXACT whole-slice special
-            # rule (data-dependent bit-select `bt`, signed-overflow): cutting it would
-            # split the pattern and replace exactness with a floor (over-taint).
-            _has_exact_rule = (
-                _build_variable_bit_select_taint(_whole, mapper) is not None
-                or _build_signed_overflow_taint(_whole, mapper) is not None
-            )
-            # Do NOT segment when the output segment would be classified ORABLE
-            # (weldable): that rule ORs the dep taints and reads bit 0 of the result,
-            # which is unsound for a flag extracted from a high bit (e.g. adc's OF,
-            # whose segment loses its INT_ADD and falls to a BOOL_XOR->ORABLE form).
-            # The differential-based categories read the correct output bit via the
-            # cell, so they stay safe.
-            _seg_orable = (
-                len(segments) > 1
-                and determine_category(segments[-1].ops) is InstructionCategory.ORABLE
-            )
-            if len(segments) > 1 and not _has_exact_rule and not _seg_orable:
-                _emit_segmented_target(
-                    arch, bytestring, translation, ctx, state_format,
-                    out_vn, mapping, segments, assignments, mapper, seen_cuts,
-                )
-                continue
 
         slice_ops = slice_backward(translation.ops, out_vn)
         polarities = compute_polarity(slice_ops)
@@ -1174,7 +1054,7 @@ def generate_taint_assignments(  # noqa: C901
             return
 
         # Build value taint: OR of all value register/memory taints.
-        value_dependencies, _, _, _, _, _ = process_dependencies(value_deps)
+        value_dependencies, _, _, _ = process_dependencies(value_deps)
 
         if value_dependencies:
             expr = value_dependencies[0]
@@ -1277,7 +1157,7 @@ def generate_taint_assignments(  # noqa: C901
         )
 
         # Build the explicit value-taint OR fallback (transport term).
-        value_dependencies, _, _, _, _, _ = process_dependencies(dep_set.value_deps)
+        value_dependencies, _, _, _ = process_dependencies(dep_set.value_deps)
 
         if value_dependencies:
             transport = value_dependencies[0]
@@ -1303,8 +1183,8 @@ def generate_taint_assignments(  # noqa: C901
     # We work with value_deps for the differential/transport/category logic,
     # and addr_deps for the pointer-avalanche (LOAD pointer taint).
     # -----------------------------------------------------------------------
-    dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2, cell_seeds_rep1, cell_seeds_rep2 = (
-        process_dependencies(dep_set.value_deps)
+    dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(
+        dep_set.value_deps,
     )
 
     # CMOV / forward-CBRANCH old-destination injection.
@@ -1478,18 +1358,9 @@ def generate_taint_assignments(  # noqa: C901
                 addr_only_regs=sorted(_addr_only_regs_set),
                 neg_inputs=_neg_inputs,
             )
-        # Pure-register fast path: cell.pyx's static-cell evaluation.  When the
-        # slice reads a materialized cut (cell_seeds_*), the cut is seeded into the
-        # cell instead of loaded as a register; the (protected) defining op keeps
-        # the seed, so start_pc stays 0 (perf-only optimisation deferred).
-        C1_cell = InstructionCellExpr(
-            arch, bytestring.hex(), out_name, out_bit_start, out_bit_end,
-            cell_inputs_rep1, seeds=cell_seeds_rep1 or None,
-        )
-        C2_cell = InstructionCellExpr(
-            arch, bytestring.hex(), out_name, out_bit_start, out_bit_end,
-            cell_inputs_rep2, seeds=cell_seeds_rep2 or None,
-        )
+        # Pure-register fast path: cell.pyx's static-cell evaluation.
+        C1_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep1)
+        C2_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep2)
         return BinaryExpr(Op.XOR, C1_cell, C2_cell)
 
     if is_load_like:
@@ -2278,7 +2149,7 @@ def build_polarized_reg(name: str, slices: list[tuple[int, int, int]], replica_i
 
 def process_dependencies(
     deps: dict[RegMapping | MemMapping, int],
-) -> tuple[list[Expr], list[str], dict[str, Expr], dict[str, Expr], dict[int, Expr], dict[int, Expr]]:
+) -> tuple[list[Expr], list[str], dict[str, Expr], dict[str, Expr]]:
     dependencies: list[Expr] = []
     dependency_names: list[str] = []
 
@@ -2296,21 +2167,10 @@ def process_dependencies(
 
     cell_inputs_rep1: dict[str, Expr] = {}
     cell_inputs_rep2: dict[str, Expr] = {}
-    # Materialized-intermediate deps (name 'UNIQ_<rawoffset>') are not loadable
-    # registers -- they are SEEDED into the segment cell.  Their polarised replica
-    # value (V|T / V&~T over the materialized value/taint) is exactly the corner the
-    # segment differential needs when the cut is treated as an independent input.
-    cell_seeds_rep1: dict[int, Expr] = {}
-    cell_seeds_rep2: dict[int, Expr] = {}
 
     for name, slices in reg_groups.items():
-        if name.startswith('UNIQ_'):
-            raw_off = int(name[len('UNIQ_'):])
-            cell_seeds_rep1[raw_off] = build_polarized_reg(name, slices, 1)
-            cell_seeds_rep2[raw_off] = build_polarized_reg(name, slices, 2)
-        else:
-            cell_inputs_rep1[name] = build_polarized_reg(name, slices, 1)
-            cell_inputs_rep2[name] = build_polarized_reg(name, slices, 2)
+        cell_inputs_rep1[name] = build_polarized_reg(name, slices, 1)
+        cell_inputs_rep2[name] = build_polarized_reg(name, slices, 2)
 
     for name, mem_list in mem_groups.items():
         m = mem_list[0]
@@ -2329,7 +2189,7 @@ def process_dependencies(
         dependencies.append(T_mem)
         dependency_names.append(name)
 
-    return dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2, cell_seeds_rep1, cell_seeds_rep2
+    return dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2
 
 
 def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOperand | MemoryOperand, str, int, int]:

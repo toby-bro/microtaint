@@ -144,37 +144,11 @@ class BinaryExpr(Expr):
     def __init__(self, op: Op, lhs: Expr, rhs: Expr) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 
-class IntermediateValueExpr(Expr):
-    instruction: str
-    raw_off: int
-    bit_start: int
-    bit_end: int
-    input_regs: list[str]
-
-    def __init__(
-        self, instruction: str, raw_off: int, bit_start: int, bit_end: int, input_regs: list[str],
-    ) -> None: ...
-    def evaluate(self, context: EvalContext) -> int: ...
-
-class IntermediateTaintExpr(Expr):
-    instruction: str
-    raw_off: int
-    bit_start: int
-    bit_end: int
-    input_regs: list[str]
-
-    def __init__(
-        self, instruction: str, raw_off: int, bit_start: int, bit_end: int, input_regs: list[str],
-    ) -> None: ...
-    def evaluate(self, context: EvalContext) -> int: ...
-
 class TaintAssignment:
     target: TaintOperand | MemoryOperand
     dependencies: list[Expr]
     expression: Expr | None
     expression_str: str
-    is_intermediate: bool
-    value_expression: Expr | None
 
     def __init__(
         self,
@@ -182,8 +156,6 @@ class TaintAssignment:
         dependencies: list[Expr],
         expression: Expr | None = ...,
         expression_str: str = ...,
-        is_intermediate: bool = ...,
-        value_expression: Expr | None = ...,
     ) -> None: ...
 
 class LogicCircuit:
@@ -192,9 +164,6 @@ class LogicCircuit:
     instruction: str
     state_format: list[Register]
     _compiled: CompiledCircuit | None | bool
-    intermediate_assignments: list[TaintAssignment]
-    regular_assignments: list[TaintAssignment]
-    has_intermediates: bool
 
     def __init__(
         self,
@@ -228,8 +197,6 @@ class InstructionCellExpr(Expr):
     out_bit_start: int
     out_bit_end: int
     inputs: dict[str, Expr]
-    seeds: dict[int, Expr]
-    start_pc: int
 
     def __init__(
         self,
@@ -239,8 +206,6 @@ class InstructionCellExpr(Expr):
         out_bit_start: int,
         out_bit_end: int,
         inputs: dict[str, Expr],
-        seeds: dict[int, Expr] | None = ...,
-        start_pc: int = ...,
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 

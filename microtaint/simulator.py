@@ -385,13 +385,6 @@ class CellSimulator:
         # globally without code changes.
         if use_c is None:
             use_c = os.environ.get('MICROTAINT_DISABLE_C_KERNEL') != '1'
-        # Intermediate-taint materialization (bring-up) uses Cython-only evaluator
-        # entry points (evaluate_uniq_concrete / evaluate_concrete_seeded / UNIQ
-        # outputs) that the C kernel does not yet implement, so segmented circuits
-        # require the Cython evaluator.  Force it while MICROTAINT_SEGMENTED is set;
-        # porting these to the C kernel is a later step.
-        if os.environ.get('MICROTAINT_SEGMENTED') == '1':
-            use_c = False
         self.use_c = use_c
         self._pcode: None | PCodeCellEvaluator | PCodeCellEvaluatorC = None
         self._pcode_fallback_exc: Any = None

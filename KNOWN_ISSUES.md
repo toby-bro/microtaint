@@ -61,12 +61,14 @@ suite passes. ARM64 cross-ISA fuzzer under-taints drop **45 -> 20**.
   0/2000 N/Z/C/V vs exact GT — so it is a `cset`/ChainedCircuit interaction on a
   specific threaded flag pattern, not flag production).
 
-**Note on materialization (`docs/design/intermediate-taint-materialization.md`):**
-it is a sound, ISA-independent mechanism for the intra-instruction
-arithmetic-core->flag REUSE case, but it does NOT fix these fuzzer under-taints
-(gate-on `multiarch_fuzz` is byte-identical to gate-off) — production-side, while
-the bug is consumption-side. The earlier claim that materialization fixes the
-ARM64/PPC fuzzer under-taints was wrong; see design doc §10.3.
+**Note on intermediate-taint materialization ("splitting"):** it was prototyped
+(M1–M4) and measured to be soundness-NEUTRAL — over identical cases it changes the
+taint output in ZERO cases on every ISA (amd64/arm64/mips/ppc), because it
+re-organises *where* taint is computed but reuses the same 2-corner differential,
+re-deriving the identical result. It is production-side; these under-taints are
+consumption-side. It was reverted from main (commit `revert: remove
+intermediate-taint materialization`) and preserved on branch
+`intermediate_splitting`. The real levers are the flag floors and the fix below.
 
 ---
 

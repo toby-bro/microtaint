@@ -687,90 +687,6 @@ cdef class Constant(Expr):
         return self.value
 
 
-cdef class IntermediateValueExpr(Expr):
-    """Concrete value of an intermediate (unique) varnode -- one full run of the
-    instruction reading the unique named by its RAW Sleigh offset.  Feeds a
-    materialized cut point (docs/design/intermediate-taint-materialization.md).
-
-    Register-input only: builds the flat concrete state from ``input_values``.
-    Memory/address generality is added by the driver, which reuses
-    make_differential's richer input construction.
-    """
-    cdef public str instruction        # hex instruction bytes
-    cdef public unsigned long raw_off   # raw Sleigh unique offset of the intermediate
-    cdef public int bit_start
-    cdef public int bit_end
-    cdef public list input_regs         # register names read as concrete values
-
-    def __init__(self, str instruction, unsigned long raw_off,
-                 int bit_start, int bit_end, list input_regs):
-        self.instruction = instruction
-        self.raw_off = raw_off
-        self.bit_start = bit_start
-        self.bit_end = bit_end
-        self.input_regs = input_regs
-
-    def __str__(self):
-        return f'V_UNIQ[{self.raw_off}][{self.bit_end}:{self.bit_start}]'
-
-    def __repr__(self):
-        return f"IntermediateValueExpr(instr={self.instruction}, raw_off={self.raw_off})"
-
-    cpdef object evaluate(self, EvalContext context):
-        cdef dict flat = {}
-        cdef str r
-        for r in self.input_regs:
-            flat[r] = context.input_values.get(r, 0)
-        pcode = context.simulator._pcode
-        return pcode.evaluate_uniq_concrete(
-            self.instruction, flat, self.raw_off, self.bit_start, self.bit_end,
-        )
-
-
-cdef class IntermediateTaintExpr(Expr):
-    """Taint T(t) of an intermediate (unique) varnode, via the whole-slice
-    differential reading the unique as output.  Register-input only (see
-    IntermediateValueExpr).  For a monotone/transportable core this is exact;
-    the driver only materializes a cut where the intermediate's own slice is a
-    sound category.
-    """
-    cdef public str instruction
-    cdef public unsigned long raw_off
-    cdef public int bit_start
-    cdef public int bit_end
-    cdef public list input_regs
-
-    def __init__(self, str instruction, unsigned long raw_off,
-                 int bit_start, int bit_end, list input_regs):
-        self.instruction = instruction
-        self.raw_off = raw_off
-        self.bit_start = bit_start
-        self.bit_end = bit_end
-        self.input_regs = input_regs
-
-    def __str__(self):
-        return f'T_UNIQ[{self.raw_off}][{self.bit_end}:{self.bit_start}]'
-
-    def __repr__(self):
-        return f"IntermediateTaintExpr(instr={self.instruction}, raw_off={self.raw_off})"
-
-    cpdef object evaluate(self, EvalContext context):
-        cdef dict or_in = {}
-        cdef dict and_in = {}
-        cdef str r
-        cdef object v, t
-        for r in self.input_regs:
-            v = context.input_values.get(r, 0)
-            t = context.input_taint.get(r, 0)
-            or_in[r] = v | t
-            and_in[r] = v & ~t
-        pcode = context.simulator._pcode
-        return pcode.evaluate_differential_seeded(
-            self.instruction, or_in, and_in, {}, {},
-            f'UNIQ_{self.raw_off}', self.bit_start, self.bit_end, 0,
-        )
-
-
 cdef class UnaryExpr(Expr):
     cdef public object op
     cdef int _op_int
@@ -831,23 +747,13 @@ cdef class TaintAssignment:
     cdef public Expr expression
     cdef public str expression_str
     cdef public bint is_mem_target  # pre-tagged: True if target has address_expr
-    # Intermediate-taint materialization: when is_intermediate is True the target
-    # is a UNIQ_<rawoffset> pseudo-register whose (value, taint) is computed FIRST
-    # and threaded to downstream assignments; value_expression carries value(t)
-    # and expression carries T(t).  See LogicCircuit._evaluate_with_intermediates.
-    cdef public bint is_intermediate
-    cdef public Expr value_expression
 
-    def __init__(self, object target, list dependencies, Expr expression=None,
-                 str expression_str='', bint is_intermediate=False,
-                 Expr value_expression=None):
+    def __init__(self, object target, list dependencies, Expr expression=None, str expression_str=''):
         self.target = target
         self.dependencies = dependencies
         self.expression = expression
         self.expression_str = expression_str
         self.is_mem_target = hasattr(target, 'address_expr')
-        self.is_intermediate = is_intermediate
-        self.value_expression = value_expression
 
     def __str__(self):
         cdef str expr_str
@@ -889,11 +795,6 @@ cdef class LogicCircuit:
     cdef public bint has_unicorn_cells  # True if any assignment uses InstructionCellExpr
     cdef public object input_reg_names  # set of register names needed as value inputs
     cdef public object _compiled       # cached CompiledCircuit (or None if compile failed/disabled)
-    # Intermediate-taint materialization: assignments whose target is a UNIQ_
-    # pseudo-register, evaluated FIRST and threaded into the downstream ones.
-    cdef public list intermediate_assignments
-    cdef public list regular_assignments
-    cdef public bint has_intermediates
 
     def __init__(self, list assignments, object architecture, str instruction, list state_format):
         self.assignments = assignments
@@ -905,20 +806,13 @@ cdef class LogicCircuit:
         self.has_unicorn_cells = False
         self.input_reg_names = set()  # register names needed as VALUE inputs
         self._compiled = None
-        self.intermediate_assignments = []
-        self.regular_assignments = []
         for _a in assignments:
-            if _a.is_intermediate:
-                self.intermediate_assignments.append(_a)
-            else:
-                self.regular_assignments.append(_a)
             if not _a.is_mem_target and _a.target.name in ('RIP', 'EIP', 'PC'):
                 self._pc_target = _a.target.name
             if isinstance(_a.expression, InstructionCellExpr):
                 self.has_unicorn_cells = True
             # Collect TaintOperand register names (both taint + value operands)
             _collect_taint_operand_names(_a.expression, self.input_reg_names)
-        self.has_intermediates = len(self.intermediate_assignments) > 0
 
     def __str__(self):
         return '\n'.join(str(a) for a in self.assignments)
@@ -927,11 +821,6 @@ cdef class LogicCircuit:
         return f"LogicCircuit(instr={self.instruction}, assignments_count={len(self.assignments)})"
 
     cpdef dict evaluate(self, EvalContext context):
-        # Segmented circuits (intermediate-taint materialization) take the
-        # two-phase path and bypass the compiled fast path entirely -- the
-        # compiled backend does not yet model UNIQ_ intermediates.
-        if self.has_intermediates:
-            return self._evaluate_with_intermediates(context)
         # Compiled-bytecode fast path:  if circuit_c is importable and the
         # circuit has a compiled form (or one can be built lazily), use it.
         # Disabled by setting the env var MICROTAINT_DISABLE_COMPILED_CIRCUIT=1
@@ -1044,90 +933,6 @@ cdef class LogicCircuit:
                     f"    Reason: The execution of this branch is governed by a tainted condition."
                 )
             
-            if implicit_policy != ImplicitTaintPolicy.KEEP:
-                del output_taint[pc_reg]
-
-        return output_taint
-
-    cdef dict _evaluate_with_intermediates(self, EvalContext context):
-        """Two-phase evaluate for a segmented circuit (materialization).
-
-        Phase 1 computes each UNIQ_ intermediate's value(t) and taint T(t) and
-        writes them into augmented copies of the value/taint state.  Phase 2 runs
-        the downstream assignments against that augmented context, so a
-        TaintOperand(UNIQ_<off>) reads the materialized intermediate by name.
-        The output taint starts from the ORIGINAL state, so UNIQ_ pseudo-registers
-        never leak into a real register / memory taint.
-        """
-        cdef dict aug_taint = dict(context.input_taint)
-        cdef dict aug_values = dict(context.input_values)
-        cdef dict output_taint = dict(context.input_taint)
-        cdef EvalContext aug_ctx
-        cdef TaintAssignment a
-        cdef Expr dep
-        cdef str nm, target_name
-        cdef object val, mask, current, address
-        cdef int bit_start, bit_end
-        cdef object implicit_policy = context.implicit_policy
-
-        # Phase 1 — materialize intermediates into the augmented state.
-        for a in self.intermediate_assignments:
-            nm = a.target.name
-            aug_values[nm] = a.value_expression.evaluate(context) if a.value_expression is not None else 0
-            aug_taint[nm] = a.expression.evaluate(context) if a.expression is not None else 0
-
-        aug_ctx = EvalContext(
-            aug_taint, aug_values,
-            simulator=context.simulator,
-            implicit_policy=implicit_policy,
-            shadow_memory=context.shadow_memory,
-            mem_reader=context.mem_reader,
-        )
-
-        # Phase 2 — downstream assignments read the augmented context.
-        for a in self.regular_assignments:
-            if a.expression is not None:
-                val = a.expression.evaluate(aug_ctx)
-            elif a.expression_str:
-                raise NotImplementedError('Arbitrary string expressions not supported.')
-            else:
-                val = 0
-                for dep in a.dependencies:
-                    val |= dep.evaluate(aug_ctx)
-
-            if a.is_mem_target:
-                address = a.target.address_expr.evaluate(aug_ctx)
-                target_name = f'MEM_{hex(address)}_{a.target.size}'
-                bit_start = 0
-                bit_end = a.target.size * 8 - 1
-            else:
-                target_name = a.target.name
-                bit_start = a.target.bit_start
-                bit_end = a.target.bit_end
-
-            mask = ((<object>1 << (bit_end - bit_start + 1)) - 1) << bit_start
-            val = (val << bit_start) & mask
-            current = output_taint.get(target_name, 0)
-            output_taint[target_name] = (current & ~mask) | val
-
-        # Implicit-taint interceptor (mirror of the main path).
-        cdef str pc_reg = None
-        if self._pc_target is not None and output_taint.get(self._pc_target, 0) != 0:
-            pc_reg = self._pc_target
-        if pc_reg is not None:
-            from microtaint.types import ImplicitTaintPolicy, ImplicitTaintError
-            if implicit_policy == ImplicitTaintPolicy.WARN:
-                print(
-                    f"[Microtaint] Implicit Taint Detected! Control flow ({pc_reg}) "
-                    f"depends on tainted data at instruction: {self.instruction}"
-                )
-            elif implicit_policy == ImplicitTaintPolicy.STOP:
-                raise ImplicitTaintError(
-                    f"\n[!] FATAL: Implicit Taint Detected (segmented)\n"
-                    f"    Instruction (Hex): {self.instruction}\n"
-                    f"    Tainted Register : {pc_reg}\n"
-                    f"    Taint Mask       : {hex(output_taint[pc_reg])}\n"
-                )
             if implicit_policy != ImplicitTaintPolicy.KEEP:
                 del output_taint[pc_reg]
 
@@ -1305,23 +1110,14 @@ cdef class InstructionCellExpr(Expr):
     cdef public int out_bit_start
     cdef public int out_bit_end
     cdef public dict inputs
-    # Segment materialization: cut intermediates to seed (raw unique offset -> Expr
-    # producing this replica's seed value), and the pc to start execution from so the
-    # arithmetic core producing them is not re-run.  Empty/0 => the ordinary
-    # whole-instruction cell (unchanged fast path).
-    cdef public dict seeds
-    cdef public int start_pc
 
-    def __init__(self, object architecture, str instruction, str out_reg, int out_bit_start,
-                 int out_bit_end, dict inputs, dict seeds=None, int start_pc=0):
+    def __init__(self, object architecture, str instruction, str out_reg, int out_bit_start, int out_bit_end, dict inputs):
         self.architecture = architecture
         self.instruction = instruction
         self.out_reg = out_reg
         self.out_bit_start = out_bit_start
         self.out_bit_end = out_bit_end
         self.inputs = inputs
-        self.seeds = seeds if seeds is not None else {}
-        self.start_pc = start_pc
 
     def __str__(self):
         args = ', '.join(f'{k}={v}' for k, v in self.inputs.items())
@@ -1336,27 +1132,9 @@ cdef class InstructionCellExpr(Expr):
         cdef Expr expr
         cdef object sim = context.simulator  # cache — avoids repeated __get__ dispatch
         cdef object pcode
-        cdef dict seed_vals
-        cdef object off_key
 
         for name, expr in self.inputs.items():
             evaluated_inputs[name] = expr.evaluate(context)
-
-        # Segment path: this cell runs only a suffix (start_pc) and/or seeds
-        # materialized intermediates.  Routed through the Cython seeded evaluator;
-        # the whole-instruction cells below never take this branch (seeds empty,
-        # start_pc == 0).
-        if self.seeds or self.start_pc:
-            pcode = sim._pcode if sim is not None else None
-            if pcode is None or not hasattr(pcode, 'evaluate_concrete_seeded'):
-                raise RuntimeError('segmented cell requires the Cython seeded evaluator')
-            seed_vals = {}
-            for off_key, expr in self.seeds.items():
-                seed_vals[off_key] = expr.evaluate(context)
-            return pcode.evaluate_concrete_seeded(
-                self.instruction, evaluated_inputs, seed_vals,
-                self.out_reg, self.out_bit_start, self.out_bit_end, self.start_pc,
-            )
 
         # Fast path: if the simulator's pcode evaluator implements evaluate_concrete_flat
         # (the C evaluator does), skip MachineState construction entirely.
