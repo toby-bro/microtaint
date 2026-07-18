@@ -2097,6 +2097,22 @@ def generate_taint_assignments(  # noqa: C901
                 combined: Expr = BinaryExpr(Op.OR, old_dest_taint, source_taint_or)
             else:
                 combined = old_dest_taint
+            # Data-select VALUE difference.  When the condition is tainted, flipping
+            # it switches the output between the selected operands, so every bit
+            # where two selectable VALUES differ becomes tainted -- not just their
+            # taint union.  (csel x0,x1,x2,cc under-tainted the (x1 XOR x2) bits on
+            # untainted positions.)  XOR the multi-bit value-operand deps pairwise
+            # (1-bit condition flags are excluded -- they are the selector, gated
+            # separately, not selectable data).
+            _sel_vals: list[Expr] = [
+                _get_taint_operand(dm.name, dm.bit_start, dm.bit_end, False)
+                for dm in dep_set.value_deps
+                if isinstance(dm, RegMapping) and dm.bit_end > dm.bit_start
+            ]
+            for _i in range(len(_sel_vals)):
+                for _j in range(_i + 1, len(_sel_vals)):
+                    _vd: Expr = BinaryExpr(Op.XOR, _sel_vals[_i], _sel_vals[_j])
+                    combined = BinaryExpr(Op.OR, combined, _vd)
             out_width = out_bit_end - out_bit_start + 1
             gate = AvalancheExpr(flag_taint_or, out_width)
             gated_passthrough = BinaryExpr(Op.AND, combined, gate)

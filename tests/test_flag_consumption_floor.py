@@ -92,7 +92,6 @@ def test_csel_tainted_condition_uses_isa_general_passthrough():
     ARM64 NZCV condition OR-s in the operand union.  With x1==x2 in value the
     differential cancels to 0; only the passthrough (fed by the tainted flag)
     recovers the operand taint."""
-    engine._SEGMENTED = False
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(ARCH, _CSEL_LT, _FMT_SEL)
     ctx = EvalContext(
@@ -104,6 +103,32 @@ def test_csel_tainted_condition_uses_isa_general_passthrough():
     # tainted condition + cancelling operands: differential alone -> 0; the
     # passthrough must recover x1's taint.
     assert circ.evaluate(ctx).get('X0', 0) & 0xF == 0xF
+
+
+def test_csel_tainted_condition_taints_operand_value_difference():
+    """csel x0,x1,x2,cc = cond ? x1 : x2.  When the condition is TAINTED, flipping
+    it switches the output between x1 and x2, so every bit where the two operand
+    VALUES differ becomes tainted -- even on positions neither operand taints.  The
+    gated passthrough must OR in (x1 XOR x2), not just the operand taint union."""
+    engine._cached_generate_static_rule.cache_clear()
+    circ = engine.generate_static_rule(ARCH, _CSEL_LT, _FMT_SEL)
+    # N tainted -> condition (N != V) tainted; operands UNtainted but differ in
+    # value (0xFF00 vs 0x00FF -> differ in the low 16 bits).
+    ctx = EvalContext(
+        input_taint={**_ZERO_SEL, 'N': 1},
+        input_values={**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xFF00, 'X2': 0x00FF},
+        simulator=CellSimulator(ARCH, use_unicorn=False, use_c=False),
+        implicit_policy=ImplicitTaintPolicy.IGNORE,
+    )
+    assert circ.evaluate(ctx).get('X0', 0) & 0xFFFF == 0xFFFF  # (x1 XOR x2)
+    # condition UNtainted -> select is concrete -> no value-difference taint
+    ctx2 = EvalContext(
+        input_taint={**_ZERO_SEL},
+        input_values={**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xFF00, 'X2': 0x00FF},
+        simulator=CellSimulator(ARCH, use_unicorn=False, use_c=False),
+        implicit_policy=ImplicitTaintPolicy.IGNORE,
+    )
+    assert circ.evaluate(ctx2).get('X0', 0) == 0
 
 
 _MIPS = Architecture.MIPS64BE
