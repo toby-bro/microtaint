@@ -1824,7 +1824,18 @@ def generate_taint_assignments(  # noqa: C901
             isinstance(dm, RegMapping) and dm.bit_end == dm.bit_start
             for dm in dep_set.value_deps.keys()
         )
-        if (is_flag or _mono_all_deps_one_bit) and dependencies:
+        # A WIDE output that is INT_ZEXT of a 1-bit value is a BOOLEAN result (0/1
+        # in bit 0): a comparison consumed into a register (MIPS `slt`/`sltu` =
+        # zext(a0 < a1), lifted to INT_SLESS/INT_LESS + INT_ZEXT -> MONOTONIC).  Its
+        # differential is confined to bit 0, and the symmetric-comparison floor
+        # below is bit-0, so firing it taints only bit 0 -- sound, no over-taint of
+        # the always-zero upper bits.  This is the wide-operand analog of the
+        # 1-bit-flag-dep case above (`cset`), which is also zext-of-1-bit.
+        _mono_result_is_boolean = out_bit_end > out_bit_start and any(
+            op.opcode.name == 'INT_ZEXT' and op.inputs and op.inputs[0].size == 1
+            for op in slice_ops if op.output is not None
+        )
+        if (is_flag or _mono_all_deps_one_bit or _mono_result_is_boolean) and dependencies:
             _is_constant_result = _slice_has_constant_dominator(slice_ops)
             if not _is_constant_result:
                 # Symmetric two-operand comparison opcodes can produce

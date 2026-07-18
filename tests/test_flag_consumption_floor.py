@@ -106,6 +106,39 @@ def test_csel_tainted_condition_uses_isa_general_passthrough():
     assert circ.evaluate(ctx).get('X0', 0) & 0xF == 0xF
 
 
+_MIPS = Architecture.MIPS64BE
+_MIPS_FMT = [Register('V0', 64), Register('A0', 64), Register('A1', 64)]
+_MIPS_ZERO = {r.name: 0 for r in _MIPS_FMT}
+_SLT = b'\x00\x85\x10\x2a'   # slt  $2,$4,$5  = zext(a0 s< a1)  (big-endian word)
+_SLTU = b'\x00\x85\x10\x2b'  # sltu $2,$4,$5  = zext(a0  < a1)  (big-endian word)
+
+
+def _v0_taint(code: bytes, taint: dict[str, int]) -> int:
+    engine._cached_generate_static_rule.cache_clear()
+    circ = engine.generate_static_rule(_MIPS, code, _MIPS_FMT)
+    ctx = EvalContext(
+        input_taint={**_MIPS_ZERO, **taint},
+        input_values={**_MIPS_ZERO, 'A0': 0x5, 'A1': 0x5},
+        simulator=CellSimulator(_MIPS),
+        implicit_policy=ImplicitTaintPolicy.IGNORE,
+    )
+    return circ.evaluate(ctx).get('V0', 0)
+
+
+def test_mips_slt_comparison_into_wide_register():
+    """MIPS `slt`/`sltu` = zext(a0 < a1): a comparison of two WIDE operands consumed
+    into a 64-bit GPR.  Lifts to INT_SLESS/INT_LESS + INT_ZEXT -> MONOTONIC with a
+    wide (non-`is_flag`) output, so the symmetric-comparison floor was gated off.
+    With both operands fully tainted the 2-corner differential lands in the equal
+    regime and returns 0; the boolean-output floor must taint the result bit."""
+    for code in (_SLT, _SLTU):
+        assert _v0_taint(code, {'A0': 0xFFFFFFFFFFFFFFFF, 'A1': 0xFFFFFFFFFFFFFFFF}) & 1
+        # confined to bit 0 (the result is 0/1; no upper-bit over-taint)
+        assert _v0_taint(code, {'A0': 0xFFFFFFFFFFFFFFFF, 'A1': 0xFFFFFFFFFFFFFFFF}) == 1
+        # untainted operands -> untainted result
+        assert _v0_taint(code, {}) == 0
+
+
 if __name__ == '__main__':
     import pytest
 
