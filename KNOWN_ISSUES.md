@@ -32,13 +32,28 @@ multi-instruction carry handling is NOT yet ported. It is a coverage gap in the
 flag machinery, not a failure of the method (the SAME categories, applied to the
 SAME classes, are already sound on x86).
 
-**General fix (proposed):** these are all instances of ONE structural limitation
--- classification is per-output-slice, single-category, so a slice that mixes an
-arithmetic core with a flag extractor is forced into one rule, and the current
-patch is ISA-specific (`_X86_FLAG_OFFSETS` in `mapper.py`). Materializing taint
-on the intermediate arithmetic result and letting flag circuits consume it makes
-flags fall out of ordinary dataflow, ISA-independently. See
-`docs/design/intermediate-taint-materialization.md`.
+**ROOT CAUSE (measured 2026-07-18) — corrects the earlier "general fix" below.**
+These under-taints are in flag *consumption*, not production. Measurement: ARM64
+`cmp x1,x2` already produces sound N/Z flag taint (0/3000 under-taints vs 2^k exact
+GT, borrow-chain included). The fuzzer cases (`cmp;cset`, `cmp;csel`, `subs;sbc`)
+under-taint because the flag-CONSUMING instruction under-taints:
+
+  cset x0, lt  ->  X0 <- masked-cell(N,V) AND AVALANCHE(T_N|T_V)
+
+The COND_TRANSPORTABLE / MONOTONIC 1-bit-flag **floor** is gated on
+`out_bit_end - out_bit_start <= 7` (engine.py ~1803), sized for x86 `setcc` BYTE
+outputs. ARM64 `cset`/`csel` write the flag into a **64-bit** GPR, so the floor
+never fires; with the tainted flag masked to 0, `N!=V` collapses to 0 and X0 is
+reported clean. **Fix:** fire the flag floor on the low bit regardless of output
+register width. This is a small, targeted change, independent of the
+materialization work.
+
+**Note on materialization (`docs/design/intermediate-taint-materialization.md`):**
+it is a sound, ISA-independent mechanism for the intra-instruction
+arithmetic-core->flag REUSE case, but it does NOT fix these fuzzer under-taints
+(gate-on `multiarch_fuzz` is byte-identical to gate-off) — production-side, while
+the bug is consumption-side. The earlier claim that materialization fixes the
+ARM64/PPC fuzzer under-taints was wrong; see design doc §10.3.
 
 ---
 

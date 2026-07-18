@@ -291,12 +291,28 @@ reimplementing the floors would both duplicate ~1000 lines and risk divergence.
 So the intermediate should materialise enough to serve both: the two corners `t_a`, `t_b`
 (from which `T(t) = t_a ^ t_b`, and `value` on untainted bits) cover every case.
 
-### 10.3 The ARM64/PPC bug IS intra-instruction
-`cmp`/`subs` on every ISA writes each flag as its own architectural output whose slice
-mixes the subtraction with a flag-extract — the exact x86 `cmp` shape. x86 is sound only
-via ISA-specific tuning (`_X86_FLAG_OFFSETS`, the sign split); ARM64's NZCV / PPC's CR lift
-to different p-code the tuned rules miss, so they under-taint. Materialisation fixes this by
-making the flag a result-derived circuit classified by ordinary dataflow — ISA-independent.
+### 10.3 CORRECTION — the ARM64/PPC fuzzer under-taints are NOT what materialisation fixes
+An earlier version of this note claimed the ARM64/PPC `multiarch_fuzz` under-taints were
+intra-instruction flag *production* mixing, which materialisation would fix ISA-independently.
+**Measurement disproves that.** ARM64 `cmp x1,x2` already produces sound flag taint on both
+gates — 0/3000 N/Z under-taints vs 2^k exact GT, including borrow-chain (low-bit) taint that
+flips the sign. So the fuzzer under-taints (`cmp;cset`, `cmp;csel`, `subs;sbc`) are in flag
+*consumption*, not production, and materialisation (a production-side transform) does not
+touch them — gate-on vs gate-off `multiarch_fuzz` is byte-identical (45 under-taints, same
+breakdown).
+
+The actual root cause (pre-existing, orthogonal to this feature): the COND_TRANSPORTABLE /
+MONOTONIC 1-bit-flag **floor** is gated on ``out_bit_end - out_bit_start <= 7`` (engine.py
+~1803) — sized for x86 `setcc` *byte* outputs. ARM64 `cset`/`csel` write the flag into a
+**64-bit** GPR, so the floor never fires and the bare `masked-cell AND avalanche` COND rule
+under-taints (with the tainted flag masked to 0, `N!=V` collapses to `0`). Fix: make the
+flag floor fire on the low bit regardless of output register width. That is the real ARM64
+fix; it is a separate change from materialisation and is tracked in `KNOWN_ISSUES.md` §-1.
+
+**What materialisation genuinely is:** a sound, ISA-independent mechanism for the
+intra-instruction arithmetic-core→flag *reuse* case (x86 handles it today via `setcc`
+floors + the sign split; materialisation would let those become ISA-general). It is not the
+fix for the flag-consumption under-taints the cross-ISA fuzzer surfaced.
 
 ### 10.4 M4 shape (targeted extensions, all behind `MICROTAINT_SEGMENTED`)
 1. **Intermediate core**: reuse `make_differential` unchanged, targeting a `UNIQ_<off>`
