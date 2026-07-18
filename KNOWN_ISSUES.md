@@ -40,13 +40,26 @@ under-taint because the flag-CONSUMING instruction under-taints:
 
   cset x0, lt  ->  X0 <- masked-cell(N,V) AND AVALANCHE(T_N|T_V)
 
-The COND_TRANSPORTABLE / MONOTONIC 1-bit-flag **floor** is gated on
+The COND_TRANSPORTABLE / MONOTONIC 1-bit-flag **floor** was gated on
 `out_bit_end - out_bit_start <= 7` (engine.py ~1803), sized for x86 `setcc` BYTE
 outputs. ARM64 `cset`/`csel` write the flag into a **64-bit** GPR, so the floor
-never fires; with the tainted flag masked to 0, `N!=V` collapses to 0 and X0 is
-reported clean. **Fix:** fire the flag floor on the low bit regardless of output
-register width. This is a small, targeted change, independent of the
-materialization work.
+never fired; with the tainted flag masked to 0, `N!=V` collapses to 0 and X0 was
+reported clean.
+
+**PARTIAL FIX landed (a9b88bf).** Both COND flag floors (the 2-replica
+differential and the FullMaskAvalanche-per-flag) now fire when a flag is consumed
+into a wide register. x86 `setcc` unchanged (still <=8 bits); full x86 soundness
+suite passes. ARM64 cross-ISA fuzzer under-taints drop **45 -> 20**.
+
+**Remaining ARM64/PPC under-taints (separate, still open):**
+* `csel x0,x1,x2,cc` — conditional SELECT: x0 = cond ? x1 : x2.  This is a
+  CMOV-style data select; the missed bits are DATA bits of x1/x2, not the flag —
+  a select data-flow / gated-passthrough issue, not the flag floor.
+* `subs;sbc`, `adds;adc` — multi-instruction borrow/carry chains (the carry-in
+  taint across the two instructions).
+* A few `cmp;cset` cases still miss (cmp produces all flags soundly — verified
+  0/2000 N/Z/C/V vs exact GT — so it is a `cset`/ChainedCircuit interaction on a
+  specific threaded flag pattern, not flag production).
 
 **Note on materialization (`docs/design/intermediate-taint-materialization.md`):**
 it is a sound, ISA-independent mechanism for the intra-instruction
