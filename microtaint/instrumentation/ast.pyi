@@ -228,6 +228,8 @@ class InstructionCellExpr(Expr):
     out_bit_start: int
     out_bit_end: int
     inputs: dict[str, Expr]
+    seeds: dict[int, Expr]
+    start_pc: int
 
     def __init__(
         self,
@@ -237,6 +239,8 @@ class InstructionCellExpr(Expr):
         out_bit_start: int,
         out_bit_end: int,
         inputs: dict[str, Expr],
+        seeds: dict[int, Expr] | None = ...,
+        start_pc: int = ...,
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 

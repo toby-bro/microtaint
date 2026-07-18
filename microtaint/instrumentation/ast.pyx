@@ -1285,14 +1285,23 @@ cdef class InstructionCellExpr(Expr):
     cdef public int out_bit_start
     cdef public int out_bit_end
     cdef public dict inputs
+    # Segment materialization: cut intermediates to seed (raw unique offset -> Expr
+    # producing this replica's seed value), and the pc to start execution from so the
+    # arithmetic core producing them is not re-run.  Empty/0 => the ordinary
+    # whole-instruction cell (unchanged fast path).
+    cdef public dict seeds
+    cdef public int start_pc
 
-    def __init__(self, object architecture, str instruction, str out_reg, int out_bit_start, int out_bit_end, dict inputs):
+    def __init__(self, object architecture, str instruction, str out_reg, int out_bit_start,
+                 int out_bit_end, dict inputs, dict seeds=None, int start_pc=0):
         self.architecture = architecture
         self.instruction = instruction
         self.out_reg = out_reg
         self.out_bit_start = out_bit_start
         self.out_bit_end = out_bit_end
         self.inputs = inputs
+        self.seeds = seeds if seeds is not None else {}
+        self.start_pc = start_pc
 
     def __str__(self):
         args = ', '.join(f'{k}={v}' for k, v in self.inputs.items())
@@ -1307,9 +1316,27 @@ cdef class InstructionCellExpr(Expr):
         cdef Expr expr
         cdef object sim = context.simulator  # cache — avoids repeated __get__ dispatch
         cdef object pcode
+        cdef dict seed_vals
+        cdef object off_key
 
         for name, expr in self.inputs.items():
             evaluated_inputs[name] = expr.evaluate(context)
+
+        # Segment path: this cell runs only a suffix (start_pc) and/or seeds
+        # materialized intermediates.  Routed through the Cython seeded evaluator;
+        # the whole-instruction cells below never take this branch (seeds empty,
+        # start_pc == 0).
+        if self.seeds or self.start_pc:
+            pcode = sim._pcode if sim is not None else None
+            if pcode is None or not hasattr(pcode, 'evaluate_concrete_seeded'):
+                raise RuntimeError('segmented cell requires the Cython seeded evaluator')
+            seed_vals = {}
+            for off_key, expr in self.seeds.items():
+                seed_vals[off_key] = expr.evaluate(context)
+            return pcode.evaluate_concrete_seeded(
+                self.instruction, evaluated_inputs, seed_vals,
+                self.out_reg, self.out_bit_start, self.out_bit_end, self.start_pc,
+            )
 
         # Fast path: if the simulator's pcode evaluator implements evaluate_concrete_flat
         # (the C evaluator does), skip MachineState construction entirely.

@@ -32,10 +32,13 @@ import random
 import pytest
 
 from microtaint.instrumentation.ast import (
+    BinaryExpr,
     EvalContext,
+    InstructionCellExpr,
     IntermediateTaintExpr,
     IntermediateValueExpr,
     LogicCircuit,
+    Op,
     TaintAssignment,
     TaintOperand,
 )
@@ -224,6 +227,41 @@ def test_concrete_seeded_is_the_single_replica_building_block():
 
         v = ev.evaluate_concrete_seeded(HEX, {'RAX': a, 'RBX': b}, {}, f'UNIQ_{sub_off}', 0, w - 1, 0)
         assert v == ev.evaluate_uniq_concrete(HEX, {'RAX': a, 'RBX': b}, sub_off, 0, w - 1)
+
+
+def test_seeded_instruction_cell_expr_is_a_segment_differential():
+    """A seeded InstructionCellExpr, reading a cut intermediate's corner from the
+    context, is one replica of a segment differential; XORing the two corner
+    replicas reproduces evaluate_differential_seeded -- so make_differential can
+    build segment differentials by emitting seeded cells."""
+    sim = _StubSim()
+    ev = sim._pcode
+    _e, sub_off, sub_size, _f, _rd = _setup()
+    w = sub_size * 8
+    spc = ev.uniq_start_pc(HEX, sub_off)
+    ka, kb = f'UNIQ_{sub_off}_A', f'UNIQ_{sub_off}_B'
+    rng = random.Random(21)
+    for _ in range(2000):
+        a, b = rng.getrandbits(64), rng.getrandbits(64)
+        ta = rng.getrandbits(64) & rng.getrandbits(64)
+        tb = rng.getrandbits(64) & rng.getrandbits(64)
+        or_in = {'RAX': (a | ta) & MASK64, 'RBX': (b | tb) & MASK64}
+        and_in = {'RAX': (a & ~ta) & MASK64, 'RBX': (b & ~tb) & MASK64}
+        t_a = ev.evaluate_uniq_concrete(HEX, or_in, sub_off, 0, w - 1)
+        t_b = ev.evaluate_uniq_concrete(HEX, and_in, sub_off, 0, w - 1)
+        ctx = EvalContext(input_taint={}, input_values={ka: t_a, kb: t_b}, simulator=sim)
+        for out in ('SF', 'ZF', 'CF'):
+            cell_or = InstructionCellExpr(
+                ARCH, HEX, out, 0, 0, {}, seeds={sub_off: TaintOperand(ka, 0, w - 1, False)}, start_pc=spc,
+            )
+            cell_and = InstructionCellExpr(
+                ARCH, HEX, out, 0, 0, {}, seeds={sub_off: TaintOperand(kb, 0, w - 1, False)}, start_pc=spc,
+            )
+            seg = BinaryExpr(Op.XOR, cell_or, cell_and).evaluate(ctx)
+            gt = ev.evaluate_differential_seeded(
+                HEX, or_in, and_in, {sub_off: t_a}, {sub_off: t_b}, out, 0, 0, spc,
+            )
+            assert seg == gt
 
 
 if __name__ == '__main__':
