@@ -1800,8 +1800,17 @@ def generate_taint_assignments(  # noqa: C901
         # INTERNAL to the monolithic block -- STORE/LOAD forces monolithic -- so no
         # flag-output rule can see it; only the differential on the byte output can.
         # Hence gate on <= 8-bit outputs rather than strictly 1-bit.
-        if out_bit_end - out_bit_start <= 7:
-            expr = BinaryExpr(Op.OR, expr, make_differential())
+        # The 2-replica differential is a SOUND floor: it reports a bit only when the
+        # two masked replicas genuinely differ, so it can never over-taint (see the
+        # rationale above).  Apply it to EVERY COND_TRANSPORTABLE output, not only x86
+        # setcc BYTE outputs -- a flag consumed into a WIDE register (ARM64
+        # `cset`/`csel` write the 0/1 condition into a 64-bit GPR) otherwise gets only
+        # the masked-single-replica term, which under-taints when masking the flag
+        # inputs to 0 collapses the condition (`cset x0,lt` -> N!=V -> 0!=0 -> clean).
+        # For a wide output the differential is 0 on the high bits (both replicas 0
+        # there) and taints exactly the meaningful low bit, so this never over-taints
+        # the upper bytes either.
+        expr = BinaryExpr(Op.OR, expr, make_differential())
 
         # CMOV not-taken passthrough: when the condition is false the destination
         # register keeps its OLD value, so its OLD taint must also survive.
@@ -2067,12 +2076,18 @@ def generate_taint_assignments(  # noqa: C901
     #   - Small byte outputs (e.g. setcc al = RAX[7:0]) whose ALL deps are
     #     1-bit flag registers.  The floor produces a 1-byte result (0x01 or 0).
     _ct_is_small_output = (out_bit_end - out_bit_start) <= 7  # ≤ 8 bits wide
-    _ct_all_deps_one_bit = all(
+    _ct_all_deps_one_bit = bool(dep_set.value_deps) and all(
         isinstance(dm, RegMapping) and dm.bit_end == dm.bit_start for dm in dep_set.value_deps.keys()
     )
+    # Also fire for a WIDE output when every dep is a 1-bit flag: a condition
+    # consumed into a large register (ARM64 `cset`/`csel` -> 64-bit GPR) is still a
+    # 0/1 in bit 0, and the 2-corner differential floor misses the non-monotone case
+    # where BOTH flags are tainted (`cset x0,lt` = N!=V: the corners (1,1) and (0,0)
+    # both give 0, so the interior (0,1)/(1,0) is missed).  FullMaskAvalanche per
+    # 1-bit flag dep (masked to bit 0 below) is the sound floor there.
     if (
         cat == InstructionCategory.COND_TRANSPORTABLE
-        and _ct_is_small_output
+        and (_ct_is_small_output or _ct_all_deps_one_bit)
         and not isinstance(mapping, MemMapping)
         and not _slice_has_constant_dominator(slice_ops)
     ):
