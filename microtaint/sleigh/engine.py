@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable
 
@@ -15,6 +16,7 @@ from microtaint.instrumentation.ast import (
     Expr,
     FullMaskAvalancheExpr,
     InstructionCellExpr,
+    IntermediateValueExpr,
     LogicCircuit,
     MemoryDifferentialExpr,
     MemoryOperand,
@@ -27,9 +29,14 @@ from microtaint.instrumentation.ast import (
 )
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import EXTENSION_OPCODES, TRANSLATABLE_OPCODES, determine_category
+from microtaint.sleigh.partition import CutPolicy, partition_slice
 from microtaint.sleigh.polarity import compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
+
+# Intermediate-taint materialization (docs/design/intermediate-taint-materialization.md).
+# Opt-in during bring-up; the default path is byte-for-byte unchanged.
+_SEGMENTED = os.environ.get('MICROTAINT_SEGMENTED') == '1'
 
 _CONST_CACHE: dict[int, Constant] = {}
 
@@ -446,6 +453,59 @@ def apply_sless_msb_split(
     return new_deps
 
 
+def _emit_core_intermediates(
+    arch: Architecture,
+    bytestring: bytes,
+    translation: Translation,
+    ctx: Context,
+    state_format: list[Register],
+    targets_to_evaluate: list[EvalTarget],
+    assignments: list[TaintAssignment],
+    mapper: StateMapper,
+) -> None:
+    """Materialize each cut result's taint T(t) as an ``is_intermediate`` assignment.
+
+    This is the CORE half of segmentation (docs/design/…): the reused arithmetic
+    result's taint is computed once, via the existing polarity-aware differential
+    targeting the unique (a ``UNIQ_<off>`` pseudo-register).  Downstream outputs
+    keep their whole-slice rules for now, so the visible taint is byte-identical --
+    this exercises the partition / UNIQ-target / two-phase plumbing before the
+    downstream rewrite consumes the intermediates.
+    """
+    seen: set[str] = set()
+    for target in targets_to_evaluate:
+        segments = partition_slice(translation.ops, target.varnode, CutPolicy.CONSERVATIVE)
+        for seg in segments[:-1]:  # every segment except the output's own terminal
+            cut = seg.output
+            cut_id = get_varnode_id(cut)
+            if cut_id in seen or cut.space.name != 'unique':
+                continue
+            seen.add(cut_id)
+
+            core_slice = slice_backward(translation.ops, cut)
+            if not core_slice:
+                continue
+            width = cut.size * 8
+            name = f'UNIQ_{cut.offset}'
+            mapping = RegMapping(name=name, bit_start=0, bit_end=width - 1)
+
+            polarities = compute_polarity(core_slice)
+            dep_set = extract_dependencies(cut, core_slice, polarities, translation.ops, mapper)
+            split = apply_sless_msb_split(dep_set.value_deps, core_slice, ctx, arch, state_format)
+            dep_set = DependencySet(value_deps=split, addr_deps=dep_set.addr_deps)
+            out_target, out_name, out_bs, out_be = generate_output_target(mapping)
+
+            before = len(assignments)
+            generate_taint_assignments(
+                arch, bytestring, assignments, core_slice, dep_set,
+                out_target, out_name, out_bs, out_be, mapper, mapping,
+            )
+            input_regs = sorted({d.name for d in dep_set.value_deps if isinstance(d, RegMapping)})
+            for a in assignments[before:]:
+                a.is_intermediate = True
+                a.value_expression = IntermediateValueExpr(bytestring.hex(), cut.offset, 0, width - 1, input_regs)
+
+
 @functools.lru_cache(maxsize=16384)
 def _cached_generate_static_rule(  # noqa: C901
     arch: Architecture,
@@ -676,6 +736,12 @@ def _cached_generate_static_rule(  # noqa: C901
             output_cond_written=output_cond_written,
             is_bit_count=is_bit_count,
             is_software_loop=is_software_loop,
+        )
+
+    if _SEGMENTED:
+        _emit_core_intermediates(
+            arch, bytestring, translation, ctx, state_format,
+            targets_to_evaluate, assignments, mapper,
         )
 
     return LogicCircuit(
