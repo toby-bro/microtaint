@@ -129,6 +129,17 @@ def test_subfc_subfe_borrow_chain_ripples():
     assert _taint(_SUBFC_SUBFE, {'R4': 0xF, 'R5': 0x10}, {'R4': 0x1}) == 0x3
 
 
+def test_subfe_borrow_in_polarity():
+    """subfe r3,r4,r5 = r5 - r4 - !xer_ca = r5 - r4 - 1 + xer_ca -- the borrow-in is
+    an EFFECTIVELY POSITIVE operand (double negation via BOOL_NEGATE).
+    compute_polarity must flip xer_ca's polarity through the BOOL_NEGATE, or the
+    tainted borrow-in lands in the wrong differential corner and R3 under-taints
+    (measured 138/2000 fuzzer under-taints with a tainted carry, 0 without).  With
+    r4=r5=0 and only xer_ca tainted, R3 = -!xer_ca toggles between 0 and -1, so the
+    whole word is tainted."""
+    assert _taint(_SUBFC_SUBFE[8:], {'R4': 0, 'R5': 0}, {'XER_CA': 1}) == 0xFFFFFFFF
+
+
 def test_extsb_not_regressed_by_native_routing():
     """``extsb`` reads only R4's low byte; the fix must NOT route it through the
     native kernel (which would read the wrong byte under BE).  Tainting the low

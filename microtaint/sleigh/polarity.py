@@ -87,7 +87,16 @@ def compute_polarity(  # noqa: C901
                     node_polarities[inp_id] = current_polarity
                     polarity_map[inp_id] = current_polarity
 
-        elif op_name == 'INT_NEGATE':  # Bitwise NOT (often simulated logically as negative)
+        elif op_name in ('INT_NEGATE', 'BOOL_NEGATE', 'INT_2COMP'):
+            # Ops that INVERT the dependency direction: bitwise NOT (~x = -x-1),
+            # logical NOT (!x = 1-x), two's-complement negation (-x).  Increasing the
+            # operand decreases the output through them, so flip polarity -- exactly
+            # like INT_SUB's RHS.  BOOL_NEGATE was previously unhandled (default
+            # branch, propagate): PPC `subfe`/`sbc` compute `... - !carry`, i.e.
+            # `... - (1 - carry) = ... + carry`, so the borrow-in is EFFECTIVELY a
+            # positive operand; leaving it negative polarised it into the wrong
+            # differential corner and under-tainted the borrow chain whenever the
+            # carry was tainted (subfe: 138/2000 with tainted carry, 0 without).
             for inp in op.inputs:
                 if inp.space.name != 'const':
                     inp_id = get_varnode_id(inp)
