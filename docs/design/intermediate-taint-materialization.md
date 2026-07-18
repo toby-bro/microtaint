@@ -259,3 +259,59 @@ not recomputed per consumer.
 - **Interaction with polarity** (`microtaint/sleigh/polarity.py`): polarity is propagated
   backward over the whole slice today. Per-segment polarity must be seeded at each cut
   boundary from the materialized value's polarity label; verify this composes.
+
+---
+
+## 10. Bring-up findings (M1–M4 groundwork)
+
+Empirical results from building the primitives (M1–M3 landed; M4 in progress).
+
+### 10.1 The 2-corner segment differential is UNSOUND for flags — floors are essential
+Materializing a cut result as its two differential corners `(t_a, t_b)` and seeding a
+downstream flag's segment differential from them does **not** suffice. Measured on x86
+`cmp` against exact 2^k ground truth: the raw 2-corner differential under-taints SF/ZF in
+6–8 / 8000 cases with the *polarity-correct* `D^{+-}` corners (8 with `D^{++}`). Reason:
+SF/ZF are **non-monotone** in the result, so any 2-point evaluation misses interior
+toggles. The engine is sound today only because each flag category adds a **floor**
+(`FullMaskAvalanche` / pairwise `Avalanche` / the exact `SignedOverflow` / `VariableBitSelect`
+rules). Those floors live inside `generate_taint_assignments`.
+
+**Consequence for M4:** the downstream segment rule cannot be a bolt-on Expr. It must reuse
+the engine's per-category rule machinery (differential **plus** the category floor). So M4
+is a *targeted extension* of `generate_taint_assignments`, not a parallel rule generator —
+reimplementing the floors would both duplicate ~1000 lines and risk divergence.
+
+### 10.2 Each downstream category needs different info from the intermediate
+- Monotone / transportable downstream: the polarised **corners** `(t_a, t_b)` (a 2-replica
+  seeded differential). `(value, taint)` alone is insufficient — it cannot reconstruct the
+  polarised corners a mixed-polarity core like `a−b` needs (the borrow-polarity issue,
+  KNOWN_ISSUES #2).
+- Condition / avalanche downstream: `(value(t), T(t))` fed to the masked-single-replica /
+  avalanche rule.
+So the intermediate should materialise enough to serve both: the two corners `t_a`, `t_b`
+(from which `T(t) = t_a ^ t_b`, and `value` on untainted bits) cover every case.
+
+### 10.3 The ARM64/PPC bug IS intra-instruction
+`cmp`/`subs` on every ISA writes each flag as its own architectural output whose slice
+mixes the subtraction with a flag-extract — the exact x86 `cmp` shape. x86 is sound only
+via ISA-specific tuning (`_X86_FLAG_OFFSETS`, the sign split); ARM64's NZCV / PPC's CR lift
+to different p-code the tuned rules miss, so they under-taint. Materialisation fixes this by
+making the flag a result-derived circuit classified by ordinary dataflow — ISA-independent.
+
+### 10.4 M4 shape (targeted extensions, all behind `MICROTAINT_SEGMENTED`)
+1. **Intermediate core**: reuse `make_differential` unchanged, targeting a `UNIQ_<off>`
+   output. *Enabled now*: the Cython concrete evaluator reads UNIQ outputs
+   (`evaluate_concrete`/`_state`/`_differential` route through `_read_output_any`), so the
+   existing polarity-aware differential materialises `T(t)` with no new rule code.
+2. **`extract_dependencies`**: return each cut `UNIQ_<off>` as a leaf dep (a `UniqMapping`
+   with `name='UNIQ_<off>'`), so the existing floors — which iterate deps — apply to it.
+3. **`make_differential` / `InstructionCellExpr`**: seed cut-UNIQ deps (from the
+   materialised corners) and run from `start_pc`, via the M1 primitive.
+4. **`generate_output_target`**: accept a UNIQ output target for intermediate segments.
+5. **Driver**: `partition_slice(CONSERVATIVE)` per output; emit intermediate assignments
+   then downstream, assemble the two-phase `LogicCircuit` (M2). `compute_polarity` per
+   segment (each segment keeps its own terminal, so it composes — agent-verified).
+
+Validation gate before flipping the default: `NONE` policy byte-identical to today across
+the x86 corpus; `CONSERVATIVE` on `sub`/`cmp` matches exact-GT for SF/ZF/PF and is
+byte-identical for CF/OF/AF (operand-derived, not cut).

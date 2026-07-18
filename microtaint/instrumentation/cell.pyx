@@ -1750,7 +1750,7 @@ cdef class PCodeCellEvaluator:
         self._load(frame, flat_inputs)
         _execute_decoded(frame, decoded)
         self.native_calls += 1
-        return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
+        return self._read_output_any(frame, decoded, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
 
     def evaluate_concrete_state(self, cell, dict regs, dict mem):
         """
@@ -1765,7 +1765,7 @@ cdef class PCodeCellEvaluator:
         self._load_state(frame, regs, mem)
         _execute_decoded(frame, decoded)
         self.native_calls += 1
-        return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
+        return self._read_output_any(frame, decoded, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
 
     def evaluate_differential(self, cell, or_inputs, and_inputs):
         cdef _PCodeFrame fa = self._frame_a
@@ -1776,10 +1776,10 @@ cdef class PCodeCellEvaluator:
             raise PCodeFallbackNeeded('instruction requires Unicorn')
         self._load(fa, or_inputs)
         _execute_decoded(fa, decoded)
-        out_or = self._read_output(fa, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
+        out_or = self._read_output_any(fa, decoded, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
         self._load(fb, and_inputs)
         _execute_decoded(fb, decoded)
-        out_and = self._read_output(fb, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
+        out_and = self._read_output_any(fb, decoded, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
         self.native_calls += 1
         return out_or ^ out_and
 
