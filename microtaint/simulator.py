@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import logging
 import os
 from dataclasses import dataclass, field
@@ -261,6 +262,76 @@ class MachineState:
     mem: dict[int, int] = field(default_factory=dict[int, int])
 
 
+@dataclass(frozen=True, slots=True)
+class _OutputCell:
+    """Minimal cell for PCodeCellEvaluator.evaluate_concrete to read one instruction
+    output register (any width) from a flat input-register dict.  Used by
+    CellSimulator._read_reg_concrete."""
+
+    instruction: str
+    out_reg: str
+    out_bit_start: int = 0
+    out_bit_end: int = 0
+
+
+@functools.lru_cache(maxsize=None)
+def _maximal_register_varnodes(arch: Architecture) -> frozenset[tuple[str, int, int]]:
+    """The ``(space, offset, size)`` of every named register that is MAXIMAL: not a
+    byte-window strictly contained in a wider named register.
+
+    Reading a maximal register moves its whole integer value, so the native
+    kernel's internal byte layout is unobservable and the value round-trips
+    regardless of endianness.  A contained sub-window is byte-order dependent: the
+    MIPS64 32-bit alias ``register[V0+4:4]`` is the LOW word under BE but the LE
+    kernel reads it as the HIGH word, and PPC ``extsb`` reads ``register[r4+3:1]``
+    (an unnamed slice).  Both must fall back to Unicorn.  PPC/SPARC 32-bit GPRs are
+    maximal (no wider container), so their arithmetic stays on the native path."""
+    from microtaint.sleigh.lifter import get_context  # noqa: PLC0415
+
+    ctx = get_context(str(arch))
+    regs = [(v.space.name, v.offset, v.size) for v in ctx.registers.values() if v.space.name == 'register']
+    maximal = set()
+    for space, off, size in regs:
+        contained = any(
+            s2 > size and o2 <= off and off + size <= o2 + s2 for _, o2, s2 in regs
+        )
+        if not contained:
+            maximal.add((space, off, size))
+    return frozenset(maximal)
+
+
+@functools.lru_cache(maxsize=8192)
+def _native_be_safe(arch: Architecture, instruction_hex: str) -> bool:
+    """True iff the native little-endian p-code kernel evaluates this instruction
+    correctly on a big-endian target.  That holds iff the instruction (a) performs
+    no memory access, and (b) touches register-space varnodes only as MAXIMAL named
+    registers -- never a sub-register byte slice nor a byte-window alias of a wider
+    register (see ``_maximal_register_varnodes``).
+
+    Under those conditions every register access moves a whole integer value, which
+    round-trips regardless of the kernel's byte layout, and every remaining p-code
+    op works on integer values (endianness independent).  Anything reading a
+    byte-offset window -- MIPS64's 32-bit register halves, PPC ``extsb``'s low byte
+    -- reads the wrong bytes under the kernel's LE layout, so it stays on Unicorn."""
+    from microtaint.sleigh.lifter import get_context  # noqa: PLC0415
+
+    try:
+        ops = get_context(str(arch)).translate(bytes.fromhex(instruction_hex), 0x1000).ops
+    except Exception:
+        return False
+    maximal = _maximal_register_varnodes(arch)
+    for op in ops:
+        if op.opcode.name in ('LOAD', 'STORE'):
+            return False
+        varnodes = list(op.inputs)
+        if op.output is not None:
+            varnodes.append(op.output)
+        for v in varnodes:
+            if v.space.name == 'register' and (v.space.name, v.offset, v.size) not in maximal:
+                return False
+    return True
+
+
 class CellSimulator:
     """
     Evaluates microtaint InstructionCellExpr natively by evaluating the instruction via Unicorn
@@ -299,6 +370,19 @@ class CellSimulator:
         self.use_c = use_c
         self._pcode: None | PCodeCellEvaluator | PCodeCellEvaluatorC = None
         self._pcode_fallback_exc: Any = None
+        # Native Cython evaluator used on a BIG-ENDIAN target to evaluate
+        # register-only instructions, which `_pcode` is disabled for (the native
+        # register file is byte-offset indexed and therefore wrong for BE memory
+        # and sub-register aliasing -- see the endianness note above).  A
+        # register-only instruction reads and writes whole registers as integer
+        # values, so the byte layout of the register file is unobservable and the
+        # result round-trips correctly regardless of endianness.  The native
+        # kernel is also STRICTLY more capable than Unicorn here: it models the
+        # PPC XER carry/overflow bits as first-class varnodes, which Unicorn PPC
+        # neither seeds nor exposes, so carry/borrow-chain taint (addc;adde,
+        # subfc;subfe) is only sound through this path.  Created lazily via
+        # `_native_be`; see `_read_reg_concrete` and `evaluate_concrete`.
+        self._be_native: PCodeCellEvaluator | None = None
 
         # Initialise Unicorn FIRST.  pypcode (called inside _get_pcode_evaluator_class)
         # invokes GHIDRA's native runtime which can interfere with Unicorn's allocator
@@ -548,6 +632,37 @@ class CellSimulator:
             return 0
         return int(self.uc.reg_read(uc_reg))
 
+    def _native_be(self) -> PCodeCellEvaluator:
+        """Lazily-created native Cython evaluator for big-endian register-only
+        instructions (see the `_be_native` field comment)."""
+        if self._be_native is None:
+            self._be_native = PCodeCellEvaluator(self.arch)
+        return self._be_native
+
+    def _use_native_be(self, cell: Any) -> bool:
+        """True iff `cell`'s instruction should be evaluated by the native kernel
+        on this (big-endian) target: only native-BE-safe instructions qualify, and
+        only when Unicorn is the active concrete engine (the native `_pcode` path,
+        when enabled, already handles everything)."""
+        return (
+            self._is_big_endian
+            and self.use_unicorn
+            and _native_be_safe(self.arch, cell.instruction)
+        )
+
+    def _read_reg_concrete(self, instruction_hex: str, input_regs: dict[str, int], reg_name: str, bits: int) -> int:
+        """Concrete post-value of output register `reg_name` (width `bits`),
+        computed by the native p-code kernel from `input_regs`.  Used on big-endian
+        targets to thread concrete state across a chained sequence when Unicorn
+        cannot seed/read the XER carry varnodes; correct for native-BE-safe
+        instructions (see `_native_be_safe`).  Raises PCodeFallbackNeeded for
+        instructions the native kernel cannot decode, so the caller can fall back."""
+        # _OutputCell is a structural stand-in for InstructionCellExpr: the native
+        # evaluate_concrete reads only .instruction / .out_reg / .out_bit_start /
+        # .out_bit_end, which the dataclass supplies.
+        cell = _OutputCell(instruction_hex, reg_name, 0, bits - 1)
+        return int(self._native_be().evaluate_concrete(cell, input_regs))  # type: ignore[arg-type]
+
     def _execute(
         self,
         bytestring: bytes,
@@ -783,6 +898,17 @@ class CellSimulator:
             except self._pcode_fallback_exc:
                 self._pcode.fallback_calls += 1
                 # Fall through to Unicorn below
+
+        # --- Native path for big-endian register-only instructions ---
+        # Unicorn cannot seed or read the PPC XER carry/overflow varnodes, so a
+        # differential over a carry-consuming instruction (adde reading xer_ca)
+        # collapses.  The native kernel models those varnodes and is byte-order
+        # agnostic for register-only instructions (see `_be_native`).
+        if self._use_native_be(cell):
+            try:
+                return self._native_be().evaluate_concrete_state(cell, v_state.regs, v_state.mem)
+            except PCodeFallbackNeeded:
+                pass  # native kernel cannot decode -- fall through to Unicorn
 
         # --- Unicorn path (use_unicorn=True, or pcode fallback) ---
         try:

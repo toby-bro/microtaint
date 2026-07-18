@@ -140,6 +140,46 @@ little-endian-only, so any SUB-register read on a BE target mapped to the wrong
 bits (SPARC's `sll %g1,%g2,%g3` reads `register:0xb:1` = g2's least-significant
 byte, reported as bits 24..31 instead of 0..7). See `_sub_reg_bit_start`.
 
+### Partial native-BE routing (2026-07-18): carry/borrow chains
+
+The Unicorn workaround has a hole option 2 does not: **Unicorn PPC neither seeds
+nor exposes the XER carry varnode** (`xer_ca`). So a carry-consuming instruction
+(`adde` = `rA + rB + xer_ca`) reads carry-in `0` in both differential replicas
+and its differential collapses -- `addc;adde` and `subfc;subfe` under-tainted the
+high bits of the extended result (the PPC entries above).
+
+Fix (`_native_be_safe`, `CellSimulator._use_native_be` / `_read_reg_concrete`,
+`_run_concrete_step`): on a BE target, evaluate an instruction with the native
+kernel **when it is native-BE-safe** -- no memory access and every register-space
+varnode is a MAXIMAL named register (not a byte-window strictly contained in a
+wider register). Reading a maximal register moves its whole integer value, so the
+kernel's internal byte layout is unobservable and the result round-trips
+regardless of endianness; and the native kernel models `xer_ca` as a first-class
+varnode, so the carry is seeded (carry-in) and read back (carry-out) correctly.
+This is a scoped slice of option 2: it makes the native kernel the concrete engine
+for exactly the instructions where it is provably byte-order-independent.
+
+The MAXIMAL requirement (not merely "named") is load-bearing: MIPS64 32-bit ops
+read/write `register[GPR+4:4]`, a byte-window alias of the 64-bit GPR (the LOW
+word under BE, which the LE kernel reads as the HIGH word). Naming alone would
+admit them and mis-read the wrong half; requiring maximal registers keeps them on
+Unicorn while still routing PPC GPR arithmetic (PPC GPRs have no wider container)
+and MIPS 64-bit ops (verified byte-identical to Unicorn). `extsb` reads
+`register[rA+3:1]` (an unnamed slice) and is likewise excluded.
+`tests/test_ppc_carry_chain.py` covers the predicate (incl. the MIPS byte-alias
+exclusion), the carry/borrow chains, and the `extsb` non-regression.
+
+Honesty caveat improves here: for native-BE-safe instructions the differential is
+again computed by the native kernel, independent of the Unicorn oracle -- so the
+two-implementation soundness argument is restored for that subset. The rest of the
+BE surface (sub-register slices, memory) is still Unicorn-only ("sound relative to
+Unicorn"). **Still open on BE:** `cmpw;mfcr` (condition-register-into-GPR flag
+consumption, the ARM64 `cset` analog -- a flag-floor issue, not endianness) and a
+1-2 bit differential-precision residual on `subfc;subfe` when both operands are
+densely tainted (the non-monotone 2-corner limitation, shared with the flag
+floors). Full option 2 (endianness-aware register packing so the native kernel
+handles sub-register slices and memory too) remains the endgame.
+
 ---
 
 ## 1. `OF` after multi-bit shift/rotate: SLEIGH preserves, silicon recomputes

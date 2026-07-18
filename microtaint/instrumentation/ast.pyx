@@ -1154,14 +1154,35 @@ def _run_concrete_step(sub, dict values, sim):
 
     # Build a MachineState from the current concrete state.  We only need
     # the registers in state_format; memory and shadow are unchanged.
-    from microtaint.simulator import MachineState
+    from microtaint.simulator import MachineState, _native_be_safe
     regs = {}
     for reg_obj in sub.state_format:
         name = reg_obj.name
         if name in values:
             regs[name] = values[name]
-    state = MachineState(regs=regs, mem={})
 
+    # On a big-endian target Unicorn cannot seed or read the PPC XER carry/overflow
+    # varnodes, so threading concrete state through it silently drops the carry bit
+    # (and any GPR whose value depends on a carry-in).  Read the whole post-state
+    # back from the native p-code kernel instead, which models those varnodes and
+    # is byte-order agnostic for native-BE-safe instructions (see _native_be_safe).
+    cdef bint be_native
+    try:
+        be_native = sim._is_big_endian and _native_be_safe(sim.arch, sub.instruction)
+    except Exception:
+        be_native = False
+    if be_native:
+        new_values = dict(values)
+        try:
+            for reg_obj in sub.state_format:
+                new_values[reg_obj.name] = sim._read_reg_concrete(
+                    sub.instruction, regs, reg_obj.name, reg_obj.bits,
+                )
+            return new_values
+        except Exception:
+            pass  # native kernel cannot decode it -> fall back to Unicorn below
+
+    state = MachineState(regs=regs, mem={})
     try:
         sim._execute(bytestring, state)
     except Exception:
@@ -1169,7 +1190,6 @@ def _run_concrete_step(sub, dict values, sim):
         # leaves the previous values untouched — sound fallback.
         return values
 
-    # Read back every register in the state_format.
     new_values = dict(values)
     for reg_obj in sub.state_format:
         name = reg_obj.name
