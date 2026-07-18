@@ -1852,6 +1852,27 @@ cdef class PCodeCellEvaluator:
         self.native_calls += 1
         return out_or ^ out_and
 
+    def evaluate_concrete_seeded(self, instruction_hex, flat_inputs, seeds, out_reg,
+                                 int bit_start, int bit_end, int start_pc=0):
+        """Single-replica seeded partial evaluation: load registers/memory, seed the
+        materialized intermediates, run from start_pc, read out_reg.  This is the
+        per-replica building block a segmented differential (the masked single-replica
+        COND rule, or one arm of a segment's XOR) is composed from.  out_reg may be a
+        register, MEM_..., or 'UNIQ_<rawoffset>'."""
+        cdef _PCodeFrame frame = self._frame_a
+        cdef object off_obj, val_obj
+        decoded = _get_decoded(self.arch, bytes.fromhex(instruction_hex))
+        if decoded.has_fallback:
+            raise PCodeFallbackNeeded('instruction requires Unicorn')
+        if seeds is None:
+            seeds = {}
+        self._load(frame, flat_inputs)
+        for off_obj, val_obj in seeds.items():
+            self._seed(frame, decoded, off_obj, val_obj)
+        _execute_decoded(frame, decoded, start_pc)
+        self.native_calls += 1
+        return self._read_output_any(frame, decoded, out_reg, bit_start, bit_end)
+
     @property
     def fallback_rate(self):
         total = self.native_calls + self.fallback_calls

@@ -197,5 +197,34 @@ def test_two_phase_circuit_threads_intermediate_and_hides_uniq():
         assert not any(k.startswith('UNIQ_') for k in out), 'UNIQ_ leaked into output'
 
 
+def test_concrete_seeded_is_the_single_replica_building_block():
+    """evaluate_concrete_seeded is the per-replica primitive a segmented differential
+    is composed from: XORing its two replicas equals evaluate_differential_seeded, and
+    with no seeds reading a UNIQ output it equals evaluate_uniq_concrete."""
+    ev = PCodeCellEvaluator(ARCH)
+    _e, sub_off, sub_size, _f, _rd = _setup()
+    w = sub_size * 8
+    spc = ev.uniq_start_pc(HEX, sub_off)
+    rng = random.Random(11)
+    for _ in range(2000):
+        a, b = rng.getrandbits(64), rng.getrandbits(64)
+        ta = rng.getrandbits(64) & rng.getrandbits(64)
+        tb = rng.getrandbits(64) & rng.getrandbits(64)
+        or_in = {'RAX': (a | ta) & MASK64, 'RBX': (b | tb) & MASK64}
+        and_in = {'RAX': (a & ~ta) & MASK64, 'RBX': (b & ~tb) & MASK64}
+        t_a = ev.evaluate_uniq_concrete(HEX, or_in, sub_off, 0, w - 1)
+        t_b = ev.evaluate_uniq_concrete(HEX, and_in, sub_off, 0, w - 1)
+        for out in ('SF', 'ZF', 'CF'):
+            diff = ev.evaluate_differential_seeded(
+                HEX, or_in, and_in, {sub_off: t_a}, {sub_off: t_b}, out, 0, 0, spc,
+            )
+            c_or = ev.evaluate_concrete_seeded(HEX, or_in, {sub_off: t_a}, out, 0, 0, spc)
+            c_and = ev.evaluate_concrete_seeded(HEX, and_in, {sub_off: t_b}, out, 0, 0, spc)
+            assert (c_or ^ c_and) == diff
+
+        v = ev.evaluate_concrete_seeded(HEX, {'RAX': a, 'RBX': b}, {}, f'UNIQ_{sub_off}', 0, w - 1, 0)
+        assert v == ev.evaluate_uniq_concrete(HEX, {'RAX': a, 'RBX': b}, sub_off, 0, w - 1)
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))
