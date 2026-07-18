@@ -146,6 +146,9 @@ def _fuzz_arch(  # noqa: C901
         asm, out_reg, srcs, code = rng.choice(corpus)
         state = {r: rng.getrandbits(spec.bits) for r in spec.regs}
         taint = _gen_taint(rng, spec, srcs)
+        # Project into the ISA's architecturally-defined regime (MIPS64: sign-extend
+        # 32-bit register values).  Non-canonical seeds test UNPREDICTABLE behaviour.
+        state, taint = spec.canonicalize(state, taint)
         try:
             lb = O.bitflip_lower_bound(spec, code, state, taint)
             mt = O.microtaint(spec, code, state, taint)

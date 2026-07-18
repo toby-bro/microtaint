@@ -111,10 +111,39 @@ class IsaSpec:
     # selects the wrong operand, and the oracle reports a spurious under-taint that
     # never occurs under a realistic (flag-tracking) state format.
     flag_regs: list[tuple[str, int]] = field(default_factory=list)
+    # Architectural canonical form of a register value, when narrower than `bits`.
+    # MIPS64 32-bit ops (addu/sll/sra/slt/…) require operands to be SIGN-EXTENDED
+    # 32-bit values; a non-canonical value (arbitrary high 32 bits) is
+    # architecturally UNPREDICTABLE, so feeding random 64-bit seeds tests undefined
+    # behaviour and Unicorn's arbitrary choice diverges from the (defined) engine
+    # result -- a spurious under-taint (`sra` was 1211/1500 non-canonical, 0/1500
+    # canonical).  Set to 32 for MIPS64 so seeds/taint stay in the defined regime.
+    canonical_word_bits: int | None = None
 
     @property
     def mask(self) -> int:
         return (1 << self.bits) - 1
+
+    def canonicalize(
+        self, state: dict[str, int], taint: dict[str, int],
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        """Project a seeded (state, taint) into the ISA's architecturally-defined
+        regime: sign-extend each register value from `canonical_word_bits`, and
+        confine taint to those low bits (the high bits are a copy of the sign, not
+        independent).  Identity when no narrower canonical form applies."""
+        w = self.canonical_word_bits
+        if w is None or w >= self.bits:
+            return state, taint
+        low = (1 << w) - 1
+        sign = 1 << (w - 1)
+        high = self.mask ^ low
+
+        def _sx(v: int) -> int:
+            v &= low
+            return v | high if v & sign else v
+
+        return ({r: _sx(v) for r, v in state.items()},
+                {r: t & low for r, t in taint.items()})
 
     def state_format(self) -> list[Register]:
         return [Register(r, self.bits) for r in self.regs] + [
@@ -140,6 +169,9 @@ def _mips() -> IsaSpec:
         uc_mode=UC_MODE_MIPS64 | UC_MODE_BIG_ENDIAN,
         regs=gpr,
         uc_regs=uc_regs,
+        # 32-bit ops (addu/sll/sra/slt/…) require sign-extended 32-bit operands;
+        # non-canonical seeds test UNPREDICTABLE behaviour (see canonicalize()).
+        canonical_word_bits=32,
         prog=[
             ('addu $2, $4, $5', 'V0', ['A0', 'A1']),
             ('subu $2, $4, $5', 'V0', ['A0', 'A1']),
