@@ -104,13 +104,22 @@ class IsaSpec:
     # positional slice of `regs` silently taints registers the instruction
     # never reads, making the whole check vacuous.
     prog: list[tuple[str, str, list[str]]] = field(default_factory=list)
+    # Condition/flag registers (name, bit-width) that instructions read/write but
+    # that are NOT taint sources.  They MUST be in the state format so a multi-step
+    # sequence can thread them: `cmp; csel` needs the concrete NZCV cmp produced to
+    # pick csel's operand -- omit them and csel evaluates with stale zero flags,
+    # selects the wrong operand, and the oracle reports a spurious under-taint that
+    # never occurs under a realistic (flag-tracking) state format.
+    flag_regs: list[tuple[str, int]] = field(default_factory=list)
 
     @property
     def mask(self) -> int:
         return (1 << self.bits) - 1
 
     def state_format(self) -> list[Register]:
-        return [Register(r, self.bits) for r in self.regs]
+        return [Register(r, self.bits) for r in self.regs] + [
+            Register(name, bits) for name, bits in self.flag_regs
+        ]
 
 
 def _mips() -> IsaSpec:
@@ -163,6 +172,11 @@ def _ppc() -> IsaSpec:
         uc_mode=UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN,
         regs=gpr,
         uc_regs=uc_regs,
+        # PPC XER carry/overflow + CR0..CR7 condition fields.
+        flag_regs=(
+            [('XER_SO', 1), ('XER_OV', 1), ('XER_CA', 1)]
+            + [(f'CR{i}', 1) for i in range(8)]
+        ),
         prog=[
             ('add 3, 4, 5', 'R3', ['R4', 'R5']),
             ('subf 3, 4, 5', 'R3', ['R4', 'R5']),   # rD = rB - rA
@@ -194,6 +208,7 @@ def _arm64() -> IsaSpec:
         uc_mode=UC_MODE_ARM,
         regs=gpr,
         uc_regs=uc_regs,
+        flag_regs=[('N', 1), ('Z', 1), ('C', 1), ('V', 1)],  # ARM64 NZCV
         prog=[
             ('add x0, x1, x2', 'X0', ['X1', 'X2']),
             ('sub x0, x1, x2', 'X0', ['X1', 'X2']),
@@ -235,6 +250,8 @@ def _sparc() -> IsaSpec:
         uc_mode=UC_MODE_SPARC32 | UC_MODE_BIG_ENDIAN,
         regs=gpr,
         uc_regs=uc_regs,
+        # SPARC icc flags (I_NF/I_ZF/I_VF/I_CF) omitted pending verification -- the
+        # SPARC fuzzer summary is currently not emitting, investigate separately.
         prog=[
             ('add %g1, %g2, %g3', 'G3', ['G1', 'G2']),
             ('sub %g1, %g2, %g3', 'G3', ['G1', 'G2']),
