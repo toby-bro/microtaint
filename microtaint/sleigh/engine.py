@@ -1811,7 +1811,20 @@ def generate_taint_assignments(  # noqa: C901
         # produce a deterministic result regardless of input, so their flag
         # assignments must NOT get the floor — the differential's 0 is correct.
         is_flag = out_bit_end == out_bit_start
-        if is_flag and dependencies:
+        # Also fire for a WIDE output when every dep is a 1-bit flag: a condition
+        # consumed into a large register (ARM64 `cset x0,hi` = C&&!Z -> 64-bit GPR,
+        # lifted to BOOL_AND -> MONOTONIC) is still 0/1 in bit 0.  The 2-corner
+        # differential misses the non-monotone BOOL_AND when BOTH flags are tainted
+        # (corners (1,1)->0 and (0,0)->0; interior (1,0)->1 is missed).  The floor
+        # terms below are already bit-0 (Avalanche size 1 / FullMaskAvalanche -> 0/1),
+        # so a wide output is tainted only in bit 0 -- no upper-byte over-taint.  This
+        # mirrors the COND_TRANSPORTABLE wide-output floor (a9b88bf); MONOTONIC was
+        # missed there.
+        _mono_all_deps_one_bit = bool(dep_set.value_deps) and all(
+            isinstance(dm, RegMapping) and dm.bit_end == dm.bit_start
+            for dm in dep_set.value_deps.keys()
+        )
+        if (is_flag or _mono_all_deps_one_bit) and dependencies:
             _is_constant_result = _slice_has_constant_dominator(slice_ops)
             if not _is_constant_result:
                 # Symmetric two-operand comparison opcodes can produce

@@ -60,11 +60,21 @@ def test_cset_lt_taints_wide_output_from_its_flags():
 
 
 def test_cset_hi_taints_wide_output_from_its_flags():
-    """cset x0,hi reads Z,C (not N,V)."""
+    """cset x0,hi = C && !Z reads Z,C (not N,V).
+
+    The compound (mixed-polarity BOOL_AND) condition lifts to MONOTONIC, not
+    COND_TRANSPORTABLE.  Its 2-corner differential misses the non-monotone case
+    where BOTH flags are tainted -- corners (C,Z)=(1,1) and (0,0) both give 0,
+    while the interior (1,0) gives 1.  The MONOTONIC wide-output flag floor (fires
+    when every dep is a 1-bit flag) must cover it, or `cset hi` under-taints its
+    result bit."""
     assert _x0_taint(_CSET_HI, {'Z': 1}) & 1
     assert _x0_taint(_CSET_HI, {'C': 1}) & 1
+    assert _x0_taint(_CSET_HI, {'Z': 1, 'C': 1}) & 1  # both tainted: 2-corner misses; floor must fire
     assert _x0_taint(_CSET_HI, {'N': 1}) == 0
     assert _x0_taint(_CSET_HI, {'V': 1}) == 0
+    # taint stays in bit 0 (no upper-byte over-taint from the wide-output floor)
+    assert _x0_taint(_CSET_HI, {'Z': 1, 'C': 1}) == 1
 
 
 # csel x0, x1, x2, lt  -- a 2-way select gated by NZCV
