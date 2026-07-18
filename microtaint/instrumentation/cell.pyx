@@ -531,6 +531,11 @@ cdef class _PCodeFrame:
     # Fallback uniq dict (unused after compact-array migration, kept for safety)
     cdef public dict mem
     cdef public object _arch  # set by _load for CBRANCH PC lookup
+    # Big-endian target: invert the sub-register byte->bit mapping and memory byte
+    # order (SLEIGH emits BE-correct varnode offsets; only the register-file/memory
+    # byte packing is LE-biased).  Set by PCodeCellEvaluator.__init__ from the arch;
+    # False leaves every byte-math path byte-identical to the little-endian original.
+    cdef bint _is_big_endian
 
     def __init__(self):
         cdef int i
@@ -545,11 +550,13 @@ cdef class _PCodeFrame:
         self.reg_sizes = {}
         self.mem       = {}
         self._arch     = None
+        self._is_big_endian = 0
 
     cdef inline void _write_reg(self, long off, int sz, uint64_t val) noexcept:
         cdef uint64_t masked = _mask64(val, sz)
         cdef uint64_t lo_mask
         cdef long invalidate_end, k
+        cdef int be_wshift
         if off >= 0 and off < REGS_ARR_SIZE:
             if not self.regs_set[off]:   # only record first write to each slot
                 if self.dirty_count < 48:
@@ -569,15 +576,25 @@ cdef class _PCodeFrame:
                     k += 1
                 return
             # Same-offset narrower write (e.g. mov al, bl into a slot that
-            # currently holds full RAX): overlay the low `sz` bytes onto
-            # the existing wider value rather than clobbering it.  See
-            # cell_c.c::frame_write_reg for the full rationale.
+            # currently holds full RAX): overlay onto the existing wider value
+            # rather than clobbering it.  See cell_c.c::frame_write_reg for the
+            # full rationale.  A narrower write sharing the base offset targets the
+            # LOW bytes under LE but the HIGH bytes under BE (the base offset is the
+            # most-significant byte).
             if <int>self.regs_sz[off] > sz:
                 if sz >= 8:
                     lo_mask = 0xFFFFFFFFFFFFFFFFULL
                 else:
                     lo_mask = ((<uint64_t>1) << (sz * 8)) - 1
-                self.regs_arr[off] = (self.regs_arr[off] & ~lo_mask) | (masked & lo_mask)
+                if self._is_big_endian:
+                    be_wshift = (<int>self.regs_sz[off] - sz) * 8
+                    if 0 <= be_wshift < 64:
+                        self.regs_arr[off] = (
+                            (self.regs_arr[off] & ~(lo_mask << be_wshift))
+                            | ((masked & lo_mask) << be_wshift)
+                        )
+                else:
+                    self.regs_arr[off] = (self.regs_arr[off] & ~lo_mask) | (masked & lo_mask)
                 # regs_sz stays at the wider size.
             else:
                 self.regs_arr[off] = masked
@@ -600,7 +617,7 @@ cdef class _PCodeFrame:
             self.reg_sizes[off] = sz
 
     cdef inline uint64_t _read_reg(self, long off, int sz) noexcept:
-        cdef long     k, byte_off, end_off
+        cdef long     k, byte_off, end_off, be_shift
         cdef int      k_sz
         cdef uint64_t base, sub_val, sub_mask, lane_mask
         cdef object   kv, v
@@ -619,7 +636,14 @@ cdef class _PCodeFrame:
                 while k >= 0 and off - k <= 8:
                     if self.regs_set[k] and k + <long>self.regs_sz[k] > off:
                         byte_off = off - k
-                        base = self.regs_arr[k] >> (byte_off * 8)
+                        if self._is_big_endian:
+                            # BE: byte `byte_off` from the MSB of a `parent_sz`-byte
+                            # register; the sub-value's low bit sits at
+                            # (parent_sz - byte_off - sz)*8.
+                            be_shift = (<long>self.regs_sz[k] - byte_off - sz) * 8
+                            base = self.regs_arr[k] >> be_shift if 0 <= be_shift < 64 else 0
+                        else:
+                            base = self.regs_arr[k] >> (byte_off * 8)
                         break
                     k -= 1
 
@@ -654,8 +678,15 @@ cdef class _PCodeFrame:
                     else:
                         sub_mask = ((<uint64_t>1) << (k_sz * 8)) - 1
                     sub_val = self.regs_arr[k] & sub_mask
-                    lane_mask = sub_mask << (byte_off * 8)
-                    base = (base & ~lane_mask) | (sub_val << (byte_off * 8))
+                    if self._is_big_endian:
+                        # BE: the sub-slot at `byte_off` from the MSB of this
+                        # `sz`-byte read occupies bits (sz - byte_off - k_sz)*8..
+                        be_shift = (<long>sz - byte_off - k_sz) * 8
+                    else:
+                        be_shift = byte_off * 8
+                    if 0 <= be_shift < 64:
+                        lane_mask = sub_mask << be_shift
+                        base = (base & ~lane_mask) | (sub_val << be_shift)
                     k += k_sz
                 else:
                     k += 1
@@ -674,23 +705,29 @@ cdef class _PCodeFrame:
                 if v is not None:
                     byte_off = off - k
                     uv = <uint64_t>(v & 0xFFFFFFFFFFFFFFFF)
+                    if self._is_big_endian:
+                        be_shift = (<long>k_sz - byte_off - sz) * 8
+                        return _mask64(uv >> be_shift, sz) if 0 <= be_shift < 64 else 0
                     return _mask64(uv >> (byte_off * 8), sz)
         return 0
 
     cdef inline void _write_mem(self, uint64_t addr, uint64_t val, int size) noexcept:
-        cdef int i
+        cdef int i, shift
         val = _mask64(val, size)
         for i in range(size):
-            self.mem[addr + i] = (val >> (i * 8)) & 0xFF
+            # BE stores the most-significant byte at the lowest address.
+            shift = (size - 1 - i) * 8 if self._is_big_endian else i * 8
+            self.mem[addr + i] = (val >> shift) & 0xFF
 
     cdef inline uint64_t _read_mem(self, uint64_t addr, int size) noexcept:
         cdef uint64_t result = 0
-        cdef int i
+        cdef int i, shift
         cdef object b
         for i in range(size):
             b = self.mem.get(addr + i)
             if b is not None:
-                result |= (<uint64_t><int>b) << (i * 8)
+                shift = (size - 1 - i) * 8 if self._is_big_endian else i * 8
+                result |= (<uint64_t><int>b) << shift
         return _mask64(result, size)
 
     cdef inline void seed_uniq(self, int slot, uint64_t val) noexcept:
@@ -1491,6 +1528,7 @@ cdef class PCodeCellEvaluator:
     Identical public interface to cell.py PCodeCellEvaluator.
     """
     cdef object      arch
+    cdef bint        _is_big_endian
     cdef _PCodeFrame _frame_a
     cdef _PCodeFrame _frame_b
     cdef public dict _offsets
@@ -1500,8 +1538,11 @@ cdef class PCodeCellEvaluator:
 
     def __init__(self, arch):
         self.arch           = arch
+        self._is_big_endian = str(arch).upper().endswith('BE')
         self._frame_a       = _PCodeFrame()
         self._frame_b       = _PCodeFrame()
+        self._frame_a._is_big_endian = self._is_big_endian
+        self._frame_b._is_big_endian = self._is_big_endian
         self._offsets, self._sizes = _build_reg_maps(arch)
         self.native_calls   = 0
         self.fallback_calls = 0

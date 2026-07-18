@@ -72,12 +72,20 @@ ARM64/PPC fuzzer under-taints was wrong; see design doc §10.3.
 
 ## 0. The native C p-code cell evaluator is LITTLE-ENDIAN only
 
-**Status:** WORKED AROUND (2026-07-17). Big-endian architectures (MIPS64BE,
-PPC32BE, SPARC32BE) now evaluate through Unicorn instead of the native p-code
-kernel (`CellSimulator` forces `use_unicorn=True` when the arch name ends `BE`);
-the cross-ISA oracle then reports 0 under-taints on all five ISAs. The native
-kernel itself is still LE-only -- making it endianness-aware (option B below) is
-the proper fix and remains open. Does NOT affect x86-64/ARM64/RISCV64 (LE).
+**Status:** WORKED AROUND (2026-07-17); native kernel now BE-aware, routing
+relaxation pending (2026-07-18). Big-endian architectures (MIPS64BE, PPC32BE,
+SPARC32BE) evaluate through Unicorn instead of the native p-code kernel
+(`CellSimulator` forces `use_unicorn=True` when the arch name ends `BE`). Two
+increments have since chipped at option B: (1) *maximal-register* BE instructions
+route to the native Cython kernel (the PPC carry fix; see the subsection below);
+(2) the Cython kernel's register-file and memory **byte math is now
+endianness-aware** and validated byte-for-byte against Unicorn on BE sub-register
+instructions -- but the routing is not yet relaxed to use it for sub-register /
+memory accesses (a canonical-input caveat on 64-bit-alias arches; the native fast
+path and independent cross-check are the payoff, not under-taint reduction). Full
+plan, formulas, validation, and the caveat: `docs/design/native-big-endian-cython.md`.
+The C kernel (`cell_c`) stays LE-only -- it is selected only for LE targets. Does
+NOT affect x86-64/ARM64/RISCV64 (LE).
 
 One honesty caveat for any BE soundness claim: on x86 soundness rests on TWO
 independent implementations agreeing -- the native C p-code evaluator
