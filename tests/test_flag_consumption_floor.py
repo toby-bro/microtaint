@@ -1,18 +1,21 @@
-"""Regression: the COND_TRANSPORTABLE 1-bit-flag floors must fire when a flag is
-consumed into a WIDE register.
+"""Regression: a flag/condition consumed into a WIDE register must stay SOUND, and
+-- where the condition is polarity-orientable -- EXACT (no floor over-taint).
 
-A flag read into a 64-bit GPR (ARM64 `cset`/`csel`, e.g. `cset x0, lt` = ZEXT(N!=V))
-is still a 0/1 in bit 0.  The two soundness floors were gated on
-`out_bit_end - out_bit_start <= 7` (sized for x86 `setcc` BYTE outputs), so a
-64-bit consumer got only the masked-single-replica COND term, which under-taints:
-masking the tainted flag to 0 collapses `N!=V` to `0`.  This pins:
+A flag read into a 64-bit GPR (ARM64 `cset`/`csel`, MIPS `slt`) is still a 0/1 in
+bit 0.  The 2-corner differential is exact for such a condition IFF compute_polarity
+orients its operands along the monotone direction:
 
-  * the 2-replica differential floor (single tainted flag), and
-  * the FullMaskAvalanche-per-flag floor (BOTH flags tainted -- the non-monotone
-    interior the 2-corner differential misses),
+  * ORIENTABLE conditions -- single-direction comparisons (`slt` = a<b) and
+    mixed-polarity BOOL_AND/BOOL_OR of flags (`cset hi` = C & !Z) -- are made EXACT
+    by the comparison-LHS-inversion / BOOL_NEGATE polarity rules; they take NO floor
+    (see docs/design/nonmonotone-taint-theory.md).  The exactness tests below pin
+    determinate cases that the old blanket wide-output floor over-tainted.
+  * EQUALITY conditions (`cset lt` = N!=V) are symmetric -- non-monotone BOTH ways,
+    so no orientation exists.  They keep the wide-output soundness floor (fires when
+    the slice contains INT_EQUAL/INT_NOTEQUAL) until the exact EqualityTaintExpr lands.
 
-both firing regardless of the consuming register width.  Gate-independent
-(fixes gate-off), and x86 `setcc` is unchanged (still <= 8 bits).
+x86 `setcc` is a 1-bit-flag output and is unaffected (keeps its floor; exact via the
+differential anyway).
 """
 
 # mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,union-attr"
@@ -62,19 +65,35 @@ def test_cset_lt_taints_wide_output_from_its_flags():
 def test_cset_hi_taints_wide_output_from_its_flags():
     """cset x0,hi = C && !Z reads Z,C (not N,V).
 
-    The compound (mixed-polarity BOOL_AND) condition lifts to MONOTONIC, not
-    COND_TRANSPORTABLE.  Its 2-corner differential misses the non-monotone case
-    where BOTH flags are tainted -- corners (C,Z)=(1,1) and (0,0) both give 0,
-    while the interior (1,0) gives 1.  The MONOTONIC wide-output flag floor (fires
-    when every dep is a 1-bit flag) must cover it, or `cset hi` under-taints its
-    result bit."""
-    assert _x0_taint(_CSET_HI, {'Z': 1}) & 1
-    assert _x0_taint(_CSET_HI, {'C': 1}) & 1
-    assert _x0_taint(_CSET_HI, {'Z': 1, 'C': 1}) & 1  # both tainted: 2-corner misses; floor must fire
+    Mixed-polarity BOOL_AND: with C at +polarity and Z at -polarity (BOOL_NEGATE),
+    the 2-corner differential is EXACT -- corners become (C,Z)=(max,min) and
+    (min,max), i.e. C&!Z evaluated at 1 and 0, so the non-monotone interior is
+    captured with NO floor.  Concrete state here is N=1,V=0,Z=0,C=1."""
+    assert _x0_taint(_CSET_HI, {'Z': 1}) & 1  # Z tainted, C=1 -> C&!Z varies
+    assert _x0_taint(_CSET_HI, {'C': 1}) & 1  # C tainted, Z=0 -> = C, varies
+    assert _x0_taint(_CSET_HI, {'Z': 1, 'C': 1}) & 1  # both tainted: exact via polarity
     assert _x0_taint(_CSET_HI, {'N': 1}) == 0
     assert _x0_taint(_CSET_HI, {'V': 1}) == 0
-    # taint stays in bit 0 (no upper-byte over-taint from the wide-output floor)
+    # taint stays in bit 0 (result is 0/1)
     assert _x0_taint(_CSET_HI, {'Z': 1, 'C': 1}) == 1
+
+
+def test_cset_hi_is_exact_not_floored():
+    """Precision lock: `cset hi` = C & !Z is now EXACT, so a determinate tainted
+    condition must NOT taint the result.  With Z=1 concrete, X0 = C & !1 = 0 for
+    every value of C, so tainting C alone leaves X0 untainted.  The old blanket
+    wide-output flag floor (FullMaskAvalanche of C) over-tainted this to 1; the
+    polarity-exact differential returns 0.  (If a floor ever re-fires here this
+    regresses to 1.)"""
+    engine._cached_generate_static_rule.cache_clear()
+    circ = engine.generate_static_rule(ARCH, _CSET_HI, _FMT)
+    ctx = EvalContext(
+        input_taint={**_ZERO, 'C': 1},
+        input_values={**_ZERO, 'Z': 1, 'C': 1},  # Z=1 -> C&!Z == 0 always
+        simulator=_SIM,
+        implicit_policy=ImplicitTaintPolicy.IGNORE,
+    )
+    assert circ.evaluate(ctx).get('X0', 0) == 0
 
 
 # csel x0, x1, x2, lt  -- a 2-way select gated by NZCV
@@ -150,18 +169,41 @@ def _v0_taint(code: bytes, taint: dict[str, int]) -> int:
     return circ.evaluate(ctx).get('V0', 0)
 
 
+def _v0_taint_vals(code: bytes, values: dict[str, int], taint: dict[str, int]) -> int:
+    engine._cached_generate_static_rule.cache_clear()
+    circ = engine.generate_static_rule(_MIPS, code, _MIPS_FMT)
+    ctx = EvalContext(
+        input_taint={**_MIPS_ZERO, **taint},
+        input_values={**_MIPS_ZERO, **values},
+        simulator=CellSimulator(_MIPS),
+        implicit_policy=ImplicitTaintPolicy.IGNORE,
+    )
+    return circ.evaluate(ctx).get('V0', 0)
+
+
 def test_mips_slt_comparison_into_wide_register():
     """MIPS `slt`/`sltu` = zext(a0 < a1): a comparison of two WIDE operands consumed
-    into a 64-bit GPR.  Lifts to INT_SLESS/INT_LESS + INT_ZEXT -> MONOTONIC with a
-    wide (non-`is_flag`) output, so the symmetric-comparison floor was gated off.
-    With both operands fully tainted the 2-corner differential lands in the equal
-    regime and returns 0; the boolean-output floor must taint the result bit."""
+    into a 64-bit GPR (INT_SLESS/INT_LESS + INT_ZEXT -> MONOTONIC).  With correct
+    comparison polarity (LHS inverted) the two replicas become [min(a0)<max(a1)] and
+    [max(a0)<min(a1)] -- "can be true" XOR "always true" -- so the differential is
+    EXACT, no floor.  Both operands fully tainted must still taint the result bit."""
     for code in (_SLT, _SLTU):
         assert _v0_taint(code, {'A0': 0xFFFFFFFFFFFFFFFF, 'A1': 0xFFFFFFFFFFFFFFFF}) & 1
         # confined to bit 0 (the result is 0/1; no upper-bit over-taint)
         assert _v0_taint(code, {'A0': 0xFFFFFFFFFFFFFFFF, 'A1': 0xFFFFFFFFFFFFFFFF}) == 1
         # untainted operands -> untainted result
         assert _v0_taint(code, {}) == 0
+
+
+def test_mips_slt_is_exact_not_floored():
+    """Precision lock: `slt` is now EXACT via comparison polarity.  a0 in [0,0xff]
+    is always < a1 in [0x7fffff00,0x7fffffff], so tainting the low byte of BOTH
+    operands does NOT change a0<a1 -> V0 must be untainted.  The old symmetric-
+    comparison floor (pairwise avalanche, fires on >=2 tainted deps) over-tainted
+    this to 1; the polarity-exact differential returns 0."""
+    for code in (_SLT, _SLTU):
+        det = _v0_taint_vals(code, {'A0': 0x0, 'A1': 0x7FFFFFFF}, {'A0': 0xFF, 'A1': 0xFF})
+        assert det == 0, f'{code.hex()} over-tainted a determinate compare: {det:#x}'
 
 
 if __name__ == '__main__':

@@ -87,6 +87,31 @@ def compute_polarity(  # noqa: C901
                     node_polarities[inp_id] = current_polarity
                     polarity_map[inp_id] = current_polarity
 
+        elif op_name in ('INT_LESS', 'INT_SLESS', 'INT_LESSEQUAL', 'INT_SLESSEQUAL'):
+            # A comparison `a < b` is `a - b` borrows: ANTITONE in its LHS, MONOTONE
+            # in its RHS -- the exact mirror of INT_SUB (which subtracts its RHS).
+            # A *bare* comparison (MIPS `slt`, PPC `cmpw`) emits INT_SLESS with no
+            # INT_SUB, so without this both operands defaulted to the SAME polarity,
+            # collapsed into the same differential corner (build_polarized_reg), and
+            # the equal regime cancelled to D=0 -- the `slt`/`sltu` under-taint.  With
+            # opposite polarity the two replicas become [min(a) < max(b)] and
+            # [max(a) < min(b)] -- "can be true" XOR "always true" -- which is the
+            # EXACT comparison taint, so no floor is needed (see
+            # docs/design/nonmonotone-taint-theory.md).  x86 lifts compares THROUGH
+            # INT_SUB/INT_SBORROW (opposite polarities already), so x86 is unaffected.
+            # INT_EQUAL/INT_NOTEQUAL are symmetric -- non-monotone BOTH ways -- so they
+            # get NO orientation here; they remain a floor / closed-form-term case.
+            lhs = get_varnode_id(op.inputs[0])
+            inv_polarity = 0 if current_polarity == 1 else 1
+            node_polarities[lhs] = inv_polarity
+            if op.inputs[0].space.name != 'const':
+                polarity_map[lhs] = inv_polarity
+
+            rhs = get_varnode_id(op.inputs[1])
+            node_polarities[rhs] = current_polarity
+            if op.inputs[1].space.name != 'const':
+                polarity_map[rhs] = current_polarity
+
         elif op_name in ('INT_NEGATE', 'BOOL_NEGATE', 'INT_2COMP'):
             # Ops that INVERT the dependency direction: bitwise NOT (~x = -x-1),
             # logical NOT (!x = 1-x), two's-complement negation (-x).  Increasing the

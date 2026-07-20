@@ -1835,7 +1835,21 @@ def generate_taint_assignments(  # noqa: C901
             op.opcode.name == 'INT_ZEXT' and op.inputs and op.inputs[0].size == 1
             for op in slice_ops if op.output is not None
         )
-        if (is_flag or _mono_all_deps_one_bit or _mono_result_is_boolean) and dependencies:
+        # After correct comparison polarity (compute_polarity now inverts a comparison's
+        # LHS), the 2-corner differential is EXACT for every ORIENTABLE MONOTONIC op:
+        # add/sub/carry/borrow chains, single-direction comparisons (SLESS/LESS), and
+        # mixed-polarity BOOL_AND/BOOL_OR of flags (`cset hi`/`ls`).  The one residual
+        # non-monotone op with NO monotone orientation is an EQUALITY (INT_EQUAL/
+        # INT_NOTEQUAL -- e.g. `cset lt` = NG!=OV).  So a WIDE boolean output needs the
+        # floor ONLY when its slice contains an equality op; firing it for the orientable
+        # cases merely re-introduced avalanche over-taint (measured: `cset hi` 20% exact,
+        # `slt` 71%).  A 1-bit flag output keeps the floor unconditionally (bit-0 term;
+        # x86 setcc is exact via the differential and unaffected).  Signed overflow is
+        # already routed to its exact closed form above.  See
+        # docs/design/nonmonotone-taint-theory.md.
+        _slice_has_equality = any(op.opcode.name in ('INT_EQUAL', 'INT_NOTEQUAL') for op in slice_ops)
+        _wide_needs_floor = (_mono_all_deps_one_bit or _mono_result_is_boolean) and _slice_has_equality
+        if (is_flag or _wide_needs_floor) and dependencies:
             _is_constant_result = _slice_has_constant_dominator(slice_ops)
             if not _is_constant_result:
                 # Symmetric two-operand comparison opcodes can produce
