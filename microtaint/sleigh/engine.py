@@ -11,7 +11,9 @@ from microtaint.instrumentation.ast import (
     AvalancheExpr,
     BinaryExpr,
     ChainedCircuit,
+    ComparisonTaintExpr,
     Constant,
+    EqualityTaintExpr,
     Expr,
     FullMaskAvalancheExpr,
     InstructionCellExpr,
@@ -984,6 +986,159 @@ def _build_variable_bit_select_taint(  # noqa: C901
     )
 
 
+_CMP_SIGNED = frozenset({'INT_SLESS', 'INT_SLESSEQUAL'})
+_CMP_OR_EQUAL = frozenset({'INT_SLESSEQUAL', 'INT_LESSEQUAL'})
+_CMP_OPS = frozenset({'INT_LESS', 'INT_LESSEQUAL', 'INT_SLESS', 'INT_SLESSEQUAL'})
+_EQ_OPS = frozenset({'INT_EQUAL', 'INT_NOTEQUAL'})
+
+
+def _build_packed_comparison_taint(  # noqa: C901
+    slice_ops: list[PcodeOp],
+    mapper: StateMapper,
+) -> Expr | None:
+    """EXACT taint for an OR-tree of shifted comparison / equality bits packed into a
+    condition field, or None.
+
+    PPC ``cmpw`` writes ``CR0 = LT(a<b)<<3 | GT(b<a)<<2 | EQ(a==b)<<1 | SO`` -- two
+    OPPOSITE-orientation signed comparisons plus an equality packed into one field, so no
+    single differential polarity is exact and the swapped-comparison floor avalanches the
+    whole field.  ARM ``cset lt`` = ``ZEXT(N!=V)`` is the degenerate one-leaf case.
+
+    Give each comparison / equality LEAF its exact closed-form term (ComparisonTaintExpr /
+    EqualityTaintExpr, both Z3-proved) and compose them through the PURE-packing grammar --
+    OR, left-shift-by-const, const-mask, and routing (COPY / ZEXT / SUBPIECE).  Each of
+    those composition steps is EXACT on disjoint bit positions and SOUND in general
+    (``taint(x|y) ⊆ Tx|Ty``, shift/mask are bijective/masking), so the result never
+    under-taints; it is exact for flag packing, where the leaves read independent
+    registers/flags and land in disjoint bits.  Returns None on any op outside the grammar
+    (e.g. BOOL_AND/BOOL_OR in ``cset gt``/``le`` -- left to the differential+floor) or when
+    the slice has no comparison/equality leaf at all.
+    """
+    if not slice_ops or slice_ops[-1].output is None:
+        return None
+
+    def _defining(vn: Varnode) -> PcodeOp | None:
+        for op in slice_ops:
+            if (
+                op.output is not None
+                and op.output.space.name == 'unique'
+                and op.output.offset == vn.offset
+            ):
+                return op
+        return None
+
+    def _reg(vn: Varnode) -> RegMapping | None:
+        """Resolve a varnode (following COPY) to a register mapping."""
+        if vn.space.name == 'register':
+            m = mapper.map_to_state(vn.offset, vn.size)
+            return m if isinstance(m, RegMapping) else None
+        if vn.space.name == 'unique':
+            d = _defining(vn)
+            if d is not None and d.opcode.name == 'COPY' and len(d.inputs) == 1:
+                return _reg(d.inputs[0])
+        return None
+
+    def _cmp_leaf(op: PcodeOp) -> Expr | None:
+        if len(op.inputs) != 2:
+            return None
+        a, b = _reg(op.inputs[0]), _reg(op.inputs[1])
+        if a is None or b is None:
+            return None
+        width = op.inputs[0].size * 8
+        if width < 1:
+            return None
+        return ComparisonTaintExpr(
+            _get_taint_operand(a.name, a.bit_start, a.bit_end, False),
+            _get_taint_operand(a.name, a.bit_start, a.bit_end, True),
+            _get_taint_operand(b.name, b.bit_start, b.bit_end, False),
+            _get_taint_operand(b.name, b.bit_start, b.bit_end, True),
+            width,
+            op.opcode.name in _CMP_SIGNED,
+            op.opcode.name in _CMP_OR_EQUAL,
+        )
+
+    def _eq_leaf(op: PcodeOp) -> Expr | None:
+        if len(op.inputs) != 2:
+            return None
+        a, b = _reg(op.inputs[0]), _reg(op.inputs[1])
+        if a is None or b is None:
+            return None
+        width = op.inputs[0].size * 8
+        if width < 1:
+            return None
+        return EqualityTaintExpr(
+            _get_taint_operand(a.name, a.bit_start, a.bit_end, False),
+            _get_taint_operand(a.name, a.bit_start, a.bit_end, True),
+            _get_taint_operand(b.name, b.bit_start, b.bit_end, False),
+            _get_taint_operand(b.name, b.bit_start, b.bit_end, True),
+            width,
+        )
+
+    leaf_count = [0]
+
+    def _taint(vn: Varnode) -> Expr | None:
+        if vn.space.name == 'const':
+            return Constant(0, 64)
+        if vn.space.name == 'register':
+            m = mapper.map_to_state(vn.offset, vn.size)
+            if not isinstance(m, RegMapping):
+                return None
+            return _get_taint_operand(m.name, m.bit_start, m.bit_end, True)
+        if vn.space.name != 'unique':
+            return None
+        d = _defining(vn)
+        return _taint_op(d) if d is not None else None
+
+    def _taint_op(op: PcodeOp) -> Expr | None:  # noqa: C901
+        name = op.opcode.name
+        if name in _EQ_OPS:
+            leaf = _eq_leaf(op)
+            if leaf is not None:
+                leaf_count[0] += 1
+            return leaf
+        if name in _CMP_OPS:
+            leaf = _cmp_leaf(op)
+            if leaf is not None:
+                leaf_count[0] += 1
+            return leaf
+        if name == 'INT_OR':
+            acc: Expr | None = None
+            for inp in op.inputs:
+                t = _taint(inp)
+                if t is None:
+                    return None
+                acc = t if acc is None else BinaryExpr(Op.OR, acc, t)
+            return acc
+        if name == 'INT_LEFT':
+            if len(op.inputs) != 2 or op.inputs[1].space.name != 'const':
+                return None
+            inner = _taint(op.inputs[0])
+            if inner is None:
+                return None
+            return BinaryExpr(Op.LEFT, inner, Constant(op.inputs[1].offset, 8))
+        if name == 'INT_AND':
+            consts = [i for i in op.inputs if i.space.name == 'const']
+            others = [i for i in op.inputs if i.space.name != 'const']
+            if len(consts) != 1 or len(others) != 1:
+                return None  # AND of two dynamic taints is not a routing mask
+            inner = _taint(others[0])
+            if inner is None:
+                return None
+            return BinaryExpr(Op.AND, inner, Constant(consts[0].offset, 64))
+        if name in ('COPY', 'INT_ZEXT', 'SUBPIECE') and len(op.inputs) >= 1:
+            # routing that preserves bit-0 alignment (SUBPIECE only when it takes the
+            # low bytes -- offset operand 0).
+            if name == 'SUBPIECE' and (len(op.inputs) < 2 or op.inputs[1].offset != 0):
+                return None
+            return _taint(op.inputs[0])
+        return None
+
+    result = _taint_op(slice_ops[-1])
+    if result is None or leaf_count[0] == 0:
+        return None
+    return result
+
+
 def generate_taint_assignments(  # noqa: C901
     arch: Architecture,
     bytestring: bytes,
@@ -1523,6 +1678,21 @@ def generate_taint_assignments(  # noqa: C901
         if _bitsel_expr is not None and not _slice_has_constant_dominator(slice_ops):
             assignments.append(
                 TaintAssignment(target=out_target, dependencies=dependencies, expression=_bitsel_expr),
+            )
+            return
+
+        # EXACT packed comparison/equality taint: a condition field built from an OR-tree
+        # of shifted comparison/equality bits (PPC `cmpw` CR0 = LT|GT|EQ|SO; ARM `cset lt`
+        # = ZEXT(N!=V)).  cmpw packs two OPPOSITE-orientation signed comparisons, so no
+        # single differential polarity is exact and the swapped-comparison floor avalanches
+        # the whole field; equality collapses the 2-corner differential outright.  Each leaf
+        # gets its Z3-proved closed form, composed through the pure-packing grammar -- exact
+        # for flag packing, sound otherwise.  None (fall through to differential+floor) for
+        # slices outside the grammar (e.g. `cset gt`/`le`, which BOOL_AND/OR a flag).
+        _packed_expr = _build_packed_comparison_taint(slice_ops, mapper)
+        if _packed_expr is not None and not _slice_has_constant_dominator(slice_ops):
+            assignments.append(
+                TaintAssignment(target=out_target, dependencies=dependencies, expression=_packed_expr),
             )
             return
 

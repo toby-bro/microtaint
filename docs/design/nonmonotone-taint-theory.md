@@ -270,16 +270,32 @@ Invariant every step: `ruff`/`mypy` clean; full `pytest`; x86 differential **dig
 identical** (no x86 behaviour change); cross-ISA fuzzer under-taints stay 0; record exact%
 delta (the precision we are buying back).
 
-1. **Comparison polarity (Mechanism A).** Add the LHS-inverting rule for
-   `INT_LESS/SLESS/LESSEQUAL/SLESSEQUAL` to `compute_polarity`; delete floors 3c79783 and
-   7c5d17b. *Predict:* under-taints stay 0, exact% up on MIPS `slt`/`sltu` and ARM64
-   `cset`. Cheapest, highest-value, correlation-safe. Verify the `cset` equality
-   sub-conditions are exact (XOR) before removing 7c5d17b.
-2. **`ComparisonTaintExpr` + `EqualityTaintExpr` (Mechanism B).** Prove in Z3, wire with
-   the independence gate, delete floor 52b53d2. *Predict:* `cmpw;mfcr` LT/GT bits exact.
-3. **`SelectTaintExpr` (Mechanism B).** Prove in Z3, replace floor 30d3f68. *Predict:*
-   `csel`/cmov value-select exact; ISA passthrough special-cases shrink.
-4. **Document the irreducible boundary (§6)** in `KNOWN_ISSUES.md`; it is the honest
+1. **Comparison polarity (Mechanism A).** [DONE — commits a009981/c89f365.] Added the
+   LHS-inverting rule for `INT_LESS/SLESS/LESSEQUAL/SLESSEQUAL` to `compute_polarity`;
+   gated the wide MONOTONIC floor on the presence of an equality op (the one
+   non-orientable case) instead of on output shape. *Measured (800/ISA):* under-taints
+   stay 0 everywhere; MIPS `slt`/`sltu` 71%/67% -> **100%**; isolated `cset hi` **157/157**;
+   AMD64 digest byte-identical. The `cmp;cset` *sequence* exact% is unchanged -- limited
+   by the cmp->cset flag-chain materialization, not the cset rule.
+2. **`ComparisonTaintExpr` + `EqualityTaintExpr` (Mechanism B).** [DONE.] Added both as
+   Cython `Expr` nodes (ast.pyx), Z3-proved (`prove_comparison_taint.py`,
+   `prove_equality_taint.py`: no-under-taint w=2..64, no-over-taint w=2..6), and composed
+   through a `_build_packed_comparison_taint` recognizer (OR-tree of shifted comparison/
+   equality/flag bits) wired into the COND_TRANSPORTABLE branch like the existing
+   `VariableBitSelect` exact term. *Measured:* PPC `cmpw;mfcr` **0% -> 100%** exact
+   (determinate compare taints nothing; verified against the native oracle); isolated
+   `cset lt`/`ge` **exact** (217/217, 226/226); all ISAs 0 under-taints; AMD64 unchanged.
+   The builder returns None (safe fall-through to the differential+floor) for any op
+   outside the pure-packing grammar (`cset gt`/`le`'s BOOL_AND/OR) or when a leaf operand
+   does not map -- so it never partially applies.
+3. **`SelectTaintExpr` (Mechanism B).** [TODO.] Prove in Z3, replace floor 30d3f68.
+   *Predict:* `csel`/cmov value-select exact; ISA passthrough special-cases shrink.
+4. **The `cmp;cset` flag-chain (intermediate materialization).** [TODO — the residual ARM
+   aggregate.] `cmpw` became exact because it fuses comparison+field in ONE instruction;
+   ARM `cmp;cset` splits the comparison across two instructions with correlated flags
+   (N,V both from X1-X2) materialized in between, so the sequence stays over-tainted even
+   though each rule is exact.  This is the intermediate-materialization boundary.
+5. **Document the irreducible boundary (§6)** in `KNOWN_ISSUES.md`; it is the honest
    statement of the avalanche limitation the paper already claims.
 
 Net: four floors -> two free polarity rules + two Z3-proved exact terms + a characterised
