@@ -585,6 +585,132 @@ cdef class VariableBitSelectTaintExpr(Expr):
         return 0
 
 
+cdef class ComparisonTaintExpr(Expr):
+    """EXACT taint of a comparison bit ``[a OP b]``, OP in {<, <=}, signed or unsigned.
+
+    A comparison is ANTITONE in its LHS and MONOTONE in its RHS.  The 2-corner
+    differential picks ONE global polarity per operand, so it is exact for a single
+    comparison but CANNOT serve a slice where the same operand feeds two comparisons of
+    OPPOSITE orientation (PPC ``cmpw`` packs ``[a<b]`` and ``[b<a]`` into CR0).  Compute
+    the comparison taint directly from the CROSS corners::
+
+        can_be_true = [ min(a) OP max(b) ]     # a smallest, b largest  -> most likely true
+        always_true = [ max(a) OP min(b) ]     # a largest,  b smallest -> least likely true
+        Tr          = can_be_true XOR always_true
+
+    can_be_true XOR always_true is 1 exactly when the predicate is NON-CONSTANT over the
+    taint cube (can be true but not always).  ``min(x)=V&~T``, ``max(x)=V|T``; a SIGNED
+    compare first XORs the sign bit of both operands into the unsigned domain (a bijection
+    on the cube, so min/max are the signed extremes).  EXACT when a and b are INDEPENDENT
+    (distinct operands / disjoint tainted bits) -- the builder gates on that; for ``[a<a]``
+    the whole-slice differential is used (already exact).  1-bit result (bit 0).
+    Machine-checked in benchmark/soundness/prove_comparison_taint.py.
+    """
+    cdef public Expr a_val
+    cdef public Expr a_taint
+    cdef public Expr b_val
+    cdef public Expr b_taint
+    cdef public int width
+    cdef public bint is_signed
+    cdef public bint or_equal
+
+    def __init__(self, Expr a_val, Expr a_taint, Expr b_val, Expr b_taint,
+                 int width, bint is_signed, bint or_equal):
+        self.a_val = a_val
+        self.a_taint = a_taint
+        self.b_val = b_val
+        self.b_taint = b_taint
+        self.width = width
+        self.is_signed = is_signed
+        self.or_equal = or_equal
+
+    def __str__(self):
+        op = ('<=' if self.or_equal else '<') + ('s' if self.is_signed else 'u')
+        return f'CMP_TAINT[{op},w={self.width}]({self.a_val}, {self.b_val})'
+
+    def __repr__(self):
+        return (
+            f'ComparisonTaintExpr(a_val={repr(self.a_val)}, b_val={repr(self.b_val)}, '
+            f'width={self.width}, is_signed={self.is_signed}, or_equal={self.or_equal})'
+        )
+
+    cpdef object evaluate(self, EvalContext context):
+        cdef int w = self.width
+        cdef object mask = ((<object>1) << w) - 1
+        cdef object a = self.a_val.evaluate(context) & mask
+        cdef object ta = self.a_taint.evaluate(context) & mask
+        cdef object b = self.b_val.evaluate(context) & mask
+        cdef object tb = self.b_taint.evaluate(context) & mask
+        if self.is_signed:
+            # signed compare == unsigned compare after flipping the sign bit
+            a = a ^ ((<object>1) << (w - 1))
+            b = b ^ ((<object>1) << (w - 1))
+        cdef object amin = a & ~ta & mask
+        cdef object amax = a | ta
+        cdef object bmin = b & ~tb & mask
+        cdef object bmax = b | tb
+        cdef int can_true, always_true
+        if self.or_equal:
+            can_true = 1 if amin <= bmax else 0
+            always_true = 1 if amax <= bmin else 0
+        else:
+            can_true = 1 if amin < bmax else 0
+            always_true = 1 if amax < bmin else 0
+        return can_true ^ always_true
+
+
+cdef class EqualityTaintExpr(Expr):
+    """EXACT taint of an equality bit ``[a == b]`` / ``[a != b]`` (identical sensitivity).
+
+    Equality is SYMMETRIC -- non-monotone in BOTH directions -- so it has no polarity
+    orientation and the 2-corner differential collapses (both corners land in the equal
+    regime).  Compute directly whether the equality can VARY over the taint cube::
+
+        equal_achievable   = ((a ^ b) & ~(Ta | Tb)) == 0    # every FIXED bit already agrees
+        unequal_achievable = (Ta | Tb) != 0                 # some bit is free to break equality
+        Tr = equal_achievable AND unequal_achievable
+
+    (equal is reachable iff the bits neither side taints already match, since any free bit
+    can be set to match; unequal is reachable iff at least one bit is free to differ.)
+    EXACT when a and b are INDEPENDENT (builder-gated); ``[a==a]`` is a constant handled by
+    the differential.  1-bit result (bit 0).  Machine-checked in
+    benchmark/soundness/prove_equality_taint.py.
+    """
+    cdef public Expr a_val
+    cdef public Expr a_taint
+    cdef public Expr b_val
+    cdef public Expr b_taint
+    cdef public int width
+
+    def __init__(self, Expr a_val, Expr a_taint, Expr b_val, Expr b_taint, int width):
+        self.a_val = a_val
+        self.a_taint = a_taint
+        self.b_val = b_val
+        self.b_taint = b_taint
+        self.width = width
+
+    def __str__(self):
+        return f'EQ_TAINT[w={self.width}]({self.a_val}, {self.b_val})'
+
+    def __repr__(self):
+        return (
+            f'EqualityTaintExpr(a_val={repr(self.a_val)}, b_val={repr(self.b_val)}, '
+            f'width={self.width})'
+        )
+
+    cpdef object evaluate(self, EvalContext context):
+        cdef int w = self.width
+        cdef object mask = ((<object>1) << w) - 1
+        cdef object a = self.a_val.evaluate(context) & mask
+        cdef object ta = self.a_taint.evaluate(context) & mask
+        cdef object b = self.b_val.evaluate(context) & mask
+        cdef object tb = self.b_taint.evaluate(context) & mask
+        cdef object free = ta | tb
+        cdef int equal_ach = 1 if ((a ^ b) & ~free & mask) == 0 else 0
+        cdef int unequal_ach = 1 if free != 0 else 0
+        return 1 if (equal_ach and unequal_ach) else 0
+
+
 cdef class TaintOperand(Expr):
     cdef public str name
     cdef public int bit_start

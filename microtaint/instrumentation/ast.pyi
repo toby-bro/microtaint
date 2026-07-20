@@ -105,6 +105,56 @@ class VariableBitSelectTaintExpr(Expr):
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 
+class ComparisonTaintExpr(Expr):
+    """EXACT taint of a comparison bit [a OP b] (OP in {<, <=}, signed/unsigned):
+    (min(a) OP max(b)) XOR (max(a) OP min(b)) -- the cross-corner differential.
+
+    Proved in benchmark/soundness/prove_comparison_taint.py.
+    """
+
+    a_val: Expr
+    a_taint: Expr
+    b_val: Expr
+    b_taint: Expr
+    width: int
+    is_signed: bool
+    or_equal: bool
+
+    def __init__(
+        self,
+        a_val: Expr,
+        a_taint: Expr,
+        b_val: Expr,
+        b_taint: Expr,
+        width: int,
+        is_signed: bool,
+        or_equal: bool,
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
+class EqualityTaintExpr(Expr):
+    """EXACT taint of an equality bit [a == b] / [a != b]:
+    ((a ^ b) & ~(Ta|Tb) == 0) AND (Ta|Tb != 0).
+
+    Proved in benchmark/soundness/prove_equality_taint.py.
+    """
+
+    a_val: Expr
+    a_taint: Expr
+    b_val: Expr
+    b_taint: Expr
+    width: int
+
+    def __init__(
+        self,
+        a_val: Expr,
+        a_taint: Expr,
+        b_val: Expr,
+        b_taint: Expr,
+        width: int,
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
 class TaintOperand(Expr):
     name: str
     bit_start: int
