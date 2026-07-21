@@ -59,6 +59,10 @@ class SignedOverflowTaintExpr(Expr):
     decomposition OF = (a_s ^ b_s) & (b_s ^ Bor)  [sub] / ~(a_s ^ b_s) & (b_s ^ Car)
     [add], where Bor/Car is the monotone borrow/carry into the msb.
 
+    The optional third operand c is the carry/borrow IN of adc/sbb/adcs/sbcs: it is
+    zext of a 1-bit flag, so it sits wholly in the low part and shifts only Bor/Car,
+    leaving the sign function unchanged.  c=None is the two-operand case.
+
     Proved in benchmark/soundness/prove_signed_overflow.py.
     """
 
@@ -66,6 +70,8 @@ class SignedOverflowTaintExpr(Expr):
     a_taint: Expr
     b_val: Expr
     b_taint: Expr
+    c_val: Expr | None
+    c_taint: Expr | None
     width: int
     is_sub: bool
 
@@ -77,6 +83,8 @@ class SignedOverflowTaintExpr(Expr):
         b_taint: Expr,
         width: int,
         is_sub: bool,
+        c_val: Expr | None = ...,
+        c_taint: Expr | None = ...,
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 

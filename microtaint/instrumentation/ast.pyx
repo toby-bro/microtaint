@@ -437,20 +437,30 @@ cdef class SignedOverflowTaintExpr(Expr):
     cdef public Expr a_taint
     cdef public Expr b_val
     cdef public Expr b_taint
+    cdef public Expr c_val
+    cdef public Expr c_taint
     cdef public int width
     cdef public bint is_sub
 
-    def __init__(self, Expr a_val, Expr a_taint, Expr b_val, Expr b_taint, int width, bint is_sub):
+    def __init__(self, Expr a_val, Expr a_taint, Expr b_val, Expr b_taint, int width, bint is_sub,
+                 Expr c_val=None, Expr c_taint=None):
         self.a_val = a_val
         self.a_taint = a_taint
         self.b_val = b_val
         self.b_taint = b_taint
+        # Optional third operand -- the carry/borrow IN of adc/sbb/adcs/sbcs.  It is
+        # zext of a 1-bit flag, so it lies entirely inside the low part and its sign
+        # bit is 0; it therefore shifts only the carry/borrow INTO the msb, leaving
+        # the sign function _g unchanged.  None == the plain two-operand case.
+        self.c_val = c_val
+        self.c_taint = c_taint
         self.width = width
         self.is_sub = is_sub
 
     def __str__(self):
         op = 'SBORROW' if self.is_sub else 'SCARRY'
-        return f'SIGNED_OVF_TAINT[{op},w={self.width}]({self.a_val}, {self.b_val})'
+        carry = '' if self.c_val is None else f', +{self.c_val}'
+        return f'SIGNED_OVF_TAINT[{op},w={self.width}]({self.a_val}, {self.b_val}{carry})'
 
     def __repr__(self):
         return (
@@ -467,6 +477,11 @@ cdef class SignedOverflowTaintExpr(Expr):
         cdef object ta = self.a_taint.evaluate(context) & mask
         cdef object b = self.b_val.evaluate(context) & mask
         cdef object tb = self.b_taint.evaluate(context) & mask
+        cdef object c = 0
+        cdef object tc = 0
+        if self.c_val is not None:
+            c = self.c_val.evaluate(context) & lowmask
+            tc = self.c_taint.evaluate(context) & lowmask
 
         cdef int a_s = <int>((a >> (w - 1)) & 1)
         cdef int b_s = <int>((b >> (w - 1)) & 1)
@@ -481,14 +496,16 @@ cdef class SignedOverflowTaintExpr(Expr):
         cdef int base_c, hi, lo, t_c
         if self.is_sub:
             # [al <u bl] is DECREASING in al, INCREASING in bl -> opposite polarity.
-            base_c = 1 if al < bl else 0
-            hi = 1 if (al & ~tal & lowmask) < (bl | tbl) else 0
-            lo = 1 if (al | tal) < (bl & ~tbl & lowmask) else 0
+            # [al <u bl + c] is DECREASING in al, INCREASING in bl and c.
+            base_c = 1 if al < bl + c else 0
+            hi = 1 if (al & ~tal & lowmask) < (bl | tbl) + (c | tc) else 0
+            lo = 1 if (al | tal) < (bl & ~tbl & lowmask) + (c & ~tc & lowmask) else 0
         else:
-            # carry into msb is INCREASING in both operands -> same polarity.
-            base_c = 1 if (al + bl) > lowmask else 0
-            hi = 1 if ((al | tal) + (bl | tbl)) > lowmask else 0
-            lo = 1 if ((al & ~tal & lowmask) + (bl & ~tbl & lowmask)) > lowmask else 0
+            # carry into msb is INCREASING in all operands -> same polarity.
+            base_c = 1 if (al + bl + c) > lowmask else 0
+            hi = 1 if ((al | tal) + (bl | tbl) + (c | tc)) > lowmask else 0
+            lo = 1 if ((al & ~tal & lowmask) + (bl & ~tbl & lowmask)
+                       + (c & ~tc & lowmask)) > lowmask else 0
         t_c = hi ^ lo
 
         cdef int base = self._g(a_s, b_s, base_c)

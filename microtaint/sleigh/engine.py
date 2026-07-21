@@ -862,22 +862,25 @@ def _build_signed_overflow_taint(  # noqa: C901
     overflow ops, ...).
     """
     ovf = [op for op in slice_ops if op.opcode.name in ('INT_SBORROW', 'INT_SCARRY')]
-    if len(ovf) != 1:
+    if not ovf or len(ovf) > 2 or any(len(o.inputs) != 2 for o in ovf):
         return None
-    # The overflow op must be the last op that computes anything.  Trailing
-    # value-preserving COPYs are fine and must be tolerated: ARM64 lifts flags
-    # into scratch varnodes and then copies them to the architectural NZCV
-    # registers, so the OV slice ends in ``COPY OV <- scratch`` rather than in
-    # the INT_SCARRY itself.  Requiring the overflow op to be literally last
-    # made the exact term decline on every ARM64 `cmn`/`cmp`.
-    _tail = slice_ops[slice_ops.index(ovf[0]) + 1 :]
+    # Nothing may compute after the overflow structure except value-preserving
+    # COPYs, which must be tolerated: ARM64 lifts flags into scratch varnodes and
+    # then copies them to the architectural NZCV registers, so the OV slice ends
+    # in ``COPY OV <- scratch`` rather than in the INT_SCARRY itself.  Requiring
+    # the overflow op to be literally last made the exact term decline on every
+    # ARM64 `cmn`/`cmp`.  For the two-op carry-in shape the joining BOOL_XOR is
+    # also allowed after them.
+    _last_ovf = max(slice_ops.index(o) for o in ovf)
+    _tail = [
+        o
+        for o in slice_ops[_last_ovf + 1 :]
+        if not (len(ovf) == 2 and o.opcode.name in ('BOOL_XOR', 'INT_XOR'))
+    ]
     if any(
         o.opcode.name != 'COPY' or o.output is None or o.output.size != o.inputs[0].size
         for o in _tail
     ):
-        return None
-    op = ovf[0]
-    if len(op.inputs) != 2:
         return None
 
     def _through_copies(vn: Varnode) -> Varnode:
@@ -911,36 +914,158 @@ def _build_signed_overflow_taint(  # noqa: C901
             vn = src
         return vn
 
-    operands: list[tuple[Expr, Expr]] = []
-    width = 0
-    for raw_vn in op.inputs:
+    def _key_vn(vn: Varnode) -> tuple[str, int, int]:
+        return (vn.space.name, vn.offset, vn.size)
+
+    def _defining(vn: Varnode) -> PcodeOp | None:
+        if vn.space.name != 'unique':
+            return None
+        return next(
+            (
+                o
+                for o in slice_ops
+                if o.output is not None
+                and o.output.space.name == 'unique'
+                and o.output.offset == vn.offset
+                and o.output.size == vn.size
+            ),
+            None,
+        )
+
+    def _resolve(raw_vn: Varnode) -> tuple[Expr, Expr, int] | None:
+        """Resolve an operand varnode to (value expr, taint expr, width in bits).
+
+        Beyond plain registers and constants this sees through the two
+        value-shaping wrappers ISAs put around a carry operand:
+        ``INT_NEGATE`` (ARM64 lifts `sbc` as ``x1 + ~x2 + CY``, so the second
+        operand is a bitwise complement -- which relocates no bits, hence carries
+        the same taint mask) and ``INT_ZEXT`` of a 1-bit flag (the carry-in
+        itself).  Returns None for anything else, so the caller declines rather
+        than guessing.
+        """
         vn = _through_copies(raw_vn)
         if vn.space.name == 'register':
             m = mapper.map_to_state(vn.offset, vn.size)
             if m is None:
                 return None
-            operands.append(
-                (
-                    _get_taint_operand(m.name, m.bit_start, m.bit_end, False),
-                    _get_taint_operand(m.name, m.bit_start, m.bit_end, True),
-                ),
+            return (
+                _get_taint_operand(m.name, m.bit_start, m.bit_end, False),
+                _get_taint_operand(m.name, m.bit_start, m.bit_end, True),
+                vn.size * 8,
             )
-        elif vn.space.name == 'const':
-            operands.append((Constant(vn.offset, vn.size * 8), Constant(0, vn.size * 8)))
-        else:
-            return None  # memory / intra-slice unique: not a plain 2-operand flag
-        width = max(width, vn.size * 8)
+        if vn.space.name == 'const':
+            return (Constant(vn.offset, vn.size * 8), Constant(0, vn.size * 8), vn.size * 8)
+        d = _defining(vn)
+        if d is None:
+            return None
+        if d.opcode.name == 'INT_NEGATE':
+            inner = _resolve(d.inputs[0])
+            if inner is None:
+                return None
+            v, t, _ = inner
+            return (UnaryExpr(Op.NOT, v), t, vn.size * 8)
+        if d.opcode.name == 'INT_ZEXT':
+            inner = _resolve(d.inputs[0])
+            if inner is None:
+                return None
+            v, t, _ = inner
+            return (v, t, vn.size * 8)
+        return None
 
+    # ---- shape 1: a plain two-operand overflow flag -------------------------
+    if len(ovf) == 1:
+        op = ovf[0]
+        if len(op.inputs) != 2:
+            return None
+        resolved = [_resolve(vn) for vn in op.inputs]
+        if any(r is None for r in resolved):
+            return None
+        (a_val, a_taint, aw), (b_val, b_taint, bw) = resolved  # type: ignore[misc]
+        width = max(aw, bw)
+        if width < 2:
+            return None
+        return SignedOverflowTaintExpr(
+            a_val,
+            a_taint,
+            b_val,
+            b_taint,
+            width,
+            op.opcode.name == 'INT_SBORROW',
+        )
+
+    # ---- shape 2: a carry-in chain (adc / sbb / adcs / sbcs) ----------------
+    #
+    # Every ISA checked lifts a carry-in add/subtract's overflow flag the same way::
+    #
+    #     OF = ovf(A, B)  XOR  ovf(A o B, C)          C = zext(carry flag)
+    #
+    #   x86   adc:  scarry(RAX,RBX)  ^^ scarry(RAX+RBX,  zext(CF))
+    #   x86   sbb:  sborrow(RAX,RBX) ^^ sborrow(RAX-RBX, zext(CF))
+    #   ARM64 adcs: scarry(x1,x2)    ^^ scarry(x1+x2,    zext(CY))
+    #   ARM64 sbcs: scarry(x1,~x2)   ^^ scarry(x1+~x2,   zext(CY))
+    #
+    # This is just the signed overflow of the THREE-operand sum A + B + C.  Because
+    # C is zext of a 1-bit flag it lies wholly inside the low part and its sign bit
+    # is 0, so it shifts only the carry/borrow INTO the msb and leaves the sign
+    # function unchanged -- the two-operand rule generalises with a third monotone
+    # contributor rather than needing a new decomposition.  Bor/Car stays monotone
+    # (increasing in C for both families), and A's sign bit, B's sign bit and
+    # Bor/Car still read disjoint inputs, so the enumeration remains exact.
+    #
+    # Without this the slice has two overflow ops, the exact term declines, and OF
+    # falls back to the 2-corner differential -- which non-monotone signed overflow
+    # is precisely able to slip through.
+    if len(ovf) != 2 or ovf[0].opcode.name != ovf[1].opcode.name:
+        return None
+    terminal = next(
+        (o for o in reversed(slice_ops) if o.opcode.name in ('BOOL_XOR', 'INT_XOR')), None,
+    )
+    if terminal is None or len(terminal.inputs) != 2:
+        return None
+    xor_srcs = {_key_vn(_through_copies(v)) for v in terminal.inputs}
+    if xor_srcs != {_key_vn(o.output) for o in ovf if o.output is not None}:
+        return None
+
+    is_sub = ovf[0].opcode.name == 'INT_SBORROW'
+    combiner = 'INT_SUB' if is_sub else 'INT_ADD'
+    # Identify which overflow op consumes the partial result A o B.
+    outer = None
+    for cand in ovf:
+        d = _defining(_through_copies(cand.inputs[0]))
+        if d is not None and d.opcode.name == combiner:
+            outer, partial = cand, d
+            break
+    if outer is None:
+        return None
+    inner = ovf[0] if outer is ovf[1] else ovf[1]
+    # The partial result must be exactly the inner overflow op's own two operands.
+    if [_key_vn(v) for v in partial.inputs] != [_key_vn(v) for v in inner.inputs]:
+        return None
+
+    resolved = [_resolve(vn) for vn in inner.inputs]
+    c_resolved = _resolve(outer.inputs[1])
+    if any(r is None for r in resolved) or c_resolved is None:
+        return None
+    (a_val, a_taint, aw), (b_val, b_taint, bw) = resolved  # type: ignore[misc]
+    c_val, c_taint, _cw = c_resolved
+    width = max(aw, bw)
     if width < 2:
         return None
-    (a_val, a_taint), (b_val, b_taint) = operands
+    # The carry-in must be a single bit, or its sign bit could reach the msb and the
+    # decomposition's premise (c_s == 0) would not hold.
+    zext_src = _defining(_through_copies(outer.inputs[1]))
+    if zext_src is None or zext_src.opcode.name != 'INT_ZEXT' or zext_src.inputs[0].size != 1:
+        return None
+
     return SignedOverflowTaintExpr(
         a_val,
         a_taint,
         b_val,
         b_taint,
         width,
-        op.opcode.name == 'INT_SBORROW',
+        is_sub,
+        c_val,
+        c_taint,
     )
 
 
