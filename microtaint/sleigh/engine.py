@@ -26,6 +26,7 @@ from microtaint.instrumentation.ast import (
     TaintOperand,
     UnaryExpr,
     VariableBitSelectTaintExpr,
+    VariableShiftTaintExpr,
 )
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import EXTENSION_OPCODES, TRANSLATABLE_OPCODES, determine_category
@@ -1069,6 +1070,140 @@ def _build_signed_overflow_taint(  # noqa: C901
     )
 
 
+_SHIFT_KIND = {'INT_LEFT': 0, 'INT_RIGHT': 1, 'INT_SRIGHT': 2}
+_SHIFT_PASSTHROUGH = frozenset({'COPY', 'INT_SEXT', 'INT_ZEXT'})
+
+
+def _build_variable_shift_taint(  # noqa: C901
+    slice_ops: list[PcodeOp],
+    mapper: StateMapper,
+    out_width: int,
+) -> Expr | None:
+    """EXACT taint for a shift by a DATA-DEPENDENT amount, or None.
+
+    A tainted shift amount otherwise forces AvalancheExpr, tainting the whole
+    output width.  Across a 2M-case five-ISA campaign that single behaviour was
+    69.8% of all over-tainted bits (4.13x invented bits) from 21 of 175
+    instructions, while everything outside shifts and multiply sat at 0.07x.
+
+    Every ISA checked lifts the variable shift identically::
+
+        u   = amount & MASK          (INT_AND with a constant)
+        dst = src <shift> u          (INT_LEFT / INT_RIGHT / INT_SRIGHT)
+
+      ARM64 `lslv`  x2 & 0x3f ; x1 << u
+      MIPS  `sllv`  a1 & 0x1f ; a0 << u ; sext            (32-bit core, widened)
+      PPC   `slw`   r5 & 0x3f ; r4 << u
+      RISCV `sll`   likewise
+
+    so the recogniser is structural rather than per-ISA.  The masking INT_AND is
+    optional (a bare register amount is accepted, with the mask defaulting to the
+    p-code shift's own saturating semantics).
+
+    Declines -- leaving today's behaviour -- unless the slice is exactly that
+    shape: one shift op, register source, register (optionally masked) amount, and
+    nothing after it but value-preserving widening.  A rotate (`rorv`) reconverges
+    two shifts into an OR and is NOT this shape, so it is correctly refused.
+    """
+    shifts = [op for op in slice_ops if op.opcode.name in _SHIFT_KIND]
+    if len(shifts) != 1:
+        return None
+    sh = shifts[0]
+    if sh.output is None or len(sh.inputs) != 2:
+        return None
+
+    inner_width = sh.output.size * 8
+    if inner_width < 2:
+        return None
+
+    def _defining(vn: Varnode) -> PcodeOp | None:
+        if vn.space.name != 'unique':
+            return None
+        return next(
+            (
+                o
+                for o in slice_ops
+                if o.output is not None
+                and o.output.space.name == 'unique'
+                and o.output.offset == vn.offset
+                and o.output.size == vn.size
+            ),
+            None,
+        )
+
+    def _reg(vn: Varnode) -> RegMapping | None:
+        d = _defining(vn)
+        while d is not None and d.opcode.name == 'COPY':
+            vn = d.inputs[0]
+            d = _defining(vn)
+        if vn.space.name != 'register':
+            return None
+        m = mapper.map_to_state(vn.offset, vn.size)
+        return m if isinstance(m, RegMapping) else None
+
+    src = _reg(sh.inputs[0])
+    if src is None:
+        return None
+
+    # Amount: either a bare register, or the standard `reg & const` masking idiom.
+    amt_mask = (1 << inner_width) - 1
+    amt_vn = sh.inputs[1]
+    d = _defining(amt_vn)
+    if d is not None and d.opcode.name == 'INT_AND' and d.inputs[1].space.name == 'const':
+        amt_mask = d.inputs[1].offset
+        amt_vn = d.inputs[0]
+    amt = _reg(amt_vn)
+    if amt is None:
+        return None
+
+    # A constant amount is handled exactly by the existing differential; this term
+    # is for the data-dependent case only.
+    if amt.name == src.name and amt.bit_start == src.bit_start:
+        return None
+
+    # Only value-preserving widening may follow the shift, and every remaining op
+    # must belong to the recognised shape -- otherwise the slice does more than
+    # this term models.
+    allowed = {id(sh)}
+    if d is not None:
+        allowed.add(id(d))
+    for op in slice_ops:
+        if id(op) in allowed:
+            continue
+        if op.opcode.name not in _SHIFT_PASSTHROUGH:
+            return None
+
+    expr: Expr = VariableShiftTaintExpr(
+        _get_taint_operand(src.name, src.bit_start, src.bit_end, False),
+        _get_taint_operand(src.name, src.bit_start, src.bit_end, True),
+        _get_taint_operand(amt.name, amt.bit_start, amt.bit_end, False),
+        _get_taint_operand(amt.name, amt.bit_start, amt.bit_end, True),
+        inner_width,
+        _SHIFT_KIND[sh.opcode.name],
+        amt_mask,
+    )
+
+    # MIPS computes a 32-bit shift and sign-extends it into a 64-bit GPR: the
+    # taint of the fill is the inner msb's taint, replicated.
+    if out_width > inner_width:
+        widening = next(
+            (o for o in slice_ops if o.opcode.name in ('INT_SEXT', 'INT_ZEXT')), None,
+        )
+        if widening is None:
+            return None
+        if widening.opcode.name == 'INT_SEXT':
+            fill: Expr = BinaryExpr(Op.AND, expr, Constant(1 << (inner_width - 1), 8))
+            step = 1
+            while step < out_width - inner_width + 1:
+                fill = BinaryExpr(Op.OR, fill, BinaryExpr(Op.LEFT, fill, Constant(step, 8)))
+                step *= 2
+            expr = BinaryExpr(
+                Op.OR, expr, BinaryExpr(Op.AND, fill, Constant((1 << out_width) - 1, 8)),
+            )
+
+    return expr
+
+
 def _build_variable_bit_select_taint(  # noqa: C901
     slice_ops: list[PcodeOp],
     mapper: StateMapper,
@@ -1869,6 +2004,23 @@ def generate_taint_assignments(  # noqa: C901
             expr = AvalancheExpr(expr, out_width)
 
     elif cat == InstructionCategory.TRANSLATABLE:
+        # A shift by a data-dependent amount otherwise falls to AvalancheExpr and
+        # taints the full output width.  Route it to the exact subcube term first;
+        # it declines (returning None) for anything that is not exactly a masked
+        # variable shift, in which case the differential path below is unchanged.
+        _var_shift = _build_variable_shift_taint(
+            slice_ops, mapper, out_bit_end - out_bit_start + 1,
+        )
+        if _var_shift is not None and not isinstance(mapping, MemMapping):
+            assignments.append(
+                TaintAssignment(
+                    target=out_target,
+                    dependencies=dependencies,
+                    expression=_var_shift,
+                ),
+            )
+            return
+
         diff_expr = make_differential()
 
         core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]

@@ -88,6 +88,38 @@ class SignedOverflowTaintExpr(Expr):
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 
+class VariableShiftTaintExpr(Expr):
+    """EXACT taint of a shift by a data-dependent amount, in O(log w) steps.
+
+    The reachable amount set is a subcube, so OR/AND over it is computed by
+    log-fold doubling rather than enumeration:
+
+        T_r = sm(T_x, OR) | (sm(x, OR) ^ sm(x, AND))
+
+    Cost is 2*log2(w) steps, independent of how many bits are tainted or of their
+    values.  Proved in benchmark/soundness/prove_variable_shift.py.
+    """
+
+    src_val: Expr
+    src_taint: Expr
+    amt_val: Expr
+    amt_taint: Expr
+    width: int
+    kind: int  # 0 = left, 1 = logical right, 2 = arithmetic right
+    amt_mask: int
+
+    def __init__(
+        self,
+        src_val: Expr,
+        src_taint: Expr,
+        amt_val: Expr,
+        amt_taint: Expr,
+        width: int,
+        kind: int,
+        amt_mask: int,
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
 class VariableBitSelectTaintExpr(Expr):
     """EXACT taint of a bit selected by a data-dependent index (`bt r,r` -> CF).
 

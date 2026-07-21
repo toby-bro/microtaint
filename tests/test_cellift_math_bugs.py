@@ -98,7 +98,9 @@ def test_bug_1_xor_is_not_monotonic(simulator: CellSimulator, state_format: list
 def test_bug_2_translatable_shifts_ignored(simulator: CellSimulator, state_format: list[Register]) -> None:
     """
     Shift: d3 e0 (shl eax, cl)
-    Math Bug: Shifts are NOT monotonic. If offset is tainted, AST must avalanche.
+    Math Bug: shifts are NOT monotonic, so a tainted offset used to require an
+    avalanche.  VariableShiftTaintExpr resolves it exactly from the reachable
+    amount subcube, so this now asserts equality with the 2^k golden model.
     """
     # V_EAX=1, V_ECX=1. T_EAX=0, T_ECX=1
     check_ast_vs_golden_taint(
@@ -108,7 +110,6 @@ def test_bug_2_translatable_shifts_ignored(simulator: CellSimulator, state_forma
         V_dict={'EAX': 1, 'ECX': 1},
         T_dict={'EAX': 0, 'ECX': 1},
         state_format=state_format,
-        expected_override=0xFFFFFFFF,  # CellIFT approximation policy requirement
     )
 
 

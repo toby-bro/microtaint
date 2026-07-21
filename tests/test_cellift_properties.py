@@ -155,8 +155,11 @@ def test_property_translatable_shift(simulator: CellSimulator, state_format: lis
     """
     PROPERTY: TRANSLATABLE
     Instruction: shl eax, cl (d3 e0)
-    Why: Shifts are not monotonic. If the shift offset is tainted, we must
-    Avalanche (taint the entire register) per the CELLIFT approximation policy.
+    Why: shifts are not monotonic, so a tainted shift amount used to Avalanche the
+    whole register per the CELLIFT approximation policy.  VariableShiftTaintExpr
+    now resolves it EXACTLY via the reachable-amount subcube, so no override is
+    needed and the assertion is against the 2^k golden model: ECX bit 0 tainted
+    means the amount is 0 or 1, so EAX=1 lands on bit 0 or bit 1 -> taint 0x3.
     """
     check_property_vs_golden_model(
         simulator,
@@ -165,7 +168,6 @@ def test_property_translatable_shift(simulator: CellSimulator, state_format: lis
         v_dict={'EAX': 1, 'ECX': 1},
         t_dict={'EAX': 0, 'ECX': 1},
         state_format=state_format,
-        expected_override=0xFFFFFFFF,
     )
 
 

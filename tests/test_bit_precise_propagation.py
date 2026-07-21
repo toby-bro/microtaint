@@ -136,7 +136,7 @@ def test_shr_concrete_propagates_taint(simulator: CellSimulator, amd64_registers
     assert circuit.evaluate(ctx).get('RAX', 0) == 0x0000000F
 
 
-def test_shl_symbolic_avalanches_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
+def test_shl_symbolic_taint_is_exact(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('d3e0')  # SHL EAX, CL
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
@@ -147,9 +147,11 @@ def test_shl_symbolic_avalanches_taint(simulator: CellSimulator, amd64_registers
     )
     output = circuit.evaluate(ctx)
 
-    # FIX: AMD64 zero-extends 32-bit outputs to the full 64-bit register.
-    # Therefore, an Avalanche on EAX correctly cascades through the entire RAX!
-    assert output.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
+    # A tainted shift amount used to Avalanche, tainting all of EAX and hence (via
+    # AMD64's zero-extension) all of RAX.  VariableShiftTaintExpr now resolves the
+    # reachable amount subcube exactly: RCX bit 0 tainted means the amount is 0 or
+    # 1, so EAX=1 lands on bit 0 or bit 1 and nothing else can move.
+    assert output.get('RAX', 0) == 0x3
 
 
 # ==========================================
