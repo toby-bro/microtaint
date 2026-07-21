@@ -235,6 +235,25 @@ def _smear_high(expr: Expr, from_bit: int, width: int) -> Expr:
     return BinaryExpr(Op.AND, fill, Constant(((1 << width) - 1) & ~((1 << from_bit) - 1), 8))
 
 
+def _smear_down(expr: Expr, from_bit: int, count: int, width: int) -> Expr:
+    """Replicate bit `from_bit` of `expr` downward across `count` bit positions.
+
+    An arithmetic right shift by `count` vacates the top `count` bits and fills
+    them with copies of the sign bit, so a tainted sign bit taints every copy.
+    Note the direction: the fill spreads *down* from the sign bit into the bits
+    the shift vacated, which are the highest bits of the result.
+    """
+    fill: Expr = BinaryExpr(Op.AND, expr, Constant(1 << from_bit, 8))
+    if count <= 1:
+        return fill
+    step = 1
+    while step < count:
+        fill = BinaryExpr(Op.OR, fill, BinaryExpr(Op.RIGHT, fill, Constant(step, 8)))
+        step *= 2
+    keep = ((1 << width) - 1) & ~((1 << (from_bit + 1 - count)) - 1)
+    return BinaryExpr(Op.AND, fill, Constant(keep, 8))
+
+
 def waist_taint_expr(  # noqa: C901
     waist: Waist,
     taint_of_register: Callable[[int, int], Expr | None],
@@ -299,7 +318,7 @@ def waist_taint_expr(  # noqa: C901
             # Arithmetic shift: the sign bit is replicated into the vacated top,
             # so a tainted sign bit taints all `c` fill bits as well.
             shifted = BinaryExpr(Op.RIGHT, a, Constant(c, 8))
-            res = BinaryExpr(Op.OR, shifted, _smear_high(a, width - 1, width))
+            res = BinaryExpr(Op.OR, shifted, _smear_down(a, width - 1, min(c, width), width))
         elif name in ('INT_NEGATE', 'BOOL_NEGATE'):
             res = a
         elif name == 'INT_AND' and c is not None:

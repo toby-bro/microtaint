@@ -840,7 +840,7 @@ def generate_static_rule(
     )
 
 
-def _build_signed_overflow_taint(
+def _build_signed_overflow_taint(  # noqa: C901
     slice_ops: list[PcodeOp],
     mapper: StateMapper,
 ) -> Expr | None:
@@ -862,15 +862,59 @@ def _build_signed_overflow_taint(
     overflow ops, ...).
     """
     ovf = [op for op in slice_ops if op.opcode.name in ('INT_SBORROW', 'INT_SCARRY')]
-    if len(ovf) != 1 or ovf[0] is not slice_ops[-1]:
+    if len(ovf) != 1:
+        return None
+    # The overflow op must be the last op that computes anything.  Trailing
+    # value-preserving COPYs are fine and must be tolerated: ARM64 lifts flags
+    # into scratch varnodes and then copies them to the architectural NZCV
+    # registers, so the OV slice ends in ``COPY OV <- scratch`` rather than in
+    # the INT_SCARRY itself.  Requiring the overflow op to be literally last
+    # made the exact term decline on every ARM64 `cmn`/`cmp`.
+    _tail = slice_ops[slice_ops.index(ovf[0]) + 1 :]
+    if any(
+        o.opcode.name != 'COPY' or o.output is None or o.output.size != o.inputs[0].size
+        for o in _tail
+    ):
         return None
     op = ovf[0]
     if len(op.inputs) != 2:
         return None
 
+    def _through_copies(vn: Varnode) -> Varnode:
+        """Follow value-preserving COPYs from a unique back to its source varnode.
+
+        Several ISAs stage an operand through a temporary before the overflow op:
+        x86 `cmp` lifts as ``COPY u <- RAX; INT_SBORROW OF <- u, RBX``, and ARM64
+        `cmn` does the same.  Without this, the `u` operand is not a register, the
+        exact term declines, and the flag silently falls back to the differential —
+        which is precisely what signed overflow is non-monotone enough to escape.
+        Only same-size COPY is followed, so no value is reinterpreted.
+        """
+        for _ in range(8):  # p-code is acyclic; the bound is belt-and-braces
+            if vn.space.name != 'unique':
+                return vn
+            src = next(
+                (
+                    o.inputs[0]
+                    for o in slice_ops
+                    if o.opcode.name == 'COPY'
+                    and o.output is not None
+                    and o.output.space.name == 'unique'
+                    and o.output.offset == vn.offset
+                    and o.output.size == vn.size
+                    and o.inputs[0].size == vn.size
+                ),
+                None,
+            )
+            if src is None:
+                return vn
+            vn = src
+        return vn
+
     operands: list[tuple[Expr, Expr]] = []
     width = 0
-    for vn in op.inputs:
+    for raw_vn in op.inputs:
+        vn = _through_copies(raw_vn)
         if vn.space.name == 'register':
             m = mapper.map_to_state(vn.offset, vn.size)
             if m is None:
