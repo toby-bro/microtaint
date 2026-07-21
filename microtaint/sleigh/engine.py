@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 from pypcode import Context, PcodeOp, Translation, Varnode
 
@@ -29,6 +29,7 @@ from microtaint.instrumentation.ast import (
 )
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import EXTENSION_OPCODES, TRANSLATABLE_OPCODES, determine_category
+from microtaint.sleigh.partition import ALG_ARITH, ALG_BITWISE, find_waist, waist_taint_expr
 from microtaint.sleigh.polarity import compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
@@ -553,6 +554,7 @@ def _cached_generate_static_rule(  # noqa: C901
         # answer (in both reps the cmov takes the same path with the same
         # concrete flags), and the old-dest passthrough only adds spurious bits.
         cbranch_flag_deps: list[tuple[int, int]] = []
+        cbranch_op = None
         if has_cbranch:
             cbranch_op = next(op for op in translation.ops if _is_forward_cbranch(op))
             _worklist = [cbranch_op.inputs[1]]  # condition input
@@ -678,6 +680,8 @@ def _cached_generate_static_rule(  # noqa: C901
             output_cond_written=output_cond_written,
             is_bit_count=is_bit_count,
             is_software_loop=is_software_loop,
+            all_ops=translation.ops,
+            cbranch_op=cbranch_op,
         )
 
     return LogicCircuit(
@@ -1139,6 +1143,127 @@ def _build_packed_comparison_taint(  # noqa: C901
     return result
 
 
+def _select_branch_expr(  # noqa: C901
+    op: PcodeOp,
+    ops: list[PcodeOp],
+    mapper: StateMapper,
+    width: int,
+    opnd: Callable[[str, int, int], Expr],
+) -> Expr | None:
+    """Reconstruct the value expression produced by `op` (a select branch), building each
+    input register operand via `opnd(name, bit_start, bit_end)`.  Passing the VALUE, the
+    high corner (V|T) or the low corner (V&~T) as `opnd` yields, respectively, the branch's
+    concrete value, or the two replicas whose XOR is the branch's own differential taint.
+    Grammar: COPY / INT_2COMP / INT_NEGATE / affine (ADD/SUB/AND/OR/XOR/LEFT) of
+    registers/consts; None outside it.  Masked to `width` so two's-complement round-trips.
+    """
+    mask = (1 << width) - 1
+
+    def v(vn: Varnode) -> Expr | None:
+        if vn.space.name == 'const':
+            return Constant(vn.offset & mask, width)
+        if vn.space.name == 'register':
+            m = mapper.map_to_state(vn.offset, vn.size)
+            if not isinstance(m, RegMapping):
+                return None
+            operand: Expr = opnd(m.name, m.bit_start, m.bit_end)
+            return operand
+        if vn.space.name == 'unique':
+            d = None
+            for o in ops:
+                if o.output is not None and o.output.space.name == 'unique' and o.output.offset == vn.offset:
+                    d = o
+            return _select_branch_expr(d, ops, mapper, width, opnd) if d is not None else None
+        return None
+
+    name = op.opcode.name
+    ins = op.inputs
+    if name == 'COPY' and ins:
+        return v(ins[0])
+    if name == 'INT_2COMP' and ins:
+        a = v(ins[0])
+        if a is None:
+            return None
+        return BinaryExpr(Op.AND, BinaryExpr(Op.SUB, Constant(0, width), a), Constant(mask, width))
+    if name == 'INT_NEGATE' and ins:
+        a = v(ins[0])
+        return BinaryExpr(Op.AND, UnaryExpr(Op.NOT, a), Constant(mask, width)) if a is not None else None
+    _bin = {'INT_ADD': Op.ADD, 'INT_SUB': Op.SUB, 'INT_AND': Op.AND, 'INT_OR': Op.OR,
+            'INT_XOR': Op.XOR, 'INT_LEFT': Op.LEFT}
+    if name in _bin and len(ins) == 2:
+        a, b = v(ins[0]), v(ins[1])
+        if a is None or b is None:
+            return None
+        return BinaryExpr(Op.AND, BinaryExpr(_bin[name], a, b), Constant(mask, width))
+    return None
+
+
+def _select_weld(  # noqa: C901
+    slice_ops: list[PcodeOp],
+    ops: list[PcodeOp],
+    cbranch_op: PcodeOp,
+    mapper: StateMapper,
+    width: int,
+) -> Expr | None:
+    """Exact taint of a CBRANCH conditional select's INTERIOR -- the WELD of the two
+    branch differentials plus their value difference:
+
+        weld = D(A) | D(B) | (val(A) ^ val(B))
+
+    D(A) is branch A's own differential (its two polarity-corner replicas XOR'd), so a
+    branch that is `x2+1` or `-x2` gets its true add/negate taint, not a coarse value
+    XOR.  This is welded (OR'd) because the reachable output over a varying selector is
+    the union of the two branch outcomes.  The caller gates it by the selector taint.
+
+    Handles the two-write ARM conditional family (csel/cneg/cinv/csinc/csneg/csinv).
+    Returns None for one-write selects (cmov -- the not-taken value is the old dest,
+    handled by the caller's old-dest passthrough) or shapes outside the branch grammar.
+    """
+    if not slice_ops:
+        return None
+    out_op = slice_ops[-1]
+    target = out_op.inputs[0] if out_op.opcode.name == 'COPY' and out_op.inputs else out_op.output
+    if target is None:
+        return None
+    try:
+        cbr = ops.index(cbranch_op)
+    except ValueError:
+        return None
+    writes = [i for i, o in enumerate(ops)
+              if o.output is not None and o.output.space.name == target.space.name
+              and o.output.offset == target.offset]
+    before = [i for i in writes if i < cbr]
+    after = [i for i in writes if i > cbr]
+    if not before or not after:
+        return None
+
+    def _val(n: str, bs: int, be: int) -> Expr:
+        return _get_taint_operand(n, bs, be, False)
+
+    def _hi(n: str, bs: int, be: int) -> Expr:
+        return BinaryExpr(Op.OR, _get_taint_operand(n, bs, be, False), _get_taint_operand(n, bs, be, True))
+
+    def _lo(n: str, bs: int, be: int) -> Expr:
+        return BinaryExpr(Op.AND, _get_taint_operand(n, bs, be, False),
+                          UnaryExpr(Op.NOT, _get_taint_operand(n, bs, be, True)))
+
+    def branch(op: PcodeOp) -> tuple[Expr, Expr] | None:
+        val = _select_branch_expr(op, ops, mapper, width, _val)
+        hi = _select_branch_expr(op, ops, mapper, width, _hi)
+        lo = _select_branch_expr(op, ops, mapper, width, _lo)
+        if val is None or hi is None or lo is None:
+            return None
+        return val, BinaryExpr(Op.XOR, hi, lo)  # (value, own differential)
+
+    ra = branch(ops[before[-1]])
+    rb = branch(ops[after[0]])
+    if ra is None or rb is None:
+        return None
+    (val_a, d_a), (val_b, d_b) = ra, rb
+    val_diff = BinaryExpr(Op.XOR, val_a, val_b)
+    return BinaryExpr(Op.OR, BinaryExpr(Op.OR, d_a, d_b), val_diff)
+
+
 def generate_taint_assignments(  # noqa: C901
     arch: Architecture,
     bytestring: bytes,
@@ -1157,6 +1282,8 @@ def generate_taint_assignments(  # noqa: C901
     output_cond_written: bool = False,
     is_bit_count: bool = False,
     is_software_loop: bool = False,
+    all_ops: list[PcodeOp] | None = None,
+    cbranch_op: PcodeOp | None = None,
 ) -> None:
     # -----------------------------------------------------------------------
     # STORE TARGET — memory output of a STORE instruction.
@@ -2142,6 +2269,65 @@ def generate_taint_assignments(  # noqa: C901
     else:
         raise ValueError(f'Unsupported instruction category: {cat}')
 
+    # -----------------------------------------------------------------------
+    # FUSED-OPERATION WAIST FLOOR  (see microtaint/sleigh/partition.py)
+    #
+    # Some ISAs encode two functional units in one instruction -- ARM64's
+    # shifted-register operand (`sub x0, x1, x2, asr #5`) runs the barrel
+    # shifter into the ALU.  `slice_backward` flattens both into one op list and
+    # `determine_category` must pick a single label; the permutation prefix wins
+    # (TRANSLATABLE) and the carry-coupled core silently loses the union floor
+    # that makes a bare `sub` sound.  The borrow chain is then covered only by
+    # the 2-corner differential, which under-taints.
+    #
+    # `find_waist` detects the fusion structurally (single conduit varnode,
+    # disjoint architectural inputs, both sides doing real work, different taint
+    # algebras), so the rule holds for any ISA rather than naming opcodes.  The
+    # floor is taken over the *materialised waist taint* -- the source taint as
+    # transformed by the upstream unit -- not the raw source taint, because the
+    # shift has already moved those bits and, for a left shift, discarded some.
+    #
+    # Restricted to wide outputs: a 1-bit flag fed by a union floor would be
+    # tainted by any tainted input bit, which is sound but needlessly coarse.
+    # -----------------------------------------------------------------------
+    if (
+        not is_store_target
+        and not isinstance(mapping, MemMapping)
+        and out_bit_end > out_bit_start
+        and slice_ops
+        and slice_ops[-1].output is not None
+    ):
+        _waist = find_waist(slice_ops, slice_ops[-1].output)
+        if (
+            _waist is not None
+            and _waist.upstream_algebra == ALG_BITWISE
+            and _waist.downstream_algebra == ALG_ARITH
+        ):
+
+            def _reg_taint(offset: int, size: int) -> Expr | None:
+                m = mapper.map_to_state(offset, size)
+                if m is None:
+                    return None
+                return _get_taint_operand(m.name, m.bit_start, m.bit_end, True)
+
+            _waist_taint = waist_taint_expr(_waist, _reg_taint)
+            if _waist_taint is not None:
+                _floor_terms: list[Expr] = [_waist_taint]
+                for _off, _sz in sorted(_waist.downstream_regs):
+                    _dt = _reg_taint(_off, _sz)
+                    if _dt is None:  # an unmappable read -> cannot bound the floor
+                        _floor_terms = []
+                        break
+                    _floor_terms.append(_dt)
+                if _floor_terms:
+                    _fl = _floor_terms[0]
+                    for _t in _floor_terms[1:]:
+                        _fl = BinaryExpr(Op.OR, _fl, _t)
+                    _w = out_bit_end - out_bit_start + 1
+                    if _w < 64:
+                        _fl = BinaryExpr(Op.AND, _fl, Constant((1 << _w) - 1, 8))
+                    expr = BinaryExpr(Op.OR, expr, _fl)
+
     # 1-bit flag soundness floor for COND_TRANSPORTABLE.
     #
     # Same principle as the MONOTONIC floor: when dep operands are fully
@@ -2299,44 +2485,53 @@ def generate_taint_assignments(  # noqa: C901
                     cond_taint = MemoryOperand(_cond_addr, dep_map.size_bytes, is_taint=True)
                 flag_taint_or = cond_taint if flag_taint_or is None else BinaryExpr(Op.OR, flag_taint_or, cond_taint)
         if flag_taint_or is not None:
-            # Build T_source = OR of all dependency taints EXCEPT the injected
-            # old-dest (which corresponds to out_name with full output slice).
-            source_taint_or: Expr | None = None
-            for dep in dependencies:
-                # Skip the injected old-dest dep (has out_name and the same slice).
-                if (
-                    isinstance(dep, TaintOperand)
-                    and dep.name == out_name
-                    and dep.bit_start == out_bit_start
-                    and dep.bit_end == out_bit_end
-                ):
-                    continue
-                source_taint_or = dep if source_taint_or is None else BinaryExpr(Op.OR, source_taint_or, dep)
-            # Combined gated term: T_old_dest | T_source, ANDed with the flag-taint mask.
-            if source_taint_or is not None:
-                combined: Expr = BinaryExpr(Op.OR, old_dest_taint, source_taint_or)
-            else:
-                combined = old_dest_taint
-            # Data-select VALUE difference.  When the condition is tainted, flipping
-            # it switches the output between the selected operands, so every bit
-            # where two selectable VALUES differ becomes tainted -- not just their
-            # taint union.  (csel x0,x1,x2,cc under-tainted the (x1 XOR x2) bits on
-            # untainted positions.)  XOR the multi-bit value-operand deps pairwise
-            # (1-bit condition flags are excluded -- they are the selector, gated
-            # separately, not selectable data).
-            _sel_vals: list[Expr] = [
-                _get_taint_operand(dm.name, dm.bit_start, dm.bit_end, False)
-                for dm in dep_set.value_deps
-                if isinstance(dm, RegMapping) and dm.bit_end > dm.bit_start
-            ]
-            for _i in range(len(_sel_vals)):
-                for _j in range(_i + 1, len(_sel_vals)):
-                    _vd: Expr = BinaryExpr(Op.XOR, _sel_vals[_i], _sel_vals[_j])
-                    combined = BinaryExpr(Op.OR, combined, _vd)
             out_width = out_bit_end - out_bit_start + 1
             gate = AvalancheExpr(flag_taint_or, out_width)
-            gated_passthrough = BinaryExpr(Op.AND, combined, gate)
-            expr = BinaryExpr(Op.OR, expr, gated_passthrough)
+            # WELDABLE INTERIOR of a two-write conditional select.  When the selector can
+            # vary, the reachable output is the UNION of the two branch outcomes, so its
+            # taint is the WELD of the branch differentials plus their value difference:
+            #     D(A) | D(B) | (val(A) ^ val(B))
+            # The extremal 2-corner differential cannot reach this interior -- `cneg`'s
+            # selector is `NG==OV`, a non-monotone EQUALITY whose two corners agree, so
+            # the branch flip is never sampled and x0 under-tainted.  Taking each branch's
+            # OWN differential (not a coarse operand XOR) also makes `csinc`/`csneg` exact,
+            # since their branch is `x2+1` / `-x2` with a real add/negate taint.  No
+            # old-dest term is needed: one of the two branches always writes the output.
+            _weld = (
+                _select_weld(slice_ops, all_ops, cbranch_op, mapper, out_width)
+                if (cbranch_op is not None and all_ops is not None) else None
+            )
+            if _weld is not None:
+                expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, _weld, gate))
+            else:
+                # ONE-write select (x86 `cmov`: the not-taken path keeps the OLD
+                # destination) or a branch shape outside the grammar -- fall back to the
+                # old-dest + source union plus the pairwise operand value difference.
+                source_taint_or: Expr | None = None
+                for dep in dependencies:
+                    # Skip the injected old-dest dep (out_name with the same slice).
+                    if (
+                        isinstance(dep, TaintOperand)
+                        and dep.name == out_name
+                        and dep.bit_start == out_bit_start
+                        and dep.bit_end == out_bit_end
+                    ):
+                        continue
+                    source_taint_or = dep if source_taint_or is None else BinaryExpr(Op.OR, source_taint_or, dep)
+                if source_taint_or is not None:
+                    combined: Expr = BinaryExpr(Op.OR, old_dest_taint, source_taint_or)
+                else:
+                    combined = old_dest_taint
+                _sel_vals: list[Expr] = [
+                    _get_taint_operand(dm.name, dm.bit_start, dm.bit_end, False)
+                    for dm in dep_set.value_deps
+                    if isinstance(dm, RegMapping) and dm.bit_end > dm.bit_start
+                ]
+                for _i in range(len(_sel_vals)):
+                    for _j in range(_i + 1, len(_sel_vals)):
+                        _vd: Expr = BinaryExpr(Op.XOR, _sel_vals[_i], _sel_vals[_j])
+                        combined = BinaryExpr(Op.OR, combined, _vd)
+                expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, combined, gate))
         else:
             # Fall back to unconditional passthrough when flag deps aren't identified
             # (e.g. CBRANCH on a non-flag predicate). Sound but possibly imprecise.
