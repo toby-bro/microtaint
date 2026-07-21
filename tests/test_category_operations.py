@@ -188,8 +188,11 @@ def test_category_avalanche_imul(amd64_registers: list[Register]) -> None:
     Category: AVALANCHE (Multiplication)
     Instruction: IMUL RAX, RBX -> 48 0f af c3
 
-    Rule: Multiplications are too complex to track bit-precisely. Any tainted
-    input bit causes the entire output register to become completely tainted (-1).
+    Rule: multiplication cannot be made exact cheaply, but avalanching the whole
+    register is far coarser than necessary.  VariableMultiplyTaintExpr bounds the
+    varying bits to [tz_lo(a)+tz_lo(b) .. highbit(max^min)] of the full product.
+    Here RAX is 2 or 3 and RBX is 3, so the product is 6 or 9 and exactly the low
+    four bits can vary: 6 ^ 9 = 0xf.
     """
     arch = Architecture.AMD64
     bytestring = bytes.fromhex('480fafc3')
@@ -209,6 +212,8 @@ def test_category_avalanche_imul(amd64_registers: list[Register]) -> None:
 
     # Because it is categorized as AVALANCHE, the AST applies the `AvalancheExpr`,
     # which evaluates to all 1s (0xFFFFFFFFFFFFFFFF) if any dependency is non-zero.
-    expected = 0xFFFFFFFFFFFFFFFF
+    expected = 0xF  # products are 6 or 9; only the low four bits can differ
     # Force 64-bit unsigned comparison
-    assert output_taint['RAX'] & 0xFFFFFFFFFFFFFFFF == expected, 'Avalanche should fully taint the 64-bit output.'
+    assert output_taint['RAX'] & 0xFFFFFFFFFFFFFFFF == expected, (
+        'Multiply taint should be bounded to the bits that can actually vary.'
+    )

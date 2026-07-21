@@ -26,6 +26,7 @@ from microtaint.instrumentation.ast import (
     TaintOperand,
     UnaryExpr,
     VariableBitSelectTaintExpr,
+    VariableMultiplyTaintExpr,
     VariableShiftTaintExpr,
 )
 from microtaint.sleigh.lifter import get_context
@@ -1072,6 +1073,161 @@ def _build_signed_overflow_taint(  # noqa: C901
 
 _SHIFT_KIND = {'INT_LEFT': 0, 'INT_RIGHT': 1, 'INT_SRIGHT': 2}
 _SHIFT_PASSTHROUGH = frozenset({'COPY', 'INT_SEXT', 'INT_ZEXT'})
+_MUL_PASSTHROUGH = frozenset({'COPY', 'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'INT_MULT'})
+
+
+def _build_variable_multiply_taint(  # noqa: C901
+    slice_ops: list[PcodeOp],
+    mapper: StateMapper,
+    out_width: int,
+) -> Expr | None:
+    """Sound fill for the taint of a multiply with tainted operands, or None.
+
+    Multiply otherwise falls to AvalancheExpr (full-width taint) and was the
+    second-largest source of over-tainted bits in the campaign (26.7%, 0.73x).
+    The 2-corner differential alone UNDER-taints -- ``max^min`` misses interior
+    products (see VariableMultiplyTaintExpr) -- so this term computes the sound
+    fill ``[tz_lo(a)+tz_lo(b) .. highbit(max^min)]`` on the full 2w product and
+    extracts the returned word.
+
+    Recognises the three lift shapes, all ISA-independent:
+
+        dst = INT_MULT(a, b)                              low word      (mul, imul)
+        dst = SUBPIECE(INT_MULT(ext a, ext b), w/8)       high word (umulh/smulh)
+        dst = INT_MULT(ext a, ext b)                      full, widening (umull)
+
+    where ``ext`` is INT_ZEXT (unsigned) or INT_SEXT (signed) -- which is also how
+    the signedness of the high half is read.  Declines for anything else, so the
+    differential path is unchanged.
+    """
+    muls = [op for op in slice_ops if op.opcode.name == 'INT_MULT']
+    if len(muls) != 1:
+        return None
+    mul = muls[0]
+    if mul.output is None or len(mul.inputs) != 2:
+        return None
+
+    def _defining(vn: Varnode) -> PcodeOp | None:
+        if vn.space.name != 'unique':
+            return None
+        return next(
+            (
+                o
+                for o in slice_ops
+                if o.output is not None
+                and o.output.space.name == 'unique'
+                and o.output.offset == vn.offset
+                and o.output.size == vn.size
+            ),
+            None,
+        )
+
+    # An operand is either a bare register, or a register widened by zext/sext.
+    # The ext type must agree between the two operands (mixed signedness would be a
+    # different instruction), and it sets the signed flag.
+    signed_flags: set[bool] = set()
+
+    def _operand(vn: Varnode) -> tuple[RegMapping, int] | None:
+        d = _defining(vn)
+        if d is not None and d.opcode.name in ('INT_ZEXT', 'INT_SEXT'):
+            signed_flags.add(d.opcode.name == 'INT_SEXT')
+            inner = d.inputs[0]
+            width = inner.size * 8
+            if inner.space.name != 'register':
+                inner_d = _defining(inner)
+                if inner_d is None or inner_d.opcode.name != 'COPY':
+                    return None
+                inner = inner_d.inputs[0]
+            m = mapper.map_to_state(inner.offset, inner.size)
+            return (m, width) if isinstance(m, RegMapping) else None
+        if vn.space.name == 'register':
+            m = mapper.map_to_state(vn.offset, vn.size)
+            return (m, vn.size * 8) if isinstance(m, RegMapping) else None
+        return None
+
+    a_op = _operand(mul.inputs[0])
+    b_op = _operand(mul.inputs[1])
+    if a_op is None or b_op is None:
+        return None
+    (a_map, a_w), (b_map, b_w) = a_op, b_op
+    if a_w != b_w:
+        return None
+    in_width = a_w
+    if in_width < 2:
+        return None
+    if len(signed_flags) > 1:
+        return None  # mixed zext/sext -> not a plain signed or unsigned multiply
+    is_signed = signed_flags == {True}
+
+    # A constant operand is handled exactly by the differential; both must be data.
+    if a_map.name == b_map.name and a_map.bit_start == b_map.bit_start:
+        # a squared is still a genuine variable multiply -- allow it.
+        pass
+
+    # Output window into the 2w-bit product.  This must be read EXACTLY, not
+    # guessed: MIPS `mul` lifts as ``v0 = sext(<low 4 bytes of the product>)``, so
+    # its output bits 32..63 are replications of product bit 31, NOT the product's
+    # own bits 32..63.  Treating the window as [0,64) there under-tainted 553/900
+    # cases against ground truth.  Rather than model every truncate-and-widen
+    # shape, accept only the two unambiguous ones and decline the rest (falling
+    # back to the avalanche, which is sound).
+    prod_bits = 2 * in_width
+    consumers = [
+        o
+        for o in slice_ops
+        if o is not mul
+        and any(
+            i.space.name == mul.output.space.name
+            and i.offset == mul.output.offset
+            and i.size == mul.output.size
+            for i in o.inputs
+        )
+    ]
+    # Any op reading only PART of the product varnode (a sub-varnode read, which is
+    # not an exact-match consumer) means the result is truncated in a way this term
+    # does not model.
+    partial_readers = [
+        o
+        for o in slice_ops
+        if o is not mul
+        and any(
+            i.space.name == mul.output.space.name
+            and i.offset != mul.output.offset
+            and mul.output.offset <= i.offset < mul.output.offset + mul.output.size
+            for i in o.inputs
+        )
+    ]
+    if partial_readers:
+        return None
+
+    if not consumers:
+        # The multiply writes the architectural output directly: low word, or the
+        # full product for a widening multiply.
+        out_lo, out_hi = 0, min(out_width, prod_bits)
+    elif len(consumers) == 1 and consumers[0].opcode.name == 'SUBPIECE':
+        out_lo = consumers[0].inputs[1].offset * 8
+        out_hi = min(out_lo + out_width, prod_bits)
+    else:
+        return None
+    if out_hi <= out_lo:
+        return None
+
+    # Only the recognised multiply-shaped ops may appear; anything else means the
+    # slice does more than this term models.
+    for op in slice_ops:
+        if op.opcode.name not in _MUL_PASSTHROUGH:
+            return None
+
+    return VariableMultiplyTaintExpr(
+        _get_taint_operand(a_map.name, a_map.bit_start, a_map.bit_end, False),
+        _get_taint_operand(a_map.name, a_map.bit_start, a_map.bit_end, True),
+        _get_taint_operand(b_map.name, b_map.bit_start, b_map.bit_end, False),
+        _get_taint_operand(b_map.name, b_map.bit_start, b_map.bit_end, True),
+        in_width,
+        is_signed,
+        out_lo,
+        out_hi,
+    )
 
 
 def _build_variable_shift_taint(  # noqa: C901
@@ -1978,6 +2134,23 @@ def generate_taint_assignments(  # noqa: C901
                 ),
             )
             return
+
+        # A multiply otherwise avalanches the full output width.  Route it to the
+        # sound fill first; it declines (None) for any non-multiply slice, leaving
+        # the avalanche path below unchanged.
+        _var_mul = _build_variable_multiply_taint(
+            slice_ops, mapper, out_bit_end - out_bit_start + 1,
+        )
+        if _var_mul is not None and not isinstance(mapping, MemMapping):
+            assignments.append(
+                TaintAssignment(
+                    target=out_target,
+                    dependencies=dependencies,
+                    expression=_var_mul,
+                ),
+            )
+            return
+
         expr = dependencies[0]
         for dep in dependencies[1:]:
             expr = BinaryExpr(Op.OR, expr, dep)

@@ -305,7 +305,9 @@ def test_mul_propagates_taint_to_rdx_rax(simulator: CellSimulator, amd64_registe
     )
     output = circuit.evaluate(ctx)
     assert output.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
-    assert output.get('RDX', 0) == 0xFFFFFFFFFFFFFFFF
+    # RDX holds floor(RAX * 3 / 2^64), which for a fully tainted RAX ranges over
+    # {0, 1, 2} only -- so exactly two bits are tainted, not the whole register.
+    assert output.get('RDX', 0) == 0x3
 
 
 def test_imul_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:

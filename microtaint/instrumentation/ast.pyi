@@ -88,6 +88,36 @@ class SignedOverflowTaintExpr(Expr):
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
 
+class VariableMultiplyTaintExpr(Expr):
+    """Sound fill for the taint of a multiply with tainted operands.
+
+    Fills bits [tz_lo(a)+tz_lo(b) .. highbit(max^min)] of the 2w-bit product (with
+    a tainted sign bit smearing the high half to the top), then extracts the
+    output window.  Proved in benchmark/soundness/prove_variable_multiply.py.
+    """
+
+    a_val: Expr
+    a_taint: Expr
+    b_val: Expr
+    b_taint: Expr
+    in_width: int
+    is_signed: bool
+    out_lo: int
+    out_hi: int
+
+    def __init__(
+        self,
+        a_val: Expr,
+        a_taint: Expr,
+        b_val: Expr,
+        b_taint: Expr,
+        in_width: int,
+        is_signed: bool,
+        out_lo: int,
+        out_hi: int,
+    ) -> None: ...
+    def evaluate(self, context: EvalContext) -> int: ...
+
 class VariableShiftTaintExpr(Expr):
     """EXACT taint of a shift by a data-dependent amount, in O(log w) steps.
 

@@ -478,8 +478,11 @@ CORPUS: list[tuple[str, str, dict, dict, str | None, int | None, str]] = [
         {'RAX': 2, 'RBX': 3},
         {'RAX': FULL_TAINT_64, 'RBX': 0},
         'RDX',
-        FULL_TAINT_64,
-        'MUL RBX — tainted RAX propagates to high half RDX',
+        # The high half of a fully-tainted RAX times 3 can only be 0, 1 or 2:
+        # floor(3a / 2^64) for a in [0, 2^64) never exceeds 2.  VariableMultiplyTaintExpr
+        # bounds it to those two bits instead of avalanching the register.
+        0x3,
+        'MUL RBX — tainted RAX propagates to high half RDX (bounded to 2 bits)',
     ),
     (
         'IMUL r64,r64',

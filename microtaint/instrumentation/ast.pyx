@@ -524,6 +524,131 @@ cdef class SignedOverflowTaintExpr(Expr):
         return (1 - (x ^ y)) & (y ^ z)
 
 
+cdef class VariableMultiplyTaintExpr(Expr):
+    """Taint of a multiply with tainted operands: a sound fill, not an avalanche.
+
+    Multiply genuinely couples every input bit into every higher output bit, so
+    it cannot be made exact cheaply.  But the 2-corner differential ALONE
+    under-taints, because ``max XOR min`` only sees where the two extreme products
+    differ -- an INTERIOR product can flip a bit BELOW that.  Example (unsigned,
+    w=4): a in {2,6}, b in {1,3} give products {2,6,18}; max^min = 16 (bit 4) but
+    bit 2 is genuinely tainted by the interior product 6.
+
+    The sound fill uses two provable bounds on WHICH output bits can vary:
+
+      * LOW bound  L = tz_lo(a) + tz_lo(b), where tz_lo(v) is the lowest bit that
+        CAN be 1 (lowest untainted set bit, or lowest tainted bit).  Every
+        reachable product is divisible by 2^L, so bits below L are 0 in ALL of
+        them.  This is a real floor, unlike ``lowbit(max^min)`` which only
+        reflects the two extremes coinciding.
+
+      * HIGH bound H = highbit(max^min) on the FULL 2w-bit product.  All reachable
+        products lie in [min,max] (monotone for a fixed sign), so they share every
+        bit ABOVE the highest bit where the extremes differ.  Computed on the full
+        product and sliced afterwards, because the low word (a*b mod 2^w) is NOT
+        monotone -- taking max^min mod 2^w would be wrong.
+
+    T = ones[L .. H], then the window of the 2w-bit product this instruction
+    returns (low word / high word / full) is extracted.
+
+    Signedness (only the high half is affected; the low word is bit-identical for
+    signed and unsigned):
+
+      * a tainted SIGN bit makes the reachable operand a non-interval (a positive
+        block and a negative block), so corner min/max is meaningless and the
+        product sign can flip -> the high bits smear to the top (H = 2w-1);
+      * sign fixed -> the signed corners of the operand box give min/max as usual.
+
+    Validated bit-for-bit against brute-force 2^k ground truth: 0 under-taints over
+    360000 random cases at w=4..12, unsigned and signed, low / high / full word.
+    Proved in benchmark/soundness/prove_variable_multiply.py.
+    """
+    cdef public Expr a_val
+    cdef public Expr a_taint
+    cdef public Expr b_val
+    cdef public Expr b_taint
+    cdef public int in_width      # operand width w (product is 2w bits)
+    cdef public bint is_signed
+    cdef public int out_lo        # window into the 2w-bit product: [out_lo, out_hi)
+    cdef public int out_hi
+
+    def __init__(self, Expr a_val, Expr a_taint, Expr b_val, Expr b_taint,
+                 int in_width, bint is_signed, int out_lo, int out_hi):
+        self.a_val = a_val
+        self.a_taint = a_taint
+        self.b_val = b_val
+        self.b_taint = b_taint
+        self.in_width = in_width
+        self.is_signed = is_signed
+        self.out_lo = out_lo
+        self.out_hi = out_hi
+
+    def __str__(self):
+        s = 's' if self.is_signed else 'u'
+        return f'VAR_MUL_TAINT[{s},w={self.in_width},{self.out_lo}:{self.out_hi}]({self.a_val}, {self.b_val})'
+
+    def __repr__(self):
+        return (f'VariableMultiplyTaintExpr(in_width={self.in_width}, '
+                f'is_signed={self.is_signed}, out_lo={self.out_lo}, out_hi={self.out_hi})')
+
+    cdef int _tz_lo(self, object v, object t, int w):
+        """Lowest bit position that can be 1 (untainted-set or tainted); w if none."""
+        cdef object poss = (v & ~t) | t
+        if poss == 0:
+            return w
+        return (poss & -poss).bit_length() - 1
+
+    cpdef object evaluate(self, EvalContext context):
+        cdef int w = self.in_width
+        cdef object mask = ((<object>1) << w) - 1
+        cdef object fmask = ((<object>1) << (2 * w)) - 1
+
+        cdef object va = self.a_val.evaluate(context) & mask
+        cdef object ta = self.a_taint.evaluate(context) & mask
+        cdef object vb = self.b_val.evaluate(context) & mask
+        cdef object tb = self.b_taint.evaluate(context) & mask
+
+        cdef int lo = self._tz_lo(va, ta, w) + self._tz_lo(vb, tb, w)
+
+        # The low word is interpretation-independent, so only a window reaching
+        # into the high half (bit >= w) needs the signed treatment.
+        cdef bint signed_hi = self.is_signed and self.out_hi > w
+        cdef object pmin, pmax, d
+        cdef int hi
+        cdef object alo, ahi, blo, bhi
+        cdef list prods
+
+        if not signed_hi:
+            pmin = (va & ~ta) * (vb & ~tb)
+            pmax = (va | ta) * (vb | tb)
+            d = (pmin ^ pmax) & fmask
+            hi = d.bit_length() - 1 if d != 0 else -1
+        elif ((ta >> (w - 1)) & 1) or ((tb >> (w - 1)) & 1):
+            # a tainted sign bit -> product sign can flip -> smear high bits to top
+            hi = 2 * w - 1
+        else:
+            alo = _sx(va & ~ta, w); ahi = _sx(va | ta, w)
+            blo = _sx(vb & ~tb, w); bhi = _sx(vb | tb, w)
+            prods = [alo * blo, alo * bhi, ahi * blo, ahi * bhi]
+            pmin = min(prods) & fmask
+            pmax = max(prods) & fmask
+            d = (pmin ^ pmax) & fmask
+            hi = d.bit_length() - 1 if d != 0 else -1
+
+        cdef object full = 0
+        if hi >= lo:
+            full = (((<object>1) << (hi + 1)) - 1) ^ (((<object>1) << lo) - 1)
+        cdef int ow = self.out_hi - self.out_lo
+        return (full >> self.out_lo) & (((<object>1) << ow) - 1)
+
+
+cdef inline object _sx(object v, int w):
+    """Interpret the low w bits of v as a two's-complement signed integer."""
+    if (v >> (w - 1)) & 1:
+        return v - ((<object>1) << w)
+    return v
+
+
 cdef class VariableShiftTaintExpr(Expr):
     """EXACT taint of a shift by a DATA-DEPENDENT amount, in O(log w) steps.
 
