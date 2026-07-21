@@ -754,16 +754,42 @@ cdef class VariableShiftTaintExpr(Expr):
         cdef object ts = self.amt_taint.evaluate(context) & self.amt_mask
         cdef int s0 = <int>((self.amt_val.evaluate(context) & self.amt_mask) & ~ts)
 
-        # Amount bits above log2(w) can only push the shift past the width, which
-        # every kind already saturates on; fold them into the low sweep so the
-        # step count stays fixed at lg.
+        # Amount bits above log2(w) can only push the shift to or past the width;
+        # those saturating outcomes are folded in after the smear (see below), so
+        # the sweep itself stays fixed at lg steps over the low bits.
+        cdef object ts_m = ts
         cdef object ts_lo = ts & ((1 << lg) - 1)
-        if ts & ~((1 << lg) - 1):
-            ts_lo = (1 << lg) - 1
 
         cdef object reach = self._smear(tx, ts_lo, s0, False, mask, w, lg)
         cdef object hi = self._smear(x, ts_lo, s0, False, mask, w, lg)
         cdef object lo = self._smear(x, ts_lo, s0, True, mask, w, lg)
+
+        # SATURATING AMOUNTS.  The subcube smear only reaches amounts
+        # s0 .. s0 + 2^lg - 1, i.e. every amount BELOW the width.  When the amount
+        # mask is wider than log2(w) -- PPC masks a 32-bit shift with 0x3f -- an
+        # amount >= w is also reachable, and p-code saturates it (0 for a logical
+        # shift, replicated sign for an arithmetic one).  That output is not in the
+        # smear, so it must be folded in explicitly.  Omitting it UNDER-TAINTS:
+        # with w=8, mask=0xf, x=0xff and the low four amount bits tainted, amounts
+        # 8..15 give 0, so the true AND is 0 and every bit is tainted, but the
+        # smear's AND over amounts 0..7 is 0x80 and bit 7 was reported clean.
+        # Found by Z3 (benchmark/soundness/prove_variable_shift.py); random testing
+        # missed it because it needs a long run of high ones in the source.
+        if (s0 | ts_m) >= w:
+            if self.kind == 2:
+                # arithmetic: the saturated result is the replicated sign bit, so a
+                # TAINTED sign makes both all-zeros and all-ones reachable.
+                if (tx >> (w - 1)) & 1:
+                    hi |= mask
+                    lo = 0
+                    reach |= mask
+                elif (x >> (w - 1)) & 1:
+                    hi |= mask
+                    lo &= mask
+                else:
+                    lo = 0
+            else:
+                lo = 0  # a reachable zero output forces the AND to zero
         return (reach | (hi ^ lo)) & mask
 
 
