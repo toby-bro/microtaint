@@ -343,6 +343,7 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         else if (strcmp(opname,"ADD") == 0) emit(e, OP_ADD);
         else if (strcmp(opname,"SUB") == 0) emit(e, OP_SUB);
         else if (strcmp(opname,"LEFT")== 0) emit(e, OP_SHL);
+        else if (strcmp(opname,"RIGHT")==0) emit(e, OP_SHR);
         else { e->fallback = 1; }
         Py_DECREF(op); Py_DECREF(opv);
         return;
@@ -729,6 +730,13 @@ static PyObject *eval_program(CompiledCircuit *cc,
             sp--;
             uint64_t shift = stack[sp] & 63;
             stack[sp-1] = stack[sp-1] << shift;
+            break;
+        }
+        case OP_SHR: {
+            if (sp < 2) goto err;
+            sp--;
+            uint64_t shift = stack[sp] & 63;
+            stack[sp-1] = stack[sp-1] >> shift;
             break;
         }
         case OP_NOT:  if (sp < 1) goto err; stack[sp-1] = ~stack[sp-1]; break;

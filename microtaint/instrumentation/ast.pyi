@@ -13,6 +13,7 @@ class Op(str, Enum):
     XOR = 'XOR'
     NOT = 'NOT'
     LEFT = 'LEFT'
+    RIGHT = 'RIGHT'
     ADD = 'ADD'  # Only for memory offset calculations, not for taint logic
     SUB = 'SUB'  # Only for memory offset calculations, not for taint logic
 

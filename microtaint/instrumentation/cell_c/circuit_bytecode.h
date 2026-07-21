@@ -36,6 +36,7 @@ typedef enum {
     OP_AND, OP_OR, OP_XOR,
     OP_ADD, OP_SUB,
     OP_SHL,
+    OP_SHR,
 
     /* Unary */
     OP_NOT,

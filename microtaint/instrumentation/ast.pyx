@@ -120,6 +120,7 @@ class Op(str, Enum):
     XOR = 'XOR'
     NOT = 'NOT'
     LEFT = 'LEFT'
+    RIGHT = 'RIGHT'
     ADD = 'ADD'  # Only for memory offset calculations, not for taint logic
     SUB = 'SUB'  # Only for memory offset calculations, not for taint logic
 
@@ -132,6 +133,7 @@ cdef int _OP_LEFT  = 3
 cdef int _OP_ADD   = 4
 cdef int _OP_SUB   = 5
 cdef int _OP_NOT   = 6
+cdef int _OP_RIGHT = 7
 
 # Mapping from Op enum to int at module init (done once)
 _OP_MAP: dict = {}
@@ -141,7 +143,7 @@ def _init_op_map():
     _OP_MAP = {
         Op.AND: _OP_AND, Op.OR: _OP_OR, Op.XOR: _OP_XOR,
         Op.LEFT: _OP_LEFT, Op.ADD: _OP_ADD, Op.SUB: _OP_SUB,
-        Op.NOT: _OP_NOT,
+        Op.NOT: _OP_NOT, Op.RIGHT: _OP_RIGHT,
     }
 _init_op_map()
 
@@ -862,6 +864,7 @@ cdef class BinaryExpr(Expr):
         if op == _OP_OR:    return left | right
         if op == _OP_XOR:   return left ^ right
         if op == _OP_LEFT:  return left << right
+        if op == _OP_RIGHT: return left >> right
         if op == _OP_ADD:   return left + right
         if op == _OP_SUB:   return left - right
         raise NotImplementedError(f'Unsupported binary op {self.op}')
