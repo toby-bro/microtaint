@@ -293,33 +293,54 @@ def varnode_taint_expr(  # noqa: C901
     rule below is either exact (shifts, constant masks, extensions) or a sound
     over-approximation (the union fallback for register-register bitwise ops),
     which is the same approximation the TRANSPORTABLE floor already makes.
+
+    P-code is NOT SSA.  SLEIGH freely redefines a varnode, including reading and
+    writing it in the same op -- ARM64's extended-register operand lifts as
+
+        unique[b900:8] = unique[a900:8]
+        unique[b900:8] = unique[b900:8] << 0x2
+
+    A definition map keyed by varnode keeps only ONE definition (the last), so the
+    recursion above met its own output, tripped the cycle guard and returned None:
+    `add x0,x1,w2,uxth #2` and its siblings silently lost their floor.  Resolution
+    is therefore by REACHING DEFINITION -- the latest definition strictly before
+    the point of use -- which is what SSA renaming buys, computed directly rather
+    than by materialising new varnodes (pypcode's are immutable natives).
     """
-    defs = {_key(op.output): op for op in ops if op.output is not None}
-    memo: dict[tuple[str, int, int], Expr | None] = {}
+    memo: dict[tuple[tuple[str, int, int], int], Expr | None] = {}
+
+    def reaching_def(vn: Varnode, before: int) -> tuple[int, PcodeOp] | None:
+        """The definition of `vn` in effect at position `before` (overlap-aware)."""
+        for i in range(before - 1, -1, -1):
+            o = ops[i]
+            if o.output is not None and _overlaps(o.output, vn):
+                return i, o
+        return None
 
     def const_of(vn: Varnode) -> int | None:
         return vn.offset if vn.space.name == 'const' else None
 
-    def taint(vn: Varnode, depth: int = 0) -> Expr | None:  # noqa: C901
-        if depth > 24:  # cycles cannot occur in SSA-like p-code, but stay bounded
+    def taint(vn: Varnode, at: int, depth: int = 0) -> Expr | None:  # noqa: C901
+        if depth > 24:
             return None
         if vn.space.name == 'const':
             return Constant(0, 8)
         if vn.space.name == 'register':
             reg_t: Expr | None = taint_of_register(vn.offset, vn.size)
             return reg_t
-        k = _key(vn)
+        found = reaching_def(vn, at)
+        if found is None:
+            return None
+        idx, op = found
+        k = (_key(vn), idx)
         if k in memo:
             return memo[k]
         memo[k] = None  # break any accidental cycle with the sound "unknown"
-        op = defs.get(k)
-        if op is None:
-            return None
 
         name = op.opcode.name
         width = vn.size * 8
         full = (1 << width) - 1
-        a = taint(op.inputs[0], depth + 1)
+        a = taint(op.inputs[0], idx, depth + 1)
         if a is None:
             return None
         c = const_of(op.inputs[1]) if len(op.inputs) > 1 else None
@@ -350,10 +371,10 @@ def varnode_taint_expr(  # noqa: C901
         elif name == 'INT_XOR' and c is not None:
             res = a
         elif name in ('INT_AND', 'INT_OR', 'INT_XOR') and len(op.inputs) > 1:
-            b = taint(op.inputs[1], depth + 1)
+            b = taint(op.inputs[1], idx, depth + 1)
             res = None if b is None else BinaryExpr(Op.OR, a, b)
         elif name == 'PIECE' and len(op.inputs) > 1:
-            b = taint(op.inputs[1], depth + 1)
+            b = taint(op.inputs[1], idx, depth + 1)
             low_bits = op.inputs[1].size * 8
             res = None if b is None else BinaryExpr(
                 Op.OR, BinaryExpr(Op.LEFT, a, Constant(low_bits, 8)), b,
@@ -364,7 +385,7 @@ def varnode_taint_expr(  # noqa: C901
         memo[k] = res
         return res
 
-    return taint(target)
+    return taint(target, len(ops))
 
 
 def waist_taint_expr(
