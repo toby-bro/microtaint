@@ -158,6 +158,21 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
     like CF in ``ror rax,1`` where CF is computed from bit0 of RAX and then used to fill
     bit63) are excluded from the dynamic-source count.
     """
+    # A permutation needs a FIXED bit mapping.  A shift whose AMOUNT is data-derived
+    # does not have one -- the mapping moves with the data -- so it is not a mapped
+    # permutation however few sources it has.  MIPS `srlv $2,$4,$4` shifts a register
+    # by ITSELF: one dynamic source, so this read as MAPPED and got a bare
+    # differential, but `x >> (x & 31)` is non-monotone in x and under-tainted
+    # 37/200.  Amounts that fold to a constant are still permutations.
+    _folded_perm = fold_constants(slice_ops)
+    for _op in slice_ops:
+        if _op.opcode.name in TRANSLATABLE_OPCODES and len(_op.inputs) > 1:
+            _amt = _op.inputs[1]
+            if _amt.space.name != 'const' and (
+                (_amt.space.name, _amt.offset, _amt.size) not in _folded_perm
+            ):
+                return False
+
     dynamic_sources: set[tuple[str, int, int]] = set()  # (space, offset, size)
     has_and_or = False
     has_shift = False
