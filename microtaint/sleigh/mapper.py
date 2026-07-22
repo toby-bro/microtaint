@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from pypcode import PcodeOp
+from pypcode import PcodeOp, Varnode
 
 from microtaint.classifier.categories import InstructionCategory
+from microtaint.sleigh.constfold import fold_constants
 
 AVALANCHE_OPCODES: set[str] = {
     'INT_MULT',
@@ -316,10 +317,64 @@ def determine_category(  # noqa: C901
         if op.opcode.name in COND_TRANSPORTABLE_OPCODES:
             return InstructionCategory.COND_TRANSPORTABLE
 
-    # FIX: Translatable MUST be above Monotonic to avoid INT_AND stealing shifts
-    for op in core_ops:
-        if op.opcode.name in TRANSLATABLE_OPCODES:
-            return InstructionCategory.TRANSLATABLE
+    # TRANSLATABLE only when the shift IS the operation that PRODUCES the output.
+    #
+    # This used to fire on the mere PRESENCE of a shift anywhere in the slice, which
+    # silently downgraded any slice with a pre-processed operand out of
+    # TRANSPORTABLE -- and TRANSPORTABLE is what carries the union floor covering
+    # the carry/borrow chain.  The decisive evidence was PPC:
+    #
+    #   addi  3,4,1365   ->  r3 = r4 + 0x555                  TRANSPORTABLE, sound
+    #   addis 3,4,1365   ->  u = 0x555 << 0x10 ; r3 = r4 + u  TRANSLATABLE, 79 under-taints
+    #
+    # The shift there is on a CONSTANT and contributes nothing to the data flow, yet
+    # it changed the classification.  Two things disqualify a shift from owning the
+    # slice:
+    #   * it only computes a CONSTANT (`addis`, and RISC-V's `64 - 1` shift mask), or
+    #   * a CARRY-COUPLED op consumes its result -- ARM64's shifted-register
+    #     (`add x0,x1,x2,lsl #3`) and extended-register (`add x0,x1,w2,uxtb`)
+    #     operands -- in which case the adder produces the output and owns the
+    #     regime; the shifter was an operand pre-processor.
+    #
+    # Deliberately NOT extended to bitwise consumers (`bic x0,x1,x2,lsl #1`).  Those
+    # under-taint too, but a shift feeding an OR is also how a rotate, `extr` and
+    # `ubfx` are lifted, and those are exact today -- so that case needs its own
+    # discriminator and its own measurement rather than being folded in here.
+    _folded = fold_constants(slice_ops)
+
+    def _vkey(vn: Varnode) -> tuple[str, int, int]:
+        return (vn.space.name, vn.offset, vn.size)
+
+    _real_shifts = [
+        op
+        for op in core_ops
+        if op.opcode.name in TRANSLATABLE_OPCODES
+        and op.output is not None
+        and _vkey(op.output) not in _folded
+    ]
+
+    def _reaches_shift(vn: Varnode, depth: int = 0) -> bool:
+        if depth > 16 or vn.space.name in ('const', 'register'):
+            return False
+        for o in slice_ops:
+            if o.output is None or not (
+                o.output.space.name == vn.space.name
+                and o.output.offset < vn.offset + vn.size
+                and vn.offset < o.output.offset + o.output.size
+            ):
+                continue
+            if o in _real_shifts:
+                return True
+            if any(_reaches_shift(i, depth + 1) for i in o.inputs):
+                return True
+        return False
+
+    _carry_consumes_shift = any(
+        op.opcode.name in TRANSPORTABLE_OPCODES and any(_reaches_shift(i) for i in op.inputs)
+        for op in core_ops
+    )
+    if _real_shifts and not _carry_consumes_shift:
+        return InstructionCategory.TRANSLATABLE
 
     # XOR makes the monotonic differential UNSOUND.  D^{++} for XOR computes
     #   (a|Ta ^ b|Tb) ^ (a&~Ta ^ b&~Tb) = Ta ^ Tb,
