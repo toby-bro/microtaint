@@ -696,10 +696,12 @@ cdef class VariableShiftTaintExpr(Expr):
     cdef public Expr amt_taint
     cdef public int width
     cdef public int kind         # 0 = left, 1 = logical right, 2 = arithmetic right
-    cdef public int amt_mask
+    # Python object, not a C int: a folded mask can be a full 64-bit value (MIPS
+    # 64-bit shifts), which overflows a C long at construction.
+    cdef public object amt_mask
 
     def __init__(self, Expr src_val, Expr src_taint, Expr amt_val, Expr amt_taint,
-                 int width, int kind, int amt_mask):
+                 int width, int kind, object amt_mask):
         self.src_val = src_val
         self.src_taint = src_taint
         self.amt_val = amt_val
@@ -752,7 +754,11 @@ cdef class VariableShiftTaintExpr(Expr):
         cdef object x = self.src_val.evaluate(context) & mask
         cdef object tx = self.src_taint.evaluate(context) & mask
         cdef object ts = self.amt_taint.evaluate(context) & self.amt_mask
-        cdef int s0 = <int>((self.amt_val.evaluate(context) & self.amt_mask) & ~ts)
+        # Clamp before narrowing to a C int: a folded 64-bit mask (MIPS 64-bit
+        # shifts) lets the masked amount exceed a C long.  Every amount >= w
+        # saturates identically, so clamping to w is exact, not an approximation.
+        cdef object _s0_full = (self.amt_val.evaluate(context) & self.amt_mask) & ~ts
+        cdef int s0 = <int>(_s0_full if _s0_full < w else w)
 
         # Amount bits above log2(w) can only push the shift to or past the width;
         # those saturating outcomes are folded in after the smear (see below), so
