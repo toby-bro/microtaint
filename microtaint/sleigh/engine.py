@@ -29,6 +29,7 @@ from microtaint.instrumentation.ast import (
     VariableMultiplyTaintExpr,
     VariableShiftTaintExpr,
 )
+from microtaint.sleigh.constfold import const_value, fold_constants, is_constant_op
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import EXTENSION_OPCODES, TRANSLATABLE_OPCODES, determine_category
 from microtaint.sleigh.partition import ALG_ARITH, ALG_BITWISE, find_waist, waist_taint_expr
@@ -1301,16 +1302,28 @@ def _build_variable_shift_taint(  # noqa: C901
     if src is None:
         return None
 
-    # Amount: either a bare register, or the standard `reg & const` masking idiom.
+    # Amount: either a bare register, or the standard `reg & mask` masking idiom.
+    # The mask is resolved through constant folding rather than requiring a literal
+    # `const` varnode: RISC-V emits the 64-bit shift mask as ``64 - 1``, so a
+    # literal-only check saw a `unique`, declined, and left sll/srl/sra avalanching
+    # at 6.0x while the word forms (literal 0x1f) were exact.
+    folded = fold_constants(slice_ops)
     amt_mask = (1 << inner_width) - 1
     amt_vn = sh.inputs[1]
     d = _defining(amt_vn)
-    if d is not None and d.opcode.name == 'INT_AND' and d.inputs[1].space.name == 'const':
-        amt_mask = d.inputs[1].offset
-        amt_vn = d.inputs[0]
+    if d is not None and d.opcode.name == 'INT_AND':
+        # INT_AND is commutative, so the mask may sit on either side.
+        for mask_idx, reg_idx in ((1, 0), (0, 1)):
+            mv = const_value(d.inputs[mask_idx], folded)
+            if mv is not None and const_value(d.inputs[reg_idx], folded) is None:
+                amt_mask = mv
+                amt_vn = d.inputs[reg_idx]
+                break
     amt = _reg(amt_vn)
     if amt is None:
         return None
+    if amt_mask == 0:
+        return None  # amount forced to 0: a constant shift, not this term's case
 
     # A constant amount is handled exactly by the existing differential; this term
     # is for the data-dependent case only.
@@ -1319,12 +1332,13 @@ def _build_variable_shift_taint(  # noqa: C901
 
     # Only value-preserving widening may follow the shift, and every remaining op
     # must belong to the recognised shape -- otherwise the slice does more than
-    # this term models.
+    # this term models.  Ops that merely compute a constant (the folded mask) are
+    # not work on data and are allowed regardless of opcode.
     allowed = {id(sh)}
     if d is not None:
         allowed.add(id(d))
     for op in slice_ops:
-        if id(op) in allowed:
+        if id(op) in allowed or is_constant_op(op, folded):
             continue
         if op.opcode.name not in _SHIFT_PASSTHROUGH:
             return None
