@@ -375,8 +375,13 @@ def determine_category(  # noqa: C901
     # 43% and 19% exact.  Those two remain UNSOUND pending a fix that is exact
     # rather than a union -- most likely a closed-form XOR term over the
     # TRANSFORMED operand taint, which keeps the differential's precision.
+    # The carry/overflow PREDICATES are carry-coupled consumers too, even though
+    # they are not in TRANSPORTABLE_OPCODES: `cmp x1,x2,lsl #3` lifts its OV as
+    # `u = x2 << 3 ; tmpOV = sborrow(x1, u)`, and leaving that TRANSLATABLE kept it
+    # away from the exact signed-overflow term.
+    _carry_consumers = TRANSPORTABLE_OPCODES | {'INT_CARRY', 'INT_SCARRY', 'INT_SBORROW'}
     _carry_consumes_shift = any(
-        op.opcode.name in TRANSPORTABLE_OPCODES and any(_reaches_shift(i) for i in op.inputs)
+        op.opcode.name in _carry_consumers and any(_reaches_shift(i) for i in op.inputs)
         for op in core_ops
     )
     if _real_shifts and not _carry_consumes_shift:

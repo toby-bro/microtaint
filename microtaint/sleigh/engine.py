@@ -935,7 +935,7 @@ def _build_signed_overflow_taint(  # noqa: C901
             None,
         )
 
-    def _resolve(raw_vn: Varnode) -> tuple[Expr, Expr, int] | None:
+    def _resolve(raw_vn: Varnode) -> tuple[Expr, Expr, int] | None:  # noqa: C901
         """Resolve an operand varnode to (value expr, taint expr, width in bits).
 
         Beyond plain registers and constants this sees through the two
@@ -973,6 +973,29 @@ def _build_signed_overflow_taint(  # noqa: C901
                 return None
             v, t, _ = inner
             return (v, t, vn.size * 8)
+        if d.opcode.name in ('INT_LEFT', 'INT_RIGHT'):
+            # A PRE-PROCESSED operand: ARM64's shifted-register compare lifts as
+            # `u = x2 << 3 ; tmpOV = sborrow(x1, u)`.  Requiring a bare register
+            # here made the exact term decline and the flag fall back to the
+            # differential -- which is exactly what non-monotone signed overflow
+            # slips through.  A constant-amount logical shift relocates bits
+            # without mixing them, so both the value and the taint transform by
+            # the same shift and stay closed-form.  INT_SRIGHT is NOT handled: its
+            # value needs a sign-replicating fill, so it declines rather than
+            # guessing.
+            amount = const_value(d.inputs[1], fold_constants(slice_ops))
+            inner = _resolve(d.inputs[0])
+            if amount is None or inner is None:
+                return None
+            v, t, _w = inner
+            shift_op = Op.LEFT if d.opcode.name == 'INT_LEFT' else Op.RIGHT
+            bits = vn.size * 8
+            keep = Constant((1 << bits) - 1, 8)
+            return (
+                BinaryExpr(Op.AND, BinaryExpr(shift_op, v, Constant(amount, 8)), keep),
+                BinaryExpr(Op.AND, BinaryExpr(shift_op, t, Constant(amount, 8)), keep),
+                bits,
+            )
         return None
 
     # ---- shape 1: a plain two-operand overflow flag -------------------------
