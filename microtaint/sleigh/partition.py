@@ -106,6 +106,24 @@ def _key(vn: Varnode) -> tuple[str, int, int]:
     return (vn.space.name, vn.offset, vn.size)
 
 
+def _overlaps(a: Varnode, b: Varnode) -> bool:
+    """True if two varnodes share any byte.
+
+    Exact-key matching is WRONG here, and silently so.  ARM64's extended-register
+    operand lifts as ``COPY unique[41984:4] <- w2 ; INT_ZEXT u <- unique[41984:1]``:
+    the ZEXT reads ONE byte of the four the COPY wrote.  With exact keys the
+    backward cone stops at the ZEXT, never reaches the register read, and the waist
+    is rejected for having no upstream register -- so `add x0,x1,w2,uxtb` and its
+    siblings silently lost their floor.  slice_backward is overlap-aware for
+    precisely this reason; this module has to match it.
+    """
+    return (
+        a.space.name == b.space.name
+        and a.offset < b.offset + b.size
+        and b.offset < a.offset + a.size
+    )
+
+
 def _algebra_of(ops: list[PcodeOp]) -> str | None:
     """The single algebra a segment belongs to, or None if it is mixed/unknown.
 
@@ -139,16 +157,23 @@ def _register_reads(ops: list[PcodeOp]) -> set[tuple[int, int]]:
 
 
 def _backward_cone(ops: list[PcodeOp], target: Varnode) -> list[PcodeOp]:
-    """Ops in `ops` that contribute to `target`, in original program order."""
-    live = {_key(target)}
+    """Ops in `ops` that contribute to `target`, in original program order.
+
+    Overlap-aware (see `_overlaps`): an op joins the cone when its output shares
+    ANY byte with a live varnode, not only when the ranges match exactly.
+    """
+    live: list[Varnode] = [target]
     cone: list[PcodeOp] = []
     for op in reversed(ops):
-        if op.output is not None and _key(op.output) in live:
-            cone.append(op)
-            live.discard(_key(op.output))
-            for inp in op.inputs:
-                if inp.space.name != 'const':
-                    live.add(_key(inp))
+        if op.output is None:
+            continue
+        if not any(_overlaps(op.output, lv) for lv in live):
+            continue
+        cone.append(op)
+        live = [lv for lv in live if not _overlaps(op.output, lv)]
+        for inp in op.inputs:
+            if inp.space.name != 'const':
+                live.append(inp)
     cone.reverse()
     return cone
 
@@ -172,16 +197,15 @@ def find_waist(slice_ops: list[PcodeOp], target: Varnode) -> Waist | None:
 
     for vn in candidates:
         upstream = _backward_cone(slice_ops, vn)
-        up_keys = {_key(op.output) for op in upstream if op.output is not None}
         downstream = [op for op in slice_ops if op not in upstream]
         if not upstream or not downstream:
             continue
 
         # (A1) `vn` is the sole conduit: no downstream op may read any other
         # value defined upstream, or the cut would not separate the dataflow.
-        conduit = _key(vn)
+        up_outs = [o.output for o in upstream if o.output is not None]
         leaks = any(
-            _key(inp) in up_keys and _key(inp) != conduit
+            any(_overlaps(inp, uo) for uo in up_outs) and not _overlaps(inp, vn)
             for op in downstream
             for inp in op.inputs
             if inp.space.name != 'const'
@@ -254,8 +278,9 @@ def _smear_down(expr: Expr, from_bit: int, count: int, width: int) -> Expr:
     return BinaryExpr(Op.AND, fill, Constant(keep, 8))
 
 
-def waist_taint_expr(  # noqa: C901
-    waist: Waist,
+def varnode_taint_expr(  # noqa: C901
+    ops: list[PcodeOp],
+    target: Varnode,
     taint_of_register: Callable[[int, int], Expr | None],
 ) -> Expr | None:
     """Closed-form taint mask of the waist varnode, or None if not expressible.
@@ -269,10 +294,7 @@ def waist_taint_expr(  # noqa: C901
     over-approximation (the union fallback for register-register bitwise ops),
     which is the same approximation the TRANSPORTABLE floor already makes.
     """
-    if waist.upstream_algebra != ALG_BITWISE:
-        return None
-
-    defs = {_key(op.output): op for op in waist.upstream if op.output is not None}
+    defs = {_key(op.output): op for op in ops if op.output is not None}
     memo: dict[tuple[str, int, int], Expr | None] = {}
 
     def const_of(vn: Varnode) -> int | None:
@@ -342,7 +364,17 @@ def waist_taint_expr(  # noqa: C901
         memo[k] = res
         return res
 
-    return taint(waist.varnode)
+    return taint(target)
+
+
+def waist_taint_expr(
+    waist: Waist,
+    taint_of_register: Callable[[int, int], Expr | None],
+) -> Expr | None:
+    """Closed-form taint of the waist varnode, or None if not expressible."""
+    if waist.upstream_algebra != ALG_BITWISE:
+        return None
+    return varnode_taint_expr(waist.upstream, waist.varnode, taint_of_register)
 
 
 __all__ = [
@@ -351,5 +383,6 @@ __all__ = [
     'ALG_COMPARE',
     'Waist',
     'find_waist',
+    'varnode_taint_expr',
     'waist_taint_expr',
 ]
