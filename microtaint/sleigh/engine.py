@@ -1712,9 +1712,22 @@ def _select_weld(  # noqa: C901
     XOR.  This is welded (OR'd) because the reachable output over a varying selector is
     the union of the two branch outcomes.  The caller gates it by the selector taint.
 
-    Handles the two-write ARM conditional family (csel/cneg/cinv/csinc/csneg/csinv).
-    Returns None for one-write selects (cmov -- the not-taken value is the old dest,
-    handled by the caller's old-dest passthrough) or shapes outside the branch grammar.
+    Handles both spellings of a conditional select:
+
+      * TWO writes, one on each side of the CBRANCH -- the ARM conditional family
+        (csel/cneg/cinv/csinc/csneg/csinv); and
+      * ONE write, guarded by the CBRANCH -- x86's `cmovcc`, where the not-taken
+        path simply falls through and leaves the destination alone.
+
+    The second case has an IMPLICIT else-branch equal to the destination's prior
+    value, so it is synthesised rather than declined.  That matters because the
+    caller's fallback for it is the old-dest passthrough, a coarse union that ORs
+    everything in whenever a condition flag is tainted, whereas the weld's
+    `val(A) ^ val(B)` term is exact -- and it is the term that matters: with both
+    branch values fully UNTAINTED the output still varies if they DIFFER, because a
+    tainted selector chooses between them.
+
+    Returns None for shapes outside the branch grammar.
     """
     if not slice_ops:
         return None
@@ -1731,7 +1744,7 @@ def _select_weld(  # noqa: C901
               and o.output.offset == target.offset]
     before = [i for i in writes if i < cbr]
     after = [i for i in writes if i > cbr]
-    if not before or not after:
+    if not before and not after:
         return None
 
     def _val(n: str, bs: int, be: int) -> Expr:
@@ -1752,8 +1765,21 @@ def _select_weld(  # noqa: C901
             return None
         return val, BinaryExpr(Op.XOR, hi, lo)  # (value, own differential)
 
-    ra = branch(ops[before[-1]])
-    rb = branch(ops[after[0]])
+    def implicit_dest() -> tuple[Expr, Expr] | None:
+        """The branch that performs no write: the destination's prior value."""
+        dest = out_op.output
+        if dest is None or dest.space.name != 'register':
+            return None
+        m = mapper.map_to_state(dest.offset, dest.size)
+        if not isinstance(m, RegMapping):
+            return None
+        v = _val(m.name, m.bit_start, m.bit_end)
+        h = _hi(m.name, m.bit_start, m.bit_end)
+        lo_e = _lo(m.name, m.bit_start, m.bit_end)
+        return v, BinaryExpr(Op.XOR, h, lo_e)
+
+    ra = branch(ops[before[-1]]) if before else implicit_dest()
+    rb = branch(ops[after[0]]) if after else implicit_dest()
     if ra is None or rb is None:
         return None
     (val_a, d_a), (val_b, d_b) = ra, rb
