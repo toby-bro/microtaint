@@ -32,10 +32,58 @@ from microtaint.instrumentation.ast import (
 from microtaint.sleigh.constfold import const_value, fold_constants, is_constant_op
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import EXTENSION_OPCODES, TRANSLATABLE_OPCODES, determine_category
-from microtaint.sleigh.partition import ALG_ARITH, ALG_BITWISE, find_waist, waist_taint_expr
+from microtaint.sleigh.partition import (
+    ALG_ARITH,
+    ALG_BITWISE,
+    find_waist,
+    varnode_taint_expr,
+    waist_taint_expr,
+)
 from microtaint.sleigh.polarity import compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
+
+
+def _cone_register_taint(
+    slice_ops: list[PcodeOp], vn: Varnode, mapper: StateMapper,
+) -> Expr | None:
+    """Union of the taint of every architectural register `vn` derives from."""
+    seen: set[tuple[str, int, int]] = set()
+    regs: list[RegMapping] = []
+
+    def walk(v: Varnode, depth: int = 0) -> None:
+        if depth > 16 or v.space.name == 'const' or _key_of(v) in seen:
+            return
+        seen.add(_key_of(v))
+        if v.space.name == 'register':
+            m = mapper.map_to_state(v.offset, v.size)
+            if isinstance(m, RegMapping):
+                regs.append(m)
+            return
+        for o in slice_ops:
+            if o.output is not None and _overlaps_vn(o.output, v):
+                for i in o.inputs:
+                    walk(i, depth + 1)
+
+    walk(vn)
+    if not regs:
+        return None
+    acc: Expr = _get_taint_operand(regs[0].name, regs[0].bit_start, regs[0].bit_end, True)
+    for m in regs[1:]:
+        acc = BinaryExpr(Op.OR, acc, _get_taint_operand(m.name, m.bit_start, m.bit_end, True))
+    return acc
+
+
+def _reg_taint_for_floor(mapper: StateMapper):
+    """Adapter: architectural-register taint lookup for varnode_taint_expr."""
+
+    def _f(offset: int, size: int) -> Expr | None:
+        m = mapper.map_to_state(offset, size)
+        if not isinstance(m, RegMapping):
+            return None
+        return _get_taint_operand(m.name, m.bit_start, m.bit_end, True)
+
+    return _f
 
 
 def _key_of(vn: Varnode) -> tuple[str, int, int]:
@@ -2957,6 +3005,57 @@ def generate_taint_assignments(  # noqa: C901
             for _t in _amt_taints[1:]:
                 _acc = BinaryExpr(Op.OR, _acc, _t)
             expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, AvalancheExpr(_acc, 1), Constant(1, 8)))
+
+    # -----------------------------------------------------------------------
+    # XOR CANCELLATION ON A 1-BIT FLAG
+    #
+    # `rcr rax,1` computes OF = MSB(RAX_old) ^ CF_old.  When BOTH of those are
+    # tainted the 2-corner differential cancels -- D = Ta ^ Tb is 0 exactly where a
+    # bit is tainted in both operands -- so OF read as clean.  Verified by probe:
+    # tainting either input alone gives the right answer, only the pair fails.
+    #
+    # For a ONE-BIT output the union is not merely sound but EXACT (a ^ b varies iff
+    # either input can vary), and it costs at most one bit.  That is why this is
+    # restricted to 1-bit outputs: the same union on a WIDE xor is a large
+    # over-approximation, which is what made the earlier attempt to route `eor
+    # x0,x1,x2,ror #11` through ORABLE cost 50+ points of exactness.
+    # -----------------------------------------------------------------------
+    if (
+        not is_store_target
+        and not isinstance(mapping, MemMapping)
+        and out_bit_end == out_bit_start
+        and slice_ops
+        and not _slice_has_constant_dominator(slice_ops)
+    ):
+        _term = next(
+            (
+                o
+                for o in reversed(slice_ops)
+                if o.opcode.name not in ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT')
+            ),
+            None,
+        )
+        if _term is not None and _term.opcode.name in ('INT_XOR', 'BOOL_XOR'):
+            _xor_terms: list[Expr] = []
+            for _inp in _term.inputs:
+                if _inp.space.name == 'const':
+                    continue
+                _t = varnode_taint_expr(slice_ops, _inp, _reg_taint_for_floor(mapper))
+                if _t is None:
+                    # Outside the closed-form grammar (these operands are INT_SLESS
+                    # sign tests): fall back to the union of the architectural
+                    # registers the operand derives from.  Sound, and on a 1-bit
+                    # output the whole term is capped at one bit.
+                    _t = _cone_register_taint(slice_ops, _inp, mapper)
+                if _t is None:
+                    _xor_terms = []
+                    break
+                _xor_terms.append(_t)
+            if len(_xor_terms) == 2:
+                _u = BinaryExpr(Op.OR, _xor_terms[0], _xor_terms[1])
+                expr = BinaryExpr(
+                    Op.OR, expr, BinaryExpr(Op.AND, AvalancheExpr(_u, 1), Constant(1, 8)),
+                )
 
     # 1-bit flag soundness floor for COND_TRANSPORTABLE.
     #
