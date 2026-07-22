@@ -257,6 +257,7 @@ _UC_REGS: dict[Architecture, dict[str, int]] = {
 
 
 @dataclass
+@dataclass
 class MachineState:
     regs: dict[str, int] = field(default_factory=dict[str, int])
     mem: dict[int, int] = field(default_factory=dict[int, int])
@@ -341,8 +342,29 @@ class CellSimulator:
         # (option B), evaluate BE architectures through Unicorn, which models the
         # full CPU and gets byte order right.
         self._is_big_endian = str(arch).upper().endswith('BE')
-        if self._is_big_endian:
+        # Big-endian targets now use the NATIVE evaluator, not Unicorn.
+        #
+        # The comment this replaces claimed the native evaluators "silently read the
+        # wrong bytes and the differential collapses to 0" on BE.  That is no longer
+        # true of the Cython frame, which threads `_is_big_endian` through register
+        # reads, sub-register overlays and both memory paths.  Measured against
+        # Unicorn over the BE corpora, the native frame is not merely equal but
+        # STRICTLY BETTER on memory: Unicorn returns 0 for a store/load round trip
+        # because the address is not mapped in the engine's instance, while the
+        # native frame round-trips it exactly.
+        #
+        #   sw $4,-16($sp); lw $2,-16($sp)   unicorn 0x0   native 0x55667788
+        #   sd $4,-16($sp); ld $2,-16($sp)   unicorn 0x0   native 0x1122334455667788
+        #
+        # That is what made BE memory chains under-taint: MIPS64BE 118 -> 1 and
+        # PPC32BE 1 -> 0, at equal or better wall-clock (MIPS 11s -> 10s).
+        # MICROTAINT_BE_UNICORN=1 restores the old behaviour.
+        if self._is_big_endian and os.environ.get('MICROTAINT_BE_UNICORN') == '1':
             use_unicorn = True
+        # The C kernel has NO byte-order handling (zero references to endianness),
+        # while the Cython frame is BE-aware throughout, so a BE target on the
+        # native path must use the Cython evaluator until the C port lands.
+        _force_cython_be = self._is_big_endian and not use_unicorn
         self.use_unicorn = use_unicorn
         # Default: use the C kernel when available.  Pass use_c=False to
         # force the Cython evaluator (e.g. for differential testing).  Set
@@ -350,6 +372,8 @@ class CellSimulator:
         # globally without code changes.
         if use_c is None:
             use_c = os.environ.get('MICROTAINT_DISABLE_C_KERNEL') != '1'
+        if _force_cython_be:
+            use_c = False
         self.use_c = use_c
         self._pcode: None | PCodeCellEvaluator | PCodeCellEvaluatorC = None
         self._pcode_fallback_exc: Any = None
@@ -744,11 +768,16 @@ class CellSimulator:
                     self.uc.mem_map(end_page_addr, 4096)
                     self._mapped_pages.add(end_page_addr)
 
+                # Byte order must follow the TARGET, not the host.  Seeding a
+                # big-endian target's memory little-endian silently feeds the
+                # instruction reversed bytes -- the load reads a different value
+                # than intended and the differential is quietly wrong.
+                _endian = 'big' if self._is_big_endian else 'little'
                 try:
-                    self.uc.mem_write(addr, val.to_bytes(size, 'little'))
+                    self.uc.mem_write(addr, val.to_bytes(size, _endian))
                 except ValueError:
                     mask = (1 << (size * 8)) - 1
-                    self.uc.mem_write(addr, (val & mask).to_bytes(size, 'little'))
+                    self.uc.mem_write(addr, (val & mask).to_bytes(size, _endian))
 
                 self._dirtied_memory.add(addr)
                 continue
@@ -863,10 +892,13 @@ class CellSimulator:
                 self._mapped_pages.add(end_page_addr)
 
             try:
-                self.uc.mem_write(addr, mem_val.to_bytes(size, 'little'))
+                self.uc.mem_write(addr, mem_val.to_bytes(size, 'big' if self._is_big_endian else 'little'))
             except ValueError:
                 mask = (1 << (size * 8)) - 1
-                self.uc.mem_write(addr, (mem_val & mask).to_bytes(size, 'little'))
+                self.uc.mem_write(
+                    addr,
+                    (mem_val & mask).to_bytes(size, 'big' if self._is_big_endian else 'little'),
+                )
 
             self._dirtied_memory.add(addr)
 
