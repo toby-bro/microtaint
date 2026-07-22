@@ -369,19 +369,17 @@ def determine_category(  # noqa: C901
                 return True
         return False
 
-    # A carry-coupled OR an XOR consumer takes ownership.  XOR is included because
-    # its differential CANCELS -- D = Ta ^ Tb is 0 wherever a bit is tainted in both
-    # operands -- so `eor x0,x1,x2,ror #11` under-tainted while it was TRANSLATABLE.
-    # ORABLE's union is not merely sound but EXACT for XOR (measured: 96% -> 100%
-    # exact), so this costs no precision.  INT_OR is deliberately NOT included: it is
-    # how a rotate, `extr` and `ubfx` are lifted, and a union there would be a gross
-    # over-approximation (measured 100% -> ~30% exact when tried).
-    _combining_consumes_shift = any(
-        op.opcode.name in (TRANSPORTABLE_OPCODES | ORABLE_OPCODES)
-        and any(_reaches_shift(i) for i in op.inputs)
+    # Only a CARRY-COUPLED consumer takes ownership.  Ceding to an XOR consumer as
+    # well does make `eor x0,x1,x2,ror #11` and `bic x0,x1,x2,lsl #1` sound, but at
+    # a precision cost that is not acceptable: ORABLE's union drops them from 96% to
+    # 43% and 19% exact.  Those two remain UNSOUND pending a fix that is exact
+    # rather than a union -- most likely a closed-form XOR term over the
+    # TRANSFORMED operand taint, which keeps the differential's precision.
+    _carry_consumes_shift = any(
+        op.opcode.name in TRANSPORTABLE_OPCODES and any(_reaches_shift(i) for i in op.inputs)
         for op in core_ops
     )
-    if _real_shifts and not _combining_consumes_shift:
+    if _real_shifts and not _carry_consumes_shift:
         return InstructionCategory.TRANSLATABLE
 
     # XOR makes the monotonic differential UNSOUND.  D^{++} for XOR computes
