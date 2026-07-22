@@ -2,7 +2,20 @@ from __future__ import annotations
 
 from pypcode import PcodeOp
 
+from microtaint.sleigh.constfold import const_value, fold_constants
 from microtaint.sleigh.slicer import get_varnode_id
+
+
+def _is_bitwise_not(op: PcodeOp, folded: dict[tuple[str, int, int], int]) -> bool:
+    """True if this XOR is really a bitwise NOT -- one operand is all ones."""
+    if op.output is None:
+        return False
+    full = (1 << (op.output.size * 8)) - 1
+    for inp in op.inputs:
+        cv = const_value(inp, folded)
+        if cv is not None and (cv & full) == full:
+            return True
+    return False
 
 
 def compute_polarity(  # noqa: C901
@@ -20,6 +33,9 @@ def compute_polarity(  # noqa: C901
         return {}
 
     polarity_map: dict[str, int] = {}
+    # Constants are routinely COMPUTED rather than emitted: ARM64 spells the `~` of
+    # `bic`/`orn`/`eon` as an XOR with an all-ones value materialised by INT_2COMP.
+    folded = fold_constants(slice_ops)
 
     # We walk backwards through the ops.
     # Usually inputs start as 1, but operations like INT_SUB can invert the right operand.
@@ -67,6 +83,24 @@ def compute_polarity(  # noqa: C901
             node_polarities[rhs] = inv_polarity
             if op.inputs[1].space.name != 'const':
                 polarity_map[rhs] = inv_polarity
+
+        elif op_name in ('INT_XOR', 'BOOL_XOR') and _is_bitwise_not(op, folded):
+            # XOR with ALL ONES is a bitwise NOT, which INVERTS the dependency
+            # direction exactly like INT_NEGATE.  ARM64 lifts `bic x0,x1,x2,lsl #1`
+            # as `x1 & (u ^ -1)`, so leaving this on the propagate path polarised x2
+            # into the WRONG corner: the differential then compared a_hi & b_lo
+            # against a_lo & b_hi, which are both 0 wherever a bit is tainted in both
+            # operands, and the bit read as clean.
+            full_mask = (1 << (op.output.size * 8)) - 1
+            for inp in op.inputs:
+                cv = const_value(inp, folded)
+                if cv is not None and (cv & full_mask) == full_mask:
+                    continue  # the all-ones constant itself carries no polarity
+                if inp.space.name != 'const':
+                    inp_id = get_varnode_id(inp)
+                    inv_polarity = 0 if current_polarity == 1 else 1
+                    node_polarities[inp_id] = inv_polarity
+                    polarity_map[inp_id] = inv_polarity
 
         elif op_name in (
             'INT_MULT',

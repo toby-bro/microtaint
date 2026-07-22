@@ -39,7 +39,7 @@ from microtaint.sleigh.partition import (
     varnode_taint_expr,
     waist_taint_expr,
 )
-from microtaint.sleigh.polarity import compute_polarity
+from microtaint.sleigh.polarity import _is_bitwise_not, compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
 
@@ -74,7 +74,7 @@ def _cone_register_taint(
     return acc
 
 
-def _reg_taint_for_floor(mapper: StateMapper):
+def _reg_taint_for_floor(mapper: StateMapper) -> Callable[[int, int], Expr | None]:
     """Adapter: architectural-register taint lookup for varnode_taint_expr."""
 
     def _f(offset: int, size: int) -> Expr | None:
@@ -1315,6 +1315,50 @@ def _build_variable_multiply_taint(  # noqa: C901
     )
 
 
+def _build_wide_xor_taint(
+    slice_ops: list[PcodeOp],
+    mapper: StateMapper,
+) -> Expr | None:
+    """EXACT taint of a wide XOR whose operands are permutations, or None.
+
+    T(a ^ b) is the position-wise union T_a | T_b: an output bit varies iff either
+    contributing bit can vary, and unlike AND/OR there is no value-dependent
+    masking to make the union pessimistic.  Both operand taints are resolved in
+    closed form through varnode_taint_expr, so a shifted or rotated operand
+    contributes its taint at the TRANSFORMED positions -- which is the whole point,
+    since the raw register taint sits at the wrong bits.
+
+    Declines unless the producing op is an XOR with two resolvable data operands,
+    leaving the differential in place.
+    """
+    term = next(
+        (
+            o
+            for o in reversed(slice_ops)
+            if o.opcode.name not in ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT')
+        ),
+        None,
+    )
+    if term is None or term.opcode.name != 'INT_XOR' or len(term.inputs) != 2:
+        return None
+    if term.output is None or term.output.size * 8 <= 1:
+        return None
+    folded = fold_constants(slice_ops)
+    if _is_bitwise_not(term, folded):
+        return None  # a NOT, not a two-operand XOR: polarity handles it
+    parts: list[Expr] = []
+    for inp in term.inputs:
+        if const_value(inp, folded) is not None:
+            continue  # a constant contributes no taint
+        t = varnode_taint_expr(slice_ops, inp, _reg_taint_for_floor(mapper))
+        if t is None:
+            return None
+        parts.append(t)
+    if len(parts) != 2:
+        return None
+    return BinaryExpr(Op.OR, parts[0], parts[1])
+
+
 def _build_variable_shift_taint(  # noqa: C901
     slice_ops: list[PcodeOp],
     mapper: StateMapper,
@@ -2305,6 +2349,24 @@ def generate_taint_assignments(  # noqa: C901
         # taints the full output width.  Route it to the exact subcube term first;
         # it declines (returning None) for anything that is not exactly a masked
         # variable shift, in which case the differential path below is unchanged.
+        # A wide XOR's differential CANCELS: D = Ta ^ Tb is 0 exactly where a bit is
+        # tainted in BOTH operands.  `eor x0,x1,x2,ror #11` hits this at the ROTATED
+        # positions -- x2's tainted bits {12,17,19,20,50} land on {1,6,8,9,39} and
+        # collide with x1's bit 1.  The exact taint of a^b is the position-wise union
+        # of the operand taints, so when both resolve in closed form (which the
+        # permutation grammar does exactly, rotation included) emit that instead of
+        # the differential.  This is EXACT, not a floor: routing the same instruction
+        # through ORABLE's union over RAW register taint was tried and cost 53 points
+        # of exactness, because the union then sits at the wrong bit positions.
+        _xor_term = _build_wide_xor_taint(slice_ops, mapper)
+        if _xor_term is not None and not isinstance(mapping, MemMapping):
+            assignments.append(
+                TaintAssignment(
+                    target=out_target, dependencies=dependencies, expression=_xor_term,
+                ),
+            )
+            return
+
         _var_shift = _build_variable_shift_taint(
             slice_ops, mapper, out_bit_end - out_bit_start + 1,
         )
@@ -3040,17 +3102,17 @@ def generate_taint_assignments(  # noqa: C901
             for _inp in _term.inputs:
                 if _inp.space.name == 'const':
                     continue
-                _t = varnode_taint_expr(slice_ops, _inp, _reg_taint_for_floor(mapper))
-                if _t is None:
+                _ft = varnode_taint_expr(slice_ops, _inp, _reg_taint_for_floor(mapper))
+                if _ft is None:
                     # Outside the closed-form grammar (these operands are INT_SLESS
                     # sign tests): fall back to the union of the architectural
                     # registers the operand derives from.  Sound, and on a 1-bit
                     # output the whole term is capped at one bit.
-                    _t = _cone_register_taint(slice_ops, _inp, mapper)
-                if _t is None:
+                    _ft = _cone_register_taint(slice_ops, _inp, mapper)
+                if _ft is None:
                     _xor_terms = []
                     break
-                _xor_terms.append(_t)
+                _xor_terms.append(_ft)
             if len(_xor_terms) == 2:
                 _u = BinaryExpr(Op.OR, _xor_terms[0], _xor_terms[1])
                 expr = BinaryExpr(
