@@ -1427,7 +1427,8 @@ def _build_variable_shift_taint(  # noqa: C901
         return m if isinstance(m, RegMapping) else None
 
     src = _reg(sh.inputs[0])
-    if src is None:
+    src_const = const_value(sh.inputs[0], fold_constants(slice_ops))
+    if src is None and src_const is None:
         return None
 
     # Amount: either a bare register, or the standard `reg & mask` masking idiom.
@@ -1454,8 +1455,9 @@ def _build_variable_shift_taint(  # noqa: C901
         return None  # amount forced to 0: a constant shift, not this term's case
 
     # A constant amount is handled exactly by the existing differential; this term
-    # is for the data-dependent case only.
-    if amt.name == src.name and amt.bit_start == src.bit_start:
+    # is for the data-dependent case only.  Source and amount aliasing the same
+    # register correlates them, which this term's independence assumption forbids.
+    if src is not None and amt.name == src.name and amt.bit_start == src.bit_start:
         return None
 
     # Only value-preserving widening may follow the shift, and every remaining op
@@ -1471,9 +1473,23 @@ def _build_variable_shift_taint(  # noqa: C901
         if op.opcode.name not in _SHIFT_PASSTHROUGH:
             return None
 
+    # A CONSTANT source is still a variable shift: `bts rax,rbx` builds its bit mask
+    # as `1 << (rbx & 0x3f)`, and the exact reachable-position set is exactly what
+    # this term computes (with zero source taint).  Requiring a register source made
+    # it decline, so the whole register avalanched -- 14x invented bits.
+    _src_val: Expr = (
+        Constant(src_const or 0, 8)
+        if src is None
+        else _get_taint_operand(src.name, src.bit_start, src.bit_end, False)
+    )
+    _src_taint: Expr = (
+        Constant(0, 8)
+        if src is None
+        else _get_taint_operand(src.name, src.bit_start, src.bit_end, True)
+    )
     expr: Expr = VariableShiftTaintExpr(
-        _get_taint_operand(src.name, src.bit_start, src.bit_end, False),
-        _get_taint_operand(src.name, src.bit_start, src.bit_end, True),
+        _src_val,
+        _src_taint,
         _get_taint_operand(amt.name, amt.bit_start, amt.bit_end, False),
         _get_taint_operand(amt.name, amt.bit_start, amt.bit_end, True),
         inner_width,

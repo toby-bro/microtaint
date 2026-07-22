@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from pypcode.pypcode_native import PcodeOp, Varnode
 
 from microtaint.instrumentation.ast import BinaryExpr, Constant, Expr, Op
-from microtaint.sleigh.constfold import fold_constants
+from microtaint.sleigh.constfold import const_value, fold_constants
 
 # Coarse taint algebras.  Two ops share an algebra when a single taint-evaluation
 # regime can express their composition; they differ when it cannot.
@@ -142,6 +142,25 @@ def _drop_constant_ops(ops: list[PcodeOp]) -> list[PcodeOp]:
     ]
 
 
+def _is_pow2_scale(op: PcodeOp, folded: dict[tuple[str, int, int], int]) -> int | None:
+    """log2 of a constant power-of-two multiplier, or None.
+
+    `x * 2^k` IS a left shift by k: a fixed relocation of bit positions, not a
+    carry-mixing multiply.  x86 addressing spells its scale that way
+    (`lea rax,[rbx+rcx*4+8]` lifts `rcx*4` as INT_MULT), so without this the scaled
+    operand is neither recognised as a permutation nor given a floor at the SHIFTED
+    positions.
+    """
+    if op.opcode.name != 'INT_MULT' or len(op.inputs) != 2:
+        return None
+    for i in (0, 1):
+        cv = const_value(op.inputs[i], folded)
+        other = const_value(op.inputs[1 - i], folded)
+        if cv is not None and other is None and cv > 0 and (cv & (cv - 1)) == 0:
+            return cv.bit_length() - 1
+    return None
+
+
 def _algebra_of(ops: list[PcodeOp]) -> str | None:
     """The single algebra a segment belongs to, or None if it is mixed/unknown.
 
@@ -149,8 +168,9 @@ def _algebra_of(ops: list[PcodeOp]) -> str | None:
     split on, because condition (C) would be meaningless for it.
     """
     ops = _drop_constant_ops(ops)
+    _f = fold_constants(ops)
     classes = {
-        _ALGEBRA[op.opcode.name]
+        (ALG_BITWISE if _is_pow2_scale(op, _f) is not None else _ALGEBRA[op.opcode.name])
         for op in ops
         if op.opcode.name not in ROUTING_OPCODES and op.opcode.name in _ALGEBRA
     }
@@ -393,6 +413,22 @@ def varnode_taint_expr(  # noqa: C901
             res = BinaryExpr(Op.OR, a, _smear_high(a, inner - 1, width))
         elif name == 'SUBPIECE' and c is not None:
             res = BinaryExpr(Op.AND, BinaryExpr(Op.RIGHT, a, Constant(c * 8, 8)), Constant(full, 8))
+        elif name == 'INT_MULT' and _is_pow2_scale(op, _folded) is not None:
+            shift_k = _is_pow2_scale(op, _folded)
+            data_in = (
+                op.inputs[1] if const_value(op.inputs[0], _folded) is not None
+                else op.inputs[0]
+            )
+            base = taint(data_in, idx, depth + 1)
+            res = (
+                None
+                if base is None or shift_k is None
+                else BinaryExpr(
+                    Op.AND,
+                    BinaryExpr(Op.LEFT, base, Constant(shift_k, 8)),
+                    Constant(full, 8),
+                )
+            )
         elif name == 'INT_LEFT' and c is not None:
             res = BinaryExpr(Op.AND, BinaryExpr(Op.LEFT, a, Constant(c, 8)), Constant(full, 8))
         elif name == 'INT_RIGHT' and c is not None:

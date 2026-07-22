@@ -143,6 +143,14 @@ IGNORED_OPCODES: set[str] = {
 }
 
 
+def _producing_op(core_ops: list[PcodeOp]) -> PcodeOp | None:
+    """The op that actually produces the slice's output."""
+    for op in reversed(core_ops):
+        if op.opcode.name not in ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT'):
+            return op
+    return None
+
+
 def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
     """
     Heuristic: A true permutation only uses routing/shifting opcodes
@@ -324,9 +332,27 @@ def determine_category(  # noqa: C901
     if not core_ops:
         return InstructionCategory.MAPPED
 
+    # AVALANCHE fires on opcode PRESENCE, which is wrong for a multiply by a
+    # CONSTANT: `lea rax,[rbx+rcx*4+8]` lifts `rcx*4` as INT_MULT, and that alone
+    # avalanched the whole address computation (7.3x invented bits, 1.6% exact)
+    # even though its producing op is an INT_ADD.  Multiplying by a constant is
+    # affine -- a sum of fixed shifts -- so each output bit still depends on a
+    # fixed set of input bit positions and the ordinary carry-coupled regime
+    # applies.  Only a data x data multiply is a genuine avalanche.
+    _folded_av = fold_constants(slice_ops)
     for op in core_ops:
-        if op.opcode.name in AVALANCHE_OPCODES:
-            return InstructionCategory.AVALANCHE
+        if op.opcode.name not in AVALANCHE_OPCODES:
+            continue
+        if op.opcode.name == 'INT_MULT' and op is not _producing_op(core_ops):
+            _data = [
+                i
+                for i in op.inputs
+                if i.space.name != 'const'
+                and (i.space.name, i.offset, i.size) not in _folded_av
+            ]
+            if len(_data) < 2:
+                continue  # affine scaling feeding some other producer
+        return InstructionCategory.AVALANCHE
 
     for op in core_ops:
         if op.opcode.name in COND_TRANSPORTABLE_OPCODES:
