@@ -2805,7 +2805,10 @@ def generate_taint_assignments(  # noqa: C901
         and slice_ops
         and slice_ops[-1].output is not None
     ):
-        _waist = find_waist(slice_ops, slice_ops[-1].output)
+        # A floor needs only the disjoint-input conduit, not two distinct algebras:
+        # `bic x0,x1,x2,lsl #1` is bitwise on both sides but still owes a floor at the
+        # SHIFTED positions, which the raw source union cannot express.
+        _waist = find_waist(slice_ops, slice_ops[-1].output, require_distinct_algebra=True)
         if (
             _waist is not None
             and _waist.upstream_algebra == ALG_BITWISE

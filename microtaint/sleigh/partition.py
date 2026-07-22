@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from pypcode.pypcode_native import PcodeOp, Varnode
 
 from microtaint.instrumentation.ast import BinaryExpr, Constant, Expr, Op
+from microtaint.sleigh.constfold import fold_constants
 
 # Coarse taint algebras.  Two ops share an algebra when a single taint-evaluation
 # regime can express their composition; they differ when it cannot.
@@ -124,12 +125,30 @@ def _overlaps(a: Varnode, b: Varnode) -> bool:
     )
 
 
+def _drop_constant_ops(ops: list[PcodeOp]) -> list[PcodeOp]:
+    """Ops that only compute a constant are routing, not work on data.
+
+    SLEIGH spells constants as arithmetic: `bic x0,x1,x2,lsl #1` materialises its
+    mask as ``unique = -0x1`` (INT_2COMP) and a rotate builds its complementary
+    amount as ``0x40 - 0xb`` (INT_SUB).  Both are ALG_ARITH by opcode, which made
+    an otherwise purely bitwise segment read as MIXED, so _algebra_of declined and
+    the waist was rejected.
+    """
+    folded = fold_constants(ops)
+    return [
+        op
+        for op in ops
+        if op.output is None or _key(op.output) not in folded
+    ]
+
+
 def _algebra_of(ops: list[PcodeOp]) -> str | None:
     """The single algebra a segment belongs to, or None if it is mixed/unknown.
 
     Conservative by design: a segment we cannot name with one algebra is never
     split on, because condition (C) would be meaningless for it.
     """
+    ops = _drop_constant_ops(ops)
     classes = {
         _ALGEBRA[op.opcode.name]
         for op in ops
@@ -144,7 +163,7 @@ def _algebra_of(ops: list[PcodeOp]) -> str | None:
 
 
 def _does_work(ops: list[PcodeOp]) -> bool:
-    return any(op.opcode.name not in ROUTING_OPCODES for op in ops)
+    return any(op.opcode.name not in ROUTING_OPCODES for op in _drop_constant_ops(ops))
 
 
 def _register_reads(ops: list[PcodeOp]) -> set[tuple[int, int]]:
@@ -178,11 +197,24 @@ def _backward_cone(ops: list[PcodeOp], target: Varnode) -> list[PcodeOp]:
     return cone
 
 
-def find_waist(slice_ops: list[PcodeOp], target: Varnode) -> Waist | None:
+def find_waist(
+    slice_ops: list[PcodeOp],
+    target: Varnode,
+    require_distinct_algebra: bool = True,
+) -> Waist | None:
     """Return the waist splitting `slice_ops` into two different operations.
 
     None when the slice is a single operation -- which is the common case and
     the safe answer, since the caller then keeps today's whole-slice behaviour.
+
+    `require_distinct_algebra` separates two questions that condition (C) had
+    conflated.  Deciding whether an instruction encodes TWO DIFFERENT OPERATIONS
+    -- the splitting question -- does need the algebras to differ.  Deciding where
+    to place a union FLOOR does not: it needs only condition (A), the disjoint-input
+    conduit that makes materialising the intermediate lossless.  `bic x0,x1,x2,lsl #1`
+    is bitwise on both sides, so it is not two different operations, yet its floor
+    still has to be computed at the SHIFTED bit positions.  Callers wanting a floor
+    pass False.
     """
     if len(slice_ops) < 2:
         return None
@@ -234,7 +266,9 @@ def find_waist(slice_ops: list[PcodeOp], target: Varnode) -> Waist | None:
         # (C) different taint algebras -- otherwise one regime composes them.
         up_alg = _algebra_of(upstream)
         down_alg = _algebra_of(downstream)
-        if up_alg is None or down_alg is None or up_alg == down_alg:
+        if up_alg is None or down_alg is None:
+            continue
+        if require_distinct_algebra and up_alg == down_alg:
             continue
 
         return Waist(vn, upstream, downstream, up_alg, down_alg, up_regs, down_regs)
@@ -308,6 +342,10 @@ def varnode_taint_expr(  # noqa: C901
     than by materialising new varnodes (pypcode's are immutable natives).
     """
     memo: dict[tuple[tuple[str, int, int], int], Expr | None] = {}
+    # Shift amounts and masks are routinely COMPUTED rather than emitted literally
+    # (a rotate's complementary amount is `0x40 - 0xb`), so constants must be
+    # resolved by folding, not by checking for a `const` varnode.
+    _folded = fold_constants(ops)
 
     def reaching_def(vn: Varnode, before: int) -> tuple[int, PcodeOp] | None:
         """The definition of `vn` in effect at position `before` (overlap-aware)."""
@@ -318,7 +356,9 @@ def varnode_taint_expr(  # noqa: C901
         return None
 
     def const_of(vn: Varnode) -> int | None:
-        return vn.offset if vn.space.name == 'const' else None
+        if vn.space.name == 'const':
+            return vn.offset
+        return _folded.get(_key(vn))
 
     def taint(vn: Varnode, at: int, depth: int = 0) -> Expr | None:  # noqa: C901
         if depth > 24:
