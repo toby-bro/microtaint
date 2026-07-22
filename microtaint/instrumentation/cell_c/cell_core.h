@@ -81,16 +81,21 @@ static inline uint8_t mem_read_byte(const MemMap *m, uint64_t addr) {
         s = (s + 1) & MEM_MASK;
     return (m->keys[s] == addr) ? (uint8_t)m->vals[s] : 0;
 }
-static inline void mem_write(MemMap *m, uint64_t addr, uint64_t val, int size) {
+static inline void mem_write(MemMap *m, uint64_t addr, uint64_t val, int size, int be) {
     uint64_t mask = (size >= 8) ? UINT64_MAX : (((uint64_t)1 << (size*8)) - 1);
     val &= mask;
-    for (int i = 0; i < size; i++)
-        mem_write_byte(m, addr+i, (uint8_t)(val >> (i*8)));
+    for (int i = 0; i < size; i++) {
+        /* BE stores the most-significant byte at the lowest address. */
+        int shift = be ? (size - 1 - i) * 8 : i * 8;
+        mem_write_byte(m, addr+i, (uint8_t)(val >> shift));
+    }
 }
-static inline uint64_t mem_read(const MemMap *m, uint64_t addr, int size) {
+static inline uint64_t mem_read(const MemMap *m, uint64_t addr, int size, int be) {
     uint64_t r = 0;
-    for (int i = 0; i < size; i++)
-        r |= ((uint64_t)mem_read_byte(m, addr+i)) << (i*8);
+    for (int i = 0; i < size; i++) {
+        int shift = be ? (size - 1 - i) * 8 : i * 8;
+        r |= ((uint64_t)mem_read_byte(m, addr+i)) << shift;
+    }
     return r;
 }
 
@@ -106,6 +111,12 @@ typedef struct {
     MemMap   mem;
     uint64_t arch_pc_off;
     int      arch_pc_sz;
+    /* Target byte order.  The register file is indexed by BYTE OFFSET, so on a
+     * big-endian target byte d of an N-byte register sits at bit (N-d-size)*8,
+     * not d*8.  Getting this wrong does not fail loudly -- it reads the wrong
+     * bytes and the differential silently collapses toward 0.  Mirrors
+     * _PCodeFrame._is_big_endian in cell.pyx. */
+    int      is_big_endian;
 } Frame;
 
 static inline void frame_clear(Frame *f) {
@@ -156,7 +167,18 @@ static inline void frame_write_reg(Frame *f, long off, int sz, uint64_t val) {
             uint64_t lo_mask = (sz >= 8)
                 ? 0xFFFFFFFFFFFFFFFFULL
                 : (((uint64_t)1 << (sz * 8)) - 1);
-            f->regs_arr[off] = (f->regs_arr[off] & ~lo_mask) | (val & lo_mask);
+            /* A narrower write sharing the base offset targets the LOW bytes
+             * under LE but the HIGH bytes under BE, because the base offset is
+             * the most-significant byte there. */
+            if (f->is_big_endian) {
+                int be_wshift = ((int)f->regs_sz[off] - sz) * 8;
+                if (be_wshift >= 0 && be_wshift < 64) {
+                    f->regs_arr[off] = (f->regs_arr[off] & ~(lo_mask << be_wshift))
+                                     | ((val & lo_mask) << be_wshift);
+                }
+            } else {
+                f->regs_arr[off] = (f->regs_arr[off] & ~lo_mask) | (val & lo_mask);
+            }
             /* regs_sz stays at the wider size — the slot still represents
              * the full architectural register. */
         } else {
@@ -195,7 +217,17 @@ static inline uint64_t frame_read_reg(const Frame *f, long off, int sz) {
         } else {
             for (long k = off-1; k >= 0 && off-k <= 8; k--) {
                 if (f->regs_set[k] && k + (long)f->regs_sz[k] > off) {
-                    base = f->regs_arr[k] >> ((off-k)*8);
+                    long byte_off = off - k;
+                    if (f->is_big_endian) {
+                        /* BE: byte `byte_off` from the MSB of a parent of
+                         * regs_sz[k] bytes; the sub-value's low bit sits at
+                         * (parent_sz - byte_off - sz)*8. */
+                        long be_shift = ((long)f->regs_sz[k] - byte_off - sz) * 8;
+                        base = (be_shift >= 0 && be_shift < 64)
+                             ? (f->regs_arr[k] >> be_shift) : 0;
+                    } else {
+                        base = f->regs_arr[k] >> (byte_off * 8);
+                    }
                     break;
                 }
             }
@@ -229,8 +261,15 @@ static inline uint64_t frame_read_reg(const Frame *f, long off, int sz) {
                     ? 0xFFFFFFFFFFFFFFFFULL
                     : (((uint64_t)1 << (k_sz * 8)) - 1);
                 uint64_t sub_val = f->regs_arr[k] & sub_mask;
-                uint64_t lane_mask = sub_mask << (byte_off * 8);
-                base = (base & ~lane_mask) | (sub_val << (byte_off * 8));
+                /* BE: the sub-slot at `byte_off` from the MSB of this sz-byte
+                 * read occupies bits (sz - byte_off - k_sz)*8 upward. */
+                long be_shift = f->is_big_endian
+                    ? ((long)sz - byte_off - k_sz) * 8
+                    : (byte_off * 8);
+                if (be_shift >= 0 && be_shift < 64) {
+                    uint64_t lane_mask = sub_mask << be_shift;
+                    base = (base & ~lane_mask) | (sub_val << be_shift);
+                }
                 k += k_sz;
             } else {
                 k++;
@@ -245,7 +284,7 @@ static inline uint64_t frame_read_d(const Frame *f, int sp, unsigned long off, i
     if (sp == SP_CONST)    return mask64((uint64_t)off, sz);
     if (sp == SP_REGISTER) return frame_read_reg(f, (long)off, sz);
     if (sp == SP_UNIQUE)   return (off < MAX_UNIQ && f->uniq_set[off]) ? mask64(f->uniq_arr[off], sz) : 0;
-    if (sp == SP_RAM)      return mem_read(&f->mem, (uint64_t)off, sz);
+    if (sp == SP_RAM)      return mem_read(&f->mem, (uint64_t)off, sz, f->is_big_endian);
     return 0;
 }
 
@@ -253,7 +292,7 @@ static inline void frame_write_d(Frame *f, int sp, unsigned long off, int sz, ui
     val = mask64(val, sz);
     if (sp == SP_REGISTER) { frame_write_reg(f, (long)off, sz, val); return; }
     if (sp == SP_UNIQUE)   { if (off < MAX_UNIQ) { f->uniq_arr[off]=val; f->uniq_set[off]=1; } return; }
-    if (sp == SP_RAM)      { mem_write(&f->mem, (uint64_t)off, val, sz); }
+    if (sp == SP_RAM)      { mem_write(&f->mem, (uint64_t)off, val, sz, f->is_big_endian); }
 }
 
 /* Maps an in-sequence x86 instruction address to its pcode op index.
@@ -652,18 +691,23 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
         case OP_LZCOUNT:
             if (op->o_sp != NO_OUT_SPACE) {
                 a = frame_read_d(f,op->i0_sp,op->i0_off,op->i0_sz);
+                /* __builtin_clzll counts over 64 bits, but the varnode is
+                 * i0_sz bytes wide -- subtract the padding above it, or a 32-bit
+                 * `cntlzw` reports 32 too many.  Latent until big-endian targets
+                 * (PPC32's 4-byte registers) reached the C kernel. */
                 frame_write_d(f, op->o_sp, op->o_off, op->o_sz,
-                    a ? (uint64_t)__builtin_clzll(a) : (uint64_t)(op->i0_sz*8));
+                    a ? (uint64_t)(__builtin_clzll(a) - (64 - op->i0_sz*8))
+                      : (uint64_t)(op->i0_sz*8));
             } break;
         case OP_LOAD:
             if (op->o_sp != NO_OUT_SPACE) {
                 a = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz);
-                frame_write_d(f, op->o_sp, op->o_off, op->o_sz, mem_read(&f->mem, a, op->o_sz));
+                frame_write_d(f, op->o_sp, op->o_off, op->o_sz, mem_read(&f->mem, a, op->o_sz, f->is_big_endian));
             } break;
         case OP_STORE:
             a = frame_read_d(f,op->i1_sp,op->i1_off,op->i1_sz);
             b = frame_read_d(f,op->i2_sp,op->i2_off,op->i2_sz);
-            mem_write(&f->mem, a, b, op->i2_sz);
+            mem_write(&f->mem, a, b, op->i2_sz, f->is_big_endian);
             break;
         case OP_MULTIEQUAL: case OP_INDIRECT:
             if (op->o_sp != NO_OUT_SPACE && op->n_ins > 0)

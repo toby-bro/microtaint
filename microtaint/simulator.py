@@ -361,10 +361,10 @@ class CellSimulator:
         # MICROTAINT_BE_UNICORN=1 restores the old behaviour.
         if self._is_big_endian and os.environ.get('MICROTAINT_BE_UNICORN') == '1':
             use_unicorn = True
-        # The C kernel has NO byte-order handling (zero references to endianness),
-        # while the Cython frame is BE-aware throughout, so a BE target on the
-        # native path must use the Cython evaluator until the C port lands.
-        _force_cython_be = self._is_big_endian and not use_unicorn
+        # Both native evaluators are byte-order aware now (the C kernel's Frame
+        # carries `is_big_endian`, mirroring _PCodeFrame), so BE uses the same fast
+        # C kernel as LE.  MICROTAINT_DISABLE_C_KERNEL=1 still forces Cython.
+        _force_cython_be = False
         self.use_unicorn = use_unicorn
         # Default: use the C kernel when available.  Pass use_c=False to
         # force the Cython evaluator (e.g. for differential testing).  Set
@@ -372,7 +372,7 @@ class CellSimulator:
         # globally without code changes.
         if use_c is None:
             use_c = os.environ.get('MICROTAINT_DISABLE_C_KERNEL') != '1'
-        if _force_cython_be:
+        if _force_cython_be:  # retained as an explicit escape hatch
             use_c = False
         self.use_c = use_c
         self._pcode: None | PCodeCellEvaluator | PCodeCellEvaluatorC = None

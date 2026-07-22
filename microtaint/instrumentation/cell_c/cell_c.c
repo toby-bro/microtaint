@@ -224,7 +224,7 @@ static void load_mem_state(EvalC *self, Frame *f, PyObject *mem_dict) {
             if (msz < 1) msz = 1;
             if (msz > 8) msz = 8;
         }
-        mem_write(&f->mem, addr, mval, msz);
+        mem_write(&f->mem, addr, mval, msz, f->is_big_endian);
     }
 }
 
@@ -293,7 +293,7 @@ static int load_flat(EvalC *self, Frame *f, PyObject *inputs_dict) {
             uint64_t base = frame_read_reg(f, roff, rsz);
             addr = base + (uint64_t)offset;
         }
-        mem_write(&f->mem, addr, v, size);
+        mem_write(&f->mem, addr, v, size, f->is_big_endian);
     }
     Py_DECREF(deferred);
     return 0;
@@ -338,7 +338,7 @@ static uint64_t read_output_full(EvalC *self, Frame *f,
             uint64_t base = frame_read_reg(f, roff, rsz);
             addr = base + (uint64_t)offset;
         }
-        val = mem_read(&f->mem, addr, size);
+        val = mem_read(&f->mem, addr, size, f->is_big_endian);
         if (width >= 64) return val >> bit_start;
         m = ((uint64_t)1 << width) - 1;
         return (val >> bit_start) & m;
@@ -398,6 +398,26 @@ static int EvalC_init(EvalC *self, PyObject *args, PyObject *kw) {
     if (!PyArg_ParseTuple(args, "O", &arch)) return -1;
     Py_XDECREF(self->arch);
     self->arch = arch; Py_INCREF(arch);
+
+    /* Target byte order, derived from the architecture name exactly as
+     * CellSimulator and _PCodeFrame do (a trailing "BE").  The register file is
+     * byte-offset indexed, so this decides where a sub-register lives; without it
+     * a BE target reads the wrong bytes and the differential silently collapses. */
+    {
+        PyObject *arch_str = PyObject_Str(arch);
+        int be = 0;
+        if (arch_str) {
+            const char *cs = PyUnicode_AsUTF8(arch_str);
+            if (cs) {
+                size_t n = strlen(cs);
+                be = (n >= 2 && (cs[n-2] == 'B' || cs[n-2] == 'b')
+                             && (cs[n-1] == 'E' || cs[n-1] == 'e'));
+            }
+            Py_DECREF(arch_str);
+        }
+        self->frame_a.is_big_endian = be;
+        self->frame_b.is_big_endian = be;
+    }
 
     PyObject *cell_mod = PyImport_ImportModule("microtaint.instrumentation.cell");
     if (!cell_mod) return -1;
