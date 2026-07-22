@@ -319,6 +319,28 @@ typedef struct {
 /* Linear-scan lookup of an IMARK address in the bundle's imark table.
  * Returns the pcode pc for that address, or -1 if not present.  Typical
  * sequence has ≤ 8 IMARKs so the linear scan is fine. */
+/* Read a 128-bit value from a unique slot pair (low at off, high at off+8), the
+ * same layout the splittable-op block writes.  For <=8-byte or non-unique sources
+ * this is just the zero-extended 64-bit value. */
+static inline unsigned __int128 frame_read_u128(const Frame *f, int sp,
+                                                unsigned long off, int sz) {
+    if (sz <= 8 || sp != SP_UNIQUE)
+        return (unsigned __int128) frame_read_d(f, sp, off, sz);
+    unsigned __int128 lo = (off < MAX_UNIQ && f->uniq_set[off]) ? f->uniq_arr[off] : 0;
+    unsigned __int128 hi = (off+8 < MAX_UNIQ && f->uniq_set[off+8]) ? f->uniq_arr[off+8] : 0;
+    return lo | (hi << 64);
+}
+static inline void frame_write_u128(Frame *f, int sp, unsigned long off, int sz,
+                                    unsigned __int128 val) {
+    if (sz > 16) sz = 16;
+    if (sz < 16 && sz > 0) {
+        unsigned __int128 m = (((unsigned __int128)1) << (sz*8)) - 1;
+        val &= m;
+    }
+    frame_write_d(f, sp, off, 8, (uint64_t)val);
+    if (sz > 8) frame_write_d(f, sp, off + 8, sz - 8, (uint64_t)(val >> 64));
+}
+
 static inline int bundle_lookup_imark(const DecodedBundle *d, uint64_t addr) {
     for (int i = 0; i < d->n_imarks; i++) {
         if (d->imarks[i].addr == addr) return d->imarks[i].pc;
@@ -449,6 +471,82 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
                 pc++;
                 continue;  /* skip the regular dispatch for this op */
             }
+            /* 128-bit multiply (widening MUL/IMUL): not lane-independent, so the
+             * split block above skips it.  Read both operands as full 128-bit and
+             * multiply.  Without this the low halves are multiplied truncated and
+             * the high half reads 0 -- which is exactly what made the imul CF flag
+             * (`sext(RAX) != full_product`) under-taint. */
+            if (oid == OP_INT_MULT) {
+                unsigned __int128 p = frame_read_u128(f, op->i0_sp, op->i0_off, op->i0_sz)
+                                    * frame_read_u128(f, op->i1_sp, op->i1_off, op->i1_sz);
+                frame_write_u128(f, op->o_sp, op->o_off, op->o_sz, p);
+                pc++;
+                continue;
+            }
+            /* 128-bit left shift. */
+            if (oid == OP_INT_LEFT) {
+                unsigned __int128 v = frame_read_u128(f, op->i0_sp, op->i0_off, op->i0_sz);
+                uint64_t sh = frame_read_d(f, op->i1_sp, op->i1_off, op->i1_sz);
+                unsigned __int128 r = (sh >= (uint64_t)(op->o_sz*8)) ? 0 : (v << sh);
+                frame_write_u128(f, op->o_sp, op->o_off, op->o_sz, r);
+                pc++;
+                continue;
+            }
+        }
+
+        /* 128-bit / 64-bit divide and remainder (DIV/IDIV read a 128-bit
+         * dividend, produce a <=8-byte quotient/remainder). */
+        if ((oid == OP_INT_DIV || oid == OP_INT_REM || oid == OP_INT_SDIV
+             || oid == OP_INT_SREM) && op->i0_sz > 8) {
+            unsigned __int128 num = frame_read_u128(f, op->i0_sp, op->i0_off, op->i0_sz);
+            uint64_t den = frame_read_d(f, op->i1_sp, op->i1_off, op->i1_sz);
+            uint64_t res;
+            if (den == 0) {
+                res = 0;
+            } else if (oid == OP_INT_DIV) {
+                res = (uint64_t)(num / den);
+            } else if (oid == OP_INT_REM) {
+                res = (uint64_t)(num % den);
+            } else {
+                int bits = op->i0_sz * 8;
+                __int128 snum = (num & (((unsigned __int128)1) << (bits-1)))
+                    ? (__int128)(num - (((unsigned __int128)1) << bits)) : (__int128)num;
+                __int128 sden = (int64_t)den;
+                res = (oid == OP_INT_SDIV)
+                    ? (uint64_t)(snum / sden) : (uint64_t)(snum % sden);
+            }
+            if (op->o_sp != NO_OUT_SPACE)
+                frame_write_d(f, op->o_sp, op->o_off, op->o_sz, res);
+            pc++;
+            continue;
+        }
+
+        /* Comparison of 128-bit operands.  The output is 1 byte, so the o_sz>8
+         * block above never sees it; reading only the low half via the 64-bit
+         * dispatch compares the wrong thing (and for the imul CF idiom the low
+         * halves are always equal, yielding a silent 0). */
+        if ((oid == OP_INT_EQUAL || oid == OP_INT_NOTEQUAL || oid == OP_INT_LESS
+             || oid == OP_INT_SLESS || oid == OP_INT_LESSEQUAL
+             || oid == OP_INT_SLESSEQUAL)
+            && (op->i0_sz > 8 || op->i1_sz > 8)) {
+            unsigned __int128 w0 = frame_read_u128(f, op->i0_sp, op->i0_off, op->i0_sz);
+            unsigned __int128 w1 = frame_read_u128(f, op->i1_sp, op->i1_off, op->i1_sz);
+            uint64_t res;
+            if (oid == OP_INT_EQUAL)         res = (w0 == w1);
+            else if (oid == OP_INT_NOTEQUAL) res = (w0 != w1);
+            else if (oid == OP_INT_LESS)     res = (w0 <  w1);
+            else if (oid == OP_INT_LESSEQUAL) res = (w0 <= w1);
+            else {
+                int bits = (op->i0_sz > op->i1_sz ? op->i0_sz : op->i1_sz) * 8;
+                unsigned __int128 sbit = ((unsigned __int128)1) << (bits - 1);
+                __int128 s0 = (w0 & sbit) ? (__int128)(w0 - (((unsigned __int128)1) << bits)) : (__int128)w0;
+                __int128 s1 = (w1 & sbit) ? (__int128)(w1 - (((unsigned __int128)1) << bits)) : (__int128)w1;
+                res = (oid == OP_INT_SLESS) ? (s0 < s1) : (s0 <= s1);
+            }
+            if (op->o_sp != NO_OUT_SPACE)
+                frame_write_d(f, op->o_sp, op->o_off, op->o_sz, res);
+            pc++;
+            continue;
         }
 
         switch (oid) {

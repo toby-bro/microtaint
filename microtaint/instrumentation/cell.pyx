@@ -284,6 +284,19 @@ cdef class DecodedOps:
         return bytes((<unsigned char*>self.buf)[:sizeof(PCodeOp) * MAX_PCODE_OPS])
 
 
+# Ops the execution block handles on >8-byte (128-bit) varnodes.  Anything not
+# here that touches a wide varnode must fall back rather than truncate -- see the
+# safety net in _predecode_ops.  INT_EQUAL/INT_NOTEQUAL/INT_LESS/INT_SLESS and the
+# ...EQUAL variants are handled by the wide-comparison block.
+cdef frozenset _WIDE_HANDLED_OPS = frozenset({
+    OP_INT_SEXT, OP_INT_ZEXT, OP_SUBPIECE, OP_INT_LEFT, OP_INT_OR, OP_INT_AND,
+    OP_INT_XOR, OP_INT_MULT, OP_COPY, OP_INT_DIV, OP_INT_REM, OP_INT_SDIV,
+    OP_INT_SREM,
+    OP_INT_EQUAL, OP_INT_NOTEQUAL, OP_INT_LESS, OP_INT_SLESS,
+    OP_INT_LESSEQUAL, OP_INT_SLESSEQUAL,
+})
+
+
 def _predecode_ops(arch, bytestring):
     """
     Translate bytestring into a DecodedOps C-struct buffer (cached by _get_decoded).
@@ -328,6 +341,18 @@ def _predecode_ops(arch, bytestring):
             has_fallback = True
         elif oid == OP_UNKNOWN:
             has_fallback = True
+
+        # WIDE-VARNODE SAFETY NET.  The execution block handles a specific set of
+        # ops on >8-byte (128-bit) varnodes; any OTHER op touching a wide varnode
+        # would fall through to the 64-bit dispatch and SILENTLY TRUNCATE.  That is
+        # exactly how `imul rax,rbx,imm` under-tainted: its CF is
+        # `sext(RAX) != full_128bit_product`, and INT_NOTEQUAL on 16-byte inputs
+        # compared only the low halves -- which are always equal -- so CF read 0 in
+        # both replicas and the differential was vacuous.  Route anything wide that
+        # we do not explicitly handle to Unicorn instead of truncating it.
+        if oid not in _WIDE_HANDLED_OPS:
+            if (out is not None and out.size > 8) or any(iv.size > 8 for iv in ins):
+                has_fallback = True
 
         # Encode output
         if out is None:
@@ -792,6 +817,7 @@ cdef void _execute_decoded(
     cdef dict      imark_to_pc     = decoded.imark_to_pc
     cdef object    _pc_obj
     cdef object    _wide_val   # Python int (arbitrary precision) for 128-bit intermediates
+    cdef object    _lo0, _hi0, _lo1, _hi1, _w0, _w1, _s0, _s1, _sbit, _cmp_res
     # Bound back-edges to keep wild differential-evaluator inputs (eg ECX
     # under V|T polarity could be huge) from running forever.  256 covers
     # every realistic ``rep stosb`` / ``rep movsb`` case in the benchmark
@@ -835,9 +861,12 @@ cdef void _execute_decoded(
         # existing uniq_arr[slot] for the low 64 bits and the new
         # uniq_hi[slot] for the high 64 bits.
         #
-        # fast-path guard: o_sz <= 8 AND NOT a wide-source SUBPIECE.
-        # This is False for >99.9% of ops → zero overhead on the hot path.
-        if o_sz > 8 or (oid == OP_SUBPIECE and i0_sz > 8):
+        # fast-path guard: enter the wide block whenever ANY varnode exceeds 8
+        # bytes.  Previously this only checked the OUTPUT (o_sz) plus wide-source
+        # SUBPIECE, so a comparison of 128-bit operands -- 1-byte output, wide
+        # inputs -- slipped straight to the 64-bit dispatch and truncated.  Still
+        # False for >99.9% of ops, so no measurable hot-path cost.
+        if o_sz > 8 or i0_sz > 8 or i1_sz > 8:
 
             if oid == OP_INT_SEXT and o_sp == SP_UNIQUE and o_sz > 8:
                 # Sign-extend source (≤8 bytes) to 16 bytes.
@@ -951,6 +980,41 @@ cdef void _execute_decoded(
                     frame.uniq_set[o_off]    = 1
                     frame.uniq_hi[o_off]     = (_wide_val >> 64) & 0xFFFFFFFFFFFFFFFF
                     frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            if (oid == OP_INT_EQUAL or oid == OP_INT_NOTEQUAL or oid == OP_INT_LESS
+                    or oid == OP_INT_SLESS or oid == OP_INT_LESSEQUAL
+                    or oid == OP_INT_SLESSEQUAL) and (i0_sz > 8 or i1_sz > 8):
+                # Comparison of 128-bit operands.  The operands live in unique slots
+                # as (low, high) halves; reading only the low half (the 64-bit
+                # dispatch below) compares the wrong thing and, for the imul CF
+                # idiom where the low halves are always equal, silently yields 0.
+                _lo0 = <object>(frame.uniq_arr[i0_off] if (i0_off < 32 and frame.uniq_set[i0_off]) else 0)
+                _hi0 = <object>(frame.uniq_hi[i0_off] if (i0_off < 32 and frame.uniq_hi_set[i0_off]) else 0)
+                _lo1 = <object>(frame.uniq_arr[i1_off] if (i1_off < 32 and frame.uniq_set[i1_off]) else 0)
+                _hi1 = <object>(frame.uniq_hi[i1_off] if (i1_off < 32 and frame.uniq_hi_set[i1_off]) else 0)
+                _w0 = _lo0 | (_hi0 << 64)
+                _w1 = _lo1 | (_hi1 << 64)
+                _sbit = (<object>1) << (i0_sz * 8 - 1)
+                if oid == OP_INT_EQUAL:
+                    _cmp_res = 1 if _w0 == _w1 else 0
+                elif oid == OP_INT_NOTEQUAL:
+                    _cmp_res = 1 if _w0 != _w1 else 0
+                elif oid == OP_INT_LESS:
+                    _cmp_res = 1 if _w0 < _w1 else 0
+                elif oid == OP_INT_LESSEQUAL:
+                    _cmp_res = 1 if _w0 <= _w1 else 0
+                else:
+                    # signed: reinterpret both as two's complement of i0_sz*8 bits
+                    _s0 = (_w0 - ((<object>1) << (i0_sz * 8))) if (_w0 & _sbit) else _w0
+                    _s1 = (_w1 - ((<object>1) << (i0_sz * 8))) if (_w1 & _sbit) else _w1
+                    if oid == OP_INT_SLESS:
+                        _cmp_res = 1 if _s0 < _s1 else 0
+                    else:
+                        _cmp_res = 1 if _s0 <= _s1 else 0
+                if o_sp != NO_OUT_SPACE:
+                    frame.write_d(o_sp, o_off, o_sz, <uint64_t><object>_cmp_res)
                 pc += 1
                 continue
 
