@@ -37,6 +37,19 @@ from microtaint.sleigh.polarity import compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
 
+
+def _key_of(vn: Varnode) -> tuple[str, int, int]:
+    return (vn.space.name, vn.offset, vn.size)
+
+
+def _overlaps_vn(a: Varnode, b: Varnode) -> bool:
+    return (
+        a.space.name == b.space.name
+        and a.offset < b.offset + b.size
+        and b.offset < a.offset + a.size
+    )
+
+
 _CONST_CACHE: dict[int, Constant] = {}
 
 
@@ -2887,6 +2900,63 @@ def generate_taint_assignments(  # noqa: C901
                     if _w < 64:
                         _fl = BinaryExpr(Op.AND, _fl, Constant((1 << _w) - 1, 8))
                     expr = BinaryExpr(Op.OR, expr, _fl)
+
+    # -----------------------------------------------------------------------
+    # VARIABLE-SHIFT FLAG GATE
+    #
+    # x86 computes a shift's CF/OF by selecting a bit whose POSITION depends on
+    # the shift amount:
+    #
+    #   shl rax,cl:  u = RAX_old << (amt-1) ; CF = u s< 0     -- bit (w-amt)
+    #   shr rax,cl:  u = RAX_old >> (amt-1) ; CF = u & 1      -- bit (amt-1)
+    #
+    # Selection by a tainted index is NON-MONOTONE, so the 2-corner differential
+    # reads the source at only two index values and misses the rest.
+    # VariableBitSelectTaintExpr is the exact term for this, but it cannot be used
+    # here: it requires the reachable index set to be a SUBCUBE of the index
+    # operand's taint cube, and `w - amt` / `amt - 1` are not subcubes of `amt`'s.
+    #
+    # So the flag gets a gate instead: if the shift AMOUNT carries any taint, the
+    # selected position can move and the flag is marked tainted.  On a 1-bit output
+    # that costs at most one bit, and it fires only when the amount is genuinely
+    # tainted -- a concrete `cl` leaves the differential untouched and exact.
+    # -----------------------------------------------------------------------
+    if (
+        not is_store_target
+        and not isinstance(mapping, MemMapping)
+        and out_bit_end == out_bit_start
+        and not _slice_has_constant_dominator(slice_ops)
+    ):
+        _folded_amt = fold_constants(slice_ops)
+
+        def _amt_regs(vn: Varnode, depth: int = 0) -> list[RegMapping]:
+            """Architectural registers the shift amount derives from."""
+            if depth > 12 or vn.space.name == 'const':
+                return []
+            if _key_of(vn) in _folded_amt:
+                return []  # a computed constant: the position cannot move
+            if vn.space.name == 'register':
+                m = mapper.map_to_state(vn.offset, vn.size)
+                return [m] if isinstance(m, RegMapping) else []
+            out: list[RegMapping] = []
+            for o in slice_ops:
+                if o.output is not None and _overlaps_vn(o.output, vn):
+                    for i in o.inputs:
+                        out.extend(_amt_regs(i, depth + 1))
+            return out
+
+        _amt_taints: list[Expr] = []
+        for _op in slice_ops:
+            if _op.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT') and len(_op.inputs) > 1:
+                for _m in _amt_regs(_op.inputs[1]):
+                    _amt_taints.append(
+                        _get_taint_operand(_m.name, _m.bit_start, _m.bit_end, True),
+                    )
+        if _amt_taints:
+            _acc = _amt_taints[0]
+            for _t in _amt_taints[1:]:
+                _acc = BinaryExpr(Op.OR, _acc, _t)
+            expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, AvalancheExpr(_acc, 1), Constant(1, 8)))
 
     # 1-bit flag soundness floor for COND_TRANSPORTABLE.
     #
