@@ -2717,14 +2717,23 @@ def generate_taint_assignments(  # noqa: C901
                     Constant(cap_mask, 8),
                 )
 
-            # Soundness floor for widening INT_SEXT: when the slice computes a
-            # narrow value and then sign-extends it, the SEXT replicates the
-            # inner MSB into every fill bit.  The transport_term as-built is
-            # only `inner_width` bits wide (deps are sliced to the inner read
-            # width), so its bits above `inner_width` are 0 — they contribute
-            # nothing through the OR.  But the *true* taint of the SEXT fill
-            # is `transport_term[inner_width-1]` replicated into bits
-            # [inner_width .. out_width-1].  Fan it out by log-fold doubling.
+            # Soundness floor for widening INT_SEXT: the sign extension replicates
+            # the inner MSB into every fill bit, so the taint of that one bit must
+            # reach ALL fill bits the output slice covers.  The 2-corner differential
+            # can miss it entirely -- the sign of a wrapping add is non-monotone, so
+            # both polarity corners can share a sign while an interior value flips it.
+            #
+            # This must fire whenever the slice INTERSECTS the fill region
+            # [inner, sext_bits), NOT only when the whole extended value fits in the
+            # slice.  A register written by a sext is enumerated as overlapping
+            # sub-views -- e.g. a 64-bit V0 as both [63:0] and [63:32] -- and the
+            # [63:32] view is ENTIRELY fill.  The old `sext_bits <= out_width` guard
+            # skipped it, so that view carried only the raw source union (the sign
+            # bit landing at one position instead of the whole fill) and, depending
+            # on which view the driver emitted LAST, clobbered the correct [63:0]
+            # taint.  MIPS `sw;lw;addu` emits [63:32] last and under-tainted; plain
+            # `addu` emits it first and hid the bug.  Firing on intersection makes
+            # every sub-view correct and the result order-independent.
             sext_op = next(
                 (
                     op
@@ -2732,19 +2741,24 @@ def generate_taint_assignments(  # noqa: C901
                     if op.opcode.name == 'INT_SEXT'
                     and op.output is not None
                     and op.inputs[0].size * 8 < op.output.size * 8
-                    and op.output.size * 8 <= out_width
                 ),
                 None,
             )
             if sext_op is not None:
                 inner = sext_op.inputs[0].size * 8
-                msb = BinaryExpr(Op.AND, transport_term, Constant(1 << (inner - 1), 8))
-                fill = BinaryExpr(Op.LEFT, msb, Constant(1, 8))  # bit at position `inner`
-                width = 1
-                while width < out_width - inner:
-                    fill = BinaryExpr(Op.OR, fill, BinaryExpr(Op.LEFT, fill, Constant(width, 8)))
-                    width *= 2
-                transport_term = BinaryExpr(Op.OR, transport_term, fill)
+                sext_bits = sext_op.output.size * 8
+                # Fill region intersected with this slice, in EXPR coordinates
+                # (expr bit k -> register bit k + out_bit_start).  transport_term is
+                # in source coordinates, so the sign bit stays at `inner-1`.
+                fill_lo = max(inner, out_bit_start) - out_bit_start
+                fill_hi = min(sext_bits - 1, out_bit_end) - out_bit_start
+                if fill_hi >= fill_lo:
+                    fill_w = fill_hi - fill_lo + 1
+                    sign = BinaryExpr(Op.AND, transport_term, Constant(1 << (inner - 1), 8))
+                    # Every fill bit equals the sign bit, so avalanche is EXACT here,
+                    # not an over-approximation.
+                    fill = BinaryExpr(Op.LEFT, AvalancheExpr(sign, fill_w), Constant(fill_lo, 8))
+                    transport_term = BinaryExpr(Op.OR, transport_term, fill)
 
             expr = BinaryExpr(Op.OR, diff_expr, transport_term)
         else:
