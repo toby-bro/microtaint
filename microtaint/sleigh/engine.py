@@ -3399,7 +3399,11 @@ def generate_taint_assignments(  # noqa: C901
          if o.opcode.name not in ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT')),
         None,
     )
-    _arith = next((o for o in slice_ops if o.opcode.name in ('INT_ADD', 'INT_SUB', 'INT_2COMP')), None)
+    _arith = next(
+        (o for o in slice_ops
+         if o.opcode.name in ('INT_ADD', 'INT_SUB', 'INT_2COMP', 'INT_AND', 'INT_OR', 'INT_XOR')),
+        None,
+    )
     _has_shift = any(o.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT') for o in slice_ops)
     if (
         not is_store_target
