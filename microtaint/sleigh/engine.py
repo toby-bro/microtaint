@@ -3469,6 +3469,28 @@ def generate_taint_assignments(  # noqa: C901
     ):
         _c_in = next((i for i in _eq_term.inputs if i.space.name == 'const'), None)
         _r_in = next((i for i in _eq_term.inputs if i.space.name == 'register'), None)
+        if _r_in is None:
+            # xadd/cmpxchg keep the compared arithmetic result in a UNIQUE
+            # (`ZF = unique == 0`) while also copying that same unique into an
+            # architectural register (`AL = unique`).  The cell can only read
+            # registers, so resolve the compared unique to that aliasing register
+            # -- the two hold the same value at the comparison point.  This
+            # generalises the floor past the register-compared shapes (add/sub/cmp)
+            # to every exchange/RMW-with-flags instruction.
+            _u_in = next((i for i in _eq_term.inputs if i.space.name == 'unique'), None)
+            if _u_in is not None and all_ops is not None:
+                for _o in all_ops:
+                    if (
+                        _o.opcode.name == 'COPY'
+                        and _o.output is not None
+                        and _o.output.space.name == 'register'
+                        and len(_o.inputs) == 1
+                        and _o.inputs[0].space.name == 'unique'
+                        and _o.inputs[0].offset == _u_in.offset
+                        and _o.inputs[0].size == _u_in.size
+                    ):
+                        _r_in = _o.output
+                        break
         _rm = mapper.map_to_state(_r_in.offset, _r_in.size) if _r_in is not None else None
         if _c_in is not None and isinstance(_rm, RegMapping):
             _w = _r_in.size * 8
