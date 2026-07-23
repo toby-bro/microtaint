@@ -1,0 +1,119 @@
+--- microtaint/sleigh/engine.py	2026-07-23 18:47:56.399871722 +0200
++++ /tmp/engine_all5.py	2026-07-23 18:38:46.480645548 +0200
+@@ -820,6 +820,64 @@
+     return False
+ 
+ 
++def _cross_instruction_intermediate_regs(  # noqa: C901
++    translation: object,
++    ctx: object,
++) -> tuple[tuple[str, int], ...]:
++    """Registers written by one sub-instruction and read by a later one.
++
++    When a multi-instruction sequence is split into per-instruction sub-circuits
++    (see generate_static_rule), taint that flows through a register BETWEEN steps
++    is threaded by the ChainedCircuit only for registers named in the sub-circuit
++    state_format.  Anything else -- MIPS's HI/LO after ``mult;mflo``, a scratch
++    register updated by step N and read by step N+1 -- is silently dropped,
++    under-tainting the later step.  This finds every such intermediate so the
++    caller can add it to the sub-circuit state_format.  It subsumes (and
++    generalises across ISAs) the former x86-flags-only augmentation: on x86 it
++    returns exactly the flags a following instruction consumes.
++    """
++    ops = translation.ops  # type: ignore[attr-defined]
++    ordinal: list[int] = []
++    ins = -1
++    for op in ops:
++        if op.opcode.name == 'IMARK':
++            ins += 1
++        ordinal.append(ins)
++    writes: list[tuple[int, int, int]] = []
++    reads: list[tuple[int, int, int]] = []
++    for i, op in enumerate(ops):
++        for vn in op.inputs:
++            if vn.space.name == 'register':
++                reads.append((vn.offset, vn.offset + vn.size, ordinal[i]))
++        if op.output is not None and op.output.space.name == 'register':
++            writes.append((op.output.offset, op.output.offset + op.output.size, ordinal[i]))
++    ranges: set[tuple[int, int]] = set()
++    for wlo, whi, wins in writes:
++        for rlo, rhi, rins in reads:
++            if rins > wins and wlo < rhi and rlo < whi:  # overlap, read strictly later
++                ranges.add((max(wlo, rlo), min(whi, rhi)))
++    # Resolve each byte range to the smallest register that fully contains it.
++    # Only WIDE registers (>= 2 bytes) are threaded here: those are the multi-byte
++    # intermediates the caller's state_format cannot express by another name
++    # (MIPS HI/LO, a widening multiply's high half).  Single-byte registers are
++    # deliberately excluded -- an ISA's 1-byte status flags (x86 CF/OF/ZF/... are
++    # byte registers in SLEIGH, not bits) are threaded at their true 1-bit width by
++    # the x86 flag safety net in the caller, and a 1-byte GPR sub-view is already
++    # covered by its parent in the state_format.  Threading a byte flag here as an
++    # 8-bit register mismatched the engine's 1-bit flag convention.
++    out: dict[str, int] = {}
++    regs = ctx.registers  # type: ignore[attr-defined]
++    for lo, hi in ranges:
++        best: tuple[str, int] | None = None
++        for nm, vn in regs.items():
++            if vn.space.name == 'register' and vn.offset <= lo and hi <= vn.offset + vn.size:
++                if best is None or vn.size < best[1]:
++                    best = (nm, vn.size)
++        if best is not None and best[1] >= 2:
++            out[best[0]] = best[1] * 8
++    return tuple(sorted(out.items()))
++
++
+ def generate_static_rule(
+     arch: Architecture,
+     bytestring: bytes,
+@@ -870,26 +928,32 @@
+     if _sequence_needs_monolithic(translation.ops, _instr_offsets, _next_instr_addr):
+         return circuit  # monolithic circuit preserves cross-instruction deps
+ 
+-    # Build one sub-circuit per instruction, using a state_format augmented
+-    # with x86 status flags so that intermediate flag taint (e.g. T_CF produced
+-    # by `add rax,rbx`) flows into the next sub-circuit (e.g. `adc rcx,rdx`).
+-    # Without flags in the sub-circuit's state_format, CF never appears in the
+-    # assignments and ChainedCircuit cannot thread it forward.
+-    # The outer state_format may or may not include flags — we add them regardless
+-    # for the internal sub-circuits.  The final output dict is filtered back to
+-    # only the registers in the caller's state_format by ChainedCircuit.evaluate.
+-    _X86_FLAG_REGISTERS: tuple[tuple[str, int], ...] = (
+-        ('CF', 1),
+-        ('OF', 1),
+-        ('ZF', 1),
+-        ('SF', 1),
+-        ('PF', 1),
+-    )
++    # Build one sub-circuit per instruction, using a state_format augmented with
++    # every register that carries taint BETWEEN steps -- otherwise the split
++    # silently drops it.  This is the general form of "thread the flags": on x86
++    # `add rax,rbx; adc rcx,rdx` it returns CF (produced by the add, consumed by
++    # the adc); on MIPS `mult $4,$5; mflo $2` it returns HI/LO (produced by the
++    # mult, consumed by the mflo) -- which the old x86-flags-only augmentation
++    # missed, zeroing every multiply/divide result read through mflo/mfhi.
++    # The final output dict is filtered back to only the registers in the caller's
++    # state_format by ChainedCircuit.evaluate, so threaded intermediates never leak.
+     _existing_names = {name for name, _ in reg_names_tuple}
+-    _extra_flags = tuple((name, bits) for name, bits in _X86_FLAG_REGISTERS if name not in _existing_names)
+-    # Only augment for x86/AMD64 — flag names differ on other arches
+-    _is_x86 = arch in (Architecture.AMD64, Architecture.X86)
+-    sub_reg_names_tuple = reg_names_tuple + _extra_flags if _is_x86 and _extra_flags else reg_names_tuple
++    _extra = tuple(
++        (name, bits)
++        for name, bits in _cross_instruction_intermediate_regs(translation, ctx)
++        if name not in _existing_names
++    )
++    # Safety net: keep threading the full x86 flag set (a following instruction may
++    # read a flag through a lifted path the write/read scan doesn't pair up).  This
++    # preserves the previous x86 behaviour exactly; the general scan adds the rest.
++    if arch in (Architecture.AMD64, Architecture.X86):
++        _have = _existing_names | {n for n, _ in _extra}
++        _extra += tuple(
++            (name, bits)
++            for name, bits in (('CF', 1), ('OF', 1), ('ZF', 1), ('SF', 1), ('PF', 1))
++            if name not in _have
++        )
++    sub_reg_names_tuple = reg_names_tuple + _extra
+ 
+     sub_circuits: list[LogicCircuit] = []
+     for addr_offset, length in imarks:
