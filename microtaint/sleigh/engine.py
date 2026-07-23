@@ -3358,6 +3358,74 @@ def generate_taint_assignments(  # noqa: C901
             # (e.g. CBRANCH on a non-flag predicate). Sound but possibly imprecise.
             expr = BinaryExpr(Op.OR, expr, old_dest_taint)
 
+    # -----------------------------------------------------------------------
+    # EQUALITY-TO-ZERO FLAG FLOOR  (ZF and friends)
+    #
+    # ZF = (a + b == 0) is NON-MONOTONE: the 2-corner differential samples only the
+    # polarity extremes, and a wrapping sum can be 0 at BOTH extremes while an
+    # interior value is non-zero (measured on `add al,bl` with both sign bits
+    # tainted: results {0, 0x80, 0x80, 0}, so both corners give ZF=1 and the
+    # interior ZF=0 is missed).  The FullMask floor only fires when a dep is FULLY
+    # tainted, so partial taint slips through.
+    #
+    # The exact-shape floor is EqualityTaintExpr(result, 0): ZF is tainted iff the
+    # result can be zero (its bits outside the taint are all 0) AND it carries
+    # taint.  The result's concrete value comes from a cell (which re-executes and
+    # reads the written register), and its taint is over-approximated by the
+    # carry-smear of the source taints -- sound because a carry from a tainted bit
+    # only propagates upward, so smearing each source taint up and unioning them
+    # covers every bit the sum's taint can reach.  It stays precise on the common
+    # case: when the result has a fixed non-zero bit outside the taint (a large
+    # `add rax,rbx`), the equal-reachable test is false and the floor does nothing.
+    _eq_term = next(
+        (o for o in reversed(slice_ops)
+         if o.opcode.name not in ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT')),
+        None,
+    )
+    if (
+        not is_store_target
+        and not isinstance(mapping, MemMapping)
+        and out_bit_end == out_bit_start  # a 1-bit flag
+        and _eq_term is not None
+        and _eq_term.opcode.name in ('INT_EQUAL', 'INT_NOTEQUAL')
+        and len(_eq_term.inputs) == 2
+        # only carry/borrow-propagating arithmetic, where smear-up is a sound
+        # over-estimate of the result taint
+        and any(o.opcode.name in ('INT_ADD', 'INT_SUB', 'INT_2COMP') for o in slice_ops)
+        and not _slice_has_constant_dominator(slice_ops)
+    ):
+        _c_in = next((i for i in _eq_term.inputs if i.space.name == 'const'), None)
+        _r_in = next((i for i in _eq_term.inputs if i.space.name == 'register'), None)
+        _rm = mapper.map_to_state(_r_in.offset, _r_in.size) if _r_in is not None else None
+        if _c_in is not None and isinstance(_rm, RegMapping):
+            _w = _r_in.size * 8
+            _src_t: Expr | None = None
+            for _dm in dep_set.value_deps:
+                if isinstance(_dm, RegMapping):
+                    _t = _get_taint_operand(_dm.name, _dm.bit_start, _dm.bit_end, True)
+                    _src_t = _t if _src_t is None else BinaryExpr(Op.OR, _src_t, _t)
+            if _src_t is not None:
+                _smear = _src_t
+                _step = 1
+                while _step < _w:
+                    _smear = BinaryExpr(Op.OR, _smear, BinaryExpr(Op.LEFT, _smear, Constant(_step, 8)))
+                    _step *= 2
+                _smear = BinaryExpr(Op.AND, _smear, Constant((1 << _w) - 1, 8))
+                # The cell re-executes the instruction; it needs the concrete VALUES
+                # of the registers it reads (an empty input map evaluates to 0).
+                _cell_inputs = {
+                    _dm.name: _get_taint_operand(_dm.name, _dm.bit_start, _dm.bit_end, False)
+                    for _dm in dep_set.value_deps
+                    if isinstance(_dm, RegMapping)
+                }
+                _result_val = InstructionCellExpr(
+                    arch, bytestring.hex(), _rm.name, _rm.bit_start, _rm.bit_end, _cell_inputs,
+                )
+                _eq_floor: Expr = EqualityTaintExpr(
+                    _result_val, _smear, Constant(_c_in.offset, _w), Constant(0, _w), _w,
+                )
+                expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, _eq_floor, Constant(1, 8)))
+
     if out_name in ('EIP', 'RIP', 'PC'):
         expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
 
