@@ -3359,6 +3359,26 @@ def generate_taint_assignments(  # noqa: C901
             expr = BinaryExpr(Op.OR, expr, old_dest_taint)
 
     # -----------------------------------------------------------------------
+    # SIGNED-OVERFLOW FLAG FLOOR, category-independent.
+    #
+    # A conditional compare (`ccmp`/`ccmn`) sets its overflow flag as
+    # `cond ? sborrow(a,b) : bit_of_#nzcv`, so the CBRANCH puts the OV slice in
+    # COND_TRANSPORTABLE, where the exact SignedOverflowTaintExpr -- only tried in
+    # the MONOTONIC branch -- never runs.  Signed overflow is non-monotone, so the
+    # 2-corner differential misses it (measured: `ccmp x1,x2,#0,al` OV).  The exact
+    # term is a SOUND floor (it never under-taints), so OR it in whenever the slice
+    # is a lone overflow predicate, regardless of category or conditional wrapper.
+    if (
+        not is_store_target
+        and not isinstance(mapping, MemMapping)
+        and out_bit_end == out_bit_start
+        and any(o.opcode.name in ('INT_SBORROW', 'INT_SCARRY') for o in slice_ops)
+    ):
+        _ovf_floor = _build_signed_overflow_taint(slice_ops, mapper)
+        if _ovf_floor is not None:
+            expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, _ovf_floor, Constant(1, 8)))
+
+    # -----------------------------------------------------------------------
     # EQUALITY-TO-ZERO FLAG FLOOR  (ZF and friends)
     #
     # ZF = (a + b == 0) is NON-MONOTONE: the 2-corner differential samples only the

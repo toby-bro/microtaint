@@ -237,6 +237,8 @@ _CASES = [
      {'x1': 0x8000400000, 'x2': 0x400000000240000}, 'bic x0,x1,x2,lsl #1 NOT-idiom polarity'),
     ('ARM64', '202cc2ca', {'x1': 0x123456789ABCDEF, 'x2': 0xFEDCBA9876543210},
      {'x1': 0x1000002, 'x2': 0x4000180021000}, 'eor x0,x1,x2,ror #11 wide-XOR transformed union'),
+    ('ARM64', '20e042fa', {'x1': 0x6A8F1DD4E13A0996, 'x2': 0x5484B3DBBA6BC77C},
+     {'x1': 0xA000008020000000, 'x2': 0x400}, 'ccmp OV conditional-compare overflow floor'),
     ('AMD64', '480fabd8', {'RAX': 0, 'RBX': 0x40}, {'RAX': 0, 'RBX': 0x3F},
      'bts rax,rbx reachable bit-index set'),
     ('AMD64', '480f4cc3', {'RAX': 0x1111, 'RBX': 0x2222, 'OF': 1, 'SF': 0},
