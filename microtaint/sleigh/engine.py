@@ -3525,6 +3525,84 @@ def generate_taint_assignments(  # noqa: C901
                 )
                 expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, _eq_floor, Constant(1, 8)))
 
+    # -----------------------------------------------------------------------
+    # VARIABLE SHIFT/MASK AMOUNT FLOOR  (bextr / bzhi and shift-composed-with-mask)
+    #
+    # A shift by a TAINTED amount taints its whole reachable output range -- the
+    # shifted bit or the mask boundary can land anywhere the amount reaches.  The
+    # exact subcube term (_build_variable_shift_taint) captures this for a LONE
+    # masked shift; when it declines because the shift is COMPOSED with a mask
+    # (bextr = `(x>>START) & ((1<<LEN)-1)`, bzhi, blsmsk) the amount's
+    # non-monotonicity is otherwise lost, under-tainting the exposed bits.  As a
+    # sound fallback OR in an avalanche over the output width, gated on the taint of
+    # every non-constant shift amount: AvalancheExpr is 0 when the amounts are
+    # untainted, so fixed-shift/fixed-mask code stays exact.  Fires only where the
+    # exact term already declined, so it never overrides a precise variable shift.
+    _var_amt_ops = [
+        _o for _o in slice_ops
+        if _o.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT')
+        and len(_o.inputs) == 2
+        and _o.inputs[1].space.name != 'const'
+    ]
+    if (
+        _var_amt_ops
+        and not isinstance(mapping, MemMapping)
+        and _build_variable_shift_taint(slice_ops, mapper, out_bit_end - out_bit_start + 1) is None
+    ):
+        _rt2 = _reg_taint_for_floor(mapper)
+        _sh_amt_taints: list[Expr] = []
+        for _o in _var_amt_ops:
+            _at = varnode_taint_expr(slice_ops, _o.inputs[1], _rt2)
+            if _at is not None:
+                _sh_amt_taints.append(_at)
+        if _sh_amt_taints:
+            _sh_amt_union: Expr = _sh_amt_taints[0]
+            for _a in _sh_amt_taints[1:]:
+                _sh_amt_union = BinaryExpr(Op.OR, _sh_amt_union, _a)
+            _ow2 = out_bit_end - out_bit_start + 1
+            expr = BinaryExpr(Op.OR, expr, AvalancheExpr(_sh_amt_union, _ow2))
+
+    # -----------------------------------------------------------------------
+    # NEGATE-THROUGH-SHIFT BORROW FLOOR  (neg/negs with a shifted operand)
+    #
+    # `-(x << k)` propagates a two's-complement borrow UP from the lowest tainted
+    # bit.  Plain `neg`/`sub` are exact under the 2-corner differential, but once a
+    # shift relocates the tainted bits the differential misses the borrow and
+    # under-taints (the transport union floor sits at the operand's RAW positions,
+    # not the shifted ones).  Gated on a negate -- INT_2COMP, or `0 - x` via
+    # INT_SUB with a constant-0 minuend (how `negs` lifts) -- *and* a shift, so
+    # plain negate and shifted add/sub (all already sound) are untouched.  OR in the
+    # borrow-smear of the negated operand's taint read at its post-shift positions.
+    _neg_operand = None
+    _2comp_op = next((_o for _o in slice_ops if _o.opcode.name == 'INT_2COMP'), None)
+    if _2comp_op is not None:
+        _neg_operand = _2comp_op.inputs[0]
+    else:
+        _sub0 = next(
+            (_o for _o in slice_ops
+             if _o.opcode.name == 'INT_SUB' and len(_o.inputs) == 2
+             and _o.inputs[0].space.name == 'const' and _o.inputs[0].offset == 0),
+            None,
+        )
+        if _sub0 is not None:
+            _neg_operand = _sub0.inputs[1]
+    if (
+        _neg_operand is not None
+        and any(_o.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT') for _o in slice_ops)
+        and not isinstance(mapping, MemMapping)
+        and out_bit_end > out_bit_start
+    ):
+        _ot = varnode_taint_expr(slice_ops, _neg_operand, _reg_taint_for_floor(mapper))
+        if _ot is not None:
+            _w3 = out_bit_end - out_bit_start + 1
+            _sm3 = _ot
+            _step3 = 1
+            while _step3 < _w3:
+                _sm3 = BinaryExpr(Op.OR, _sm3, BinaryExpr(Op.LEFT, _sm3, Constant(_step3, 8)))
+                _step3 *= 2
+            _sm3 = BinaryExpr(Op.AND, _sm3, Constant((1 << _w3) - 1, 8))
+            expr = BinaryExpr(Op.OR, expr, _sm3)
+
     if out_name in ('EIP', 'RIP', 'PC'):
         expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
 
