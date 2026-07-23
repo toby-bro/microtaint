@@ -3379,6 +3379,59 @@ def generate_taint_assignments(  # noqa: C901
             expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, _ovf_floor, Constant(1, 8)))
 
     # -----------------------------------------------------------------------
+    # SIGN FLAG FLOOR for SHIFTED-operand arithmetic (NG/SF).
+    #
+    # NG = (a - (b<<k)) s< 0 is the sign bit of the result.  When the shift brings
+    # a tainted bit of `b` up to the subtrahend's SIGN position, toggling it is a
+    # 2^(w-1) jump that WRAPS the subtract, so the sign becomes non-monotone and the
+    # 2-corner differential misses it even with correct polarity (measured: `cmp
+    # x1,x2,lsl #3` NG, `adds x0,x1,x2,lsl #2` NG).  The plain (unshifted) sign is
+    # monotone and already exact, so this is gated on a shift feeding the
+    # arithmetic -- plain `cmp`/`adds` NG is left untouched.
+    #
+    # The non-monotonicity is precisely a TAINTED SIGN BIT of an operand: toggling
+    # it is the 2^(w-1) wrap.  Low-bit taint keeps the sign monotone (a single
+    # zero-crossing the differential's polarity corners already bracket), so the
+    # floor fires ONLY when a transformed operand's own sign bit is tainted --
+    # which keeps it tight (no smear) and leaves the monotone cases exact.
+    _sign_term = next(
+        (o for o in reversed(slice_ops)
+         if o.opcode.name not in ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT')),
+        None,
+    )
+    _arith = next((o for o in slice_ops if o.opcode.name in ('INT_ADD', 'INT_SUB', 'INT_2COMP')), None)
+    _has_shift = any(o.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT') for o in slice_ops)
+    if (
+        not is_store_target
+        and not isinstance(mapping, MemMapping)
+        and out_bit_end == out_bit_start
+        and _sign_term is not None
+        and _sign_term.opcode.name in ('INT_SLESS', 'INT_SLESSEQUAL')
+        and any(i.space.name == 'const' and i.offset == 0 for i in _sign_term.inputs)
+        and _arith is not None
+        and _arith.output is not None
+        and _has_shift
+    ):
+        _rt = _reg_taint_for_floor(mapper)
+        _parts: list[Expr] = []
+        for _inp in _arith.inputs:
+            if _inp.space.name == 'const':
+                continue
+            _pt = varnode_taint_expr(slice_ops, _inp, _rt)
+            if _pt is None:
+                _pt = _cone_register_taint(slice_ops, _inp, mapper)
+            if _pt is not None:
+                _parts.append(_pt)
+        if _parts:
+            _u: Expr = _parts[0]
+            for _p in _parts[1:]:
+                _u = BinaryExpr(Op.OR, _u, _p)
+            _aw = _arith.output.size * 8
+            # Fire iff a transformed operand's SIGN bit (bit w-1) is tainted.
+            _msb = BinaryExpr(Op.AND, _u, Constant(1 << (_aw - 1), 8))
+            expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, AvalancheExpr(_msb, 1), Constant(1, 8)))
+
+    # -----------------------------------------------------------------------
     # EQUALITY-TO-ZERO FLAG FLOOR  (ZF and friends)
     #
     # ZF = (a + b == 0) is NON-MONOTONE: the 2-corner differential samples only the
