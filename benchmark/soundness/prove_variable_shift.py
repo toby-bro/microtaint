@@ -55,6 +55,7 @@ import argparse
 import sys
 
 from z3 import (
+    UGE,
     And,
     BitVec,
     BitVecVal,
@@ -65,7 +66,6 @@ from z3 import (
     Not,
     Or,
     Solver,
-    UGE,
     unsat,
 )
 
