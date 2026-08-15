@@ -182,7 +182,6 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
                 return False
 
     dynamic_sources: set[tuple[str, int, int]] = set()  # (space, offset, size)
-    has_and_or = False
     has_shift = False
 
     # Track registers written within this slice (intra-instruction intermediates)
@@ -262,8 +261,6 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
         if op.opcode.name not in ROUTING_OPCODES:
             return False
 
-        if op.opcode.name in {'INT_AND', 'INT_OR', 'BOOL_AND', 'BOOL_OR'}:
-            has_and_or = True
         if op.opcode.name in {'INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT'}:
             has_shift = True
 
@@ -277,9 +274,6 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
                 dynamic_sources.add((vn.space.name, vn.offset, vn.size))
 
     if len(dynamic_sources) == 1:
-        # Classic single-source permutation (bswap, shifts by constant, mov, ror, etc.)
-        if has_and_or and not has_shift:
-            return False
         return True
 
     if len(dynamic_sources) == 2:

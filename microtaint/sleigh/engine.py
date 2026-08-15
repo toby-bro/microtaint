@@ -31,7 +31,13 @@ from microtaint.instrumentation.ast import (
 )
 from microtaint.sleigh.constfold import const_value, fold_constants, is_constant_op
 from microtaint.sleigh.lifter import get_context
-from microtaint.sleigh.mapper import EXTENSION_OPCODES, TRANSLATABLE_OPCODES, determine_category
+from microtaint.sleigh.mapper import (
+    CONTROL_FLOW_OPCODES,
+    EXTENSION_OPCODES,
+    ROUTING_OPCODES,
+    TRANSLATABLE_OPCODES,
+    determine_category,
+)
 from microtaint.sleigh.partition import (
     ALG_ARITH,
     ALG_BITWISE,
@@ -42,6 +48,9 @@ from microtaint.sleigh.partition import (
 from microtaint.sleigh.polarity import _is_bitwise_not, compute_polarity
 from microtaint.sleigh.slicer import get_varnode_id, slice_backward
 from microtaint.types import Architecture, Register
+
+if TYPE_CHECKING:
+    from microtaint.simulator import CellSimulator
 
 
 def _cone_register_taint(
@@ -2289,6 +2298,64 @@ def generate_taint_assignments(  # noqa: C901
         C2_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep2)
         return BinaryExpr(Op.XOR, C1_cell, C2_cell)
 
+    def make_mapped_single_call() -> Expr | None:
+        """Single-call (linear-part) rule for a MAPPED routing slice.
+
+        A routing slice with a single dynamic input is GF(2)-affine,
+        ``f(x, c) = L(x) XOR a(c)``, so the 2-replica differential
+        ``f(V|T) XOR f(V&~T)`` collapses to the value-independent
+        ``L(T) = f(T) XOR f|_{x->0}``: one instruction execution on the taint mask
+        plus the constant part ``a(c) = f|_{x->0}``, folded once at synthesis (vs.
+        two executions for the differential). ``a(c)`` is nonzero for bit-injecting
+        routing such as OR-with-a-set-constant, so the fold is required, not an
+        optimisation. The taint mask placed at the input's register positions is
+        exactly ``(V|T) XOR (V&~T)``, reusing the differential's own replica inputs.
+
+        Returns ``None`` -- caller keeps the differential -- unless every
+        precondition holds. See ``tests/test_mapped_single_call.py`` for the
+        corpus-wide proof that this equals the differential where it fires.
+
+        * pure-register slice (memory / address-only / load-like keep the
+          differential -- their dynamic address is a second runtime input);
+        * exactly one dynamic register input -- a single routed operand is affine,
+          whereas two dynamic inputs into a routing op (e.g. ``a & b``) are not;
+        * every slice op is a routing (bit-permuting) op;
+        * no control-flow op anywhere in the instruction -- a branch/call taints
+          the concrete run with a backend-specific landing address that the
+          two-run differential cancels by XOR but a single run cannot (e.g.
+          RISC-V ``jalr``'s link-register write is otherwise pure routing).
+        """
+        if _use_mem_diff or is_load_like:
+            return None
+        reg_groups: set[str] = set()
+        for d in dep_set.value_deps.keys():
+            if isinstance(d, MemMapping):
+                return None
+            reg_groups.add(d.name)
+        if len(reg_groups) != 1:
+            return None
+        if any(op.opcode.name not in ROUTING_OPCODES for op in slice_ops):
+            return None
+        if any(op.opcode.name in CONTROL_FLOW_OPCODES for op in (all_ops or slice_ops)):
+            return None
+
+        name = next(iter(reg_groups))
+        hexs = bytestring.hex()
+        try:
+            from microtaint.simulator import MachineState  # noqa: PLC0415
+
+            # a(c) = f|_{x->0}: the affine constant part (nonzero for OR-with-a-set-
+            # constant), the output slice with the dynamic input cleared. One cached
+            # concrete evaluation at synthesis; never on the runtime hot path.
+            probe = InstructionCellExpr(arch, hexs, out_name, out_bit_start, out_bit_end, {})
+            a_c = _synth_simulator(arch).evaluate_concrete(probe, MachineState(regs={name: 0}, mem={}))
+        except Exception:
+            return None
+        # Taint mask placed at the input's register positions: (V|T) XOR (V&~T).
+        taint_input = BinaryExpr(Op.XOR, cell_inputs_rep1[name], cell_inputs_rep2[name])
+        taint_cell = InstructionCellExpr(arch, hexs, out_name, out_bit_start, out_bit_end, {name: taint_input})
+        return BinaryExpr(Op.XOR, taint_cell, Constant(a_c, out_bit_end - out_bit_start + 1))
+
     if is_load_like:
         mem_taint: Expr | None = None
         if mem_taint_exprs:
@@ -2765,7 +2832,8 @@ def generate_taint_assignments(  # noqa: C901
             expr = diff_expr
 
     elif cat == InstructionCategory.MAPPED:
-        expr = make_differential()
+        _single = make_mapped_single_call()
+        expr = _single if _single is not None else make_differential()
 
     elif cat == InstructionCategory.ORABLE:
         core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
@@ -3666,6 +3734,17 @@ def build_polarized_reg(name: str, slices: list[tuple[int, int, int]], replica_i
     if combined_expr is None:
         raise ValueError(f'No slices found for register {name}')
     return combined_expr
+
+
+@functools.lru_cache(maxsize=None)
+def _synth_simulator(arch: Architecture) -> CellSimulator:
+    """Concrete p-code evaluator used at rule-synthesis time (offline), cached per
+    architecture. Used only to fold the single-call MAPPED rule's affine constant
+    part ``f|_{x->0}``; never on the runtime hot path.
+    """
+    from microtaint.simulator import CellSimulator  # noqa: PLC0415
+
+    return CellSimulator(arch, use_unicorn=False, use_c=True)
 
 
 def process_dependencies(
