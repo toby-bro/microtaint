@@ -1142,6 +1142,49 @@ def _get(output: dict, key: str) -> int:
 
 
 # ===========================================================================
+# KNOWN UB (not a taint bug): x86 shifts and rotates leave certain flags
+# UNDEFINED per the Intel/AMD manuals -- e.g. OF is undefined for a shift/rotate
+# count != 1.  Unicorn and Ghidra-pcode each pick a legal-but-different value for
+# the undefined bits, so their taint on those flags legitimately differs.  We
+# document these here and exclude the undefined flag keys AND their bits inside
+# the EFLAGS aggregate from the backend correctness comparison, rather than
+# treating a known-UB divergence as a failure.
+_EFLAGS_BIT_POS = {'CF': 0, 'PF': 2, 'ZF': 6, 'SF': 7, 'OF': 11}
+UB_UNDEFINED_FLAGS: dict[str, set[str]] = {
+    'SHL r64,cl': {'OF'},      # OF undefined for shift count != 1
+    'SHL r64,imm8': {'OF'},    # SHL RAX,8
+    'ROL r64,imm8': {'OF'},    # OF undefined for rotate count != 1
+}
+
+
+def _backend_taint_diffs(
+    mnemonic: str,
+    out_unicorn: dict[str, int],
+    out_pcode: dict[str, int],
+    exempt_keys: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, tuple[int, int]]:
+    """Differing output-taint keys between the two backends, with undefined-flag
+    UB (and the corresponding EFLAGS bits) filtered out for known-UB mnemonics."""
+    ub_flags = UB_UNDEFINED_FLAGS.get(mnemonic, set())
+    ub_eflags_mask = 0
+    for _f in ub_flags:
+        ub_eflags_mask |= 1 << _EFLAGS_BIT_POS[_f]
+
+    diffs: dict[str, tuple[int, int]] = {}
+    for k in set(out_unicorn) | set(out_pcode):
+        if k in exempt_keys or k in ub_flags:
+            continue
+        u = out_unicorn.get(k, 0)
+        p = out_pcode.get(k, 0)
+        if k == 'EFLAGS' and ub_eflags_mask:
+            u &= ~ub_eflags_mask
+            p &= ~ub_eflags_mask
+        if u != p:
+            diffs[k] = (u, p)
+    return diffs
+
+
+# ===========================================================================
 # PART 1 — Correctness: unicorn output == pcode output for every instruction
 # ===========================================================================
 
@@ -1198,15 +1241,7 @@ def test_pcode_matches_unicorn(
     PCODE_PRECISE_EXEMPTIONS: dict[str, set[str]] = {}
     exempt_keys = PCODE_PRECISE_EXEMPTIONS.get(mnemonic, set())
 
-    differing = {}
-    all_keys = set(out_unicorn.keys()) | set(out_pcode.keys())
-    for k in all_keys:
-        if k in exempt_keys:
-            continue
-        u = out_unicorn.get(k, 0)
-        p = out_pcode.get(k, 0)
-        if u != p:
-            differing[k] = (u, p)
+    differing = _backend_taint_diffs(mnemonic, out_unicorn, out_pcode, exempt_keys)
 
     assert (
         not differing
@@ -1784,11 +1819,7 @@ def test_diagnostic_print_all_diffs(
             continue
 
         exempt = DIAGNOSTIC_EXEMPTIONS.get(mnemonic, set())
-        diffs = {
-            k: (out_u.get(k, 0), out_p.get(k, 0))
-            for k in set(out_u) | set(out_p)
-            if k not in exempt and out_u.get(k, 0) != out_p.get(k, 0)
-        }
+        diffs = _backend_taint_diffs(mnemonic, out_u, out_p, exempt)
 
         if diffs:
             any_unexpected_diff = True
