@@ -2091,16 +2091,8 @@ def generate_taint_assignments(  # noqa: C901
             neg_inputs=neg_inputs,
         )
 
-        # Build the explicit value-taint OR fallback (transport term).
         value_dependencies, _, _, _ = process_dependencies(dep_set.value_deps)
-
-        if value_dependencies:
-            transport = value_dependencies[0]
-            for t in value_dependencies[1:]:
-                transport = BinaryExpr(Op.OR, transport, t)
-            expr = BinaryExpr(Op.OR, diff_expr, transport)
-        else:
-            expr = diff_expr
+        expr = diff_expr
 
         # addr_deps deliberately excluded — same reason as pure-store path.
 
