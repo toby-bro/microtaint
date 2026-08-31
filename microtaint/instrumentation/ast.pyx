@@ -1753,8 +1753,16 @@ cdef class MemoryDifferentialExpr(Expr):
 
         # ---- Memory value-deps: read V from mem_reader, T from shadow ----
         for addr_reg, offset, size_bytes in self.mem_inputs:
-            base = input_values.get(addr_reg, 0)
-            addr = (base + offset) & 0xFFFFFFFFFFFFFFFF
+            if addr_reg == 'CONSTZERO':
+                # Compile-time-constant absolute address (RIP-relative / absolute
+                # operand): base is 0, the address IS the offset.  Emit a Format-A
+                # key so both kernels resolve it statically.
+                addr = offset & 0xFFFFFFFFFFFFFFFF
+                mem_key = f'MEM_{hex(addr)}_{size_bytes}'
+            else:
+                base = input_values.get(addr_reg, 0)
+                addr = (base + offset) & 0xFFFFFFFFFFFFFFFF
+                mem_key = f'MEM_{addr_reg}_{offset}_{size_bytes}'
             if mem_reader is not None:
                 try:
                     v_val = mem_reader(addr, size_bytes)
@@ -1769,7 +1777,6 @@ cdef class MemoryDifferentialExpr(Expr):
                     t_val = 0
             else:
                 t_val = 0
-            mem_key = f'MEM_{addr_reg}_{offset}_{size_bytes}'
             if mem_key in self.neg_inputs:
                 or_inputs[mem_key]  = v_val & ~t_val
                 and_inputs[mem_key] = v_val | t_val

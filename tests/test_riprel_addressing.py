@@ -36,7 +36,10 @@ def simulator() -> CellSimulator:
 
 @pytest.fixture(scope='module')
 def regs() -> list[Register]:
-    return [Register(name=n, bits=64) for n in ('RAX', 'RBX', 'RCX', 'RDX', 'RBP', 'RSP', 'RIP')]
+    return [Register(name=n, bits=64) for n in ('RAX', 'RBX', 'RCX', 'RDX', 'RBP', 'RSP', 'RIP')] + [
+        Register('EFLAGS', 32), Register('CF', 1), Register('ZF', 1),
+        Register('SF', 1), Register('OF', 1), Register('PF', 1),
+    ]
 
 
 def test_riprel_load_reads_tainted_global(simulator: CellSimulator, regs: list[Register]) -> None:
@@ -75,4 +78,56 @@ def test_riprel_store_taints_global(simulator: CellSimulator, regs: list[Registe
     assert tainted_mem, (
         'RIP-relative store of a tainted register must produce a tainted memory '
         'output (dropped taint / unsound if none)'
+    )
+
+
+def test_riprel_arith_flows_memory_operand(simulator: CellSimulator, regs: list[Register]) -> None:
+    """ADD EAX, [RIP+0] (03 05 00000000) must flow the ABSOLUTE memory operand's
+    taint through the arithmetic (carry-aware differential), not merely transport
+    it.  This is the case a transport-only shortcut gets wrong: the memory operand
+    participates in the INT_ADD carry chain with EAX, so it MUST go through the
+    same differential machinery as a register / register-relative operand.
+    """
+    circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('030500000000'), regs)
+    shadow = BitPreciseShadowMemory()
+    for addr in range(_TRANSLATE_BASE - 0x100, _TRANSLATE_BASE + 0x100):
+        shadow.write_mask(addr, 0xFF, 1)  # the global is tainted, EAX is not
+    ctx = EvalContext(
+        input_values={'RIP': _TRANSLATE_BASE, 'RAX': 0},
+        input_taint={},
+        simulator=simulator,
+        shadow_memory=shadow,
+        mem_reader=lambda addr, sz: 0,  # noqa: ARG005
+    )
+    out = circuit.evaluate(ctx)
+    assert out.get('RAX', 0) != 0, (
+        'absolute memory operand must flow through arithmetic; under-taint if 0'
+    )
+
+
+def test_arm64_pcrel_literal_load_reads_tainted() -> None:
+    """Cross-ISA: ARM64 `ldr w0, #8` (40 00 00 18) loads a PC-relative literal
+    whose address folds to a compile-time constant (a LOAD with a constant
+    pointer, resolve_ptr_with_offset -> (None, addr)).  A tainted literal must
+    taint w0.  Same constant-address handling as x86 RIP-relative -- one fix
+    covers every ISA that lifts absolute / PC-relative addressing to a folded
+    constant address.
+    """
+    arm_sim = CellSimulator(Architecture.ARM64)
+    arm_regs = [Register(f'x{i}', 64) for i in range(31)] + [Register('sp', 64), Register('pc', 64)]
+    circuit = generate_static_rule(Architecture.ARM64, bytes.fromhex('40000018'), arm_regs)
+    shadow = BitPreciseShadowMemory()
+    for addr in range(0x1000, 0x1020):
+        shadow.write_mask(addr, 0xFF, 1)  # the literal (at PC+8) is tainted
+    ctx = EvalContext(
+        input_values={'pc': 0x1000},
+        input_taint={},
+        simulator=arm_sim,
+        shadow_memory=shadow,
+        mem_reader=lambda addr, sz: 0,  # noqa: ARG005
+    )
+    out = circuit.evaluate(ctx)
+    assert out.get('x0', 0) != 0, (
+        'ARM64 PC-relative literal load from tainted memory must taint the '
+        'destination (under-taint / unsound if 0)'
     )

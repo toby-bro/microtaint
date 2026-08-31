@@ -141,6 +141,18 @@ class MemMapping:
     addr_const_offset: int = 0
 
 
+# Marker base for a compile-time-constant memory address (absolute / PC-relative
+# operands lifted to a ram-space varnode: the varnode offset IS the address).  A
+# MemMapping whose base is this sentinel encodes an absolute address in
+# addr_const_offset; downstream it becomes a Format-A key ``MEM_0x<addr>_<size>``
+# that both the C kernel (cell.pyx) and the Unicorn path resolve statically.  The
+# name has no underscores so that, even on a path that does not special-case it,
+# the Format-B key ``MEM_CONSTZERO_<addr>_<size>`` still parses (base resolves to
+# 0).  Constant pointer => untainted => plain value dep, no avalanche.
+_CONST_ADDR_MARKER = 'CONSTZERO'
+_CONST_ADDR_BASE = RegMapping(_CONST_ADDR_MARKER, 0, 63)
+
+
 @dataclass
 class EvalTarget:
     varnode: Varnode
@@ -533,7 +545,7 @@ def _cached_generate_static_rule(  # noqa: C901
     ctx = get_context(arch)
     translation = ctx.translate(bytestring, 0x1000)
 
-    outputs, store_ops = get_register_outputs_and_stores(translation)
+    outputs, store_ops, ram_outputs = get_register_outputs_and_stores(translation)
     unique_outputs = {get_varnode_id(out): out for out in outputs}.values()
 
     mapper = StateMapper(ctx, arch, state_format)
@@ -545,6 +557,7 @@ def _cached_generate_static_rule(  # noqa: C901
         store_ops,
         unique_outputs,
         mapper,
+        ram_outputs,
     )
 
     for target in targets_to_evaluate:
@@ -3924,17 +3937,26 @@ def extract_dependencies(  # noqa: C901
     )
 
     for _op_idx, op in enumerate(all_ops):
-        if op.opcode.name == 'RETURN':
+        if op.opcode.name in ('RETURN', 'IMARK'):
+            # IMARK is a disassembly marker whose input is the instruction's own
+            # bytes (a ram-space varnode at the PC) — not a data dependency.
             continue
 
         if op.opcode.name == 'LOAD':
             ptr_vn = op.inputs[1]
             mapped_addr, const_offset = resolve_ptr_with_offset(ptr_vn, all_ops, mapper, stop_op_index=load_op_index)
-            if mapped_addr:
+            _load_base = mapped_addr
+            if _load_base is None and const_offset != 0:
+                # The pointer folds to a compile-time constant absolute address
+                # (absolute / PC-relative literal, e.g. ARM64 `ldr w0,#imm`):
+                # model it as a constant-address memory value dep instead of
+                # dropping the load.  (const_offset==0 is the unresolvable case.)
+                _load_base = _CONST_ADDR_BASE
+            if _load_base is not None:
                 mem_map = MemMapping(
                     ptr_vn.offset,
                     op.output.size if op.output else 8,
-                    mapped_addr,
+                    _load_base,
                     const_offset,
                 )
                 # LOAD memory content is a *value* dependency, and it carries the
@@ -4021,6 +4043,24 @@ def extract_dependencies(  # noqa: C901
                         if md not in value_deps:
                             value_deps[md] = 1
 
+            elif vn.space.name == 'ram' and op.opcode.name not in (
+                'BRANCH', 'CBRANCH', 'BRANCHIND', 'CALL', 'CALLIND', 'RETURN', 'STORE',
+            ):
+                # Direct absolute / PC-relative memory DATA operand.  SLEIGH folds
+                # a compile-time-known address into a ram-space varnode on ANY data
+                # op (COPY for `mov r,[abs]`; INT_ADD/INT_CARRY for `add r,[abs]`;
+                # …), not a LOAD.  The pointer is a constant (untainted), so this
+                # is a plain VALUE dependency read from the shadow at the absolute
+                # address — no pointer avalanche, exactly like a register value.
+                # (An RMW that also writes this cell keeps the read: the old value
+                # is a genuine input, unlike an intra-instruction register rewrite.)
+                # Excluded: control-flow ops, whose ram operand is a branch/call
+                # TARGET address (a control destination, not a memory read), and
+                # STORE, whose target is handled separately.
+                _mem_dep = MemMapping(vn.offset, vn.size, _CONST_ADDR_BASE, vn.offset)
+                if _mem_dep not in value_deps:
+                    value_deps[_mem_dep] = 1
+
     # Apply polarity annotations to value_deps only (addr_deps don't
     # participate in the differential so polarity is irrelevant for them).
     for vn_id, p in polarities.items():
@@ -4102,6 +4142,7 @@ def map_outputs_to_targets(  # noqa: C901
     store_ops: list[PcodeOp],
     unique_outputs: Iterable[Varnode],
     mapper: StateMapper,
+    ram_outputs: list[Varnode] | None = None,
 ) -> tuple[list[EvalTarget], list[TaintAssignment]]:
     targets_to_evaluate: list[EvalTarget] = []
     mem_targets: list[tuple[Varnode, Varnode, int, int]] = []
@@ -4172,19 +4213,43 @@ def map_outputs_to_targets(  # noqa: C901
             stop_op_index=store_idx,
         )
         if base_reg is None:
-            continue
-        mem_map = MemMapping(ptr_vn.offset, size, base_reg, const_offset)
+            # Constant / absolute STORE address (e.g. `mov [rip+d], rax`): the
+            # pointer folds to a compile-time constant.  Model it as a
+            # constant-address memory target instead of dropping the store.
+            mem_map = MemMapping(ptr_vn.offset, size, _CONST_ADDR_BASE, const_offset)
+        else:
+            mem_map = MemMapping(ptr_vn.offset, size, base_reg, const_offset)
         targets_to_evaluate.append(EvalTarget(val_vn, mem_map))
+
+    # Direct ram-space OUTPUT varnodes (absolute / PC-relative writes lifted as
+    # COPY/op out=ram[addr], not STORE): a constant-address memory target.  The
+    # output varnode itself is the value whose taint is computed and stored.
+    for ram_out in ram_outputs or ():
+        mem_map = MemMapping(ram_out.offset, ram_out.size, _CONST_ADDR_BASE, ram_out.offset)
+        targets_to_evaluate.append(EvalTarget(ram_out, mem_map))
 
     return targets_to_evaluate, assignments
 
 
-def get_register_outputs_and_stores(translation: Translation) -> tuple[list[Varnode], list[PcodeOp]]:
+def get_register_outputs_and_stores(
+    translation: Translation,
+) -> tuple[list[Varnode], list[PcodeOp], list[Varnode]]:
     outputs: list[Varnode] = []
     store_ops: list[PcodeOp] = []
+    ram_outputs: list[Varnode] = []
+    _seen_ram: set[tuple[int, int]] = set()
     for op in translation.ops:
         if op.output and op.output.space.name == 'register':
             outputs.append(op.output)
+        elif op.output and op.output.space.name == 'ram':
+            # Direct absolute / PC-relative memory WRITE: SLEIGH folds a
+            # compile-time-known address into a ram-space OUTPUT varnode on any
+            # op (e.g. `mov [rip+d],al` lifts as COPY out=ram[addr]), not a
+            # STORE.  Record it as a constant-address memory target.
+            key = (op.output.offset, op.output.size)
+            if key not in _seen_ram:
+                _seen_ram.add(key)
+                ram_outputs.append(op.output)
         if op.opcode.name == 'STORE':
             store_ops.append(op)
-    return outputs, store_ops
+    return outputs, store_ops, ram_outputs
