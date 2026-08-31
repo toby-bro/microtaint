@@ -1,5 +1,6 @@
 import pytest
 
+from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
@@ -86,6 +87,39 @@ def test_amd64_8bit_mov_preserves_upper_taint(simulator: CellSimulator, amd64_re
 
     # Only the lowest byte gets overwritten by BL's taint.
     assert output.get('RAX', 0) == 0xFFFFFFFFFFFFFFCC
+
+
+def test_amd64_32bit_load_from_untainted_mem_clears_taint(
+    simulator: CellSimulator, amd64_registers: list[Register],
+) -> None:
+    """
+    MOV EAX, [RBP-8] (8B 45 F8) loading from UNTAINTED memory MUST strong-update:
+    a previously-tainted EAX becomes untainted (and the upper 32 bits of RAX clear
+    via zero-extension).
+
+    Regression: reg<-reg writes strong-updated correctly, but reg<-MEMORY loads did
+    NOT clear the destination's stale taint when the loaded memory was untainted --
+    they carried the register's old taint forward. This weak-update-on-zero was the
+    root cause of the nft (CVE-2023-35001) and constant-time over-taint: a stale
+    len/exponent taint survived a clean load, then seeded a pointer-avalanche / div
+    over-taint. See the nft and CT application experiments.
+    """
+    regs = [*amd64_registers, Register(name='RBP', bits=64), Register(name='RSP', bits=64)]
+    shadow = BitPreciseShadowMemory()  # entirely untainted
+    circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('8B45F8'), regs)
+
+    ctx = EvalContext(
+        input_values={'RAX': 0, 'RBP': 0x7FFFF000},
+        input_taint={'RAX': 0x00000000FFFFFFFF},  # stale low-32 taint on the destination
+        simulator=simulator,
+        shadow_memory=shadow,
+    )
+    output = circuit.evaluate(ctx)
+
+    assert output.get('RAX', 0) == 0x0, (
+        'load from untainted memory must clear the destination register (strong '
+        f'update); got {output.get("RAX", 0):#x}'
+    )
 
 
 def test_amd64_32bit_xor_zeroing_idiom_clears_64bit_taint(
