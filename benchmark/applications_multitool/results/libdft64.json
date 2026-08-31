@@ -1,0 +1,31 @@
+{
+  "tool": "libdft64 (Intel Pin 3.20 DTA, byte-granular tag map)",
+  "ct": {
+    "vuln_branch_leaks": 32,
+    "ct_branch_leaks": 0,
+    "raw_total_tainted_cond_branches": {"vuln": 34, "ct": 2},
+    "secret_dependent_branch_pc": "0x402fa8 (je after test %eax,%eax of `e & 1`)",
+    "shared_plumbing_tainted_branches": [
+      "0x412f86 __libc_read: `ja` on read() return (rax) error check",
+      "0x4030c0 main: `je` on read()==4 length check"
+    ],
+    "initial_taint": "stdin exponent, 4 bytes",
+    "verdict": "vuln FLAGGED (control-flow leak): the key-bit `je` at 0x402fa8 is driven by tainted flags on all 32 loop iterations. ct CLEAN: 0 algorithm-level tainted branches (only the clean loop-counter `jle` executes). This is control-flow taint, not sub-byte taint, so libdft handles it correctly.",
+    "matches_microtaint": true,
+    "note_on_raw_totals": "libdft's read hook taints RAX (the read() byte-count return) via tagmap_setb_reg(tid,DFT_REG_RAX,...), so the two read-length checks (__libc_read error check + main's !=4 check) count as tainted branches in BOTH variants (2 each-run). They are shared harness/libc plumbing, fire identically in vuln and ct, and are not the crypto side channel; the differential/algorithm signal is a clean 32 vs 0."
+  },
+  "dns": {
+    "granularity": "byte",
+    "can_taint_single_bit": false,
+    "input_byte": "0x88 (QR bit7=1, OPCODE bits6..3=0001)",
+    "and_pc": "0x402fb1 (24 78 : AND AL,0x78)",
+    "shr_pc": "0x402fb3 (C0 E8 03 : SHR AL,3)",
+    "al_tainted_before_and": true,
+    "al_tainted_after_and": true,
+    "byte_taint_output_al": "0x01",
+    "output_al_tainted": true,
+    "can_discriminate_qr_vs_opcode": false,
+    "verdict": "libdft is BYTE-granular: the finest source it can express is the whole flag byte, so tainting it taints QR(bit7) and OPCODE(bits6..3) together. AND AL,0x78 masks bit7 away at the VALUE level (0x88 -> 0x08) but libdft keeps AL tagged tainted, and after SHR AL,3 the extracted OPCODE (0x01) is reported tainted. libdft cannot express 'QR only' vs 'OPCODE only'. TOOL-SPECIFIC FALSE POSITIVE: for a policy asking 'does the benign QR field reach the dispatch?', libdft cannot clear it because it conflates QR and OPCODE in the same byte; the extracted OPCODE output is reported tainted regardless of which field the analyst cares about."
+  },
+  "notes": "Pin 3.20 + libdft64. Sources built with `gcc -O0 -g -static -no-pie -fno-stack-protector`. Taint source = stdin fd 0 via libdft hook_file_syscall(). Workload 1 driver: cf_leak.cpp latches source-operand taint at every RFLAGS-writing instruction (libdft carries no RFLAGS tag) and checks it at each XED_CATEGORY_COND_BR; exponent value = 5 (\\x05\\x00\\x00\\x00). Workload 2 driver: dns_taint.cpp locates AND AL,0x78 (24 78) and SHR AL,3 (C0 E8 03) by exact encoding and reads back AL's byte tag. All numbers measured, not estimated."
+}

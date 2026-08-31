@@ -1,0 +1,31 @@
+{
+  "tool": "panda",
+  "family": "dbi",
+  "method": "Full-system PANDA (QEMU) + taint2 byte-precise dynamic taint; 80 stdin-derived register bytes labeled at nft_byteorder_eval entry, taint queried on every guest write into canary_after",
+  "ran": true,
+  "n_oob_writes": 20,
+  "n_oob_writes_tainted": 0,
+  "sink_value_tainted": false,
+  "sink_addr_input_dependent": false,
+  "oob_pc": "0x4034ca",
+  "detected": false,
+  "control_fixed_detected": false,
+  "error": "",
+  "notes": "taint2 observed 20 out-of-bounds writes into canary_after (single store PC 0x4034ca, stride 4, all writing 0xefcd) -- the exact 20-write overshoot geometry. NONE carried attacker taint on the stored VALUE: the overshoot (loop iterations 20..39) reads the sentinel region's own constants, not stdin, so byte-precise data-flow correctly reports the values as clean. Sanity: 20/20 in-bounds byteswap writes into the register file ARE tainted, proving taint2 propagates through ntohs/htons -- the OOB 'clean' result is a true data-flow fact, not an engine miss. This is where taint2 (pure value data-flow) diverges from microtaint's shadow, which reports the same 20 writes as tainted.",
+  "extra": {
+    "labeled_source_bytes": 80,
+    "oob_addr_lo": "0x4b7c10",
+    "oob_addr_hi": "0x4b7c5c",
+    "oob_values": [
+      "0xefcd"
+    ],
+    "inbounds_writes": 20,
+    "inbounds_writes_tainted": 20,
+    "serial_timeout": false,
+    "engine": "PANDA taint2 (full-system x86_64, pandare/panda container)",
+    "control_oob_writes": 0,
+    "control_inbounds_writes": 40
+  },
+  "n_inbounds_writes": 20,
+  "n_inbounds_tainted": 20
+}

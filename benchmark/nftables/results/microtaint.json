@@ -1,0 +1,18 @@
+{
+  "tool": "microtaint",
+  "family": "dbi",
+  "method": "Qiling emulation + bit-precise shadow memory; stdin tainted at read(), taint checked at every guest write into canary_after",
+  "ran": true,
+  "n_oob_writes": 20,
+  "n_oob_writes_tainted": 20,
+  "sink_value_tainted": true,
+  "sink_addr_input_dependent": false,
+  "oob_pc": "0x4034ca",
+  "n_inbounds_writes": 20,
+  "n_inbounds_tainted": 20,
+  "detected": true,
+  "control_fixed_detected": false,
+  "error": "",
+  "notes": "flags all 20 OOB stride-4 stores value-tainted -- an OVER-TAINT. The taint is the len control byte, NOT attacker register data (clearing len -> 0 tainted; clearing all 80 register bytes -> still 20). It is laundered by two imprecisions: mov reg<-mem does not clear stale register taint, so len's taint from the loop-bound computation survives into the untainted loop index; then loading through that spuriously-tainted address taints the value (pointer-avalanche). Sound (never misses the write) but imprecise.",
+  "extra": {}
+}

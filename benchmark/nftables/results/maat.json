@@ -1,0 +1,53 @@
+{
+  "tool": "maat",
+  "family": "symbolic",
+  "method": "Maat function-level emulation of nft_byteorder_eval; the 80 stdin register bytes are made concolic (color A) and taint is read at every guest write into canary_after (value = not is_concrete). Full-process load blocked by unemulated static glibc syscalls, so the vulnerable function is driven directly on the ELF-mapped struct L.",
+  "ran": true,
+  "n_oob_writes": 20,
+  "n_oob_writes_tainted": 0,
+  "sink_value_tainted": false,
+  "sink_addr_input_dependent": false,
+  "oob_pc": "0x4034ca",
+  "n_inbounds_writes": 20,
+  "n_inbounds_tainted": 20,
+  "detected": false,
+  "control_fixed_detected": false,
+  "error": "",
+  "notes": "Maat SEES the memory-safety bug: 20 writes land in canary_after at offsets +0..+76 (stride 4), all from store PC 0x4034ca, matching the microtaint geometry. But with sreg=dreg=0 the buggy overshoot READS its source from regs+80 == canary_after itself, so the 20 stored values are byteswapped *sentinel* bytes (concrete, untainted); attacker stdin bytes stay inside the 80-byte register file. Maat's symbolic value-tracking is therefore precise here and reports the OOB *values* are NOT attacker-tainted -- unlike microtaint's byte-shadow, which over-approximates via register reuse and marks them tainted. Positive control (taint the canary source too): 20/20 OOB values then carry taint, proving the taint engine is live and the real-run False is a true negative from the harness's self-read geometry, not a Maat blind spot.",
+  "extra": {
+    "emulation": "function-level (nft_byteorder_eval @ 0x403017)",
+    "oob_offsets": [
+      0,
+      4,
+      8,
+      12,
+      16,
+      20,
+      24,
+      28,
+      32,
+      36,
+      40,
+      44,
+      48,
+      52,
+      56,
+      60,
+      64,
+      68,
+      72,
+      76
+    ],
+    "oob_write_size": 2,
+    "oob_value_example": "0xefcd",
+    "oob_all_values_concrete": true,
+    "positive_control_taint_canary": {
+      "n_oob_writes": 20,
+      "n_oob_writes_tainted": 20,
+      "sink_value_tainted": true
+    },
+    "fixed_harness_n_oob_writes": 0,
+    "full_process_blocker": "STOP.FATAL during glibc start-up: Maat EnvEmulator raises on an unemulated static-glibc syscall (first observed: set_tid_address, nr=218) inside the CALLOTHER/SYSCALL handler and aborts before main()/fread is reached (stderr: \"syscall '218' not supported for emulation\")",
+    "taint_model": "concolic input bytes; tainted == symbolic expression not is_concrete(engine.vars)"
+  }
+}

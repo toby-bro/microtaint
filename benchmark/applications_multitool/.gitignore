@@ -1,0 +1,22 @@
+# Build artifacts and scratch; sources, README and results/*.json are tracked.
+__pycache__/
+*.pyc
+*.o
+*.so
+*.bin
+*.elf
+obj-intel64/
+bin/
+ct_test
+dns_bitfield
+out.bin
+*.stderr
+*.stdout
+*.log
+results/*.stdout
+results/*.log
+_*_raw.json
+
+# keep the per-tool verdicts, drop raw intermediate dumps
+!results/*.json
+results/_*_raw.json

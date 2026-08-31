@@ -1,0 +1,28 @@
+{
+  "tool": "taintgrind",
+  "tool_version": "Taintgrind (2010-2018, Wei Ming Khoo) on Valgrind-3.25.1 / LibVEX",
+  "config": {
+    "docker_image": "taintgrind:latest",
+    "invocation": "docker run -i --rm -v <dir>:/pwd taintgrind:latest /code/valgrind/build/bin/taintgrind /pwd/<binary> [argv]",
+    "taint_source": "explicit TNT_TAINT(addr,size) client request from taintgrind.h, applied in-harness right after the read() (base/modulus/flag-value stay untainted)",
+    "build_flags": "gcc -O0 -g -static -no-pie -fno-stack-protector -I. -I/usr/include/valgrind",
+    "branch_leak_metric": "count of taintgrind IR log lines tagged 'IfGoto' (Ist_Exit whose guard is tainted = a tainted conditional jump / Jcc)"
+  },
+  "ct": {
+    "vuln_branch_leaks": 32,
+    "ct_branch_leaks": 0,
+    "initial_taint": "4-byte little-endian secret exponent read from stdin (value 5), marked with TNT_TAINT(buf,4); BASE=7 and MOD=101 are compiled-in constants, untainted",
+    "verdict": "LEAK on vuln, CLEAN on ct. vuln (pow_branch): the tainted exponent bit drives 'je 0x4031e8' at test_constant_time.c:34 ('if (e & 1)'), logged as 32 'IfGoto' tainted-guard exits (one per loop iteration) -> control-flow side channel. ct (pow_ct): 2480 tainted dataflow lines through the mask-select arithmetic but 0 'IfGoto' lines -> tainted data never reaches a conditional-jump guard, no side channel.",
+    "matches_microtaint": true
+  },
+  "dns": {
+    "granularity": "byte / register (VEX Ity_I8 shadow); taintgrind tracks taint per byte, not per bit",
+    "can_taint_single_bit": false,
+    "instructions": "AND AL,0x78 (logged 'And8 | 0x28') then SHR AL,3 (logged 'Shr'), extracting OPCODE (flag bits 6..3) into bits 3..0; on input flag 0xAD the output value is 0x05",
+    "byte_taint_output_al": "0x0f",
+    "byte_taint_output_al_note": "TNT_IS_TAINTED on the output byte returned 0xFFFFFF0F; the AL taint mask is 0x0f (the surviving low nibble is tainted), i.e. the extracted OPCODE byte is tainted (nonzero mask). The store 'opcode:... <- t64_236' with value 0x5 confirms the result byte stays tainted and propagates into write()/fprintf.",
+    "can_discriminate_qr_vs_opcode": false,
+    "verdict": "FALSE POSITIVE for a QR-attribution policy. taintgrind cannot mark a single bit, so it cannot taint 'QR only' (bit 7) or 'OPCODE only' (bits 6..3) separately. Tainting the flag byte taints both fields at once; after AND 0x78 + SHR 3 the extracted OPCODE output AL is reported tainted regardless of whether the attacker actually controls QR or OPCODE. Ground truth wants QR-taint -> clean, OPCODE-taint -> tainted; taintgrind collapses both to tainted."
+  },
+  "notes": "docker image taintgrind:latest present (e792a92ba652, 1.77GB); the /code/valgrind/build/bin/taintgrind entry is a wrapper for 'valgrind --tool=taintgrind'. Harnesses ct_tg.c / dns_tg.c keep the pow_branch/pow_ct functions and the LDNS_OPCODE_WIRE AND/SHR sequence verbatim; only additions are #include taintgrind.h and TNT_TAINT/TNT_IS_TAINTED. Raw logs: results/ct_vuln.log (919 lines, 32 IfGoto), results/ct_ct.log (2508 lines, 0 IfGoto), results/dns.log. CT result matches the MicroTaint reference (vuln>=1, ct=0). DNS is the tool-specific limitation: byte granularity => no QR-vs-OPCODE discrimination."
+}

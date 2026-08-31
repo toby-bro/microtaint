@@ -1,0 +1,33 @@
+{
+  "tool": "triton",
+  "method": "Triton ELF load (dependency-free ELF64 loader) + native x86-64 instruction emulation; target routine driven directly (RIP := function entry, SysV args in registers) to bypass static-glibc startup, mirroring nftables/detect_triton.py. Taint engine enabled by default.",
+  "ct": {
+    "workload": "test_constant_time.c (square-and-multiply modexp)",
+    "initial_taint": "exponent only: ESI (32-bit `e`, the stdin secret, value 5) tainted via ctx.taintRegister; base=EDI=7 and mod=EDX=101 left untainted (public constants), matching the RSA/DH threat model.",
+    "detection_rule": "For each conditional branch (Jcc), check ctx.isRegisterTainted on every register the branch READS (the EFLAGS bits it consumes). A tainted read-flag => branch outcome depends on the secret.",
+    "vuln_branch_leaks": 1,
+    "vuln_branch_leak_sites": ["0x402fa8"],
+    "vuln_branch_leak_execs": 32,
+    "vuln_leak_insn": "je 0x402fc8 after `test eax,eax` (the `if (e & 1)`), controlled by tainted ZF",
+    "vuln_cond_branches_total": 65,
+    "ct_branch_leaks": 0,
+    "ct_cond_branches_total": 33,
+    "ct_note": "The only Jcc in pow_ct is the loop-counter `cmp [rbp-0xc],0x1f; jle` on the untainted local `i`; the secret flows through neg/and/not/or/imul/div into `result` but never into a flag that drives a Jcc.",
+    "verdict": "vuln = TRUE POSITIVE (1 tainted branch site, executed 32x, ZF tainted); ct = TRUE NEGATIVE (0 tainted branches). No false positive, no false negative.",
+    "matches_microtaint": true
+  },
+  "dns": {
+    "workload": "test_bitpacked_dns.c LDNS_OPCODE_WIRE: AND AL,0x78 (24 78) then SHR AL,3 (C0 E8 03)",
+    "granularity": "register/byte-level. Triton's taint engine exposes taintRegister / taintMemory / setTaintRegister / setTaintMemory only; the smallest addressable taint unit is one byte (an 8-bit sub-register such as AL). No bit-level taint API exists (no taintRegisterBit / taintBit / bit index).",
+    "can_taint_single_bit": false,
+    "input_flag_byte": "0xa8",
+    "byte_taint_output_al": "0x5",
+    "byte_taint_output_al_tainted": true,
+    "and_keeps_taint": "AL=0xa8 fully tainted; after AND AL,0x78 (masks QR bit7 away) AL=0x28 still tainted; after SHR AL,3 AL=0x05 still tainted. Byte-granular over-approximation: the AND with a constant mask does not clear taint on the masked-out bits.",
+    "control_untainted_output_al_tainted": false,
+    "can_discriminate_qr_vs_opcode": false,
+    "verdict": "Triton CANNOT express sub-byte taint. To model either policy it must taint the whole AL byte, so 'taint QR bit7 only' and 'taint OPCODE bits6..3 only' collapse to identical input and identical output (AL=0x05 TAINTED) in both. For a QR-attribution policy the ground truth is a CLEAN output (bit7 is masked away by AND 0x78), so Triton reports TAINTED => tool-specific FALSE POSITIVE. For an OPCODE policy the TAINTED output is a true positive. Triton conflates QR and OPCODE and reports the OPCODE output tainted regardless of which bit the analyst intended.",
+    "matches_microtaint": false
+  },
+  "notes": "All numbers produced by real Triton emulation of the -O0 -static -no-pie binaries built from the paper's sources (drivers: detect_triton_ct.py, detect_triton_dns.py; raw traces: results/_ct_raw.json, results/_dns_raw.json). CT: Triton is register-precise on flags and matches MicroTaint's control-flow verdict (vuln>=1 leak, ct=0) exactly; the leak is the single Jcc at 0x402fa8 with tainted ZF, executed once per loop iteration (32x). DNS: Triton's byte-granular taint cannot isolate a single bit, so it is strictly weaker than MicroTaint's bit-level shadow memory on the sub-byte discrimination task and yields a false positive under a QR-only (benign-bit) attribution policy. Verified no bit-level API exists in the running Triton build (taint methods enumerated in _dns_raw.json)."
+}

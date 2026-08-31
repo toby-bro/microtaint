@@ -1,0 +1,34 @@
+{
+  "tool": "maat",
+  "family": "symbolic",
+  "method": "Maat concolic/symbolic emulation of the -O0 -static -no-pie binaries. No separate taint bit: attacker input is made concolic (symbolic var + concrete valuation) and 'tainted' == the value's symbolic expression still depends on an input variable. CT: function-level emulation of pow_branch/pow_ct (RIP := entry, SysV args, sentinel return) to bypass static-glibc startup, exactly as nftables/detect_maat.py; only the exponent (rsi, stdin value 5) is a concolic var, and a conditional branch leaks iff its Constraint.contained_vars() include 'exp'. DNS: the flag byte is built bit-by-bit (Concat of Var(1)/Cst(1)) so single bits can be tainted; output dependence is tested by dual concretization.",
+  "ct": {
+    "workload": "test_constant_time.c (square-and-multiply modexp)",
+    "initial_taint": "exponent only: rsi low-32 `e` (stdin secret, value 5) is a concolic Var(32) 'exp'; base=rdi=7 and mod=rdx=101 concrete public constants (RSA/DH threat model).",
+    "detection_rule": "For each conditional BRANCH event, leak iff the secret var 'exp' is in engine.info.branch.cond.contained_vars().",
+    "vuln_branch_leaks": 1,
+    "vuln_branch_leak_sites": [
+      "0x402fa8"
+    ],
+    "vuln_branch_leak_execs": 32,
+    "vuln_cond_branches_total": 65,
+    "ct_branch_leaks": 0,
+    "ct_cond_branches_total": 33,
+    "verdict": "vuln = TRUE POSITIVE (1 tainted conditional-branch site, executed 32x, cond depends on the secret exponent var 'exp'); ct = TRUE NEGATIVE (0 tainted branches). No false positive, no false negative -- matches microtaint (vuln>=1, ct=0).",
+    "matches_microtaint": true
+  },
+  "dns": {
+    "workload": "test_bitpacked_dns.c LDNS_OPCODE_WIRE: AND AL,0x78 (24 78) then SHR AL,3 (C0 E8 03)",
+    "granularity": "bit",
+    "can_taint_single_bit": true,
+    "input_flag_byte": "0xa8",
+    "qr_reaches_output": false,
+    "opcode_reaches_output": true,
+    "can_discriminate_qr_vs_opcode": true,
+    "qr_output_al": "0x5",
+    "opcode_output_al_bit0": "0x0",
+    "opcode_output_al_bit1": "0xf",
+    "verdict": "Maat is bit-granular symbolic: an 8-bit value is a Concat of eight independent 1-bit terms, so a SINGLE flag bit can be made symbolic in isolation. Tainting only QR(bit7): AL output is CLEAN (AND 0x78 masks bit7 away, dual-concretization shows no dependence). Tainting only OPCODE(bits6..3): AL output is TAINTED (bits survive AND+SHR into the low nibble). Maat therefore DISCRIMINATES QR from OPCODE -- the bit-granularity discriminator the byte engines (Triton/libdft/Taintgrind) fail: they can only taint the whole AL byte and conflate the two."
+  },
+  "notes": "All numbers produced by real Maat emulation via .venv_maat/bin/python (drivers: detect_maat_ct.py, detect_maat_dns.py; raw traces: results/_maat_ct_raw.json, results/_maat_dns_raw.json). Full-process emulation of the static -no-pie binaries is blocked by unemulated glibc-startup syscalls (the same blocker documented in nftables/detect_maat.py), so the CT target functions are driven directly at their entry points -- the sanctioned function-level fallback. CT: Maat resolves the branch condition symbolically and matches microtaint exactly (vuln = 1 leak site at 0x402fa8 executed 32x, ct = 0). DNS: unlike the byte-granular engines, Maat expresses per-bit taint (Concat of 1-bit terms) and correctly reports QR(bit7)->output CLEAN vs OPCODE(bits6..3)->output TAINTED, i.e. it CAN discriminate benign QR from security-relevant OPCODE. Bit-granularity is the discriminator."
+}
