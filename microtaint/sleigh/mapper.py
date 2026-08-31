@@ -3,7 +3,7 @@ from __future__ import annotations
 from pypcode import PcodeOp, Varnode
 
 from microtaint.classifier.categories import InstructionCategory
-from microtaint.sleigh.constfold import fold_constants
+from microtaint.sleigh.constfold import const_value, fold_constants
 
 AVALANCHE_OPCODES: set[str] = {
     'INT_MULT',
@@ -148,6 +148,24 @@ def _producing_op(core_ops: list[PcodeOp]) -> PcodeOp | None:
     for op in reversed(core_ops):
         if op.opcode.name not in ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT'):
             return op
+    return None
+
+
+def _pow2_mult_shift(op: PcodeOp, folded: dict[tuple[str, int, int], int]) -> int | None:
+    """log2 of a constant power-of-two INT_MULT multiplier, or None.
+
+    `x * 2^k` IS a left shift by k: a fixed relocation of bit positions with no
+    carry mixing, hence exact taint (T << k), not an avalanche.  x86 spells
+    `lea` scales this way (`lea (,%rax,4),%rdx` lifts `rax*4` as INT_MULT).
+    Mirrors partition._is_pow2_scale so both classifier and taint-expr agree.
+    """
+    if op.opcode.name != 'INT_MULT' or len(op.inputs) != 2:
+        return None
+    for i in (0, 1):
+        cv = const_value(op.inputs[i], folded)
+        other = const_value(op.inputs[1 - i], folded)
+        if cv is not None and other is None and cv > 0 and (cv & (cv - 1)) == 0:
+            return cv.bit_length() - 1
     return None
 
 
@@ -333,6 +351,18 @@ def determine_category(  # noqa: C901
     # affine -- a sum of fixed shifts -- so each output bit still depends on a
     # fixed set of input bit positions and the ordinary carry-coupled regime
     # applies.  Only a data x data multiply is a genuine avalanche.
+    # A bare power-of-two scale is a pure linear shift, not a carry-mixing
+    # multiply: `lea (,%rax,4),%rdx` lifts as `rdx = rax * 4`, i.e. rax << 2.
+    # When that scale is the op that PRODUCES the output, the slice is exactly
+    # linear, so MAPPED gives it exact taint (T << k) via the linear projection.
+    # (A scale feeding an INT_ADD is handled below: the adder owns the
+    # carry-coupled regime and keeps TRANSPORTABLE.)  Non-pow2 constant
+    # multiplies carry-mix and fall through to the avalanche guard.  Provably
+    # sound: the differential of x << k is exactly T << k.
+    _prod = _producing_op(core_ops)
+    if _prod is not None and _pow2_mult_shift(_prod, fold_constants(slice_ops)) is not None:
+        return InstructionCategory.MAPPED
+
     _folded_av = fold_constants(slice_ops)
     for op in core_ops:
         if op.opcode.name not in AVALANCHE_OPCODES:

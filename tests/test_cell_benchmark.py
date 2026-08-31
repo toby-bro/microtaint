@@ -499,7 +499,9 @@ CORPUS: list[tuple[str, str, dict, dict, str | None, int | None, str]] = [
         {'RBX': 5},
         {'RBX': FULL_TAINT_64},
         'RAX',
-        FULL_TAINT_64,
+        # RBX*2 == RBX<<1 (pow2 multiply lifts to a shift): bit 0 is a constant 0,
+        # so the exact taint is T<<1, not the full-width over-approximation.
+        0xFFFFFFFFFFFFFFFE,
         'IMUL RAX,RBX,2 — 3-op imul propagates taint',
     ),
     (
@@ -622,7 +624,9 @@ CORPUS: list[tuple[str, str, dict, dict, str | None, int | None, str]] = [
         {'RAX': 4},
         {'RAX': FULL_TAINT_64},
         'RAX',
-        FULL_TAINT_64,
+        # RAX*4 == RAX<<2 (pow2 scale lifts to a shift): bits 0..1 are constant 0,
+        # so the exact taint is T<<2, not the full-width over-approximation.
+        0xFFFFFFFFFFFFFFFC,
         'LEA RAX,[RAX*4+0] — scaled address propagates taint',
     ),
     (
@@ -1264,6 +1268,52 @@ def test_expected_taint_pcode(
     assert (
         actual == expected_taint
     ), f'[P-code] [{mnemonic}] {description}\n  {check_reg}: expected {hex(expected_taint)}, got {hex(actual)}'
+
+
+# Pow2-scale ops (LEA [r*2^k], IMUL r,r,2^k) lift to a left shift, so the low k
+# bits of the result are constant 0 and must NOT be tainted.  Each case carries
+# BOTH an exact taint (precision: forbids the old full-width over-approximation)
+# and a minimal taint (soundness: every input-dependent output bit must be
+# tainted).  minimal == exact here because the only clean bits are genuinely
+# constant; keeping them separate lets the two asserts distinguish an over-taint
+# (exact fails, minimal holds) from an under-taint (both fail).
+_POW2_SCALE_TAINT_CASES: list[tuple[str, dict, dict, str, int, int, str]] = [
+    ('488D048500000000', {'RAX': 4}, {'RAX': FULL_TAINT_64}, 'RAX',
+     0xFFFFFFFFFFFFFFFC, 0xFFFFFFFFFFFFFFFC, 'LEA RAX,[RAX*4] -> RAX<<2'),
+    ('486BC302', {'RBX': 5}, {'RBX': FULL_TAINT_64}, 'RAX',
+     0xFFFFFFFFFFFFFFFE, 0xFFFFFFFFFFFFFFFE, 'IMUL RAX,RBX,2 -> RBX<<1'),
+]
+
+
+@pytest.mark.parametrize(
+    ('hex_bytes', 'input_values', 'input_taint', 'check_reg', 'exact', 'minimal', 'desc'),
+    _POW2_SCALE_TAINT_CASES,
+    ids=[c[6] for c in _POW2_SCALE_TAINT_CASES],
+)
+def test_pow2_scale_taint_exact_and_minimal(
+    sim_pcode: CellSimulator,
+    prebuilt_circuits: dict,
+    hex_bytes: str,
+    input_values: dict,
+    input_taint: dict,
+    check_reg: str,
+    exact: int,
+    minimal: int,
+    desc: str,
+) -> None:
+    """A pow2 scale/multiply must taint exactly T<<k (precise) and never under-taint."""
+    circuit = prebuilt_circuits[hex_bytes]
+    out = _run(sim_pcode, circuit, input_values, input_taint)
+    actual = _get(out, check_reg)
+    # 1. EXACT — precise taint, no over- (nor under-) approximation.
+    assert actual == exact, (
+        f'{desc}: exact taint expected {hex(exact)}, got {hex(actual)}'
+    )
+    # 2. SOUNDNESS — the taint covers AT LEAST every input-dependent output bit.
+    assert (actual & minimal) == minimal, (
+        f'{desc}: UNDER-TAINT — missing {hex(minimal & ~actual)} '
+        f'(got {hex(actual)}, need superset of {hex(minimal)})'
+    )
 
 
 # ===========================================================================
