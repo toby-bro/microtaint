@@ -265,6 +265,10 @@ cdef class InstructionHook:
 
         # Snapshot register_taint for EvalContext.
         cdef dict pre_taint = PyDict_Copy(register_taint)
+        # Feed the REAL program counter so PC-relative memory operands (which the
+        # circuit models as pc-register-relative) resolve against the runtime PC,
+        # not the fixed translate base.  `address` is this instruction's own PC.
+        pre_regs['RIP'] = address
         # Tell wrapper for AIW check + slow path consistency.
         self.wrapper._pre_regs = pre_regs
         self.wrapper._pre_taint = pre_taint

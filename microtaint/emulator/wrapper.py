@@ -503,6 +503,7 @@ class MicrotaintWrapper:
         self.reporter = reporter or Reporter()
 
         self.arch = Architecture.AMD64
+        self._pc_reg_name = 'RIP'  # PC register fed to the circuit for PC-relative memory
         self.sim = CellSimulator(self.arch, use_unicorn=False)
         self.shadow_mem = BitPreciseShadowMemory()
 
@@ -1104,6 +1105,10 @@ class MicrotaintWrapper:
                     self._pre_regs.update({_f: (_ef >> _b) & 1 for _f, _b in _EFLAGS_BITS.items()})
         except Exception:
             self._pre_regs = self._get_live_registers(uch)
+        # Feed the REAL program counter so PC-relative memory operands (modelled by
+        # the circuit as pc-register-relative) resolve against the runtime PC, not
+        # the fixed translate base.  `address` is this instruction's own PC.
+        self._pre_regs[self._pc_reg_name] = address
         self._pre_taint = dict(self.register_taint)
 
         ctx = EvalContext(

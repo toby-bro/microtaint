@@ -152,6 +152,75 @@ class MemMapping:
 _CONST_ADDR_MARKER = 'CONSTZERO'
 _CONST_ADDR_BASE = RegMapping(_CONST_ADDR_MARKER, 0, 63)
 
+# Every instruction is translated at this fixed base (see ctx.translate below).
+# A compile-time-constant memory address is therefore expressed relative to it.
+_TRANSLATE_BASE = 0x1000
+
+
+def _pc_reg_mapping(arch: Architecture, state_format: list[Register]) -> RegMapping | None:
+    """The program-counter register (RIP / EIP / PC) as a whole-register mapping,
+    or None if the state_format has no PC.  Used as the base for PC-relative
+    memory so the address resolves against the RUNTIME pc, not the translate base."""
+    up = str(arch).upper()
+    name = 'RIP' if 'AMD64' in up else 'EIP' if 'X86' in up else 'PC'
+    reg = next((r for r in state_format if r.name.upper() == name), None)
+    if reg is None:
+        reg = next((r for r in state_format if r.name.upper() in ('RIP', 'EIP', 'PC')), None)
+    return RegMapping(reg.name, 0, reg.bits - 1) if reg is not None else None
+
+
+@functools.lru_cache(maxsize=16384)
+def _pc_relative_addrs(
+    arch: Architecture,
+    bytestring: bytes,
+    state_format_tuple: tuple[tuple[str, int], ...],
+) -> frozenset[int]:
+    """Constant memory addresses (as resolved at ``_TRANSLATE_BASE``) whose value
+    SHIFTS with the translation base -- i.e. PC-relative operands (x86 RIP-relative,
+    ARM64 / PPC literal pools).  Covers both direct ram-space varnodes and
+    LOAD/STORE pointers that fold to a constant.  Genuine absolute operands (x86
+    ``moffs``) do not shift and are excluded, so they stay baked.
+
+    Detection: translate the SAME bytes at two bases and keep the addresses that
+    moved by exactly the base delta.  The two translations share op/varnode order,
+    so the extracted address lists align positionally.
+    """
+    ctx = get_context(arch)
+    state_format = [Register(name=n, bits=b) for n, b in state_format_tuple]
+    delta = 0x40000
+
+    def _addrs(base: int) -> list[int]:
+        ops = ctx.translate(bytestring, base).ops
+        mp = StateMapper(ctx, arch, state_format)
+        out: list[int] = []
+        for op in ops:
+            if op.opcode.name in ('LOAD', 'STORE'):
+                mapped_addr, const_offset = resolve_ptr_with_offset(op.inputs[1], ops, mp)
+                if mapped_addr is None and const_offset != 0:
+                    out.append(const_offset)
+            for v in (*op.inputs, *([op.output] if op.output is not None else [])):
+                if v.space.name == 'ram':
+                    out.append(v.offset)
+        return out
+
+    a1 = _addrs(_TRANSLATE_BASE)
+    a2 = _addrs(_TRANSLATE_BASE + delta)
+    return frozenset(x for x, y in zip(a1, a2) if y - x == delta)
+
+
+def _const_addr_mem(
+    abs_offset: int,
+    size: int,
+    pc_relative: frozenset[int],
+    pc_reg: RegMapping | None,
+) -> MemMapping:
+    """Build the memory mapping for a compile-time-resolved address.  PC-relative
+    addresses use the runtime pc register as base (offset relative to the translate
+    base); genuine absolute addresses are baked via the const-zero sentinel."""
+    if pc_reg is not None and abs_offset in pc_relative:
+        return MemMapping(abs_offset, size, pc_reg, abs_offset - _TRANSLATE_BASE)
+    return MemMapping(abs_offset, size, _CONST_ADDR_BASE, abs_offset)
+
 
 @dataclass
 class EvalTarget:
@@ -550,6 +619,11 @@ def _cached_generate_static_rule(  # noqa: C901
 
     mapper = StateMapper(ctx, arch, state_format)
 
+    # Which compile-time-constant memory addresses are PC-relative (resolve against
+    # the runtime pc) vs genuinely absolute (baked).  Shared by outputs and deps.
+    pc_relative = _pc_relative_addrs(arch, bytestring, state_format_tuple)
+    pc_reg = _pc_reg_mapping(arch, state_format)
+
     targets_to_evaluate, assignments = map_outputs_to_targets(
         arch,
         state_format,
@@ -558,6 +632,8 @@ def _cached_generate_static_rule(  # noqa: C901
         unique_outputs,
         mapper,
         ram_outputs,
+        pc_relative,
+        pc_reg,
     )
 
     for target in targets_to_evaluate:
@@ -567,7 +643,9 @@ def _cached_generate_static_rule(  # noqa: C901
         slice_ops = slice_backward(translation.ops, out_vn)
         polarities = compute_polarity(slice_ops)
 
-        dep_set = extract_dependencies(out_vn, slice_ops, polarities, translation.ops, mapper)
+        dep_set = extract_dependencies(
+            out_vn, slice_ops, polarities, translation.ops, mapper, pc_relative, pc_reg,
+        )
 
         # For STORE targets whose val_vn is a leaf register (no defining op in
         # this instruction), slice_backward returns empty and extract_dependencies
@@ -3821,6 +3899,8 @@ def extract_dependencies(  # noqa: C901
     polarities: dict[str, int],
     all_ops: list[PcodeOp],
     mapper: StateMapper,
+    pc_relative: frozenset[int] = frozenset(),
+    pc_reg: RegMapping | None = None,
 ) -> DependencySet:
     """
     Classify all inputs of a taint assignment into value_deps and addr_deps.
@@ -3945,20 +4025,17 @@ def extract_dependencies(  # noqa: C901
         if op.opcode.name == 'LOAD':
             ptr_vn = op.inputs[1]
             mapped_addr, const_offset = resolve_ptr_with_offset(ptr_vn, all_ops, mapper, stop_op_index=load_op_index)
-            _load_base = mapped_addr
-            if _load_base is None and const_offset != 0:
-                # The pointer folds to a compile-time constant absolute address
-                # (absolute / PC-relative literal, e.g. ARM64 `ldr w0,#imm`):
-                # model it as a constant-address memory value dep instead of
-                # dropping the load.  (const_offset==0 is the unresolvable case.)
-                _load_base = _CONST_ADDR_BASE
-            if _load_base is not None:
-                mem_map = MemMapping(
-                    ptr_vn.offset,
-                    op.output.size if op.output else 8,
-                    _load_base,
-                    const_offset,
-                )
+            _load_size = op.output.size if op.output else 8
+            mem_map = None
+            if mapped_addr is not None:
+                mem_map = MemMapping(ptr_vn.offset, _load_size, mapped_addr, const_offset)
+            elif const_offset != 0:
+                # The pointer folds to a compile-time constant (absolute / PC-
+                # relative literal, e.g. ARM64 `ldr w0,#imm`): a constant-address
+                # memory value dep instead of a drop.  PC-relative resolves against
+                # the runtime pc; absolute is baked.  (const_offset==0 = unresolvable.)
+                mem_map = _const_addr_mem(const_offset, _load_size, pc_relative, pc_reg)
+            if mem_map is not None:
                 # LOAD memory content is a *value* dependency, and it carries the
                 # polarity compute_polarity derived for the LOADED VALUE -- keyed by
                 # the LOAD's own output varnode.  Hardcoding +1 here silently
@@ -4057,7 +4134,7 @@ def extract_dependencies(  # noqa: C901
                 # Excluded: control-flow ops, whose ram operand is a branch/call
                 # TARGET address (a control destination, not a memory read), and
                 # STORE, whose target is handled separately.
-                _mem_dep = MemMapping(vn.offset, vn.size, _CONST_ADDR_BASE, vn.offset)
+                _mem_dep = _const_addr_mem(vn.offset, vn.size, pc_relative, pc_reg)
                 if _mem_dep not in value_deps:
                     value_deps[_mem_dep] = 1
 
@@ -4143,6 +4220,8 @@ def map_outputs_to_targets(  # noqa: C901
     unique_outputs: Iterable[Varnode],
     mapper: StateMapper,
     ram_outputs: list[Varnode] | None = None,
+    pc_relative: frozenset[int] = frozenset(),
+    pc_reg: RegMapping | None = None,
 ) -> tuple[list[EvalTarget], list[TaintAssignment]]:
     targets_to_evaluate: list[EvalTarget] = []
     mem_targets: list[tuple[Varnode, Varnode, int, int]] = []
@@ -4215,8 +4294,9 @@ def map_outputs_to_targets(  # noqa: C901
         if base_reg is None:
             # Constant / absolute STORE address (e.g. `mov [rip+d], rax`): the
             # pointer folds to a compile-time constant.  Model it as a
-            # constant-address memory target instead of dropping the store.
-            mem_map = MemMapping(ptr_vn.offset, size, _CONST_ADDR_BASE, const_offset)
+            # constant-address memory target (PC-relative -> runtime pc; absolute
+            # -> baked) instead of dropping the store.
+            mem_map = _const_addr_mem(const_offset, size, pc_relative, pc_reg)
         else:
             mem_map = MemMapping(ptr_vn.offset, size, base_reg, const_offset)
         targets_to_evaluate.append(EvalTarget(val_vn, mem_map))
@@ -4225,7 +4305,7 @@ def map_outputs_to_targets(  # noqa: C901
     # COPY/op out=ram[addr], not STORE): a constant-address memory target.  The
     # output varnode itself is the value whose taint is computed and stored.
     for ram_out in ram_outputs or ():
-        mem_map = MemMapping(ram_out.offset, ram_out.size, _CONST_ADDR_BASE, ram_out.offset)
+        mem_map = _const_addr_mem(ram_out.offset, ram_out.size, pc_relative, pc_reg)
         targets_to_evaluate.append(EvalTarget(ram_out, mem_map))
 
     return targets_to_evaluate, assignments

@@ -81,6 +81,27 @@ def test_riprel_store_taints_global(simulator: CellSimulator, regs: list[Registe
     )
 
 
+def test_riprel_store_resolves_against_runtime_pc(simulator: CellSimulator, regs: list[Register]) -> None:
+    """A PC-relative store must resolve against the RUNTIME pc, not the fixed
+    translate base.  `mov [rip+0],al` (88 05 00000000) is translated at base
+    0x1000 but evaluated with RIP=0x500000: the store must target 0x500006
+    (RIP + 6), NOT the baked 0x1006 -- otherwise the shadow write lands at the
+    wrong address in a full-program run (the DNS end-to-end sink bug)."""
+    circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('880500000000'), regs)
+    ctx = EvalContext(
+        input_values={'RIP': 0x500000, 'RAX': 0},
+        input_taint={'RAX': 0xFF},  # AL tainted
+        simulator=simulator,
+        shadow_memory=BitPreciseShadowMemory(),
+        mem_reader=lambda addr, sz: 0,  # noqa: ARG005
+    )
+    out = circuit.evaluate(ctx)
+    mem = {k: v for k, v in out.items() if k.startswith('MEM') and v}
+    assert 'MEM_0x500006_1' in mem, (
+        f'PC-relative store must target RIP+6 = 0x500006 (runtime pc), got {mem}'
+    )
+
+
 def test_riprel_arith_flows_memory_operand(simulator: CellSimulator, regs: list[Register]) -> None:
     """ADD EAX, [RIP+0] (03 05 00000000) must flow the ABSOLUTE memory operand's
     taint through the arithmetic (carry-aware differential), not merely transport
