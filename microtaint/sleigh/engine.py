@@ -3868,6 +3868,24 @@ def extract_dependencies(  # noqa: C901
         if _op.output is not None and _op.output.space.name == 'register' and _op.output.offset not in _reg_first_write:
             _reg_first_write[_op.output.offset] = _i
 
+    # Byte-precise first-write index: for each register-space byte, the index of
+    # the first op that writes it.  A later read whose EVERY byte was written by a
+    # strictly-earlier op observes this instruction's own intermediate result
+    # (SSA within the instruction), not an external input, so it must not become a
+    # value dependency.  This is the byte-granular generalisation of the two
+    # coarser (offset-keyed / exact-size) checks below.  It is what suppresses the
+    # trailing INT_ZEXT of `mov eax,[mem]` reading the load-written EAX: that read
+    # is offset 0 size 4 while the output RAX is offset 0 size 8, so the exact-size
+    # check misses it and it leaks in as a spurious old-destination dep -- the root
+    # cause of the load strong-update failure (a load from untainted memory then
+    # fails to clear the destination register's stale taint).
+    _reg_byte_first_write: dict[int, int] = {}
+    for _i, _op in enumerate(all_ops):
+        if _op.output is not None and _op.output.space.name == 'register':
+            for _b in range(_op.output.offset, _op.output.offset + _op.output.size):
+                if _b not in _reg_byte_first_write:
+                    _reg_byte_first_write[_b] = _i
+
     def _collect_ptr_offsets(vn: Varnode, visited: set[int] | None = None) -> None:
         """
         Walk a pointer varnode to its ultimate register source(s) and record
@@ -3933,6 +3951,20 @@ def extract_dependencies(  # noqa: C901
 
         for vn in op.inputs:
             if vn.space.name == 'register':
+                # Byte-precise intra-instruction intermediate suppression: if EVERY
+                # byte of this register read was written by a strictly-earlier op in
+                # the same instruction, the read observes this instruction's own
+                # result, not an external input.  Generalises the exact-size /
+                # non-output checks below; in particular it catches a sub-register
+                # read of the output written earlier (INT_ZEXT of a load-written
+                # EAX), which those two miss.  Reads before the first write, and the
+                # writing op's own input reads, are preserved (first_write >= _op_idx).
+                if vn.size > 0 and all(
+                    _reg_byte_first_write.get(_b, _op_idx) < _op_idx
+                    for _b in range(vn.offset, vn.offset + vn.size)
+                ):
+                    continue
+
                 # Skip read-backs of the destination register that occur AFTER
                 # the main computation has already written it.  Ghidra emits
                 # flag-update ops (e.g. `INT_SEXT in=RAX` after `INT_MULT out=RAX`
