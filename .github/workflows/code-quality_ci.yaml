@@ -34,7 +34,11 @@ jobs:
       - name: Test with pytest
         id: test
         if: always() && steps.install.outcome == 'success'
-        run: uv run pytest --cov --cov-branch --cov-report=xml
+        # Run sequentially: -p no:xdist forces single-process even if pytest-xdist
+        # is ever installed, since the native C extensions can segfault a worker
+        # under parallel execution (the flaky test_multi_scenario_backends_agree /
+        # RISC-V worker crashes seen only under `-n auto`).
+        run: uv run pytest --cov --cov-branch --cov-report=xml -p no:xdist
 
       - name: Upload coverage reports to Codecov
         if: always() && steps.test.outcome == 'success'
