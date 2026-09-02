@@ -306,6 +306,37 @@ _VEC_LANE_OFFSET = {
 }
 
 
+# Vector-register lane bases, derived purely from pypcode's own register geometry
+# (no per-ISA offset tables).  Every register-space varnode wider than one 64-bit
+# lane (size > 8) is a vector register; its bytes are decomposed into 8-byte
+# lanes.  A wide varnode that no state_format entry covers is then tracked on
+# synthetic VL_<lane_base> lanes (see StateMapper._synth_vec_lane), so ANY ISA's
+# SIMD file (x86 XMM/YMM/ZMM, ARM64 NEON q/z, PPC AltiVec vs, RISC-V V) is taint-
+# tracked without being enumerated in the state_format.  This is the ISA-general
+# form of the old x86-only XMM<n>_LO/_HI lane naming: geometry, not names.
+_VEC_LANE_BASES_CACHE: dict[str, frozenset[int]] = {}
+
+
+def _vector_lane_bases(ctx: Context, arch: str) -> frozenset[int]:
+    """The set of 8-aligned lane-base offsets that lie inside some register-space
+    varnode wider than 8 bytes (i.e. every vector register's lanes).  Cached per
+    arch because it depends only on the Sleigh register layout."""
+    cached = _VEC_LANE_BASES_CACHE.get(arch)
+    if cached is not None:
+        return cached
+    bases: set[int] = set()
+    for _vn in ctx.registers.values():
+        if _vn.space.name == 'register' and _vn.size > 8:
+            _b = _vn.offset & ~7
+            _end = _vn.offset + _vn.size
+            while _b < _end:
+                bases.add(_b)
+                _b += 8
+    frozen = frozenset(bases)
+    _VEC_LANE_BASES_CACHE[arch] = frozen
+    return frozen
+
+
 class StateMapper:
     def __init__(self, ctx: Context, arch: str, state_format: list[Register]):
         self.ctx = ctx
@@ -344,6 +375,25 @@ class StateMapper:
         # split into halves (XMM<n>_LO/_HI) can locate each half within the
         # parent varnode and feed it the matching memory bytes on a wide LOAD.
         self.name_to_offset: dict[str, int] = {reg.name: sr.offset for reg, sr in self.sf_resolved}
+        # 8-aligned lane bases of every vector register (geometry from pypcode).
+        # A wide register varnode no state_format entry covers is lane-synthesised
+        # onto VL_<lane_base> here, tracking any ISA's SIMD file without enumeration.
+        self._vec_lane_bases: frozenset[int] = _vector_lane_bases(ctx, str(arch))
+
+    def lane_base_offset(self, name: str, default: int) -> int:
+        """Sleigh byte offset of a state entry / synthetic lane by name.  A listed
+        entry resolves through name_to_offset; a synthetic vector lane VL_<hex>
+        carries its own absolute offset in the name (so a wide-copy's second lane
+        gets the right byte range, not the whole varnode's base)."""
+        off = self.name_to_offset.get(name)
+        if off is not None:
+            return off
+        if name.startswith('VL_'):
+            try:
+                return int(name[3:], 16)
+            except ValueError:
+                pass
+        return default
 
     @staticmethod
     def _synth_xmm_varnode(name: str) -> _SynthVarnode | None:
@@ -368,6 +418,39 @@ class StateMapper:
             return None
         return _SynthVarnode(offset=0x1200 + n * 0x40 + lane, size=8)
 
+    def _synth_vec_lane(self, offset: int, size: int) -> RegMapping | None:
+        """A single synthetic 8-byte vector lane (VL_<lane_base>) covering
+        [offset, offset+size) when that range lies wholly inside one lane of a
+        vector register that no state_format entry covers.  Returns None when the
+        varnode is not in the vector region, or straddles two lanes / spans a
+        whole vector (the caller's map_to_state_all splits those per lane).  This
+        is what makes wide SIMD taint ISA-general: the lane name is pure geometry
+        (VL_<offset>), so cross-instruction flow connects by offset with no
+        per-ISA register-name table."""
+        lane_base = offset & ~7
+        if lane_base not in self._vec_lane_bases:
+            return None
+        if (offset + size - 1) & ~7 != lane_base:
+            return None  # straddles lanes / whole-vector read -> map_to_state_all
+        bit_start = (offset - lane_base) * 8
+        bit_end = bit_start + size * 8 - 1
+        return RegMapping(f'VL_{lane_base:#x}', bit_start, bit_end)
+
+    def _append_synth_vec_lanes(self, mappings: list[RegMapping], offset: int, size: int) -> None:
+        """Split a wide (possibly whole-vector) register read across the synthetic
+        VL_ lanes it overlaps, one RegMapping per 8-byte lane in the vector region.
+        Used when no state_format entry covers the varnode (e.g. ARM64 NEON / PPC
+        AltiVec wide ops, whose vector file is not enumerated in the state_format,
+        or an avalanche/shuffle whole-vector read)."""
+        end = offset + size
+        b = offset & ~7
+        while b < end:
+            if b in self._vec_lane_bases:
+                lo = max(b, offset)
+                hi = min(b + 8, end)
+                mappings.append(RegMapping(f'VL_{b:#x}', (lo - b) * 8, (hi - b) * 8 - 1))
+            b += 8
+
     def _sub_reg_bit_start(self, rel_byte: int, size: int, reg_bytes: int) -> int:
         """Bit offset, within a state register, of a `size`-byte read at byte
         `rel_byte` from the register's base.
@@ -385,19 +468,25 @@ class StateMapper:
             return max((reg_bytes - rel_byte - size) * 8, 0)
         return rel_byte * 8
 
+    def _map_x86_flag(self, offset: int) -> RegMapping | None:
+        """x86 EFLAGS bit at Sleigh offset [512,560) -> its state_format entry
+        (a dedicated CF/PF/ZF/SF/OF register, else the packed FLAGS reg)."""
+        bit_idx = offset - 512
+        flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
+        requested_flag = flag_names.get(bit_idx)
+        for sf_reg in self.state_format:
+            if requested_flag and sf_reg.name.upper() == requested_flag:
+                return RegMapping(sf_reg.name, 0, 0)
+        for sf_reg in self.state_format:
+            if 'FLAGS' in sf_reg.name.upper():
+                return RegMapping(sf_reg.name, bit_idx, bit_idx)
+        return None
+
     def map_to_state(self, offset: int, size: int) -> RegMapping | None:
         if self.is_x86 and 512 <= offset < 560:
-            bit_idx = offset - 512
-            flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
-            requested_flag = flag_names.get(bit_idx)
-
-            for sf_reg in self.state_format:
-                if requested_flag and sf_reg.name.upper() == requested_flag:
-                    return RegMapping(sf_reg.name, 0, 0)
-
-            for sf_reg in self.state_format:
-                if 'FLAGS' in sf_reg.name.upper():
-                    return RegMapping(sf_reg.name, bit_idx, bit_idx)
+            flag_map = self._map_x86_flag(offset)
+            if flag_map is not None:
+                return flag_map
 
         best_match = None
         end_offset = offset + size
@@ -413,7 +502,12 @@ class StateMapper:
                 if not best_match or s_r.size < best_match[1]:
                     best_match = (mapping, s_r.size)
 
-        return best_match[0] if best_match else None
+        if best_match:
+            return best_match[0]
+        # No state_format entry covers it: if it is one lane of a vector register,
+        # synthesise the VL_ lane (ISA-general SIMD tracking).  Not in the vector
+        # region (a plain unmapped GPR read) -> None, unchanged scalar behaviour.
+        return self._synth_vec_lane(offset, size)
 
     def map_to_state_all(self, offset: int, size: int) -> list[RegMapping]:
         mappings: list[RegMapping] = []
@@ -439,6 +533,11 @@ class StateMapper:
                 bit_end = min(bit_start + ((overlap_end - overlap_start) * 8) - 1, sf_reg.bits - 1)
                 mappings.append(RegMapping(sf_reg.name, bit_start, bit_end))
 
+        if not mappings:
+            # Nothing enumerated covers it: a wide vector read (e.g. ARM64 NEON /
+            # PPC AltiVec, or an x86 avalanche/shuffle over a whole XMM) split
+            # across the synthetic VL_ lanes it spans.  Non-vector -> stays empty.
+            self._append_synth_vec_lanes(mappings, offset, size)
         return mappings
 
 
@@ -672,7 +771,7 @@ def _cached_generate_static_rule(  # noqa: C901
             and out_vn.space.name == 'register'
             and out_vn.size > 8
         ):
-            half_off = mapper.name_to_offset.get(mapping.name, out_vn.offset) - out_vn.offset
+            half_off = mapper.lane_base_offset(mapping.name, out_vn.offset) - out_vn.offset
             half_size = (mapping.bit_end - mapping.bit_start + 1) // 8
             if 0 <= half_off and half_off + half_size <= out_vn.size:
                 load_sub = (half_off, half_size)
@@ -4044,6 +4143,44 @@ def _exact_store_lane_targets(
     return out_asgs
 
 
+def _trace_wide_regcopy_source(out_vn: Varnode, all_ops: list[PcodeOp]) -> Varnode | None:
+    """The register a wide (>8-byte) register OUTPUT is a verbatim byte-for-byte
+    COPY of, or None.  The reg->reg twin of _trace_wide_store_source: a single
+    16/32/64-byte COPY (ARM64 `mov v0,v1`/`orr`, PPC `vor`) cannot route through
+    the 64-bit differential kernel (it truncates to the low 8 bytes), so we detect
+    the pattern here and wire each 8-byte lane as an exact pure copy instead."""
+    for op in all_ops:
+        o = op.output
+        if o is not None and o.space.name == 'register' and o.offset == out_vn.offset and o.size == out_vn.size:
+            if op.opcode.name == 'COPY' and len(op.inputs) == 1 and op.inputs[0].size == out_vn.size:
+                return _trace_wide_store_source(op.inputs[0], all_ops)
+            return None
+    return None
+
+
+def _exact_regcopy_lane_targets(
+    out_vn: Varnode, src_reg: Varnode, mapper: StateMapper,
+) -> list[TaintAssignment] | None:
+    """One exact 8-byte-lane assignment per sub-range of a wide reg->reg copy:
+    output lane [k, k+8) gets EXACTLY the taint of source lane [k, k+8) as a pure
+    TaintOperand (no differential), so wider-than-64-bit vector moves are lane-
+    exact on any ISA.  None if any lane fails to resolve to a single state reg."""
+    lanes: list[tuple[RegMapping, RegMapping]] = []
+    for k in range(0, out_vn.size, 8):
+        csize = min(8, out_vn.size - k)
+        tgt = mapper.map_to_state(out_vn.offset + k, csize)
+        src = mapper.map_to_state(src_reg.offset + k, csize)
+        if tgt is None or src is None:
+            return None
+        lanes.append((tgt, src))
+    out_asgs: list[TaintAssignment] = []
+    for tgt, src in lanes:
+        tgt_target, _n, _bs, _be = generate_output_target(tgt)
+        src_expr: Expr = _get_taint_operand(src.name, src.bit_start, src.bit_end, True)
+        out_asgs.append(TaintAssignment(target=tgt_target, dependencies=[src_expr], expression=src_expr))
+    return out_asgs
+
+
 def _load_byte_range(
     target: Varnode, load_out: Varnode, all_ops: list[PcodeOp],
 ) -> tuple[int, int] | None:
@@ -4470,7 +4607,18 @@ def map_outputs_to_targets(  # noqa: C901
     targets_to_evaluate: list[EvalTarget] = []
     mem_targets: list[tuple[Varnode, Varnode, int, int]] = []
 
+    # Wide reg->reg copies wired lane-exact as pure operands (see below), so their
+    # output is NOT added to targets_to_evaluate (which would route the whole >8-byte
+    # copy through the 64-bit differential kernel and drop every lane above the low 8).
+    regcopy_asgs: list[TaintAssignment] = []
     for out_vn in unique_outputs:
+        if out_vn.space.name == 'register' and out_vn.size > 8:
+            src_reg = _trace_wide_regcopy_source(out_vn, translation.ops)
+            if src_reg is not None:
+                lane_asgs = _exact_regcopy_lane_targets(out_vn, src_reg, mapper)
+                if lane_asgs is not None:
+                    regcopy_asgs.extend(lane_asgs)
+                    continue
         mapped_outs = mapper.map_to_state_all(out_vn.offset, out_vn.size)
         for mapped_out in mapped_outs:
             targets_to_evaluate.append(EvalTarget(out_vn, mapped_out))
@@ -4527,7 +4675,7 @@ def map_outputs_to_targets(  # noqa: C901
 
             targets_to_evaluate.append(EvalTarget(varnode, RegMapping(pc_reg_r.name, 0, pc_reg_r.bits - 1)))
 
-    assignments: list[TaintAssignment] = []
+    assignments: list[TaintAssignment] = list(regcopy_asgs)
 
     for val_vn, ptr_vn, size, store_idx in mem_targets:
         # Resolve the address as it stood AT THE STORE — i.e. ignore any

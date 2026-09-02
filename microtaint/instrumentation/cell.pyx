@@ -1571,6 +1571,25 @@ cdef class PCodeCellEvaluator:
         self.native_calls   = 0
         self.fallback_calls = 0
 
+    cdef inline object _resolve_off(self, str key):
+        """Sleigh byte offset for a register-name key, resolving synthetic vector
+        lanes (VL_<hex>) on demand.  A VL_ lane carries its own absolute offset in
+        the name (size 8), so any ISA's SIMD register file is byte-addressable in
+        the native frame without a per-arch table.  The (offset, size) pair is
+        cached into _offsets/_sizes on first use.  Returns None for unknown keys."""
+        cdef object off_obj = self._offsets.get(key)
+        if off_obj is not None:
+            return off_obj
+        if key[:3] == 'VL_':
+            try:
+                off_obj = int(key[3:], 16)
+            except ValueError:
+                return None
+            self._offsets[key] = off_obj
+            self._sizes[key] = 8
+            return off_obj
+        return None
+
     cdef void _load(self, _PCodeFrame frame, dict inputs):
         frame._arch = str(self.arch)  # for CBRANCH PC lookup
         cdef object   name, val, off_obj, sz_obj
@@ -1600,7 +1619,7 @@ cdef class PCodeCellEvaluator:
                 deferred_mem.append((<str>name, v))
             else:
                 key     = (<str>name).upper()
-                off_obj = self._offsets.get(key)
+                off_obj = self._resolve_off(key)
                 if off_obj is not None:
                     off    = <long>off_obj
                     sz_obj = self._sizes.get(key)
@@ -1671,7 +1690,7 @@ cdef class PCodeCellEvaluator:
         for name, val in regs.items():
             v = <uint64_t>(val & 0xFFFFFFFFFFFFFFFF)
             key     = (<str>name).upper()
-            off_obj = self._offsets.get(key)
+            off_obj = self._resolve_off(key)
             if off_obj is not None:
                 off    = <long>off_obj
                 sz_obj = self._sizes.get(key)
@@ -1749,7 +1768,7 @@ cdef class PCodeCellEvaluator:
             return (val >> bit_start) & mask
 
         key     = out_reg.upper()
-        off_obj = self._offsets.get(key)
+        off_obj = self._resolve_off(key)
         if off_obj is None:
             return 0
         off    = <long>off_obj
