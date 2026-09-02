@@ -65,6 +65,15 @@ X64_FORMAT = [
 for _i in range(16):
     X64_FORMAT.append(Register(f'XMM{_i}_LO', 64))
     X64_FORMAT.append(Register(f'XMM{_i}_HI', 64))
+# YMM upper half (bits 128-255): the sleigh.engine StateMapper resolves
+# YMM<n>_LO/_HI to the vector register at byte offsets 16 and 24, so 256-bit
+# AVX loads/stores/bitwise are tracked one 64-bit lane at a time (exactly like
+# the XMM halves).  These lanes carry taint only; they need no Unicorn value
+# install because the AVX ops that would need a concrete value lift to the
+# avalanche (CALLOTHER) path, which is value-independent.
+for _i in range(16):
+    X64_FORMAT.append(Register(f'YMM{_i}_LO', 64))
+    X64_FORMAT.append(Register(f'YMM{_i}_HI', 64))
 del _i
 # Pre-computed cache key for X64_FORMAT — avoids rebuilding a 24-element tuple
 # via genexpr on every generate_static_rule call (was 2.26s in profiling).

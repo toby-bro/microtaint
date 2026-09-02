@@ -287,11 +287,16 @@ class DependencySet:
 @dataclass(frozen=True, slots=True)
 class _SynthVarnode:
     """Minimal Varnode-shaped object for synthetic state_format entries
-    (currently: XMM<n>_LO / XMM<n>_HI).  StateMapper only reads .offset
-    and .size from these, never anything else, so the shim is sufficient."""
+    (the XMM<n>/YMM<n> 64-bit lanes).  StateMapper only reads .offset and
+    .size from these, never anything else, so the shim is sufficient."""
 
     offset: int
     size: int
+
+
+# 64-bit lane -> byte offset within a vector register (ZMM<n> at 0x1200+n*0x40).
+# XMM covers bytes 0-15 (LO/HI), YMM adds the upper 128 bits (bytes 16-31).
+_VEC_LANE_OFFSET = {('XMM', 'LO'): 0, ('XMM', 'HI'): 8, ('YMM', 'LO'): 16, ('YMM', 'HI'): 24}
 
 
 class StateMapper:
@@ -335,26 +340,26 @@ class StateMapper:
 
     @staticmethod
     def _synth_xmm_varnode(name: str) -> _SynthVarnode | None:
-        """Build a lightweight Varnode-like object for XMM<n>_LO / _HI.
+        """Build a lightweight Varnode-like object for an XMM/YMM 64-bit lane.
 
-        The StateMapper only reads `.offset` and `.size` from these
-        objects, so a tiny shim suffices.  Returns None for any name
-        that doesn't match the XMM<n>_LO / XMM<n>_HI pattern.
+        The StateMapper only reads `.offset` and `.size` from these objects, so a
+        tiny shim suffices.  Returns None for any name that is not an
+        XMM<n>_LO/_HI or YMM<n>_LO/_HI lane.
         """
-        if not name.startswith('XMM'):
+        if len(name) < 3:
             return None
-        # Parse "XMM<n>_LO" or "XMM<n>_HI"
+        prefix, rest = name[:3], name[3:]
+        if prefix not in ('XMM', 'YMM'):
+            return None
+        num_str, _, half = rest.partition('_')
         try:
-            rest = name[3:]
-            num_str, _, half = rest.partition('_')
             n = int(num_str)
         except ValueError:
             return None
-        if not (0 <= n < 16) or half not in ('LO', 'HI'):
+        lane = _VEC_LANE_OFFSET.get((prefix, half))
+        if lane is None or not (0 <= n < 16):
             return None
-        # pypcode's XMM<n> sits at 0x1200 + n*0x40, size 16.
-        sub_offset = 0 if half == 'LO' else 8
-        return _SynthVarnode(offset=0x1200 + n * 0x40 + sub_offset, size=8)
+        return _SynthVarnode(offset=0x1200 + n * 0x40 + lane, size=8)
 
     def _sub_reg_bit_start(self, rel_byte: int, size: int, reg_bytes: int) -> int:
         """Bit offset, within a state register, of a `size`-byte read at byte
@@ -3948,6 +3953,11 @@ def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOpera
 # so they are left to the conservative whole-value path.
 _LANE_INDEPENDENT_OPS = frozenset({
     'COPY', 'INT_XOR', 'INT_AND', 'INT_OR', 'INT_NEGATE', 'LOAD', 'STORE', 'IMARK',
+    # INT_ZEXT is lane-independent for the bytes it copies (byte j <- byte j) and
+    # zero-fills the rest; AVX loads/moves lift the upper-lane zeroing of the
+    # 256-bit result as a ZEXT into the 512-bit register.  A lane beyond the source
+    # gets no dep (untainted), handled where the range is narrowed.
+    'INT_ZEXT',
 })
 
 
@@ -4194,6 +4204,7 @@ def extract_dependencies(  # noqa: C901
             mapped_addr, const_offset = resolve_ptr_with_offset(ptr_vn, all_ops, mapper, stop_op_index=load_op_index)
             _load_size = op.output.size if op.output else 8
             _load_off = 0
+            _skip_load = False
             if _load_size > 8 and op.output is not None:
                 # EXACT wide load: a >8-byte memory taint cannot be held in one
                 # 64-bit mask, and the whole-load MemoryOperand aliases the high
@@ -4204,18 +4215,24 @@ def extract_dependencies(  # noqa: C901
                 rng = _load_byte_range(_out_vn, op.output, all_ops)
                 if rng is not None:
                     _load_off, _load_size = rng
-                    # When the target is one lane of a wide register output (the
-                    # whole 16-byte XMM written in one COPY, as movdqu/movdqa emit),
-                    # _out_vn spans every lane; load_sub narrows the memory range to
-                    # this lane -- the same lane rule as for register inputs above,
-                    # so it only applies on a lane-independent slice.
-                    if _lane_ok and load_sub is not None:
-                        sub_off, sub_size = load_sub
-                        if sub_off + sub_size <= _load_size:
-                            _load_off += sub_off
-                            _load_size = sub_size
+                # Lane rule: when this target is one 64-bit lane of a wide register
+                # output (movdqu/movdqa write the whole XMM in one COPY; AVX loads
+                # ZEXT the 32-byte load into the 512-bit register), narrow the load
+                # window to this lane.  Applies on any lane-independent slice, even
+                # when the COPY-chain trace above found nothing (the ZEXT case).
+                if _lane_ok and load_sub is not None:
+                    sub_off, sub_size = load_sub
+                    if sub_off >= _load_size:
+                        # Lane lies beyond the loaded bytes (ZEXT zero-fill) -> the
+                        # lane is untainted, so contribute no memory dependency.
+                        _skip_load = True
+                    elif sub_off + sub_size <= _load_size:
+                        _load_off += sub_off
+                        _load_size = sub_size
             mem_map = None
-            if mapped_addr is not None:
+            if _skip_load:
+                mem_map = None
+            elif mapped_addr is not None:
                 mem_map = MemMapping(ptr_vn.offset, _load_size, mapped_addr, const_offset + _load_off)
             elif const_offset != 0:
                 # The pointer folds to a compile-time constant (absolute / PC-
@@ -4290,7 +4307,12 @@ def extract_dependencies(  # noqa: C901
                 # halves).  Narrow (<=8-byte) inputs are already a single lane.
                 _off, _sz = vn.offset, vn.size
                 if _lane_ok and vn.size > 8 and vn.offset not in ptr_reg_offsets:
-                    _off, _sz = vn.offset + load_sub[0], load_sub[1]  # type: ignore[index]
+                    _lane_lo, _lane_sz = load_sub  # type: ignore[misc]
+                    if _lane_lo >= vn.size:
+                        # This output lane is beyond the (narrower) input -- an
+                        # INT_ZEXT zero-fill lane -- so the input contributes none.
+                        continue
+                    _off, _sz = vn.offset + _lane_lo, min(_lane_sz, vn.size - _lane_lo)
 
                 # Try the singular map first — preserves the existing
                 # "smallest covering register" semantics for GPRs and

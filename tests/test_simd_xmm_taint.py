@@ -192,3 +192,79 @@ def test_pand_is_lane_exact_and_value_aware() -> None:
     assert _bitwise_out('660fdbc1', ones, {'XMM1_LO': _FULL}) == (_FULL, 0)
     # the other operand as a concrete zero mask clears the taint (value-aware AND)
     assert _bitwise_out('660fdbc1', {}, {'XMM1_HI': _FULL}) == (0, 0)
+
+
+# --- AVX / 256-bit YMM (four 64-bit lanes: XMM_LO/HI = bytes 0-15, YMM_LO/HI = 16-31) ---
+_YMM_LANES = ('XMM0_LO', 'XMM0_HI', 'YMM0_LO', 'YMM0_HI')  # byte 0-7, 8-15, 16-23, 24-31
+
+
+def _regs_ymm() -> list[Register]:
+    rs = [Register(name=n, bits=64) for n in ('RAX', 'RSI', 'RDI')]
+    for n in (0, 1, 2):
+        for p in ('XMM', 'YMM'):
+            rs += [Register(name=f'{p}{n}_LO', bits=64), Register(name=f'{p}{n}_HI', bits=64)]
+    return rs
+
+
+def _ymm_load_bytes(opcode_hex: str, tainted_src: set[int]) -> set[int]:
+    circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex(opcode_hex), _regs_ymm())
+    shadow = BitPreciseShadowMemory()
+    for i in tainted_src:
+        shadow.write_mask(_SRC + i, 0xFF, 1)
+    out = circuit.evaluate(EvalContext(
+        input_values={'RAX': _SRC}, input_taint={},
+        simulator=CellSimulator(Architecture.AMD64), shadow_memory=shadow))
+    got: set[int] = set()
+    for li, name in enumerate(_YMM_LANES):
+        mask = out.get(name, 0)
+        got |= {li * 8 + j for j in range(8) if (mask >> (j * 8)) & 0xFF}
+    return got
+
+
+def _ymm_store_bytes(opcode_hex: str, in_taint: dict[str, int]) -> set[int]:
+    circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex(opcode_hex), _regs_ymm())
+    shadow = BitPreciseShadowMemory()
+    out = circuit.evaluate(EvalContext(
+        input_values={'RAX': _DST}, input_taint=in_taint,
+        simulator=CellSimulator(Architecture.AMD64), shadow_memory=shadow))
+    for key, mask in out.items():
+        if key.startswith('MEM_'):
+            body = key[4:]
+            last = body.rfind('_')
+            shadow.write_mask(int(body[:last], 16), mask, int(body[last + 1:]))
+    return {i for i in range(32) if shadow.read_mask(_DST + i, 1)}
+
+
+@pytest.mark.parametrize(('name', 'opcode'), [
+    ('vmovdqu ymm0,[rax]', 'c5fe6f00'),
+    ('vmovups ymm0,[rax]', 'c5fc1000'),
+])
+@pytest.mark.parametrize('rng', [range(8), range(8, 16), range(16, 24), range(24, 32), range(32)])
+def test_avx_ymm_load_is_lane_exact(name: str, opcode: str, rng: range) -> None:
+    """A 256-bit AVX load must taint exactly the loaded bytes, per 64-bit lane."""
+    want = set(rng)
+    got = _ymm_load_bytes(opcode, want)
+    assert got == want, f'{name} src={sorted(want)}: ymm bytes {sorted(got)} != {sorted(want)}'
+
+
+@pytest.mark.parametrize(('half', 'expected'), [
+    ('XMM0_LO', set(range(8))),
+    ('XMM0_HI', set(range(8, 16))),
+    ('YMM0_LO', set(range(16, 24))),
+    ('YMM0_HI', set(range(24, 32))),
+])
+def test_avx_ymm_store_is_lane_exact(half: str, expected: set[int]) -> None:
+    """vmovdqu [rax],ymm0: each tainted 64-bit lane reaches exactly its 8 bytes."""
+    got = _ymm_store_bytes('c5fe7f00', {half: _FULL})
+    assert got == expected, f'store {half}: dest bytes {sorted(got)} != {sorted(expected)}'
+
+
+def test_avx_vpxor_ymm_is_lane_exact() -> None:
+    """vpxor ymm0,ymm1,ymm2 keeps taint in its 64-bit lane across the 256-bit op."""
+    circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('c5f5efc2'), _regs_ymm())
+    for src, dst in (('YMM2_LO', 'YMM0_LO'), ('XMM1_HI', 'XMM0_HI'), ('XMM2_LO', 'XMM0_LO')):
+        out = circuit.evaluate(EvalContext(
+            input_values={}, input_taint={src: _FULL},
+            simulator=CellSimulator(Architecture.AMD64), shadow_memory=BitPreciseShadowMemory()))
+        tainted_out = {k for k, v in out.items() if v and k.startswith(('XMM0', 'YMM0'))}
+        assert tainted_out == {dst}, f'vpxor {src} -> output {tainted_out}, expected only {dst}'
