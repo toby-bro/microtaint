@@ -31,6 +31,7 @@ jobs:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         # This will natively compile your Cython/mypyc code for Linux, Windows, and Mac (including Apple Silicon)
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -54,8 +55,8 @@ jobs:
         env:
           # Tell the build environment to trigger hatch-mypyc and set the optimization level
           CIBW_ENVIRONMENT: 'HATCH_BUILD_HOOKS_ENABLE="1" MYPYC_OPT_LEVEL="3"'
-          # Optional: Skip 32-bit and PyPy builds to save CI time
-          CIBW_SKIP: "pp* *i686* *musllinux* *win32* cp314-* cp314t-*"
+          # 3.15 and the free-threaded builds have no pypcode wheel on any platform.
+          CIBW_SKIP: "*i686* *musllinux* *win32* cp314t-* cp315-* cp315t-*"
           CIBW_BEFORE_BUILD: >
             git config --global --add safe.directory '*' &&
             python -c "import pathlib, shutil; shutil.rmtree('build', ignore_errors=True); [p.unlink() for ext in ('*.so', '*.pyd', '*.c', '*.o') for p in pathlib.Path('microtaint').rglob(ext)]" &&

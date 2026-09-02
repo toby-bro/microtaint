@@ -135,8 +135,9 @@ path = "hatch_build.py"
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel.hooks.mypyc]
 enable-by-default = false
-dependencies = ["hatch-mypyc>=0.16.0", "mypy>=1.19.1"]
-require-runtime-dependencies = true
+# pypcode is the only runtime dep the compiled modules import, so it is listed
+# here instead of pulling them all in with require-runtime-dependencies.
+dependencies = ["hatch-mypyc>=0.16.0", "mypy>=1.19.1", "pypcode>=3.3.3"]
 exclude = [
     "/microtaint/simulator.py",
     "/microtaint/sleigh/lifter.py",
