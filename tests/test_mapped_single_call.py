@@ -81,13 +81,13 @@ def _corners(rng):
         yield {r: rng.getrandbits(64) for r in REG_NAMES}
 
 
-@pytest.mark.parametrize('label,hexs', MAPPED_CASES.items(), ids=MAPPED_CASES.keys())
+@pytest.mark.parametrize(('label', 'hexs'), MAPPED_CASES.items(), ids=MAPPED_CASES.keys())
 def test_mapped_emits_single_call(label, hexs):
     _circ, expr = _rax_expr(hexs)
     assert _cell_count(repr(expr)) == 1, f'{label}: expected single-call (1 cell), got {repr(expr)[:120]}'
 
 
-@pytest.mark.parametrize('label,hexs', MAPPED_CASES.items(), ids=MAPPED_CASES.keys())
+@pytest.mark.parametrize(('label', 'hexs'), MAPPED_CASES.items(), ids=MAPPED_CASES.keys())
 def test_single_call_equals_differential(label, hexs, sim):
     circ, _ = _rax_expr(hexs)
     rng = random.Random(hash(hexs) & 0xFFFF)
@@ -98,7 +98,7 @@ def test_single_call_equals_differential(label, hexs, sim):
         assert got == ref, f'{label}: single-call {got:#x} != differential {ref:#x} (taint={taint["RAX"]:#x})'
 
 
-@pytest.mark.parametrize('label,hexs', DIFFERENTIAL_CASES.items(), ids=DIFFERENTIAL_CASES.keys())
+@pytest.mark.parametrize(('label', 'hexs'), DIFFERENTIAL_CASES.items(), ids=DIFFERENTIAL_CASES.keys())
 def test_non_mapped_keeps_differential(label, hexs):
     _circ, expr = _rax_expr(hexs)
     assert _cell_count(repr(expr)) != 1, f'{label}: should keep differential, not single-call'
