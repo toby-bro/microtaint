@@ -205,7 +205,10 @@ def _pc_relative_addrs(
 
     a1 = _addrs(_TRANSLATE_BASE)
     a2 = _addrs(_TRANSLATE_BASE + delta)
-    return frozenset(x for x, y in zip(a1, a2) if y - x == delta)
+    # a1 and a2 are the same instruction translated at two bases, so they share
+    # op/varnode order and are equal-length by construction -- strict catches a
+    # regression instead of silently truncating.
+    return frozenset(x for x, y in zip(a1, a2, strict=True) if y - x == delta)
 
 
 def _const_addr_mem(
