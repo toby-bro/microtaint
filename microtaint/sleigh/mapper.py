@@ -13,6 +13,12 @@ AVALANCHE_OPCODES: set[str] = {
     'INT_SREM',
     'POPCOUNT',
     'LZCOUNT',
+    # ZPULL / SPULL: pypcode 4 (Ghidra 11.x) bit-range extract ops (unsigned /
+    # signed).  Not emitted by the lifters for any supported ISA yet, so this is a
+    # defensive categorisation; avalanche is the sound default (over-taint) until
+    # a precise routing model with native cell support is needed.
+    'ZPULL',
+    'SPULL',
     'FLOAT_ADD',
     'FLOAT_SUB',
     'FLOAT_MULT',

@@ -375,7 +375,7 @@ class CellSimulator:
         if _force_cython_be:  # retained as an explicit escape hatch
             use_c = False
         self.use_c = use_c
-        self._pcode: None | PCodeCellEvaluator | PCodeCellEvaluatorC = None
+        self._pcode: PCodeCellEvaluator | PCodeCellEvaluatorC | None = None
         self._pcode_fallback_exc: Any = None
         # Native Cython evaluator used on a BIG-ENDIAN target to evaluate
         # register-only instructions, which `_pcode` is disabled for (the native

@@ -284,7 +284,7 @@ class LogicCircuit:
     architecture: Architecture
     instruction: str
     state_format: list[Register]
-    _compiled: CompiledCircuit | None | bool
+    _compiled: CompiledCircuit | bool | None
 
     def __init__(
         self,
