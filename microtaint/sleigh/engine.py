@@ -325,6 +325,10 @@ class StateMapper:
                 s_r = self._synth_xmm_varnode(sf_reg.name)
             if s_r:
                 self.sf_resolved.append((sf_reg, s_r))
+        # Sleigh byte-offset of each state register, so a wide register output
+        # split into halves (XMM<n>_LO/_HI) can locate each half within the
+        # parent varnode and feed it the matching memory bytes on a wide LOAD.
+        self.name_to_offset: dict[str, int] = {reg.name: sr.offset for reg, sr in self.sf_resolved}
 
     @staticmethod
     def _synth_xmm_varnode(name: str) -> _SynthVarnode | None:
@@ -643,8 +647,23 @@ def _cached_generate_static_rule(  # noqa: C901
         slice_ops = slice_backward(translation.ops, out_vn)
         polarities = compute_polarity(slice_ops)
 
+        # When a wide (>8-byte) register output is split into halves (XMM<n>_LO /
+        # _HI both mapped from the same 16-byte varnode, as movdqu/movdqa loads
+        # emit), tell extract_dependencies which byte range of the output THIS
+        # half occupies, so a wide LOAD feeds each half its own memory bytes.
+        load_sub: tuple[int, int] | None = None
+        if (
+            isinstance(mapping, RegMapping)
+            and out_vn.space.name == 'register'
+            and out_vn.size > 8
+        ):
+            half_off = mapper.name_to_offset.get(mapping.name, out_vn.offset) - out_vn.offset
+            half_size = (mapping.bit_end - mapping.bit_start + 1) // 8
+            if 0 <= half_off and half_off + half_size <= out_vn.size:
+                load_sub = (half_off, half_size)
+
         dep_set = extract_dependencies(
-            out_vn, slice_ops, polarities, translation.ops, mapper, pc_relative, pc_reg,
+            out_vn, slice_ops, polarities, translation.ops, mapper, pc_relative, pc_reg, load_sub,
         )
 
         # For STORE targets whose val_vn is a leaf register (no defining op in
@@ -2095,6 +2114,30 @@ def generate_taint_assignments(  # noqa: C901
         # Putting addr taint into shadow would cause catastrophic false positives:
         # after 'leave' propagates T_RBP→T_RSP, every subsequent push/call would
         # write tainted shadow, poisoning all future return addresses.
+
+        # WIDE STORE SPLIT.  A memory target wider than 8 bytes cannot be held
+        # in a single 64-bit taint mask: the shadow layer's write_mask takes a
+        # uint64, so a single MEM_<addr>_16 key keeps only the low 8 bytes and
+        # silently drops the taint of the high bytes.  That is the SSE memcpy
+        # under-taint (`movups [rdi], xmm0` copies 16 bytes but taints 8).
+        # Split the store into 8-byte chunks, mirroring the XMM_LO/HI register
+        # split, so every chunk carries a <=64-bit mask the shadow layer stores
+        # exactly.  The value taint is the OR of the value-deps (the same coarse
+        # but sound model the wide LOAD side already uses), applied to each
+        # chunk, so fully-tainted SIMD data survives the copy intact.
+        if isinstance(out_target, MemoryOperand) and out_target.size > 8:
+            base_addr = out_target.address_expr
+            for k in range(0, out_target.size, 8):
+                csize = min(8, out_target.size - k)
+                chunk_addr = base_addr if k == 0 else BinaryExpr(Op.ADD, base_addr, Constant(k, 8))
+                assignments.append(
+                    TaintAssignment(
+                        target=MemoryOperand(chunk_addr, csize, is_taint=True),
+                        dependencies=value_dependencies,
+                        expression=expr,
+                    ),
+                )
+            return
 
         assignments.append(
             TaintAssignment(
@@ -3893,6 +3936,102 @@ def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOpera
     return out_target, out_name, out_bit_start, out_bit_end
 
 
+def _trace_wide_store_source(
+    vn: Varnode, all_ops: list[PcodeOp], seen: set[int] | None = None,
+) -> Varnode | None:
+    """The single register varnode a STORE value copies verbatim, byte-for-byte,
+    or None.  Follows the size-preserving COPY chain SLEIGH emits for a wide
+    register store (`movups [mem], xmm`) so that byte j of the stored value is
+    byte j of the register.  Any non-copy or size-changing step returns None."""
+    if vn.space.name == 'register':
+        return vn
+    if vn.space.name != 'unique':
+        return None
+    if seen is None:
+        seen = set()
+    if vn.offset in seen:
+        return None
+    seen.add(vn.offset)
+    for op in all_ops:
+        out = op.output
+        if out is not None and out.space.name == 'unique' and out.offset == vn.offset and out.size == vn.size:
+            if op.opcode.name == 'COPY' and len(op.inputs) == 1 and op.inputs[0].size == vn.size:
+                return _trace_wide_store_source(op.inputs[0], all_ops, seen)
+            return None
+    return None
+
+
+def _exact_store_lane_targets(
+    src_reg: Varnode,
+    ptr_vn: Varnode,
+    base_reg: RegMapping | None,
+    const_offset: int,
+    size: int,
+    mapper: StateMapper,
+    pc_relative: frozenset[int],
+    pc_reg: RegMapping | None,
+) -> list[TaintAssignment] | None:
+    """One exact 8-byte-lane STORE assignment per register sub-range of a wide
+    copy: memory bytes [k, k+8) get EXACTLY the taint of the source register's
+    bytes [k, k+8) (e.g. XMM<n>_LO -> bytes 0-7, XMM<n>_HI -> bytes 8-15).  An
+    untainted half evaluates to 0 and correctly clears its lane.  Returns None if
+    any lane's source does not resolve to a single state register."""
+    lanes: list[tuple[int, int, RegMapping]] = []
+    for k in range(0, size, 8):
+        csize = min(8, size - k)
+        src = mapper.map_to_state(src_reg.offset + k, csize)
+        if src is None:
+            return None
+        lanes.append((k, csize, src))
+    out_asgs: list[TaintAssignment] = []
+    for k, csize, src in lanes:
+        if base_reg is None:
+            mem_map: MemMapping = _const_addr_mem(const_offset + k, csize, pc_relative, pc_reg)
+        else:
+            mem_map = MemMapping(ptr_vn.offset, csize, base_reg, const_offset + k)
+        mem_target, _n, _bs, _be = generate_output_target(mem_map)
+        src_expr: Expr = _get_taint_operand(src.name, src.bit_start, src.bit_end, True)
+        out_asgs.append(TaintAssignment(target=mem_target, dependencies=[src_expr], expression=src_expr))
+    return out_asgs
+
+
+def _load_byte_range(
+    target: Varnode, load_out: Varnode, all_ops: list[PcodeOp],
+) -> tuple[int, int] | None:
+    """Byte offset and size, within a wide LOAD's output `load_out`, that feed
+    `target`, following the size-preserving COPY chain SLEIGH emits into the XMM
+    destination (byte j of the load fills byte j of the register).  None if the
+    flow is not a plain copy of a contiguous load sub-range, in which case the
+    caller keeps the whole-load dependency (a sound over-approximation)."""
+
+    def walk(space: str, offset: int, sz: int, seen: set[tuple[str, int, int]]) -> tuple[int, int] | None:
+        key = (space, offset, sz)
+        if key in seen:
+            return None
+        seen.add(key)
+        for op in all_ops:
+            out = op.output
+            if out is None or out.space.name != space:
+                continue
+            if not (out.offset <= offset and offset + sz <= out.offset + out.size):
+                continue
+            sub = offset - out.offset
+            if (
+                op.opcode.name == 'LOAD'
+                and out.space.name == load_out.space.name
+                and out.offset == load_out.offset
+                and out.size == load_out.size
+            ):
+                return (sub, sz)
+            if op.opcode.name == 'COPY' and len(op.inputs) == 1 and op.inputs[0].size == out.size:
+                src = op.inputs[0]
+                return walk(src.space.name, src.offset + sub, sz, seen)
+            return None
+        return None
+
+    return walk(target.space.name, target.offset, target.size, set())
+
+
 def extract_dependencies(  # noqa: C901
     _out_vn: Varnode,
     _slice_ops: list[PcodeOp],
@@ -3901,6 +4040,7 @@ def extract_dependencies(  # noqa: C901
     mapper: StateMapper,
     pc_relative: frozenset[int] = frozenset(),
     pc_reg: RegMapping | None = None,
+    load_sub: tuple[int, int] | None = None,
 ) -> DependencySet:
     """
     Classify all inputs of a taint assignment into value_deps and addr_deps.
@@ -4026,15 +4166,35 @@ def extract_dependencies(  # noqa: C901
             ptr_vn = op.inputs[1]
             mapped_addr, const_offset = resolve_ptr_with_offset(ptr_vn, all_ops, mapper, stop_op_index=load_op_index)
             _load_size = op.output.size if op.output else 8
+            _load_off = 0
+            if _load_size > 8 and op.output is not None:
+                # EXACT wide load: a >8-byte memory taint cannot be held in one
+                # 64-bit mask, and the whole-load MemoryOperand aliases the high
+                # bytes onto the low 8.  Restrict the dependency to the exact byte
+                # range of the load that feeds THIS target, so each XMM half reads
+                # only its own 8 bytes.  Non-copy value flows keep the whole load
+                # (a sound over-approximation) via _load_byte_range -> None.
+                rng = _load_byte_range(_out_vn, op.output, all_ops)
+                if rng is not None:
+                    _load_off, _load_size = rng
+                    # When the target is one half of a wide register output (the
+                    # whole 16-byte XMM written in one COPY, as movdqu/movdqa emit),
+                    # _out_vn spans both halves; load_sub narrows the range to the
+                    # bytes of THIS half.
+                    if load_sub is not None:
+                        sub_off, sub_size = load_sub
+                        if sub_off + sub_size <= _load_size:
+                            _load_off += sub_off
+                            _load_size = sub_size
             mem_map = None
             if mapped_addr is not None:
-                mem_map = MemMapping(ptr_vn.offset, _load_size, mapped_addr, const_offset)
+                mem_map = MemMapping(ptr_vn.offset, _load_size, mapped_addr, const_offset + _load_off)
             elif const_offset != 0:
                 # The pointer folds to a compile-time constant (absolute / PC-
                 # relative literal, e.g. ARM64 `ldr w0,#imm`): a constant-address
                 # memory value dep instead of a drop.  PC-relative resolves against
                 # the runtime pc; absolute is baked.  (const_offset==0 = unresolvable.)
-                mem_map = _const_addr_mem(const_offset, _load_size, pc_relative, pc_reg)
+                mem_map = _const_addr_mem(const_offset + _load_off, _load_size, pc_relative, pc_reg)
             if mem_map is not None:
                 # LOAD memory content is a *value* dependency, and it carries the
                 # polarity compute_polarity derived for the LOADED VALUE -- keyed by
@@ -4291,6 +4451,22 @@ def map_outputs_to_targets(  # noqa: C901
             mapper,
             stop_op_index=store_idx,
         )
+        # EXACT wide-store split: a >8-byte store whose value is a verbatim copy
+        # of a wide register (the SIMD memcpy pattern, `movups [mem], xmm`) maps
+        # byte j of memory to byte j of that register.  Emit one exact 8-byte lane
+        # per register half so each lane's taint is EXACTLY its source half (and
+        # an untainted half clears its lane).  Non-copy wide stores fall through
+        # to the generic path, where the value is split into sound OR-of-deps
+        # chunks (see generate_taint_assignments).
+        if size > 8:
+            src_reg = _trace_wide_store_source(val_vn, translation.ops)
+            if src_reg is not None and src_reg.size == size:
+                lane_asgs = _exact_store_lane_targets(
+                    src_reg, ptr_vn, base_reg, const_offset, size, mapper, pc_relative, pc_reg,
+                )
+                if lane_asgs is not None:
+                    assignments.extend(lane_asgs)
+                    continue
         if base_reg is None:
             # Constant / absolute STORE address (e.g. `mov [rip+d], rax`): the
             # pointer folds to a compile-time constant.  Model it as a
