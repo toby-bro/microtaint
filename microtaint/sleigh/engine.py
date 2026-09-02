@@ -294,9 +294,16 @@ class _SynthVarnode:
     size: int
 
 
-# 64-bit lane -> byte offset within a vector register (ZMM<n> at 0x1200+n*0x40).
-# XMM covers bytes 0-15 (LO/HI), YMM adds the upper 128 bits (bytes 16-31).
-_VEC_LANE_OFFSET = {('XMM', 'LO'): 0, ('XMM', 'HI'): 8, ('YMM', 'LO'): 16, ('YMM', 'HI'): 24}
+# 64-bit lane -> byte offset within a vector register (ZMM<n> at 0x1200+n*0x40,
+# 64 bytes).  The eight lanes cover the whole 512-bit AVX-512 register: XMM is
+# bytes 0-15 (LO/HI), YMM adds the upper 128 bits (bytes 16-31), and ZMM_L4..L7
+# add the upper 256 bits (bytes 32-63).  The prefix+suffix in a state-register
+# name picks the lane, so a Ghidra XMM/YMM/ZMM varnode maps to the right 8 bytes.
+_VEC_LANE_OFFSET = {
+    ('XMM', 'LO'): 0, ('XMM', 'HI'): 8,
+    ('YMM', 'LO'): 16, ('YMM', 'HI'): 24,
+    ('ZMM', 'L4'): 32, ('ZMM', 'L5'): 40, ('ZMM', 'L6'): 48, ('ZMM', 'L7'): 56,
+}
 
 
 class StateMapper:
@@ -340,16 +347,16 @@ class StateMapper:
 
     @staticmethod
     def _synth_xmm_varnode(name: str) -> _SynthVarnode | None:
-        """Build a lightweight Varnode-like object for an XMM/YMM 64-bit lane.
+        """Build a lightweight Varnode-like object for an XMM/YMM/ZMM 64-bit lane.
 
         The StateMapper only reads `.offset` and `.size` from these objects, so a
-        tiny shim suffices.  Returns None for any name that is not an
-        XMM<n>_LO/_HI or YMM<n>_LO/_HI lane.
+        tiny shim suffices.  Returns None for any name that is not a recognised
+        vector lane (XMM<n>_LO/_HI, YMM<n>_LO/_HI, ZMM<n>_L4..L7).
         """
         if len(name) < 3:
             return None
         prefix, rest = name[:3], name[3:]
-        if prefix not in ('XMM', 'YMM'):
+        if prefix not in ('XMM', 'YMM', 'ZMM'):
             return None
         num_str, _, half = rest.partition('_')
         try:
