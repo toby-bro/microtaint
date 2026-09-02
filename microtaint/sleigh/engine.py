@@ -2952,7 +2952,7 @@ def generate_taint_assignments(  # noqa: C901
                 ),
                 None,
             )
-            if sext_op is not None:
+            if sext_op is not None and sext_op.output is not None:
                 inner = sext_op.inputs[0].size * 8
                 sext_bits = sext_op.output.size * 8
                 # Fill region intersected with this slice, in EXPR coordinates
@@ -3636,12 +3636,12 @@ def generate_taint_assignments(  # noqa: C901
             if _pt is not None:
                 _parts.append(_pt)
         if _parts:
-            _u: Expr = _parts[0]
+            _uu: Expr = _parts[0]
             for _p in _parts[1:]:
-                _u = BinaryExpr(Op.OR, _u, _p)
+                _uu = BinaryExpr(Op.OR, _uu, _p)
             _aw = _arith.output.size * 8
             # Fire iff a transformed operand's SIGN bit (bit w-1) is tainted.
-            _msb = BinaryExpr(Op.AND, _u, Constant(1 << (_aw - 1), 8))
+            _msb = BinaryExpr(Op.AND, _uu, Constant(1 << (_aw - 1), 8))
             expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, AvalancheExpr(_msb, 1), Constant(1, 8)))
 
     # -----------------------------------------------------------------------
@@ -3705,7 +3705,7 @@ def generate_taint_assignments(  # noqa: C901
                         _r_in = _o.output
                         break
         _rm = mapper.map_to_state(_r_in.offset, _r_in.size) if _r_in is not None else None
-        if _c_in is not None and isinstance(_rm, RegMapping):
+        if _c_in is not None and _r_in is not None and isinstance(_rm, RegMapping):
             _w = _r_in.size * 8
             _src_t: Expr | None = None
             for _dm in dep_set.value_deps:
@@ -3721,7 +3721,7 @@ def generate_taint_assignments(  # noqa: C901
                 _smear = BinaryExpr(Op.AND, _smear, Constant((1 << _w) - 1, 8))
                 # The cell re-executes the instruction; it needs the concrete VALUES
                 # of the registers it reads (an empty input map evaluates to 0).
-                _cell_inputs = {
+                _cell_inputs: dict[str, Expr] = {
                     _dm.name: _get_taint_operand(_dm.name, _dm.bit_start, _dm.bit_end, False)
                     for _dm in dep_set.value_deps
                     if isinstance(_dm, RegMapping)
@@ -4478,8 +4478,12 @@ def map_outputs_to_targets(  # noqa: C901
         op_name = op.opcode.name
         if op_name in ('CBRANCH', 'BRANCHIND', 'CALLIND'):
             pc_name = 'EIP' if 'X86' in arch.upper() else 'RIP' if 'AMD64' in arch.upper() else 'PC'
-            pc_reg = next((r for r in state_format if r.name.upper() == pc_name), None)
-            if not pc_reg:
+            # Local Register for the branch target's PC; must NOT shadow the
+            # `pc_reg` parameter (a RegMapping used later for const-address
+            # stores/ram outputs) -- reusing the name clobbered it for the rest
+            # of the function.
+            pc_reg_r = next((r for r in state_format if r.name.upper() == pc_name), None)
+            if not pc_reg_r:
                 continue
 
             # For CBRANCH:  inputs[0] = branch destination, inputs[1] = condition predicate.
@@ -4504,7 +4508,7 @@ def map_outputs_to_targets(  # noqa: C901
             if varnode.space.name == 'const':
                 continue
 
-            targets_to_evaluate.append(EvalTarget(varnode, RegMapping(pc_reg.name, 0, pc_reg.bits - 1)))
+            targets_to_evaluate.append(EvalTarget(varnode, RegMapping(pc_reg_r.name, 0, pc_reg_r.bits - 1)))
 
     assignments: list[TaintAssignment] = []
 

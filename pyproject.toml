@@ -289,6 +289,11 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_unused_configs = true
 namespace_packages = true
+# Each source file resolves to exactly one module name (the repo root is the
+# package base).  Without this, `mypy .` reports test files as "found twice
+# under different module names" (tests/ has a conftest.py but no __init__.py)
+# and aborts before checking anything.
+explicit_package_bases = true
 pretty = true
 exclude = [
     ".venv/",
@@ -301,9 +306,14 @@ exclude = [
     "benchmark/",
 ]
 
-# pypcode and unicorn are C extensions with no bundled stubs
+# C-extension / native deps with no bundled type stubs (assemblers and emulators
+# used only by tests and tooling).
 [[tool.mypy.overrides]]
-module = ["pypcode", "pypcode.*", "unicorn", "unicorn.*", "qiling", "qiling.*"]
+module = [
+    "pypcode", "pypcode.*", "unicorn", "unicorn.*", "qiling", "qiling.*",
+    "capstone", "capstone.*", "keystone", "keystone.*",
+    "riscv_encoder",  # test-only RISC-V encoder in tests/, on the path via pytest
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

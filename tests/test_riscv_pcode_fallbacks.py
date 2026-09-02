@@ -24,12 +24,8 @@ Run:
 
 from __future__ import annotations
 
-import sys
-
 import pytest
-
-sys.path.insert(0, 'tests')  # riscv_encoder lives in tests/
-from riscv_encoder import encode
+from riscv_encoder import encode  # test helper in tests/, on sys.path via pytest
 
 from microtaint.instrumentation.cell import _get_decoded
 from microtaint.types import Architecture

@@ -50,16 +50,13 @@ Run
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 
 import pytest
 import unicorn
 import unicorn.riscv_const as ur
 import unicorn.unicorn_py3
-
-sys.path.insert(0, '/home/claude')
-from riscv_encoder import encode
+from riscv_encoder import encode  # test helper in tests/, on sys.path via pytest
 
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator

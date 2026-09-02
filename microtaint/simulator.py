@@ -4,7 +4,7 @@ import functools
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import unicorn.arm64_const as uc_arm64_const
 import unicorn.mips_const as uc_mips_const
@@ -772,7 +772,7 @@ class CellSimulator:
                 # big-endian target's memory little-endian silently feeds the
                 # instruction reversed bytes -- the load reads a different value
                 # than intended and the differential is quietly wrong.
-                _endian = 'big' if self._is_big_endian else 'little'
+                _endian: Literal['big', 'little'] = 'big' if self._is_big_endian else 'little'
                 try:
                     self.uc.mem_write(addr, val.to_bytes(size, _endian))
                 except ValueError:

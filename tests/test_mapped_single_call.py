@@ -9,10 +9,11 @@ for every mapped instruction, the emitted rule's taint must equal the differenti
 (and therefore the exact bit-flip taint) on every random and corner (V, T).
 """
 import random
+from collections.abc import Iterator
 
 import pytest
 
-from microtaint.instrumentation.ast import EvalContext, InstructionCellExpr
+from microtaint.instrumentation.ast import EvalContext, Expr, InstructionCellExpr, LogicCircuit
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, Register
@@ -49,22 +50,22 @@ DIFFERENTIAL_CASES = {
 
 
 @pytest.fixture(scope='module')
-def sim():
+def sim() -> CellSimulator:
     return CellSimulator(ARCH, use_unicorn=False, use_c=True)
 
 
-def _rax_expr(hexs):
+def _rax_expr(hexs: str) -> tuple[LogicCircuit, Expr | None]:
     circ = generate_static_rule(ARCH, bytes.fromhex(hexs), REGS)
     asn = next((a for a in circ.assignments if getattr(a.target, 'name', None) == 'RAX'), None)
     assert asn is not None, f'no RAX output for {hexs}'
     return circ, asn.expression
 
 
-def _cell_count(expr_repr):
+def _cell_count(expr_repr: str) -> int:
     return expr_repr.count('InstructionCellExpr')
 
 
-def _differential(sim, hexs, values, taint):
+def _differential(sim: CellSimulator, hexs: str, values: dict[str, int], taint: dict[str, int]) -> int:
     """Reference: f(V|T) XOR f(V&~T) on RAX, computed independently of the rule."""
     ice = InstructionCellExpr(ARCH, hexs, 'RAX', 0, 63, {})
     hi = sim.evaluate_concrete(ice, MachineState(regs={r: (values[r] | taint[r]) & M64 for r in REG_NAMES}, mem={}))
@@ -72,7 +73,7 @@ def _differential(sim, hexs, values, taint):
     return hi ^ lo
 
 
-def _corners(rng):
+def _corners(rng: random.Random) -> Iterator[dict[str, int]]:
     yield dict.fromkeys(REG_NAMES, M64)
     yield dict.fromkeys(REG_NAMES, 1)
     yield dict.fromkeys(REG_NAMES, 1 << 31)
@@ -82,13 +83,13 @@ def _corners(rng):
 
 
 @pytest.mark.parametrize(('label', 'hexs'), MAPPED_CASES.items(), ids=MAPPED_CASES.keys())
-def test_mapped_emits_single_call(label, hexs):
+def test_mapped_emits_single_call(label: str, hexs: str) -> None:
     _circ, expr = _rax_expr(hexs)
     assert _cell_count(repr(expr)) == 1, f'{label}: expected single-call (1 cell), got {repr(expr)[:120]}'
 
 
 @pytest.mark.parametrize(('label', 'hexs'), MAPPED_CASES.items(), ids=MAPPED_CASES.keys())
-def test_single_call_equals_differential(label, hexs, sim):
+def test_single_call_equals_differential(label: str, hexs: str, sim: CellSimulator) -> None:
     circ, _ = _rax_expr(hexs)
     rng = random.Random(hash(hexs) & 0xFFFF)
     for taint in _corners(rng):
@@ -99,6 +100,6 @@ def test_single_call_equals_differential(label, hexs, sim):
 
 
 @pytest.mark.parametrize(('label', 'hexs'), DIFFERENTIAL_CASES.items(), ids=DIFFERENTIAL_CASES.keys())
-def test_non_mapped_keeps_differential(label, hexs):
+def test_non_mapped_keeps_differential(label: str, hexs: str) -> None:
     _circ, expr = _rax_expr(hexs)
     assert _cell_count(repr(expr)) != 1, f'{label}: should keep differential, not single-call'
