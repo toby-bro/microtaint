@@ -95,5 +95,5 @@ All three propagate taint end-to-end and produce correct output
 - Per-target raw tallies: `base64.json`, `nftables.json`, `siphash.json`
 - SipHash target build: `gcc -O0 -static -no-pie -fno-stack-protector -o siphash_bin
   benchmark/crypto/siphash/test_avalanche_siphash.c benchmark/crypto/siphash/siphash_ref.c`
-- nftables target: `benchmark/nftables/harness` (prebuilt static ELF)
+- nftables target: `avalanche/nftables_harness` (prebuilt static ELF)
 </content>

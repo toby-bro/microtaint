@@ -1,5 +1,5 @@
 # Standalone Pin/libdft64 tools for the RQ7 multitool applications eval.
-# Mirrors nftables/libdft64_tool/Makefile (absolute paths, out-of-tree).
+# Absolute paths, built out-of-tree.
 
 PIN_ROOT   ?= /home/jns/Documents/Telecom/PRIM/benchmark/external/pin-3.20-98437-gf02b61307-gcc-linux
 LIBDFT_SRC ?= /home/jns/Documents/Telecom/PRIM/benchmark/external/libdft64/src

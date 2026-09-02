@@ -1,6 +1,6 @@
 {
   "tool": "triton",
-  "method": "Triton ELF load (dependency-free ELF64 loader) + native x86-64 instruction emulation; target routine driven directly (RIP := function entry, SysV args in registers) to bypass static-glibc startup, mirroring nftables/detect_triton.py. Taint engine enabled by default.",
+  "method": "Triton ELF load (dependency-free ELF64 loader) + native x86-64 instruction emulation; target routine driven directly (RIP := function entry, SysV args in registers) to bypass static-glibc startup. Taint engine enabled by default.",
   "ct": {
     "workload": "test_constant_time.c (square-and-multiply modexp)",
     "initial_taint": "exponent only: ESI (32-bit `e`, the stdin secret, value 5) tainted via ctx.taintRegister; base=EDI=7 and mod=EDX=101 left untainted (public constants), matching the RSA/DH threat model.",

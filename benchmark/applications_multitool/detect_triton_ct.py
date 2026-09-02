@@ -12,7 +12,7 @@ from pathlib import Path
 
 from triton import ARCH, EXCEPTION, Instruction, MemoryAccess, TritonContext
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "nftables" / "triton_tool"))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "triton_tool"))
 from elfload import load_segments  # noqa: E402
 
 ELF = Path(__file__).resolve().parent / "bin" / "test_constant_time"

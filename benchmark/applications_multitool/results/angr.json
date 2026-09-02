@@ -4,7 +4,6 @@
   "ct": {
     "vuln_branch_leaks": 1,
     "ct_branch_leaks": 0,
-    "verdict": "vuln has a secret-dependent branch (je on e&1); ct is branch-free (only the concrete loop-counter jle) -> vuln=1 ct=0",
     "matches_microtaint": true
   },
   "dns": {
@@ -12,10 +11,8 @@
     "can_taint_single_bit": true,
     "qr_reaches_output": false,
     "opcode_reaches_output": true,
-    "can_discriminate_qr_vs_opcode": true,
-    "verdict": "angr is bit-precise: QR(bit7) is masked by 0x78 and does NOT reach the output, OPCODE(bits6..3) DOES; angr discriminates them (unlike byte/register engines)."
+    "can_discriminate_qr_vs_opcode": true
   },
-  "notes": "CT: pow_branch/pow_ct are emulated directly with a SYMBOLIC 32-bit exponent argument (RSI); base=7/mod=101 are concrete public constants. Detection = any conditional-branch guard AST that structurally depends on the `exponent` symbol (state.inspect 'exit' breakpoint on exit_guard). The exponent is constrained to the tested value 5 so the 32-iteration loop follows ONE deterministic path (the DBI analog) while guard ASTs stay symbolic functions of the exponent. VULN: exactly one secret-dependent branch SITE ['0x402fa8'] (the `je` after `and 1; test`), executed 64 times over the 32 iterations. CT: zero secret-dependent branch sites -- its only conditional branch is the concrete loop counter i<32 ([] secret-dependent). Matches microtaint (vuln>=1, ct=0). DNS: angr executes the real bytes 24 78 C0 E8 03 on a symbolic flag byte and reasons PER BIT via claripy. A sound per-bit dependence test (two inputs agreeing on all other bits; can the outputs differ?) shows the output depends on bits 6..3 (OPCODE) and NOT on bit7 (QR, masked by 0x78). Additionally, making ONLY bit7 symbolic yields a CONCRETE output while making ONLY bits6..3 symbolic yields a SYMBOLIC output -- literal single-bit taint that byte/register engines (Triton, libdft, taintgrind) cannot express. angr therefore CAN discriminate QR from OPCODE, matching microtaint and unlike the byte-granular engines. Caveat: unicorn engine unavailable in this venv (pure-python VEX engine used); functionally irrelevant here since we emulate small routines / a 2-instruction snippet.",
   "raw": {
     "vuln": {
       "name": "vuln",

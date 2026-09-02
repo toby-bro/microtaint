@@ -45,11 +45,6 @@ The command to run is
 uv run overhead_bench.py --build-bench bench.c --gen-input 256 --runs 100 --only native --only qiling-only --only microtaint-all --native-timeout 5 --qiling-timeout 120 --microtaint-timeout 1800 --json overhead_results.json
 ```
 
-## nftables bug
-
-The nftable bug and it's associated [README.md](./nftables/README.md) can be found in the nftables subdir. The README is AI generated as well as the reproduction script, they have been checked and validated by the authors.
-All the instructions for reproducing the test are in this subdir.
-
 ## DNS header parsing
 
 The file is in the [dns](./dns) subdirectory. The file is commented and prints many debbug information, so no extra information will be provided here.

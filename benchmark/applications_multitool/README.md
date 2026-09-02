@@ -3,7 +3,6 @@
 Per-tool baseline verdicts for two of the RQ7 end-to-end applications (§IX-B of
 the paper), so the byte- and register-granularity DIFT baselines' configurations
 and false-positive/false-negative decisions are demonstrated, not asserted.
-Companion to `../nftables/` (the CVE-2023-35001 seven-engine comparison).
 
 Every engine gets the identical source and the identical detection question; the
 only variable is the engine. `results/<tool>.json` holds each verdict; the raw
@@ -71,5 +70,4 @@ python detect_<tool>_dns.py    # runs the AND 0x78 ; SHR 3 macro under each engi
 python report.py               # aggregate results/*.json (if present)
 ```
 
-Tool installs and venvs are under `../../../benchmark` (`external/`, `.venv_*`),
-as in `../nftables/`.
+Tool installs and venvs are under `../../../benchmark` (`external/`, `.venv_*`).

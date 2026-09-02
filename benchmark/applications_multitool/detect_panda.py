@@ -2,7 +2,7 @@
 """PANDA/taint2 baseline for the CT and DNS workloads (writes results/panda.json).
 
 taint2 is full-system byte/register dynamic taint; it runs inside the
-pandare/panda:latest container against an x86_64 guest (the nftables PANDA infra).
+pandare/panda:latest container against an x86_64 guest.
 Byte granularity is the crux: CT is register-precise on the branch flags so it
 matches microtaint (vuln leaks, ct clean); DNS taints the whole flag byte, so it
 cannot separate QR from OPCODE -> byte-granularity false positive (like libdft).
