@@ -3936,6 +3936,18 @@ def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOpera
     return out_target, out_name, out_bit_start, out_bit_end
 
 
+# Lane-independent P-code ops: output byte j depends only on input byte j, at any
+# width.  For a >8-byte (vector) value these can be analysed one 64-bit lane at a
+# time with no interaction between lanes, which is what lets a single rule keep
+# vector taint exact without widening the 64-bit core (see _lane_ok below).  Ops
+# NOT in this set (arithmetic with carries, shuffles/CALLOTHER, widening
+# INT_ZEXT/SEXT, SUBPIECE/PIECE at non-lane offsets) can move taint across lanes,
+# so they are left to the conservative whole-value path.
+_LANE_INDEPENDENT_OPS = frozenset({
+    'COPY', 'INT_XOR', 'INT_AND', 'INT_OR', 'INT_NEGATE', 'LOAD', 'STORE', 'IMARK',
+})
+
+
 def _trace_wide_store_source(
     vn: Varnode, all_ops: list[PcodeOp], seen: set[int] | None = None,
 ) -> Varnode | None:
@@ -4071,6 +4083,18 @@ def extract_dependencies(  # noqa: C901
     value_deps: dict[RegMapping | MemMapping, int] = {}
     addr_deps: dict[RegMapping, int] = {}
 
+    # Lane rule: this target is one 64-bit lane, at byte offset load_sub[0], of a
+    # wider (vector) result.  When the whole value-producing slice is
+    # lane-independent, output byte j depends only on input byte j, so every input
+    # contributes only its bytes at this lane -- the same restriction applied to
+    # memory (below) and to register inputs (map_to_state at input.offset + lane
+    # offset).  This is what keeps pxor/pand/por and reg-to-reg movaps exact
+    # instead of smearing taint across the two 128-bit halves; it needs the guard
+    # so shuffles / cross-lane arithmetic stay on the conservative whole-value path.
+    _lane_ok: bool = load_sub is not None and bool(_slice_ops) and all(
+        _o.opcode.name in _LANE_INDEPENDENT_OPS for _o in _slice_ops
+    )
+
     # Find the index of the first op in all_ops that writes to the output register.
     # Any subsequent op that reads the same register is a read-back of the result
     # (e.g. Ghidra's flag-update patterns) and must NOT be treated as an input dep.
@@ -4177,11 +4201,12 @@ def extract_dependencies(  # noqa: C901
                 rng = _load_byte_range(_out_vn, op.output, all_ops)
                 if rng is not None:
                     _load_off, _load_size = rng
-                    # When the target is one half of a wide register output (the
+                    # When the target is one lane of a wide register output (the
                     # whole 16-byte XMM written in one COPY, as movdqu/movdqa emit),
-                    # _out_vn spans both halves; load_sub narrows the range to the
-                    # bytes of THIS half.
-                    if load_sub is not None:
+                    # _out_vn spans every lane; load_sub narrows the memory range to
+                    # this lane -- the same lane rule as for register inputs above,
+                    # so it only applies on a lane-independent slice.
+                    if _lane_ok and load_sub is not None:
                         sub_off, sub_size = load_sub
                         if sub_off + sub_size <= _load_size:
                             _load_off += sub_off
@@ -4254,10 +4279,20 @@ def extract_dependencies(  # noqa: C901
                 ):  # out_vn handled above
                     continue
 
+                # Lane rule: for a lane-independent slice feeding one 64-bit lane
+                # of a wider result, this wide (>8-byte, i.e. vector) input
+                # contributes only its bytes at the same lane -- input byte j feeds
+                # output byte j.  So map just that 8-byte lane (e.g. the XMM_HI
+                # target of `pxor` reads only XMM0_HI and XMM1_HI, not the low
+                # halves).  Narrow (<=8-byte) inputs are already a single lane.
+                _off, _sz = vn.offset, vn.size
+                if _lane_ok and vn.size > 8 and vn.offset not in ptr_reg_offsets:
+                    _off, _sz = vn.offset + load_sub[0], load_sub[1]  # type: ignore[index]
+
                 # Try the singular map first — preserves the existing
                 # "smallest covering register" semantics for GPRs and
                 # their aliases (RAX → just RAX, not RAX+EAX+AX+AL).
-                mapped_dep = mapper.map_to_state(vn.offset, vn.size)
+                mapped_dep = mapper.map_to_state(_off, _sz)
                 if mapped_dep is not None:
                     mapped_deps: list[RegMapping] = [mapped_dep]
                 else:
@@ -4265,7 +4300,7 @@ def extract_dependencies(  # noqa: C901
                     # back to the multi-mapping form.  This is how XMM
                     # registers (split into XMM<n>_LO + XMM<n>_HI in the
                     # state_format) get all their pieces tracked.
-                    mapped_deps = mapper.map_to_state_all(vn.offset, vn.size)
+                    mapped_deps = mapper.map_to_state_all(_off, _sz)
                 if not mapped_deps:
                     continue
                 for md in mapped_deps:

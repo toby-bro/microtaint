@@ -151,3 +151,44 @@ def test_sse_memcpy_roundtrip_is_byte_exact(tainted_src: set[int]) -> None:
 
     got = {i for i in range(16) if shadow.read_mask(_DST + i, 1)}
     assert got == tainted_src, f'roundtrip: dest bytes {sorted(got)} != source {sorted(tainted_src)}'
+
+
+def _regs_two_xmm() -> list[Register]:
+    return [Register(name=n, bits=64) for n in ('RAX', 'RSI', 'RDI')] + [
+        Register(name='XMM0_LO', bits=64), Register(name='XMM0_HI', bits=64),
+        Register(name='XMM1_LO', bits=64), Register(name='XMM1_HI', bits=64),
+    ]
+
+
+def _bitwise_out(opcode_hex: str, in_values: dict[str, int], in_taint: dict[str, int]) -> tuple[int, int]:
+    circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex(opcode_hex), _regs_two_xmm())
+    out = circuit.evaluate(EvalContext(
+        input_values=in_values, input_taint=in_taint,
+        simulator=CellSimulator(Architecture.AMD64), shadow_memory=BitPreciseShadowMemory(),
+    ))
+    return out.get('XMM0_LO', 0), out.get('XMM0_HI', 0)
+
+
+@pytest.mark.parametrize(('name', 'opcode'), [
+    ('pxor xmm0,xmm1', '660fefc1'),
+    ('por xmm0,xmm1', '660febc1'),
+    ('movaps xmm0,xmm1', '0f28c1'),
+])
+def test_sse2_bitwise_taint_stays_in_lane(name: str, opcode: str) -> None:
+    """A 128-bit bitwise/move op must keep taint within its 64-bit lane: tainting
+    one input half must not bleed into the other output half (the pre-fix bug)."""
+    lo, hi = _bitwise_out(opcode, {}, {'XMM1_HI': _FULL})
+    assert (lo, hi) == (0, _FULL), f'{name}: XMM1_HI taint -> (LO={lo:#x}, HI={hi:#x}), expected only HI'
+    lo, hi = _bitwise_out(opcode, {}, {'XMM1_LO': _FULL})
+    assert (lo, hi) == (_FULL, 0), f'{name}: XMM1_LO taint -> (LO={lo:#x}, HI={hi:#x}), expected only LO'
+
+
+def test_pand_is_lane_exact_and_value_aware() -> None:
+    """pand keeps taint in-lane AND respects masking: a lane ANDed with a concrete
+    0 clears its taint; ANDed with all-ones passes it through, in that lane only."""
+    ones = {'XMM0_LO': _FULL, 'XMM0_HI': _FULL, 'XMM1_LO': _FULL, 'XMM1_HI': _FULL}
+    # mask = all-ones -> taint passes through, in-lane only
+    assert _bitwise_out('660fdbc1', ones, {'XMM1_HI': _FULL}) == (0, _FULL)
+    assert _bitwise_out('660fdbc1', ones, {'XMM1_LO': _FULL}) == (_FULL, 0)
+    # the other operand as a concrete zero mask clears the taint (value-aware AND)
+    assert _bitwise_out('660fdbc1', {}, {'XMM1_HI': _FULL}) == (0, 0)
