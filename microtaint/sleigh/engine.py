@@ -1004,26 +1004,43 @@ def generate_static_rule(
     if _sequence_needs_monolithic(translation.ops, _instr_offsets, _next_instr_addr):
         return circuit  # monolithic circuit preserves cross-instruction deps
 
-    # Build one sub-circuit per instruction, using a state_format augmented
-    # with x86 status flags so that intermediate flag taint (e.g. T_CF produced
-    # by `add rax,rbx`) flows into the next sub-circuit (e.g. `adc rcx,rdx`).
-    # Without flags in the sub-circuit's state_format, CF never appears in the
-    # assignments and ChainedCircuit cannot thread it forward.
-    # The outer state_format may or may not include flags — we add them regardless
-    # for the internal sub-circuits.  The final output dict is filtered back to
-    # only the registers in the caller's state_format by ChainedCircuit.evaluate.
-    _X86_FLAG_REGISTERS: tuple[tuple[str, int], ...] = (
-        ('CF', 1),
-        ('OF', 1),
-        ('ZF', 1),
-        ('SF', 1),
-        ('PF', 1),
-    )
+    # Build one sub-circuit per instruction, using a state_format augmented with
+    # the sequence's intra-instruction intermediate registers so that a carry/flag
+    # produced by one instruction flows into the next (add;adc, subs;sbc,
+    # subcc;subx, subfc;subfe, ...).  Without the carry register in the sub-circuit
+    # state_format its taint never appears in the assignments and ChainedCircuit
+    # cannot thread it forward.
+    #
+    # The set is discovered from the p-code itself -- ANY register-space varnode
+    # that is WRITTEN by one op and READ by another in the sequence is an
+    # intra-sequence intermediate -- so the threading is fully ISA-agnostic: x86
+    # CF/OF, ARM64 C, PPC xer_ca, SPARC i_cf, and any future ISA's condition
+    # register are all picked up by geometry, with no hardcoded per-arch flag list.
+    # Over-inclusion is safe: the final output dict is filtered back to the
+    # caller's state_format by ChainedCircuit.evaluate.
+    _name_by_key: dict[tuple[int, int], str] = {
+        (vn.offset, vn.size): nm for nm, vn in ctx.registers.items() if vn.space.name == 'register'
+    }
+    _written: set[tuple[int, int]] = set()
+    _read: set[tuple[int, int]] = set()
+    for _op in translation.ops:
+        if _op.output is not None and _op.output.space.name == 'register':
+            _written.add((_op.output.offset, _op.output.size))
+        for _inp in _op.inputs:
+            if _inp.space.name == 'register':
+                _read.add((_inp.offset, _inp.size))
     _existing_names = {name for name, _ in reg_names_tuple}
-    _extra_flags = tuple((name, bits) for name, bits in _X86_FLAG_REGISTERS if name not in _existing_names)
-    # Only augment for x86/AMD64 — flag names differ on other arches
-    _is_x86 = arch in (Architecture.AMD64, Architecture.X86)
-    sub_reg_names_tuple = reg_names_tuple + _extra_flags if _is_x86 and _extra_flags else reg_names_tuple
+    # Only thread scalar intermediates (<=8 bytes: flags, carries, GPRs) -- these
+    # are what a carry/condition chain flows through.  Wider register-space
+    # varnodes are vector registers, handled by the SIMD lane machinery, not this
+    # 64-bit-mask state threading; adding one here builds a >64-bit Register and
+    # corrupts the mask path (a 128-bit XMM roundtrip segfaults the native cell).
+    _extra_flags = tuple(
+        (_name_by_key[_k], _k[1] * 8)
+        for _k in sorted(_written & _read)
+        if _k[1] <= 8 and _k in _name_by_key and _name_by_key[_k] not in _existing_names
+    )
+    sub_reg_names_tuple = reg_names_tuple + _extra_flags if _extra_flags else reg_names_tuple
 
     sub_circuits: list[LogicCircuit] = []
     for addr_offset, length in imarks:
