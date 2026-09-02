@@ -2973,8 +2973,8 @@ def generate_taint_assignments(  # noqa: C901
             expr = diff_expr
 
     elif cat == InstructionCategory.MAPPED:
-        _single = make_mapped_single_call()
-        expr = _single if _single is not None else make_differential()
+        mapped_single = make_mapped_single_call()
+        expr = mapped_single if mapped_single is not None else make_differential()
 
     elif cat == InstructionCategory.ORABLE:
         core_ops = [op for op in slice_ops if op.opcode.name not in EXTENSION_OPCODES]
