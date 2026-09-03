@@ -108,14 +108,13 @@ def test_arm64_neon_eor_is_sound() -> None:
     assert set(range(8)).issubset(_vec_tainted_bytes(out, v0, 16))
 
 
-@pytest.mark.xfail(
-    reason='Wide (>8-byte) vector LOAD routes through the 64-bit differential '
-    'kernel, which truncates a single 16-byte LOAD -- exact in the native-width '
-    'differential (M2). Not a regression: non-x86 vectors were untracked before.',
-    strict=False,
-)
 def test_arm64_neon_ldr_q_is_exact() -> None:
-    """`ldr q0, [x1]`: memory byte j (tainted) -> q0 byte j, byte-exact."""
+    """`ldr q0, [x1]`: memory byte j (tainted) -> q0 byte j, byte-exact.
+
+    A wide (>8-byte) vector load is recognised as load-like per 8-byte lane, so
+    each lane reads its own memory taint directly (exact) instead of the 64-bit
+    differential kernel that truncated the single 16-byte LOAD to its low 8 bytes.
+    """
     code = _asm(_KS_ARM, 'ldr q0, [x1]')
     q0 = _reg_off(Architecture.ARM64, 'q0')
     circuit = generate_static_rule(Architecture.ARM64, code, _gp_regs(['x0', 'x1', 'x2']))

@@ -2498,6 +2498,20 @@ def generate_taint_assignments(  # noqa: C901
                 if mapped_load_out and mapped_load_out.name == out_name:
                     is_load_like = True
                     break
+                # Wide (>8-byte) vector load: a single >8-byte varnode maps to no
+                # single state entry (map_to_state returns None), so the check above
+                # misses it and the load falls to the 64-bit differential kernel,
+                # which truncates the load to its low 8 bytes.  Instead recognise
+                # that THIS target is one 8-byte LANE of the wide load output and
+                # keep it load-like: each lane then reads its own memory taint
+                # directly (exact, ISA-general), the load twin of the wide store /
+                # reg-copy lane paths.
+                if load_op.output.size > 8 and any(
+                    m.name == out_name
+                    for m in mapper.map_to_state_all(load_op.output.offset, load_op.output.size)
+                ):
+                    is_load_like = True
+                    break
 
     # Detect whether this register-target instruction has memory inputs
     # OR address-only registers — both cases need MemoryDifferentialExpr
