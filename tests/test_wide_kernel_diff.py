@@ -618,3 +618,67 @@ def test_cell_wide_ppc_vand_avalanche_be() -> None:
     instr = _asm(_KS_PPC, 'vand 0, 1, 2').hex()
     got = _cell_wide_taint(Architecture.PPC32BE, instr, _VR0, 16, {}, {_vlane(_VR1, 8): 0xFF})
     assert got == set(range(16))  # avalanche
+
+
+# ===========================================================================
+# 8. 256-bit AVX (YMM) and the VEX upper-clear.  A VEX-encoded op writes its
+#    result to a 16/32-byte UNIQUE temp, then INT_ZEXTs it into the 512-bit ZMM
+#    (zeroing the upper bytes).  Exercises >128-bit unique storage (uniq_wide)
+#    and the wide-register INT_ZEXT.  x86 is little-endian, the perf-critical ISA.
+# ===========================================================================
+
+_YMM0, _YMM1, _YMM2 = 0x1200, 0x1240, 0x1280
+
+
+def test_cell_wide_vmovdqa_ymm_256() -> None:
+    instr = _asm(_KS_X86, 'vmovdqa ymm0, ymm1').hex()
+    taint = 0xFF | (0xFF << (16 * 8)) | (0xFF << (31 * 8))  # ymm1 bytes 0,16,31
+    _, taints = _lanes_from_wide(0, taint, _YMM1, 32)
+    got = _cell_wide_taint(Architecture.AMD64, instr, _YMM0, 32, {}, taints)
+    assert got == {0, 16, 31}  # exact 32-byte copy
+
+
+def test_cell_wide_vpxor_ymm_256() -> None:
+    # vpxor lands in a 32-byte UNIQUE temp then ZEXTs to the ZMM: needs uniq_wide.
+    instr = _asm(_KS_X86, 'vpxor ymm0, ymm1, ymm2').hex()
+    a = 0xFF | (0xFF << (20 * 8))          # ymm1 bytes 0, 20
+    b = (0xFF << (8 * 8)) | (0xFF << (31 * 8))  # ymm2 bytes 8, 31
+    _, ta = _lanes_from_wide(0, a, _YMM1, 32)
+    _, tb = _lanes_from_wide(0, b, _YMM2, 32)
+    got = _cell_wide_taint(Architecture.AMD64, instr, _YMM0, 32, {}, {**ta, **tb})
+    assert got == {0, 8, 20, 31}  # exact byte union across 32 bytes
+
+
+def test_cell_wide_vpxor_xmm_avx128_upper_clear() -> None:
+    # AVX-128 vpxor xmm still emits the ZEXT-to-ZMM upper-clear (uniq:16 -> reg:64).
+    instr = _asm(_KS_X86, 'vpxor xmm0, xmm1, xmm2').hex()
+    a = 0x00000000FFFFFFFF   # xmm1 bytes 0-3
+    b = 0xFFFFFFFF00000000   # xmm2 bytes 4-7
+    _, ta = _lanes_from_wide(0, a, _XMM1, 16)
+    _, tb = _lanes_from_wide(0, b, 0x1280, 16)  # xmm2
+    got = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, {**ta, **tb})
+    assert got == set(range(8))  # low lane union; high lane clean
+
+
+def test_cell_wide_vpand_ymm_avalanche() -> None:
+    instr = _asm(_KS_X86, 'vpand ymm0, ymm1, ymm2').hex()
+    got = _cell_wide_taint(Architecture.AMD64, instr, _YMM0, 32, {}, {_vlane(_YMM1, 8): 0xFF})
+    assert got == set(range(32))  # CALLOTHER -> avalanche across all 32 bytes
+
+
+def test_cell_wide_vmovdqu_ymm_load_256() -> None:
+    instr = _asm(_KS_X86, 'vmovdqu ymm0, [rdi]').hex()
+    src, tb = 0x5000, {0, 1, 15, 16, 31}
+    got = _cell_wide_taint_sleigh(
+        Architecture.AMD64, instr, _YMM0, 32, {'RDI': src}, _mem_byte_taints(src, tb), be=False)
+    assert got == tb  # memory byte j -> register byte j across 32 bytes
+
+
+def test_cell_wide_vmovdqu_ymm_store_256() -> None:
+    instr = _asm(_KS_X86, 'vmovdqu [rdi], ymm0').hex()
+    dst = 0x6000
+    # ymm0 low 16 bytes tainted (lanes 0,1), high 16 clean (lanes 2,3).
+    taints = {_vlane(_YMM0, 0): _FULL, _vlane(_YMM0, 8): _FULL,
+              _vlane(_YMM0, 16): 0, _vlane(_YMM0, 24): 0}
+    got = _cell_store_mem_taint(Architecture.AMD64, instr, dst, 32, {'RDI': dst}, taints)
+    assert got == set(range(16))  # register bytes 0-15 -> memory bytes 0-15

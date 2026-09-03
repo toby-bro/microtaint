@@ -539,6 +539,12 @@ cdef class _PCodeFrame:
     # (CQO/INT_SEXT, MUL/IMUL widening, DIV/IDIV 128-bit dividend).
     cdef uint64_t uniq_hi[32]
     cdef uint8_t  uniq_hi_set[32]
+    # Overflow store for unique temps WIDER than 128 bits (AVX YMM/ZMM, RISC-V V:
+    # a 32/64-byte INT_XOR/COPY/LOAD lands in a unique varnode).  slot -> Python
+    # int of the full value.  uniq_arr/uniq_hi still mirror the low 128 bits so
+    # the fast <=8B / 128-bit unique reads never consult this dict; only >16-byte
+    # reads do.  Touched only by wide ops, so the LE fast path is unaffected.
+    cdef public dict uniq_wide
     # Cold byte-addressable store for offsets >= REGS_ARR_SIZE (vector registers
     # x86 XMM/YMM/ZMM, ARM q/z, PPC vs + rare cold regs).  Endianness-neutral:
     # vecb[sleigh_offset] = one byte (0-255).  Scalar (<=8B) and wide (>8B)
@@ -564,6 +570,7 @@ cdef class _PCodeFrame:
             self.uniq_hi_set[i] = 0
         self.dirty_count = 0
         self.vecb      = {}
+        self.uniq_wide = {}
         self.mem       = {}
         self._arch     = None
         self._is_big_endian = 0
@@ -764,11 +771,18 @@ cdef class _PCodeFrame:
 
     cdef object _read_wide(self, int sp, unsigned long off, int sz):
         """Arbitrary-width read of any operand space, as a Python int (no 64-bit
-        cap).  Used by the wide (>8-byte) register-space op handlers."""
-        cdef object lo, hi
+        cap).  Used by the wide (>8-byte) op handlers."""
+        cdef object lo, hi, w
         if sp == SP_REGISTER:
+            if sz <= 8:
+                # <=8B register (incl. hot GP regs on regs_arr) -> the fast read.
+                return <object>self.read_d(SP_REGISTER, off, sz)
             return self._read_reg_wide(<long>off, sz)
         if sp == SP_UNIQUE:
+            if sz > 16:
+                w = self.uniq_wide.get(off)
+                if w is not None:
+                    return w
             if off < 32:
                 lo = (<object>self.uniq_arr[off]) if self.uniq_set[off] else <object>0
                 hi = (<object>self.uniq_hi[off]) if self.uniq_hi_set[off] else <object>0
@@ -776,12 +790,15 @@ cdef class _PCodeFrame:
             return <object>0
         if sp == SP_CONST:
             return (<object>off) & (((<object>1) << (sz * 8)) - 1)
+        if sp == SP_RAM:
+            return self._read_mem_wide(<uint64_t>off, sz)
         return <object>0
 
     cdef void _write_wide(self, int sp, unsigned long off, int sz, object val):
         """Arbitrary-width write of a Python int to a register or unique varnode
-        (the wide COPY/LOAD destinations).  Unique keeps the 128-bit low/high
-        split; register uses the byte store."""
+        (the wide COPY/LOAD/bitwise destinations).  Register uses the byte store;
+        unique keeps the fast 128-bit low/high split and, for >128 bits, an
+        overflow entry in uniq_wide."""
         if sp == SP_REGISTER:
             self._write_reg_wide(<long>off, sz, val)
         elif sp == SP_UNIQUE and off < 32:
@@ -789,6 +806,10 @@ cdef class _PCodeFrame:
             self.uniq_set[off]    = 1
             self.uniq_hi[off]     = <uint64_t>((val >> 64) & 0xFFFFFFFFFFFFFFFF)
             self.uniq_hi_set[off] = 1
+            if sz > 16:
+                self.uniq_wide[off] = val & (((<object>1) << (sz * 8)) - 1)
+            elif self.uniq_wide:
+                self.uniq_wide.pop(off, None)   # a narrower write invalidates the stale wide value
 
     cdef inline void _write_mem(self, uint64_t addr, uint64_t val, int size) noexcept:
         cdef int i, shift
@@ -846,6 +867,8 @@ cdef class _PCodeFrame:
                 self.uniq_hi_set[i] = 0
         if self.vecb:
             self.vecb.clear()
+        if self.uniq_wide:
+            self.uniq_wide.clear()
         self.mem.clear()
 
     # ------------------------------------------------------------------
@@ -971,15 +994,8 @@ cdef void _execute_decoded(
             # 16/32/64-byte movdqu / ldr q / lvx keeps every byte's taint instead
             # of truncating to the low 8.
             if oid == OP_LOAD and o_sz > 8:
-                _wide_val = frame._read_mem_wide(
-                    frame.read_d(i1_sp, i1_off, i1_sz), o_sz)
-                if o_sp == SP_REGISTER:
-                    frame._write_reg_wide(o_off, o_sz, _wide_val)
-                elif o_sp == SP_UNIQUE and o_off < 32:
-                    frame.uniq_arr[o_off]    = <uint64_t>(_wide_val & 0xFFFFFFFFFFFFFFFF)
-                    frame.uniq_set[o_off]    = 1
-                    frame.uniq_hi[o_off]     = <uint64_t>((_wide_val >> 64) & 0xFFFFFFFFFFFFFFFF)
-                    frame.uniq_hi_set[o_off] = 1
+                frame._write_wide(o_sp, o_off, o_sz, frame._read_mem_wide(
+                    frame.read_d(i1_sp, i1_off, i1_sz), o_sz))
                 pc += 1
                 continue
 
@@ -1001,30 +1017,51 @@ cdef void _execute_decoded(
                 pc += 1
                 continue
 
-            # Register-space wide bitwise ops (vector registers live in the cold
-            # byte store, offset >= REGS_ARR_SIZE, and exceed the 64-bit scalar
-            # dispatch).  Byte-parallel propagation at arbitrary width via
-            # Python-int values, so the high lanes are exact instead of being
-            # truncated / mirrored from the low lane by the 64-bit cold path.
-            # The value read (V) and the differential's forced V|T / V&~T inputs
-            # each run through here, so the taint (their XOR) is exact for free.
-            if o_sp == SP_REGISTER and o_sz > 8:
+            # Wide bitwise ops on ANY space pair (register vector file OR a wide
+            # unique temp -- AVX/AVX-512 route vpxor/vpand through a 16/32/64-byte
+            # unique).  Byte-parallel propagation at arbitrary width via Python-int
+            # values, so the high lanes are exact instead of being truncated /
+            # mirrored by the 64-bit cold path.  The value read (V) and the
+            # differential's forced V|T / V&~T inputs each run through here, so the
+            # taint (their XOR) is exact for free.
+            if o_sz > 8:
                 if oid == OP_INT_XOR:
-                    frame._write_reg_wide(o_off, o_sz,
+                    frame._write_wide(o_sp, o_off, o_sz,
                         frame._read_wide(i0_sp, i0_off, i0_sz)
                         ^ frame._read_wide(i1_sp, i1_off, i1_sz))
                     pc += 1
                     continue
                 if oid == OP_INT_AND:
-                    frame._write_reg_wide(o_off, o_sz,
+                    frame._write_wide(o_sp, o_off, o_sz,
                         frame._read_wide(i0_sp, i0_off, i0_sz)
                         & frame._read_wide(i1_sp, i1_off, i1_sz))
                     pc += 1
                     continue
                 if oid == OP_INT_OR:
-                    frame._write_reg_wide(o_off, o_sz,
+                    frame._write_wide(o_sp, o_off, o_sz,
                         frame._read_wide(i0_sp, i0_off, i0_sz)
                         | frame._read_wide(i1_sp, i1_off, i1_sz))
+                    pc += 1
+                    continue
+
+            # Wide register-output ops: byte store destinations only.
+            if o_sp == SP_REGISTER and o_sz > 8:
+                # INT_ZEXT / INT_SEXT into a wide register: the VEX upper-clear
+                # (writing xmm/ymm zeroes the rest of the 512-bit ZMM).  ZEXT
+                # zero-fills; SEXT sign-fills from bit i0_sz*8-1.
+                if oid == OP_INT_ZEXT:
+                    frame._write_reg_wide(o_off, o_sz,
+                        frame._read_wide(i0_sp, i0_off, i0_sz)
+                        & (((<object>1) << (i0_sz * 8)) - 1))
+                    pc += 1
+                    continue
+                if oid == OP_INT_SEXT:
+                    _wide_val = (frame._read_wide(i0_sp, i0_off, i0_sz)
+                                 & (((<object>1) << (i0_sz * 8)) - 1))
+                    if _wide_val >> (i0_sz * 8 - 1):
+                        _wide_val = _wide_val | (
+                            (((<object>1) << (o_sz * 8 - i0_sz * 8)) - 1) << (i0_sz * 8))
+                    frame._write_reg_wide(o_off, o_sz, _wide_val)
                     pc += 1
                     continue
                 if oid == OP_INT_NEGATE:
