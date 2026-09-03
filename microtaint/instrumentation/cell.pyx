@@ -714,7 +714,8 @@ cdef class _PCodeFrame:
             v = self.vecb.get(off + k)
             if v is not None:
                 be_shift = (sz - 1 - k) * 8 if self._is_big_endian else k * 8
-                base |= (<uint64_t><int>v) << be_shift
+                if be_shift < 64:   # this uint64 read only holds the low 8 bytes;
+                    base |= (<uint64_t><int>v) << be_shift  # a >8B varnode is read via _read_reg_wide
             k += 1
         return _mask64(base, sz)
 
@@ -1019,6 +1020,32 @@ cdef void _execute_decoded(
                 if oid == OP_INT_NEGATE:
                     frame._write_reg_wide(o_off, o_sz,
                         (~frame._read_wide(i0_sp, i0_off, i0_sz))
+                        & (((<object>1) << (o_sz * 8)) - 1))
+                    pc += 1
+                    continue
+                # Whole-register byte shifts (x86 psrldq/pslldq lift to a single
+                # >8-byte INT_RIGHT/INT_LEFT).  Position-sensitive, so they run on
+                # the target-endian integer value (assembled by _read_wide); the
+                # differential still yields exact per-byte taint.
+                if oid == OP_INT_RIGHT:
+                    frame._write_reg_wide(o_off, o_sz,
+                        frame._read_wide(i0_sp, i0_off, i0_sz)
+                        >> frame.read_d(i1_sp, i1_off, i1_sz))
+                    pc += 1
+                    continue
+                if oid == OP_INT_LEFT:
+                    frame._write_reg_wide(o_off, o_sz,
+                        (frame._read_wide(i0_sp, i0_off, i0_sz)
+                         << frame.read_d(i1_sp, i1_off, i1_sz))
+                        & (((<object>1) << (o_sz * 8)) - 1))
+                    pc += 1
+                    continue
+                if oid == OP_INT_SRIGHT:
+                    _wide_val = frame._read_wide(i0_sp, i0_off, i0_sz)
+                    if _wide_val >> (o_sz * 8 - 1):   # sign bit set
+                        _wide_val = _wide_val - ((<object>1) << (o_sz * 8))
+                    frame._write_reg_wide(o_off, o_sz,
+                        (_wide_val >> frame.read_d(i1_sp, i1_off, i1_sz))
                         & (((<object>1) << (o_sz * 8)) - 1))
                     pc += 1
                     continue

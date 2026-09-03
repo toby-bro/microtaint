@@ -17,9 +17,8 @@ Three ingredients
   INT_NEGATE, LOAD) the concrete op is plain Python integer arithmetic at
   arbitrary width, so the oracle is trivially correct and independent of BOTH
   kernels.  These ops are byte-parallel (output byte j depends only on input
-  byte j), hence endianness-agnostic; the position-sensitive integer ops
-  (INT_ZEXT/SEXT, SUBPIECE, PIECE) are deferred to the kernel-build increment
-  with their own big-endian anchors.
+  byte j), hence endianness-agnostic; the position-sensitive whole-register
+  shifts (psrldq/pslldq -> INT_RIGHT/INT_LEFT) run on the target-endian value.
 
 * ``_engine_wide_taint`` -- PATH A, the CURRENT behaviour.  Drives the full rule
   engine (``generate_static_rule`` + ``circuit.evaluate``) exactly like
@@ -34,14 +33,14 @@ Three ingredients
   kernel (``PCodeCellEvaluator.evaluate_differential``) directly, addressing each
   8-byte output lane by its absolute offset via a ``VL_<hex>`` output name, with
   the wide op fed as a single real instruction.  Every vector register lives in
-  the cold ``self.regs`` dict (offset >= 1104); the wide-register handlers
-  (Stage 1a) propagate movement and byte-parallel bitwise at arbitrary width via
-  Python-int values, so the high lanes are exact.  Before Stage 1a the 64-bit
-  cold path truncated / mirrored the high lanes (an ``x >> 64`` shift returning
-  the low lane); the four ``test_cell_wide_*`` tests pin those exact defects so
-  they cannot regress.  The scalar (<=8-byte) path through the SAME driver
-  matches the oracle too, proving the driver is sound and the fast path is
-  untouched.
+  an endianness-neutral cold byte store (offset >= 1104); the wide-register
+  handlers (Stage 1a) propagate movement, byte-parallel bitwise, LOAD/STORE and
+  whole-register shifts at arbitrary width via Python-int values, so the high
+  lanes are exact under both endiannesses.  Before Stage 1a the 64-bit cold path
+  truncated / mirrored the high lanes (an ``x >> 64`` shift returning the low
+  lane); the ``test_cell_wide_*`` tests pin those exact defects so they cannot
+  regress.  The scalar (<=8-byte) path through the SAME driver matches the oracle
+  too, proving the driver is sound and the fast path is untouched.
 """
 
 from __future__ import annotations
@@ -558,3 +557,28 @@ def test_cell_wide_store_ppc_stvx_be() -> None:
     got = _cell_store_mem_taint(
         Architecture.PPC32BE, instr, dst, 16, {'R1': dst, 'R2': 0}, taints)
     assert got == set(range(8))  # register bytes 0-7 -> memory bytes 0-7, under BE
+
+
+# ===========================================================================
+# 6. Whole-register byte shifts (x86 psrldq/pslldq -> a single >8-byte
+#    INT_RIGHT/INT_LEFT).  Position-sensitive: output byte j takes input byte
+#    j +/- shift; bytes shifted past either end are dropped (clean).
+# ===========================================================================
+
+
+def test_cell_wide_psrldq_byte_shift() -> None:
+    # psrldq xmm0, 4 : logical right shift by 4 bytes -> output byte j = input j+4.
+    instr = _asm(_KS_X86, 'psrldq xmm0, 4').hex()
+    taint = (0xFF << (4 * 8)) | (0xFF << (8 * 8)) | (0xFF << (15 * 8))  # in bytes 4,8,15
+    _, taints = _lanes_from_wide(0, taint, _XMM0, 16)
+    got = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, taints)
+    assert got == {0, 4, 11}  # 4->0, 8->4, 15->11 (bytes < shift are dropped)
+
+
+def test_cell_wide_pslldq_byte_shift() -> None:
+    # pslldq xmm0, 4 : left shift by 4 bytes -> output byte j = input byte j-4.
+    instr = _asm(_KS_X86, 'pslldq xmm0, 4').hex()
+    taint = 0xFF | (0xFF << (7 * 8)) | (0xFF << (11 * 8))  # in bytes 0,7,11
+    _, taints = _lanes_from_wide(0, taint, _XMM0, 16)
+    got = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, taints)
+    assert got == {4, 11, 15}  # 0->4, 7->11, 11->15 (bytes past the top are dropped)
