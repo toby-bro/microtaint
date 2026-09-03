@@ -30,24 +30,24 @@ Three ingredients
   exact ops, it VALIDATES the oracle against known-good output in both
   endiannesses.
 
-* ``_cell_wide_taint`` -- PATH B, the FUTURE behaviour.  Drives the cell kernel
-  (``PCodeCellEvaluator.evaluate_differential``) directly, addressing each 8-byte
-  output lane by its absolute offset via a ``VL_<hex>`` output name, with the
-  wide op fed as a single real instruction.  TODAY this truncates: every vector
-  register lives in the cold ``self.regs`` dict (offset >= 1104) and the 64-bit
-  cold-path read/write does not carry bytes past the low 8 of a lane's parent
-  (an ``x >> 64`` shift), so a wide reg->reg op mis-propagates the high lanes.
-  Those cases are marked ``xfail`` and are the Stage-1a checklist: when the
-  width-native kernel lands they turn green and the markers come off.  The scalar
-  (<=8-byte) path through the SAME driver already matches the oracle, proving the
-  driver is sound and the fast path is untouched.
+* ``_cell_wide_taint`` -- PATH B, the width-native cell kernel.  Drives the cell
+  kernel (``PCodeCellEvaluator.evaluate_differential``) directly, addressing each
+  8-byte output lane by its absolute offset via a ``VL_<hex>`` output name, with
+  the wide op fed as a single real instruction.  Every vector register lives in
+  the cold ``self.regs`` dict (offset >= 1104); the wide-register handlers
+  (Stage 1a) propagate movement and byte-parallel bitwise at arbitrary width via
+  Python-int values, so the high lanes are exact.  Before Stage 1a the 64-bit
+  cold path truncated / mirrored the high lanes (an ``x >> 64`` shift returning
+  the low lane); the four ``test_cell_wide_*`` tests pin those exact defects so
+  they cannot regress.  The scalar (<=8-byte) path through the SAME driver
+  matches the oracle too, proving the driver is sound and the fast path is
+  untouched.
 """
 
 from __future__ import annotations
 
 import types
 
-import pytest
 from keystone import (
     KS_ARCH_ARM64,
     KS_ARCH_PPC,
@@ -347,27 +347,20 @@ def test_cell_scalar_xor_matches_oracle() -> None:
 _XMM0 = 0x1200
 _XMM1 = 0x1240
 
-# Characterisation (measured, cell.pyx use_c=False): every vector register sits
-# in the cold ``self.regs`` dict (offset >= 1104), and its 64-bit cold-path
-# read/write cannot carry bytes past the low 8 of a lane's parent.  The high lane
-# (bytes 8-15) of a wide reg->reg op is therefore computed wrong, in BOTH
-# directions depending on the opcode:
-#   COPY : high lane mirrors the low lane (over-taints when only the low lane is
-#          tainted; UNDER-TAINTS -- drops real taint -- when only the high lane is)
-#   XOR  : high lane is dropped to 0 (UNDER-TAINTS whenever the high lane carries taint)
-#   AND  : high lane ignores its operand's concrete value (value-aware clear fails)
-# The two under-taints are soundness violations, reachable at the cell level; in
-# production the rule engine hides them by splitting wide varnodes into VL_ lanes
-# and never routing a wide reg op through the cell.  The width-native kernel makes
-# the cell itself correct so the splitting can be deleted.  Each test below pins
-# the EXACT taint a human expects (never the current engine output) on an input
-# verified to expose the defect; strict=True flips XPASS->fail the instant the
-# kernel is fixed, forcing removal of the marker (a red->green ratchet).
+# These four cases pin defects that existed BEFORE the width-native kernel (and
+# were measured on cell.pyx use_c=False): every vector register sits in the cold
+# ``self.regs`` dict (offset >= 1104), and the old 64-bit cold path could not
+# carry bytes past the low 8 of a lane's parent, so the high lane (bytes 8-15) of
+# a wide reg->reg op was computed wrong in BOTH directions depending on opcode:
+#   COPY : high lane mirrored the low lane (over-taint when only the low lane was
+#          tainted; UNDER-TAINT -- dropped real taint -- when only the high lane was)
+#   XOR  : high lane dropped to 0 (UNDER-TAINT whenever the high lane carried taint)
+#   AND  : high lane ignored its operand's concrete value (value-aware clear failed)
+# The two under-taints were soundness violations, reachable at the cell level.
+# Each test asserts the EXACT taint a human expects (never engine output) on an
+# input that exercises the high lane, so the width-native handlers cannot regress.
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='Stage-1a: cold-dict wide reg->reg COPY drops high-lane '
-                          'taint (soundness under-taint); width-native kernel pending')
 def test_cell_wide_copy_high_lane_undertaint() -> None:
     # movdqa xmm0, xmm1 with ONLY xmm1's high lane (bytes 8-15) tainted.
     instr = _asm(_KS_X86, 'movdqa xmm0, xmm1').hex()
@@ -378,9 +371,6 @@ def test_cell_wide_copy_high_lane_undertaint() -> None:
     assert got == _oracle_taint('copy', [(0, taint)], 16) == set(range(8, 16))
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='Stage-1a: cold-dict wide reg->reg COPY mirrors the low '
-                          'lane into the high lane (over-taint); width-native kernel pending')
 def test_cell_wide_copy_high_lane_overtaint() -> None:
     # movdqa xmm0, xmm1 with ONLY xmm1's low lane tainted.
     instr = _asm(_KS_X86, 'movdqa xmm0, xmm1').hex()
@@ -391,9 +381,6 @@ def test_cell_wide_copy_high_lane_overtaint() -> None:
     assert got == _oracle_taint('copy', [(0, taint)], 16) == set(range(8))
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='Stage-1a: cold-dict wide INT_XOR drops the high lane to 0 '
-                          '(soundness under-taint); width-native kernel pending')
 def test_cell_wide_xor_high_lane_undertaint() -> None:
     # pxor xmm0, xmm1 with taint ONLY in the high lane (xmm1 bytes 8-15).
     instr = _asm(_KS_X86, 'pxor xmm0, xmm1').hex()
@@ -404,9 +391,6 @@ def test_cell_wide_xor_high_lane_undertaint() -> None:
     assert got == _oracle_taint('xor', [(0, 0), (0, b)], 16) == set(range(8, 16))
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='Stage-1a: cold-dict wide INT_AND ignores the high lane '
-                          "operand's concrete value (value-aware clear fails); kernel pending")
 def test_cell_wide_and_high_lane_value_aware() -> None:
     # pand xmm0, xmm1 : xmm0 fully tainted; xmm1 low lane concrete ~0 (passes the
     # taint), high lane concrete 0 (masks it away).  Human-expected: low tainted,

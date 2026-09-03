@@ -696,23 +696,92 @@ cdef class _PCodeFrame:
 
             return _mask64(base, sz)
 
-        # Cold path: dict fallback
+        # Cold path: dict fallback.  Vector registers (offset >= REGS_ARR_SIZE)
+        # can hold arbitrary-width Python-int values written by the wide-SIMD
+        # path, so the sub-range extraction is done in the Python-int domain:
+        # masking to uint64 first would drop every byte above the low 8, and a
+        # shift by >= 64 (a high lane of a >8-byte parent) is undefined in C and
+        # on x86 silently returns the low lane.
         v = self.regs.get(off)
         if v is not None:
-            uv = <uint64_t>(v & 0xFFFFFFFFFFFFFFFF)
-            return _mask64(uv, sz)
+            return _mask64(<uint64_t>((<object>v) & 0xFFFFFFFFFFFFFFFF), sz)
         for k, kv in self.reg_sizes.items():
             k_sz = <int>kv
             if k <= off < k + k_sz:
                 v = self.regs.get(k)
                 if v is not None:
                     byte_off = off - k
-                    uv = <uint64_t>(v & 0xFFFFFFFFFFFFFFFF)
                     if self._is_big_endian:
                         be_shift = (<long>k_sz - byte_off - sz) * 8
-                        return _mask64(uv >> be_shift, sz) if 0 <= be_shift < 64 else 0
-                    return _mask64(uv >> (byte_off * 8), sz)
+                        if be_shift < 0:
+                            return 0
+                        return _mask64(<uint64_t>(((<object>v) >> be_shift) & 0xFFFFFFFFFFFFFFFF), sz)
+                    return _mask64(<uint64_t>(((<object>v) >> (byte_off * 8)) & 0xFFFFFFFFFFFFFFFF), sz)
         return 0
+
+    # ------------------------------------------------------------------
+    # Arbitrary-width (>8-byte) register access for the cold vector region.
+    # SIMD registers (x86 XMM/YMM/ZMM, ARM q/z, PPC vs) all live in the cold
+    # self.regs dict (offset >= REGS_ARR_SIZE); the hot regs_arr fast path
+    # (offset < REGS_ARR_SIZE, GP + flags) is never touched by these.  Values
+    # are Python ints of arbitrary width, stored LE-internal: byte off+j at
+    # bits [8j, 8j+8).  Byte-parallel ops (COPY/AND/OR/XOR/NEGATE) need no endian
+    # handling because that convention cancels across read/op/write; endianness
+    # only matters when a position-sensitive op assembles the target-endian value.
+    # ------------------------------------------------------------------
+
+    cdef object _read_reg_wide(self, long off, int sz):
+        """Read ``sz`` bytes from the cold register file as one Python int.
+
+        Gathers every stored entry overlapping ``[off, off+sz)`` -- an exact wide
+        entry, a wider parent, and non-overlapping 8-byte input lanes all
+        reconstruct without truncation."""
+        cdef object base = 0
+        cdef object v, wmask
+        cdef long k_off, lo, hi
+        cdef int  k_sz, width_bytes
+        cdef object full = ((<object>1) << (sz * 8)) - 1
+        for k_off, k_sz_obj in self.reg_sizes.items():
+            k_sz = <int>k_sz_obj
+            lo = k_off if k_off > off else off
+            hi = (k_off + k_sz) if (k_off + k_sz) < (off + sz) else (off + sz)
+            if lo < hi:
+                v = self.regs.get(k_off)
+                if v is not None:
+                    width_bytes = <int>(hi - lo)
+                    wmask = ((<object>1) << (width_bytes * 8)) - 1
+                    base = base | ((((<object>v) >> ((lo - k_off) * 8)) & wmask) << ((lo - off) * 8))
+        return base & full
+
+    cdef void _write_reg_wide(self, long off, int sz, object val):
+        """Store an arbitrary-width Python int as a single cold-region entry
+        (LE-internal) and drop any narrower entries strictly inside
+        ``(off, off+sz)`` so a later wide or lane read reconstructs cleanly."""
+        cdef object full = ((<object>1) << (sz * 8)) - 1
+        cdef list stale
+        cdef object kk
+        self.regs[off] = val & full
+        self.reg_sizes[off] = sz
+        stale = [kk for kk in self.regs if off < (<long>kk) < off + sz]
+        for kk in stale:
+            self.regs.pop(kk, None)
+            self.reg_sizes.pop(kk, None)
+
+    cdef object _read_wide(self, int sp, unsigned long off, int sz):
+        """Arbitrary-width read of any operand space, as a Python int (no 64-bit
+        cap).  Used by the wide (>8-byte) register-space op handlers."""
+        cdef object lo, hi
+        if sp == SP_REGISTER:
+            return self._read_reg_wide(<long>off, sz)
+        if sp == SP_UNIQUE:
+            if off < 32:
+                lo = (<object>self.uniq_arr[off]) if self.uniq_set[off] else <object>0
+                hi = (<object>self.uniq_hi[off]) if self.uniq_hi_set[off] else <object>0
+                return lo | (hi << 64)
+            return <object>0
+        if sp == SP_CONST:
+            return (<object>off) & (((<object>1) << (sz * 8)) - 1)
+        return <object>0
 
     cdef inline void _write_mem(self, uint64_t addr, uint64_t val, int size) noexcept:
         cdef int i, shift
@@ -867,6 +936,44 @@ cdef void _execute_decoded(
         # inputs -- slipped straight to the 64-bit dispatch and truncated.  Still
         # False for >99.9% of ops, so no measurable hot-path cost.
         if o_sz > 8 or i0_sz > 8 or i1_sz > 8:
+
+            # Register-space wide ops (vector registers live in the cold dict,
+            # offset >= REGS_ARR_SIZE, and exceed the 64-bit scalar dispatch).
+            # Movement and byte-parallel bitwise propagate at arbitrary width via
+            # Python-int values, so the high lanes are exact instead of being
+            # truncated / mirrored from the low lane by the 64-bit cold path.
+            # The value read (V) and the differential's forced V|T / V&~T inputs
+            # each run through here, so the taint (their XOR) is exact for free.
+            if o_sp == SP_REGISTER and o_sz > 8:
+                if oid == OP_COPY:
+                    frame._write_reg_wide(o_off, o_sz,
+                        frame._read_wide(i0_sp, i0_off, i0_sz))
+                    pc += 1
+                    continue
+                if oid == OP_INT_XOR:
+                    frame._write_reg_wide(o_off, o_sz,
+                        frame._read_wide(i0_sp, i0_off, i0_sz)
+                        ^ frame._read_wide(i1_sp, i1_off, i1_sz))
+                    pc += 1
+                    continue
+                if oid == OP_INT_AND:
+                    frame._write_reg_wide(o_off, o_sz,
+                        frame._read_wide(i0_sp, i0_off, i0_sz)
+                        & frame._read_wide(i1_sp, i1_off, i1_sz))
+                    pc += 1
+                    continue
+                if oid == OP_INT_OR:
+                    frame._write_reg_wide(o_off, o_sz,
+                        frame._read_wide(i0_sp, i0_off, i0_sz)
+                        | frame._read_wide(i1_sp, i1_off, i1_sz))
+                    pc += 1
+                    continue
+                if oid == OP_INT_NEGATE:
+                    frame._write_reg_wide(o_off, o_sz,
+                        (~frame._read_wide(i0_sp, i0_off, i0_sz))
+                        & (((<object>1) << (o_sz * 8)) - 1))
+                    pc += 1
+                    continue
 
             if oid == OP_INT_SEXT and o_sp == SP_UNIQUE and o_sz > 8:
                 # Sign-extend source (≤8 bytes) to 16 bytes.
