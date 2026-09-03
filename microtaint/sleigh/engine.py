@@ -4157,114 +4157,6 @@ def _exact_store_lane_targets(
     return out_asgs
 
 
-def _trace_wide_regcopy_source(out_vn: Varnode, all_ops: list[PcodeOp]) -> Varnode | None:
-    """The register a wide (>8-byte) register OUTPUT is a verbatim byte-for-byte
-    COPY of, or None.  The reg->reg twin of _trace_wide_store_source: a single
-    16/32/64-byte COPY (ARM64 `mov v0,v1`/`orr`, PPC `vor`) cannot route through
-    the 64-bit differential kernel (it truncates to the low 8 bytes), so we detect
-    the pattern here and wire each 8-byte lane as an exact pure copy instead."""
-    for op in all_ops:
-        o = op.output
-        if o is not None and o.space.name == 'register' and o.offset == out_vn.offset and o.size == out_vn.size:
-            if op.opcode.name == 'COPY' and len(op.inputs) == 1 and op.inputs[0].size == out_vn.size:
-                return _trace_wide_store_source(op.inputs[0], all_ops)
-            return None
-    return None
-
-
-def _exact_regcopy_lane_targets(
-    out_vn: Varnode, src_reg: Varnode, mapper: StateMapper,
-) -> list[TaintAssignment] | None:
-    """One exact 8-byte-lane assignment per sub-range of a wide reg->reg copy:
-    output lane [k, k+8) gets EXACTLY the taint of source lane [k, k+8) as a pure
-    TaintOperand (no differential), so wider-than-64-bit vector moves are lane-
-    exact on any ISA.  None if any lane fails to resolve to a single state reg."""
-    lanes: list[tuple[RegMapping, RegMapping]] = []
-    for k in range(0, out_vn.size, 8):
-        csize = min(8, out_vn.size - k)
-        tgt = mapper.map_to_state(out_vn.offset + k, csize)
-        src = mapper.map_to_state(src_reg.offset + k, csize)
-        if tgt is None or src is None:
-            return None
-        lanes.append((tgt, src))
-    out_asgs: list[TaintAssignment] = []
-    for tgt, src in lanes:
-        tgt_target, _n, _bs, _be = generate_output_target(tgt)
-        src_expr: Expr = _get_taint_operand(src.name, src.bit_start, src.bit_end, True)
-        out_asgs.append(TaintAssignment(target=tgt_target, dependencies=[src_expr], expression=src_expr))
-    return out_asgs
-
-
-def _trace_wide_bitwise_op(out_vn: Varnode, all_ops: list[PcodeOp]) -> PcodeOp | None:
-    """The single INT_OR/INT_AND op that defines a wide (>8-byte) register output
-    from two same-size register inputs, or None.  This is the pand/por/vand/vor
-    shape SLEIGH lifts as one >8-byte bitwise op."""
-    for op in all_ops:
-        o = op.output
-        if o is not None and o.space.name == 'register' and o.offset == out_vn.offset and o.size == out_vn.size:
-            if (
-                op.opcode.name in ('INT_OR', 'INT_AND')
-                and len(op.inputs) == 2
-                and all(i.space.name == 'register' and i.size == out_vn.size for i in op.inputs)
-            ):
-                return op
-            return None
-    return None
-
-
-def _wide_bitwise_lane_targets(
-    out_vn: Varnode, op: PcodeOp, mapper: StateMapper,
-) -> list[TaintAssignment] | None:
-    """Per-lane taint for a wide (>8-byte) reg INT_OR/INT_AND on SYNTHESISED (VL_)
-    lanes, bypassing the 64-bit differential kernel that truncates the single
-    >8-byte op (which under-tainted every lane above the low 8).
-
-    INT_OR takes the EXACT value-aware closed form.  A result bit `a | b` is
-    tainted iff flipping a tainted input could change it, i.e. the other operand
-    is 0 (or itself tainted):
-
-        out_t = a_t & (~b_v | b_t)  |  b_t & (~a_v | a_t)
-
-    so a lane OR-ed with a concrete ~0 correctly clears its taint when the operand
-    lane VALUES are supplied in input_values (the pand/por contract).  With values
-    absent it degrades to the sound union (~b_v -> ~0), so it is sound either way.
-
-    INT_AND takes the sound value-independent union (a_t | b_t).  The exact AND
-    form (a_t & (b_v|b_t) | ...) is EXACT only with correct values and UNDER-taints
-    without them, and no supported ISA lifts a wide AND to a single synth-lane
-    INT_AND (PPC vand -> CALLOTHER, ARM64 and -> per-byte, x86 pand -> listed lanes
-    + 128-bit cell), so there is no value-providing caller for it here; the union
-    is the safe rule.
-
-    Fires ONLY for synth lanes; listed lanes (x86 XMM) keep the exact cell path.
-    Returns None to fall through when a lane is unresolved or not synth."""
-    is_or = op.opcode.name == 'INT_OR'
-    a, b = op.inputs[0], op.inputs[1]
-    out_asgs: list[TaintAssignment] = []
-    for k in range(0, out_vn.size, 8):
-        csize = min(8, out_vn.size - k)
-        tgt = mapper.map_to_state(out_vn.offset + k, csize)
-        a_lane = mapper.map_to_state(a.offset + k, csize)
-        b_lane = mapper.map_to_state(b.offset + k, csize)
-        if tgt is None or a_lane is None or b_lane is None or not tgt.name.startswith('VL_'):
-            return None
-        a_t = _get_taint_operand(a_lane.name, a_lane.bit_start, a_lane.bit_end, True)
-        b_t = _get_taint_operand(b_lane.name, b_lane.bit_start, b_lane.bit_end, True)
-        if is_or:
-            a_v = _get_taint_operand(a_lane.name, a_lane.bit_start, a_lane.bit_end, False)
-            b_v = _get_taint_operand(b_lane.name, b_lane.bit_start, b_lane.bit_end, False)
-            expr: Expr = BinaryExpr(
-                Op.OR,
-                BinaryExpr(Op.AND, a_t, BinaryExpr(Op.OR, UnaryExpr(Op.NOT, b_v), b_t)),
-                BinaryExpr(Op.AND, b_t, BinaryExpr(Op.OR, UnaryExpr(Op.NOT, a_v), a_t)),
-            )
-        else:  # INT_AND -> sound union
-            expr = BinaryExpr(Op.OR, a_t, b_t)
-        tgt_target, _n, _bs, _be = generate_output_target(tgt)
-        out_asgs.append(TaintAssignment(target=tgt_target, dependencies=[a_t, b_t], expression=expr))
-    return out_asgs
-
-
 def _load_byte_range(
     target: Varnode, load_out: Varnode, all_ops: list[PcodeOp],
 ) -> tuple[int, int] | None:
@@ -4691,24 +4583,14 @@ def map_outputs_to_targets(  # noqa: C901
     targets_to_evaluate: list[EvalTarget] = []
     mem_targets: list[tuple[Varnode, Varnode, int, int]] = []
 
-    # Wide reg->reg copies wired lane-exact as pure operands (see below), so their
-    # output is NOT added to targets_to_evaluate (which would route the whole >8-byte
-    # copy through the 64-bit differential kernel and drop every lane above the low 8).
+    # Wide (>8-byte) vector register outputs are split into 8-byte VL_ lanes by
+    # map_to_state_all and evaluated per lane through the width-native cell kernel,
+    # which computes wide COPY / XOR / AND / OR / NEGATE / shift / LOAD exactly (and
+    # avalanches opaque CALLOTHER/FLOAT).  The former per-op closed forms
+    # (_exact_regcopy / _wide_bitwise) are gone -- the cell subsumes them.
+    # regcopy_asgs now only carries the wide-STORE lane targets built below.
     regcopy_asgs: list[TaintAssignment] = []
     for out_vn in unique_outputs:
-        if out_vn.space.name == 'register' and out_vn.size > 8:
-            src_reg = _trace_wide_regcopy_source(out_vn, translation.ops)
-            if src_reg is not None:
-                lane_asgs = _exact_regcopy_lane_targets(out_vn, src_reg, mapper)
-                if lane_asgs is not None:
-                    regcopy_asgs.extend(lane_asgs)
-                    continue
-            _bw_op = _trace_wide_bitwise_op(out_vn, translation.ops)
-            if _bw_op is not None:
-                _bw_asgs = _wide_bitwise_lane_targets(out_vn, _bw_op, mapper)
-                if _bw_asgs is not None:
-                    regcopy_asgs.extend(_bw_asgs)
-                    continue
         mapped_outs = mapper.map_to_state_all(out_vn.offset, out_vn.size)
         for mapped_out in mapped_outs:
             targets_to_evaluate.append(EvalTarget(out_vn, mapped_out))
