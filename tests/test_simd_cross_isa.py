@@ -14,7 +14,6 @@ state_format.  Before the geometry rule these wide ops were dropped entirely
 
 from __future__ import annotations
 
-import pytest
 from keystone import (
     KS_ARCH_ARM64,
     KS_ARCH_PPC,
@@ -165,21 +164,49 @@ def test_ppc_altivec_vxor_is_exact_lane_union() -> None:
     assert _vec_tainted_bytes(out, vr0, 16) & set(range(8)) == set(range(8))
 
 
-@pytest.mark.xfail(
-    reason='Wide (>8-byte) value-aware bitwise (INT_OR/INT_AND) routes through the '
-    '64-bit differential kernel, which truncates a single 16-byte op -- exact in the '
-    'native-width differential (M2). vxor works because XOR taint is a pure union '
-    '(value-independent) and takes the operand path instead.',
-    strict=False,
-)
-def test_ppc_altivec_vor_is_sound() -> None:
-    """`vor 0,1,2`: OR of two vectors; every tainted input byte taints vr0 (no under-taint)."""
+def test_ppc_altivec_vor_is_sound_without_values() -> None:
+    """`vor 0,1,2`: with no operand values, the exact OR closed form degrades to
+    the sound per-lane union -- both 128-bit lanes tainted, no under-taint (the
+    64-bit differential kernel had truncated the single 16-byte op, dropping every
+    lane above the low 8)."""
     code = _asm(_KS_PPC, 'vor 0, 1, 2')
     vr0 = _reg_off(Architecture.PPC32BE, 'vs32')
     vr1 = _reg_off(Architecture.PPC32BE, 'vs33')
     circuit = generate_static_rule(Architecture.PPC32BE, code, _gp_regs(['r0', 'r1', 'r2']))
     out = circuit.evaluate(EvalContext(
-        input_values={}, input_taint={_vlane(vr1, 0): _FULL},
+        input_values={}, input_taint={_vlane(vr1, 0): _FULL, _vlane(vr1, 8): _FULL},
         simulator=CellSimulator(Architecture.PPC32BE), shadow_memory=None,
     ))
-    assert set(range(8)).issubset(_vec_tainted_bytes(out, vr0, 16))
+    assert _vec_tainted_bytes(out, vr0, 16) == set(range(16))
+
+
+def test_ppc_altivec_vor_is_exact_value_aware() -> None:
+    """`vor 0,1,2` with concrete operand VALUES: a lane OR-ed with a concrete ~0 is
+    a constant, so its taint clears -- EXACT, value-aware (the pand/por contract).
+    vr1 is fully tainted; vr2's low lane is ~0 (masks -> cleared), high lane is 0
+    (passes -> tainted)."""
+    code = _asm(_KS_PPC, 'vor 0, 1, 2')
+    vr0 = _reg_off(Architecture.PPC32BE, 'vs32')
+    vr1 = _reg_off(Architecture.PPC32BE, 'vs33')
+    vr2 = _reg_off(Architecture.PPC32BE, 'vs34')
+    circuit = generate_static_rule(Architecture.PPC32BE, code, _gp_regs(['r0', 'r1', 'r2']))
+    out = circuit.evaluate(EvalContext(
+        input_values={_vlane(vr2, 0): _FULL, _vlane(vr2, 8): 0},
+        input_taint={_vlane(vr1, 0): _FULL, _vlane(vr1, 8): _FULL},
+        simulator=CellSimulator(Architecture.PPC32BE), shadow_memory=None,
+    ))
+    # Low lane cleared by the ~0 mask; high lane (mask 0) passes vr1's taint.
+    assert _vec_tainted_bytes(out, vr0, 16) == set(range(8, 16))
+
+
+def test_ppc_altivec_vand_is_sound() -> None:
+    """`vand 0,1,2`: AND of two vectors; no under-taint on any of the 16 bytes."""
+    code = _asm(_KS_PPC, 'vand 0, 1, 2')
+    vr0 = _reg_off(Architecture.PPC32BE, 'vs32')
+    vr1 = _reg_off(Architecture.PPC32BE, 'vs33')
+    circuit = generate_static_rule(Architecture.PPC32BE, code, _gp_regs(['r0', 'r1', 'r2']))
+    out = circuit.evaluate(EvalContext(
+        input_values={}, input_taint={_vlane(vr1, 0): _FULL, _vlane(vr1, 8): _FULL},
+        simulator=CellSimulator(Architecture.PPC32BE), shadow_memory=None,
+    ))
+    assert _vec_tainted_bytes(out, vr0, 16) == set(range(16))
