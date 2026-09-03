@@ -68,6 +68,7 @@ from keystone import (
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.instrumentation.cell import PCodeCellEvaluator
+from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.sleigh.lifter import get_context
@@ -193,13 +194,15 @@ def _cell_wide_taint(
     nbytes: int,
     in_values: dict[str, int],
     in_taints: dict[str, int],
+    evaluator_cls: type = PCodeCellEvaluator,
 ) -> set[int]:
-    """Drive PCodeCellEvaluator.evaluate_differential once per 8-byte output lane.
+    """Drive <evaluator>.evaluate_differential once per 8-byte output lane.
 
     Inputs are VL_-addressed (value, taint) dicts; the differential is fed
     ``V|T`` and ``V&~T`` exactly as the engine's InstructionCellExpr does.
+    ``evaluator_cls`` selects the kernel (cell.pyx or the C kernel).
     """
-    ev = PCodeCellEvaluator(arch)
+    ev = evaluator_cls(arch)
     or_in = {k: (in_values.get(k, 0) | t) & _FULL for k, t in in_taints.items()}
     and_in = {k: (in_values.get(k, 0) & ~t) & _FULL for k, t in in_taints.items()}
     # value-only inputs (no taint) still need to be present in both runs
@@ -682,3 +685,34 @@ def test_cell_wide_vmovdqu_ymm_store_256() -> None:
               _vlane(_YMM0, 16): 0, _vlane(_YMM0, 24): 0}
     got = _cell_store_mem_taint(Architecture.AMD64, instr, dst, 32, {'RDI': dst}, taints)
     assert got == set(range(16))  # register bytes 0-15 -> memory bytes 0-15
+
+
+# ===========================================================================
+# 9. cell_c (the production C kernel) parity for the avalanche floor.  Stage 1b
+#    begins the port; opaque CALLOTHER/FLOAT ops must avalanche identically to
+#    cell.pyx, with no Unicorn.  (The avalanche short-circuit runs before the
+#    frame load, so it needs no vector backing store -- that lands next.)
+# ===========================================================================
+
+
+def test_cellc_pshufb_avalanche_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'pshufb xmm0, xmm1').hex()
+    taints = {_vlane(_XMM1, 0): 0xFF}
+    py = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, taints, PCodeCellEvaluator)
+    c = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, taints, PCodeCellEvaluatorC)
+    assert py == c == set(range(16))  # both avalanche
+
+
+def test_cellc_pshufb_no_taint_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'pshufb xmm0, xmm1').hex()
+    py = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, {}, PCodeCellEvaluator)
+    c = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, {}, PCodeCellEvaluatorC)
+    assert py == c == set()  # neither invents taint
+
+
+def test_cellc_vpand_ymm_avalanche_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'vpand ymm0, ymm1, ymm2').hex()
+    taints = {_vlane(_YMM1, 8): 0xFF}
+    py = _cell_wide_taint(Architecture.AMD64, instr, _YMM0, 32, {}, taints, PCodeCellEvaluator)
+    c = _cell_wide_taint(Architecture.AMD64, instr, _YMM0, 32, {}, taints, PCodeCellEvaluatorC)
+    assert py == c == set(range(32))  # both avalanche across 32 bytes

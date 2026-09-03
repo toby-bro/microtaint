@@ -150,6 +150,10 @@ static DecodedBundle *get_bundle(EvalC *self, PyObject *bytestring) {
     bundle->n_ops = (int)PyLong_AsLong(tmp); Py_DECREF(tmp);
     tmp = PyObject_GetAttrString(decoded_obj, "has_fallback");
     bundle->has_fallback = PyObject_IsTrue(tmp); Py_DECREF(tmp);
+    tmp = PyObject_GetAttrString(decoded_obj, "avalanche_ok");
+    bundle->avalanche_ok = tmp ? PyObject_IsTrue(tmp) : 0;
+    Py_XDECREF(tmp);
+    if (PyErr_Occurred()) PyErr_Clear();
     tmp = PyObject_GetAttrString(decoded_obj, "next_instr_addr");
     bundle->next_instr_addr = (uint64_t)PyLong_AsUnsignedLongLong(tmp); Py_DECREF(tmp);
 
@@ -825,6 +829,24 @@ static PyObject *EvalC_evaluate_concrete_state(EvalC *self, PyObject *args) {
     return PyLong_FromUnsignedLongLong(out);
 }
 
+/* Avalanche floor: an input is tainted iff its value differs between the V|T
+ * (or_inputs) and V&~T (and_inputs) polarities.  Returns 1 if ANY does. */
+static int any_input_differs(PyObject *or_inputs, PyObject *and_inputs) {
+    PyObject *key, *va;
+    Py_ssize_t pos = 0;
+    while (PyDict_Next(or_inputs, &pos, &key, &va)) {
+        PyObject *vb = PyDict_GetItem(and_inputs, key);  /* borrowed, may be NULL */
+        if (vb == NULL) {
+            if (PyObject_IsTrue(va)) return 1;   /* absent in and -> differs iff va != 0 */
+            continue;
+        }
+        int ne = PyObject_RichCompareBool(va, vb, Py_NE);
+        if (ne < 0) { PyErr_Clear(); continue; }
+        if (ne) return 1;
+    }
+    return 0;
+}
+
 static PyObject *EvalC_evaluate_differential(EvalC *self, PyObject *args) {
     PyObject *cell_obj, *or_inputs, *and_inputs;
     if (!PyArg_ParseTuple(args, "OOO", &cell_obj, &or_inputs, &and_inputs)) return NULL;
@@ -834,6 +856,21 @@ static PyObject *EvalC_evaluate_differential(EvalC *self, PyObject *args) {
     DecodedBundle *bundle = get_bundle(self, ib);
     Py_DECREF(ib);
     if (!bundle) { self->fallback_calls++; return NULL; }
+    /* Opaque data op (shuffle / crypto / float SIMD): avalanche the whole output
+     * slice if any input is tainted -- no concrete execution, no Unicorn. */
+    if (bundle->avalanche_ok) {
+        char *av_reg = NULL; int av_bs, av_be;
+        if (cell_output_info(cell_obj, &av_reg, &av_bs, &av_be) < 0) return NULL;
+        free(av_reg);
+        int width = av_be - av_bs + 1;
+        uint64_t full = 0;
+        if (any_input_differs(or_inputs, and_inputs)) {
+            full = (width >= 64) ? 0xFFFFFFFFFFFFFFFFULL
+                                 : (((uint64_t)1 << width) - 1);
+        }
+        self->native_calls++;
+        return PyLong_FromUnsignedLongLong(full);
+    }
     if (bundle->has_fallback) {
         self->fallback_calls++;
         PyErr_SetString(self->fallback_exc, "instruction requires Unicorn");

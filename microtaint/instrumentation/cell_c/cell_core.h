@@ -307,6 +307,10 @@ typedef struct {
     PCOp     buf[MAX_PCODE_OPS];
     int      n_ops;
     int      has_fallback;
+    /* Opaque data op (CALLOTHER-with-output / FLOAT): avalanche its taint at the
+     * differential level instead of executing it via Unicorn.  Mirrors
+     * cell.pyx DecodedOps.avalanche_ok. */
+    int      avalanche_ok;
     uint64_t next_instr_addr;
     /* IMARK address → pcode pc.  Linear scan; n_imarks ≤ MAX_PCODE_OPS. */
     int          n_imarks;
