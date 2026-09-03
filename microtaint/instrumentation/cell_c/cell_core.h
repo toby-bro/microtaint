@@ -9,8 +9,12 @@
 /* REGS_ARR_SIZE: large enough to cover both x86/AMD64 (offsets up to ~1100)
  * and ARM64 (offsets up to ~16640 for X-registers, vector regs higher).
  * Cython falls back to a Python dict for offsets above its 1104 limit; we
- * use a flat array sized to cover the common architectures' GP register files. */
-#define REGS_ARR_SIZE  17000
+ * use a flat array sized to cover the common architectures' GP register files
+ * AND their vector files (x86 XMM/YMM/ZMM 0x1200, PPC vs 0x4200, ARM q/z up to
+ * 0x6040), so the width-native wide-vector path can address them by lane.
+ * frame_clear is dirty-tracked, so a larger array costs no per-instruction time,
+ * only memory. */
+#define REGS_ARR_SIZE  24832
 #define MAX_PCODE_OPS  96
 #define MAX_UNIQ       64
 #define MAX_DIRTY      128
@@ -328,10 +332,13 @@ typedef struct {
  * this is just the zero-extended 64-bit value. */
 static inline unsigned __int128 frame_read_u128(const Frame *f, int sp,
                                                 unsigned long off, int sz) {
-    if (sz <= 8 || sp != SP_UNIQUE)
+    if (sz <= 8)
         return (unsigned __int128) frame_read_d(f, sp, off, sz);
-    unsigned __int128 lo = (off < MAX_UNIQ && f->uniq_set[off]) ? f->uniq_arr[off] : 0;
-    unsigned __int128 hi = (off+8 < MAX_UNIQ && f->uniq_set[off+8]) ? f->uniq_arr[off+8] : 0;
+    /* Read the low and high 8-byte lanes via frame_read_d so this works for a
+     * unique slot pair (off / off+8) AND a register vector (sleigh off / off+8),
+     * not just unique -- a whole-register 128-bit shift reads from a register. */
+    unsigned __int128 lo = frame_read_d(f, sp, off, 8);
+    unsigned __int128 hi = frame_read_d(f, sp, off + 8, sz - 8);
     return lo | (hi << 64);
 }
 static inline void frame_write_u128(Frame *f, int sp, unsigned long off, int sz,
@@ -409,11 +416,26 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
          * simply be a precision loss in the C path's concrete value,
          * not an unsound taint result.
          */
+        /* Wide vector STORE: STORE(space_const, addr, value) with a >8-byte
+         * value (input 2).  STORE has no output, so it is handled before the
+         * output-gated wide block.  Write the full width to memory lane-by-lane
+         * (mem_write is endian-aware). */
+        if (oid == OP_STORE && op->i2_sz > 8) {
+            uint64_t addr = frame_read_d(f, op->i1_sp, op->i1_off, op->i1_sz);
+            for (int lane = 0; lane < op->i2_sz; lane += 8) {
+                int lsz = (op->i2_sz - lane < 8) ? (op->i2_sz - lane) : 8;
+                uint64_t v = frame_read_d(f, op->i2_sp, op->i2_off + lane, lsz);
+                mem_write(&f->mem, addr + lane, v, lsz, f->is_big_endian);
+            }
+            pc++;
+            continue;
+        }
         if (op->o_sp != NO_OUT_SPACE && op->o_sz > 8) {
             int splittable = (oid == OP_INT_XOR || oid == OP_INT_AND
                               || oid == OP_INT_OR || oid == OP_COPY
                               || oid == OP_INT_ZEXT
-                              || oid == OP_INT_SEXT);
+                              || oid == OP_INT_SEXT
+                              || oid == OP_INT_NEGATE);
             if (splittable) {
                 /* Split into 8-byte lanes and apply the op lane-by-lane.  Byte-
                  * parallel bitwise / movement is width-agnostic; ZEXT/SEXT zero-
@@ -450,6 +472,7 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
                         case OP_INT_XOR: r = v0 ^ v1; break;
                         case OP_INT_AND: r = v0 & v1; break;
                         case OP_INT_OR:  r = v0 | v1; break;
+                        case OP_INT_NEGATE: r = ~v0; break;
                         default:         r = v0; break;  /* COPY/ZEXT/SEXT */
                     }
                     frame_write_d(f, op->o_sp, op->o_off + lane, lsz, r);
@@ -469,12 +492,36 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
                 pc++;
                 continue;
             }
-            /* 128-bit left shift. */
+            /* 128-bit left / logical-right shift (x86 pslldq / psrldq lift to a
+             * single whole-register INT_LEFT / INT_RIGHT).  Position-sensitive,
+             * so run on the full 128-bit value read via the (now register-aware)
+             * frame_read_u128. */
             if (oid == OP_INT_LEFT) {
                 unsigned __int128 v = frame_read_u128(f, op->i0_sp, op->i0_off, op->i0_sz);
                 uint64_t sh = frame_read_d(f, op->i1_sp, op->i1_off, op->i1_sz);
                 unsigned __int128 r = (sh >= (uint64_t)(op->o_sz*8)) ? 0 : (v << sh);
                 frame_write_u128(f, op->o_sp, op->o_off, op->o_sz, r);
+                pc++;
+                continue;
+            }
+            if (oid == OP_INT_RIGHT) {
+                unsigned __int128 v = frame_read_u128(f, op->i0_sp, op->i0_off, op->i0_sz);
+                uint64_t sh = frame_read_d(f, op->i1_sp, op->i1_off, op->i1_sz);
+                unsigned __int128 r = (sh >= (uint64_t)(op->o_sz*8)) ? 0 : (v >> sh);
+                frame_write_u128(f, op->o_sp, op->o_off, op->o_sz, r);
+                pc++;
+                continue;
+            }
+            /* Wide vector LOAD: reg/unique = LOAD(space_const, addr).  Read o_sz
+             * bytes from memory lane-by-lane (mem_read is endian-aware) and store
+             * the full width, so movdqu / ldr q / lvx keeps every byte's taint. */
+            if (oid == OP_LOAD) {
+                uint64_t addr = frame_read_d(f, op->i1_sp, op->i1_off, op->i1_sz);
+                for (int lane = 0; lane < op->o_sz; lane += 8) {
+                    int lsz = (op->o_sz - lane < 8) ? (op->o_sz - lane) : 8;
+                    uint64_t v = mem_read(&f->mem, addr + lane, lsz, f->is_big_endian);
+                    frame_write_d(f, op->o_sp, op->o_off + lane, lsz, v);
+                }
                 pc++;
                 continue;
             }

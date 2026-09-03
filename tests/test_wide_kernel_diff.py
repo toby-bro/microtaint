@@ -234,6 +234,7 @@ def _mk_diff_inputs(in_values: dict[str, int], in_taints: dict[str, int]) -> tup
 def _cell_wide_taint_sleigh(
     arch: Architecture, instr_hex: str, out_base: int, nbytes: int,
     in_values: dict[str, int], in_taints: dict[str, int], be: bool,
+    evaluator_cls: type = PCodeCellEvaluator,
 ) -> set[int]:
     """Like _cell_wide_taint but reports ARCHITECTURAL (sleigh) byte indices.
 
@@ -242,7 +243,7 @@ def _cell_wide_taint_sleigh(
     'byte j' = the register's j-th byte in memory order, which is what a wide
     LOAD/STORE preserves against memory byte j regardless of target endianness.
     """
-    ev = PCodeCellEvaluator(arch)
+    ev = evaluator_cls(arch)
     or_in, and_in = _mk_diff_inputs(in_values, in_taints)
     tainted: set[int] = set()
     for k in range(0, nbytes, 8):
@@ -260,10 +261,11 @@ def _cell_wide_taint_sleigh(
 def _cell_store_mem_taint(
     arch: Architecture, instr_hex: str, store_addr: int, nbytes: int,
     in_values: dict[str, int], in_taints: dict[str, int],
+    evaluator_cls: type = PCodeCellEvaluator,
 ) -> set[int]:
     """Drive a wide STORE and read back each stored memory byte's taint (byte j =
     architectural memory offset store_addr+j), endianness-independent."""
-    ev = PCodeCellEvaluator(arch)
+    ev = evaluator_cls(arch)
     or_in, and_in = _mk_diff_inputs(in_values, in_taints)
     tainted: set[int] = set()
     for j in range(nbytes):
@@ -767,3 +769,43 @@ def test_cellc_ppc_vxor_be_matches_pyx() -> None:
     instr = _asm(_KS_PPC, 'vxor 0, 1, 2').hex()
     _, t = _lanes_from_wide(0, 0xFF | (0xFF << (15 * 8)), _VR1, 16)
     assert _both_kernels(Architecture.PPC32BE, instr, _VR0, 16, {}, t) == {0, 15}
+
+
+# ===========================================================================
+# 11. cell_c parity for the rest of the wide set: whole-register shift, LOAD,
+#     STORE (LE), and an ARM vector (offset >= old REGS_ARR_SIZE, now covered).
+# ===========================================================================
+
+
+def test_cellc_psrldq_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'psrldq xmm0, 4').hex()
+    _, t = _lanes_from_wide(0, (0xFF << (4 * 8)) | (0xFF << (8 * 8)) | (0xFF << (15 * 8)), _XMM0, 16)
+    assert _both_kernels(Architecture.AMD64, instr, _XMM0, 16, {}, t) == {0, 4, 11}
+
+
+def test_cellc_movdqu_load_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'movdqu xmm0, [rdi]').hex()
+    q0 = _reg_off(Architecture.AMD64, 'XMM0')
+    src, tb = 0x5000, {0, 1, 7, 8, 15}
+    args = (Architecture.AMD64, instr, q0, 16, {'RDI': src}, _mem_byte_taints(src, tb), False)
+    py = _cell_wide_taint_sleigh(*args, PCodeCellEvaluator)
+    c = _cell_wide_taint_sleigh(*args, PCodeCellEvaluatorC)
+    assert py == c == tb
+
+
+def test_cellc_movdqu_store_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'movdqu [rdi], xmm0').hex()
+    dst = 0x6000
+    taints = {_vlane(_XMM0, 0): _FULL, _vlane(_XMM0, 8): 0}
+    py = _cell_store_mem_taint(Architecture.AMD64, instr, dst, 16, {'RDI': dst}, taints, PCodeCellEvaluator)
+    c = _cell_store_mem_taint(Architecture.AMD64, instr, dst, 16, {'RDI': dst}, taints, PCodeCellEvaluatorC)
+    assert py == c == set(range(8))
+
+
+def test_cellc_arm_neon_mov_matches_pyx() -> None:
+    # ARM q0 sits at offset 0x5000 -- above the old REGS_ARR_SIZE, now covered.
+    instr = _asm(_KS_ARM, 'orr v0.16b, v1.16b, v1.16b').hex()
+    q0 = _reg_off(Architecture.ARM64, 'q0')
+    q1 = _reg_off(Architecture.ARM64, 'q1')
+    _, t = _lanes_from_wide(0, 0xFF | (0xFF << (15 * 8)), q1, 16)
+    assert _both_kernels(Architecture.ARM64, instr, q0, 16, {}, t) == {0, 15}
