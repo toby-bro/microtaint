@@ -266,6 +266,12 @@ cdef class DecodedOps:
     cdef PCodeOp buf[MAX_PCODE_OPS]
     cdef public int       n_ops
     cdef public bint      has_fallback
+    # True when the instruction contains an opaque data op (CALLOTHER with
+    # output, or FLOAT): its taint is AVALANCHED (any tainted input taints the
+    # whole output) at the differential level instead of executing it concretely
+    # via Unicorn.  Matches the static rule-gen AVALANCHE categorisation and
+    # keeps the cell self-contained (no Unicorn dependency for shuffles etc).
+    cdef public bint      avalanche_ok
     cdef public uint64_t  next_instr_addr  # 0x1000 + len(bytestring); used by CBRANCH to detect CMOVxx skip pattern
     cdef public uint64_t  imark_addr       # 0x1000 — base address used by IMARK; loop-back BRANCH targets this
     cdef public bint      has_loop         # True iff a backward BRANCH to imark_addr is present (rep stosb / movsb pattern)
@@ -317,6 +323,7 @@ def _predecode_ops(arch, bytestring):
     result.imark_to_pc = {}
     result.input_reg_offsets = set()
     has_fallback = False
+    cdef bint _avalanche = False   # opaque data op (CALLOTHER-out / FLOAT) -> avalanche taint
     # Compact unique-space mapping: raw offset → sequential index 0,1,2,...
     cdef dict uniq_map = {}
     cdef int  uniq_next = 0
@@ -337,8 +344,10 @@ def _predecode_ops(arch, bytestring):
             has_fallback = True  # may be cleared after full decode
         elif oid == OP_CALLOTHER and out is not None:
             has_fallback = True
+            _avalanche = True   # opaque data op (pshufb/aesenc/...) -> avalanche
         elif oid == OP_FLOAT_ANY or oid == OP_TRUNC_FLOAT:
             has_fallback = True
+            _avalanche = True   # opaque float op -> avalanche (integer cell can't model it)
         elif oid == OP_UNKNOWN:
             has_fallback = True
 
@@ -499,6 +508,7 @@ def _predecode_ops(arch, bytestring):
             result.input_reg_offsets.add(result.buf[_ii].i2_off)
 
     result.has_fallback = has_fallback
+    result.avalanche_ok = _avalanche
     return result
 
 
@@ -1997,11 +2007,31 @@ cdef class PCodeCellEvaluator:
         self.native_calls += 1
         return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
 
+    cdef uint64_t _avalanche_taint(self, cell, dict or_inputs, dict and_inputs):
+        """Avalanche floor for an opaque data op (CALLOTHER/FLOAT): if ANY input
+        is tainted (differs between the V|T and V&~T polarities) the whole output
+        slice is tainted.  Sound over-approximation; no concrete execution, so no
+        Unicorn dependency for shuffles / crypto / float SIMD."""
+        cdef int width = cell.out_bit_end - cell.out_bit_start + 1
+        cdef object k
+        for k in or_inputs:
+            if or_inputs[k] != and_inputs.get(k, 0):
+                if width >= 64:
+                    return 0xFFFFFFFFFFFFFFFF
+                return (<uint64_t>1 << width) - 1
+        return 0
+
     def evaluate_differential(self, cell, or_inputs, and_inputs):
         cdef _PCodeFrame fa = self._frame_a
         cdef _PCodeFrame fb = self._frame_b
         cdef uint64_t out_or, out_and
         decoded = _get_decoded(self.arch, bytes.fromhex(cell.instruction))
+        # Opaque data op (shuffle / crypto / float SIMD): avalanche its taint
+        # instead of executing it via Unicorn.  Matches the static rule-gen
+        # AVALANCHE categorisation and keeps the cell self-contained.
+        if decoded.avalanche_ok:
+            self.native_calls += 1
+            return self._avalanche_taint(cell, or_inputs, and_inputs)
         if decoded.has_fallback:
             raise PCodeFallbackNeeded('instruction requires Unicorn')
         self._load(fa, or_inputs)

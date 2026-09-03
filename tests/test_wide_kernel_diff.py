@@ -36,11 +36,18 @@ Three ingredients
   an endianness-neutral cold byte store (offset >= 1104); the wide-register
   handlers (Stage 1a) propagate movement, byte-parallel bitwise, LOAD/STORE and
   whole-register shifts at arbitrary width via Python-int values, so the high
-  lanes are exact under both endiannesses.  Before Stage 1a the 64-bit cold path
+  lanes are exact under both endiannesses.  Opaque data ops (CALLOTHER shuffles
+  like pshufb, FLOAT SIMD) are AVALANCHED -- any tainted input taints the whole
+  output -- with no Unicorn dependency.  Before Stage 1a the 64-bit cold path
   truncated / mirrored the high lanes (an ``x >> 64`` shift returning the low
   lane); the ``test_cell_wide_*`` tests pin those exact defects so they cannot
   regress.  The scalar (<=8-byte) path through the SAME driver matches the oracle
   too, proving the driver is sound and the fast path is untouched.
+
+Coverage spans little-endian (x86 SSE, ARM64 NEON) and big-endian (PPC AltiVec)
+vector files.  The handlers are ISA-agnostic (they key on space + size, not the
+ISA), so wide register ops on any other ISA with a vector file (RISC-V V,
+MIPS/SPARC) route through the same validated code.
 """
 
 from __future__ import annotations
@@ -582,3 +589,32 @@ def test_cell_wide_pslldq_byte_shift() -> None:
     _, taints = _lanes_from_wide(0, taint, _XMM0, 16)
     got = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, taints)
     assert got == {4, 11, 15}  # 0->4, 7->11, 11->15 (bytes past the top are dropped)
+
+
+# ===========================================================================
+# 7. Opaque data ops (CALLOTHER shuffles / crypto, FLOAT SIMD) -> AVALANCHE.
+#    The cell no longer runs these via Unicorn; any tainted input taints the
+#    whole output slice (sound over-approximation, self-contained).
+# ===========================================================================
+
+
+def test_cell_wide_pshufb_avalanche() -> None:
+    # pshufb xmm0, xmm1 lifts to a CALLOTHER.  Any tainted input byte must taint
+    # the whole 16-byte output (a data-dependent shuffle can move it anywhere).
+    instr = _asm(_KS_X86, 'pshufb xmm0, xmm1').hex()
+    got = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, {_vlane(_XMM1, 0): 0xFF})
+    assert got == set(range(16))  # avalanche
+
+
+def test_cell_wide_pshufb_no_taint_is_clean() -> None:
+    # No tainted input -> no output taint (avalanche must not invent taint).
+    instr = _asm(_KS_X86, 'pshufb xmm0, xmm1').hex()
+    got = _cell_wide_taint(Architecture.AMD64, instr, _XMM0, 16, {}, {})
+    assert got == set()
+
+
+def test_cell_wide_ppc_vand_avalanche_be() -> None:
+    # PPC vand lifts to a CALLOTHER too; avalanche under BE, no Unicorn.
+    instr = _asm(_KS_PPC, 'vand 0, 1, 2').hex()
+    got = _cell_wide_taint(Architecture.PPC32BE, instr, _VR0, 16, {}, {_vlane(_VR1, 8): 0xFF})
+    assert got == set(range(16))  # avalanche
