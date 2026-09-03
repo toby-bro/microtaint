@@ -213,6 +213,65 @@ def _cell_wide_taint(
     return tainted
 
 
+def _mk_diff_inputs(in_values: dict[str, int], in_taints: dict[str, int]) -> tuple[dict, dict]:
+    or_in = {k: (in_values.get(k, 0) | t) & _FULL for k, t in in_taints.items()}
+    and_in = {k: (in_values.get(k, 0) & ~t) & _FULL for k, t in in_taints.items()}
+    for k, v in in_values.items():
+        or_in.setdefault(k, v & _FULL)
+        and_in.setdefault(k, v & _FULL)
+    return or_in, and_in
+
+
+def _cell_wide_taint_sleigh(
+    arch: Architecture, instr_hex: str, out_base: int, nbytes: int,
+    in_values: dict[str, int], in_taints: dict[str, int], be: bool,
+) -> set[int]:
+    """Like _cell_wide_taint but reports ARCHITECTURAL (sleigh) byte indices.
+
+    An 8-byte VL_ lane is read as an integer whose byte i (bits 8i..) is sleigh
+    byte off+i under LE but sleigh byte off+7-i under BE.  Un-reversing that gives
+    'byte j' = the register's j-th byte in memory order, which is what a wide
+    LOAD/STORE preserves against memory byte j regardless of target endianness.
+    """
+    ev = PCodeCellEvaluator(arch)
+    or_in, and_in = _mk_diff_inputs(in_values, in_taints)
+    tainted: set[int] = set()
+    for k in range(0, nbytes, 8):
+        cell = types.SimpleNamespace(
+            instruction=instr_hex, out_reg=_vlane(out_base, k),
+            out_bit_start=0, out_bit_end=63,
+        )
+        lane = ev.evaluate_differential(cell, dict(or_in), dict(and_in))
+        for i in range(8):
+            if (lane >> (i * 8)) & 0xFF:
+                tainted.add(k + (7 - i if be else i))
+    return tainted
+
+
+def _cell_store_mem_taint(
+    arch: Architecture, instr_hex: str, store_addr: int, nbytes: int,
+    in_values: dict[str, int], in_taints: dict[str, int],
+) -> set[int]:
+    """Drive a wide STORE and read back each stored memory byte's taint (byte j =
+    architectural memory offset store_addr+j), endianness-independent."""
+    ev = PCodeCellEvaluator(arch)
+    or_in, and_in = _mk_diff_inputs(in_values, in_taints)
+    tainted: set[int] = set()
+    for j in range(nbytes):
+        cell = types.SimpleNamespace(
+            instruction=instr_hex, out_reg=f'MEM_{store_addr + j:#x}_1',
+            out_bit_start=0, out_bit_end=7,
+        )
+        if ev.evaluate_differential(cell, dict(or_in), dict(and_in)):
+            tainted.add(j)
+    return tainted
+
+
+def _mem_byte_taints(addr: int, byte_indices: set[int]) -> dict[str, int]:
+    """Per-byte memory taint via 1-byte MEM_ keys (size 1 has no endian ambiguity)."""
+    return {f'MEM_{addr + j:#x}_1': 0xFF for j in byte_indices}
+
+
 # ===========================================================================
 # 1. Oracle self-checks (hand-verified) -- the ground truth is trustworthy.
 # ===========================================================================
@@ -349,7 +408,7 @@ _XMM1 = 0x1240
 
 # These four cases pin defects that existed BEFORE the width-native kernel (and
 # were measured on cell.pyx use_c=False): every vector register sits in the cold
-# ``self.regs`` dict (offset >= 1104), and the old 64-bit cold path could not
+# register store (offset >= 1104), and the old 64-bit cold path could not
 # carry bytes past the low 8 of a lane's parent, so the high lane (bytes 8-15) of
 # a wide reg->reg op was computed wrong in BOTH directions depending on opcode:
 #   COPY : high lane mirrored the low lane (over-taint when only the low lane was
@@ -406,3 +465,96 @@ def test_cell_wide_and_high_lane_value_aware() -> None:
         8 + j for j in _oracle_taint('and', operands_hi, 8)
     }
     assert got == expect == set(range(8))
+
+
+# ===========================================================================
+# 4. Big-endian wide register ops (PPC AltiVec) -- prove endianness handling.
+#    The cold vector store is byte-addressable; the target-endian integer is
+#    assembled/decomposed only at the byte<->int boundary, so byte-parallel ops
+#    are exact under BE as well as LE.  Before the byte-store the LE-only wide
+#    read/write silently swapped lanes on a BE target (a soundness under-taint).
+# ===========================================================================
+
+_VR0 = 0x4200  # PPC vs32 / vr0
+_VR1 = 0x4210  # vs33 / vr1
+_VR2 = 0x4220  # vs34 / vr2
+
+
+def test_cell_wide_xor_be_low_lane() -> None:
+    # vxor vr0, vr1, vr2 with ONLY vr1's low lane (bytes 0-7) tainted.
+    instr = _asm(_KS_PPC, 'vxor 0, 1, 2').hex()
+    a = _FULL  # low lane
+    _, ta = _lanes_from_wide(0, a, _VR1, 16)
+    got = _cell_wide_taint(Architecture.PPC32BE, instr, _VR0, 16, {}, ta)
+    assert got == _oracle_taint('xor', [(0, a), (0, 0)], 16) == set(range(8))
+
+
+def test_cell_wide_xor_be_high_lane() -> None:
+    # vxor with ONLY vr2's high lane (bytes 8-15) tainted -- the lane the LE-only
+    # code used to drop on a BE target (under-taint).
+    instr = _asm(_KS_PPC, 'vxor 0, 1, 2').hex()
+    b = _FULL << 64
+    _, tb = _lanes_from_wide(0, b, _VR2, 16)
+    got = _cell_wide_taint(Architecture.PPC32BE, instr, _VR0, 16, {}, tb)
+    assert got == _oracle_taint('xor', [(0, 0), (0, b)], 16) == set(range(8, 16))
+
+
+def test_cell_wide_or_be_value_aware() -> None:
+    # vor vr0, vr1, vr2 : vr1 fully tainted; vr2 concrete low lane ~0 (OR-mask
+    # clears the taint), high lane 0 (passes it).  Exact value-aware OR under BE.
+    instr = _asm(_KS_PPC, 'vor 0, 1, 2').hex()
+    v2 = {_vlane(_VR2, 0): _FULL, _vlane(_VR2, 8): 0}
+    t1 = {_vlane(_VR1, 0): _FULL, _vlane(_VR1, 8): _FULL}
+    got = _cell_wide_taint(Architecture.PPC32BE, instr, _VR0, 16, v2, t1)
+    operands_lo = [(0, _FULL), (_FULL, 0)]   # vr2 lane0 == ~0 -> cleared
+    operands_hi = [(0, _FULL), (0, 0)]       # vr2 lane1 == 0  -> passed
+    expect = _oracle_taint('or', operands_lo, 8) | {
+        8 + j for j in _oracle_taint('or', operands_hi, 8)
+    }
+    assert got == expect == set(range(8, 16))
+
+
+# ===========================================================================
+# 5. Wide vector LOAD / STORE at the cell level (LE + BE).  A wide load/store
+#    carries memory byte j <-> register byte j (architectural / sleigh order),
+#    which is the exact taint a human expects on both endiannesses.
+# ===========================================================================
+
+
+def test_cell_wide_load_arm_ldr_q_le() -> None:
+    instr = _asm(_KS_ARM, 'ldr q0, [x1]').hex()
+    q0 = _reg_off(Architecture.ARM64, 'q0')
+    src, tb = 0x5000, {0, 1, 7, 8, 15}
+    got = _cell_wide_taint_sleigh(
+        Architecture.ARM64, instr, q0, 16, {'x1': src}, _mem_byte_taints(src, tb), be=False)
+    assert got == tb  # memory byte j -> register byte j
+
+
+def test_cell_wide_load_ppc_lvx_be() -> None:
+    # lvx vr0, r1, r2 : address = (r1 + r2) & ~0xf.  r1 aligned, r2 = 0.
+    instr = _asm(_KS_PPC, 'lvx 0, 1, 2').hex()
+    vr0 = _reg_off(Architecture.PPC32BE, 'vs32')
+    src, tb = 0x5000, {0, 1, 7, 8, 15}
+    got = _cell_wide_taint_sleigh(
+        Architecture.PPC32BE, instr, vr0, 16, {'R1': src, 'R2': 0},
+        _mem_byte_taints(src, tb), be=True)
+    assert got == tb  # memory byte j -> register byte j, under BE too
+
+
+def test_cell_wide_store_x86_movdqu_le() -> None:
+    instr = _asm(_KS_X86, 'movdqu [rdi], xmm0').hex()
+    dst = 0x6000
+    # xmm0 low lane fully tainted, high lane clean.
+    taints = {_vlane(_XMM0, 0): _FULL, _vlane(_XMM0, 8): 0}
+    got = _cell_store_mem_taint(Architecture.AMD64, instr, dst, 16, {'RDI': dst}, taints)
+    assert got == set(range(8))  # register bytes 0-7 -> memory bytes 0-7
+
+
+def test_cell_wide_store_ppc_stvx_be() -> None:
+    instr = _asm(_KS_PPC, 'stvx 0, 1, 2').hex()
+    vr0 = _reg_off(Architecture.PPC32BE, 'vs32')
+    dst = 0x6000
+    taints = {_vlane(vr0, 0): _FULL, _vlane(vr0, 8): 0}
+    got = _cell_store_mem_taint(
+        Architecture.PPC32BE, instr, dst, 16, {'R1': dst, 'R2': 0}, taints)
+    assert got == set(range(8))  # register bytes 0-7 -> memory bytes 0-7, under BE

@@ -529,9 +529,13 @@ cdef class _PCodeFrame:
     # (CQO/INT_SEXT, MUL/IMUL widening, DIV/IDIV 128-bit dividend).
     cdef uint64_t uniq_hi[32]
     cdef uint8_t  uniq_hi_set[32]
-    # Cold fallback for offsets >= REGS_ARR_SIZE
-    cdef public dict regs
-    cdef public dict reg_sizes
+    # Cold byte-addressable store for offsets >= REGS_ARR_SIZE (vector registers
+    # x86 XMM/YMM/ZMM, ARM q/z, PPC vs + rare cold regs).  Endianness-neutral:
+    # vecb[sleigh_offset] = one byte (0-255).  Scalar (<=8B) and wide (>8B)
+    # accesses share it, so a scalar movq and a wide pxor to the same vector
+    # register stay consistent; the target-endian integer is assembled and
+    # decomposed only at the read/write boundary, exactly like self.mem.
+    cdef public dict vecb
     # Fallback uniq dict (unused after compact-array migration, kept for safety)
     cdef public dict mem
     cdef public object _arch  # set by _load for CBRANCH PC lookup
@@ -549,8 +553,7 @@ cdef class _PCodeFrame:
             self.uniq_set[i] = 0
             self.uniq_hi_set[i] = 0
         self.dirty_count = 0
-        self.regs      = {}
-        self.reg_sizes = {}
+        self.vecb      = {}
         self.mem       = {}
         self._arch     = None
         self._is_big_endian = 0
@@ -616,8 +619,13 @@ cdef class _PCodeFrame:
                         self.regs_set[k] = 0
                     k += 1
         else:
-            self.regs[off]      = masked
-            self.reg_sizes[off] = sz
+            # Cold vector region: decompose into the endianness-neutral byte
+            # store so wide (>8B) reads of the same bytes stay consistent.
+            k = 0
+            while k < sz:
+                be_wshift = (sz - 1 - <int>k) * 8 if self._is_big_endian else <int>k * 8
+                self.vecb[off + k] = <int>((masked >> be_wshift) & 0xFF)
+                k += 1
 
     cdef inline uint64_t _read_reg(self, long off, int sz) noexcept:
         cdef long     k, byte_off, end_off, be_shift
@@ -696,76 +704,52 @@ cdef class _PCodeFrame:
 
             return _mask64(base, sz)
 
-        # Cold path: dict fallback.  Vector registers (offset >= REGS_ARR_SIZE)
-        # can hold arbitrary-width Python-int values written by the wide-SIMD
-        # path, so the sub-range extraction is done in the Python-int domain:
-        # masking to uint64 first would drop every byte above the low 8, and a
-        # shift by >= 64 (a high lane of a >8-byte parent) is undefined in C and
-        # on x86 silently returns the low lane.
-        v = self.regs.get(off)
-        if v is not None:
-            return _mask64(<uint64_t>((<object>v) & 0xFFFFFFFFFFFFFFFF), sz)
-        for k, kv in self.reg_sizes.items():
-            k_sz = <int>kv
-            if k <= off < k + k_sz:
-                v = self.regs.get(k)
-                if v is not None:
-                    byte_off = off - k
-                    if self._is_big_endian:
-                        be_shift = (<long>k_sz - byte_off - sz) * 8
-                        if be_shift < 0:
-                            return 0
-                        return _mask64(<uint64_t>(((<object>v) >> be_shift) & 0xFFFFFFFFFFFFFFFF), sz)
-                    return _mask64(<uint64_t>(((<object>v) >> (byte_off * 8)) & 0xFFFFFFFFFFFFFFFF), sz)
-        return 0
+        # Cold path: endianness-neutral byte store (vector registers + rare cold
+        # regs, offset >= REGS_ARR_SIZE).  Assemble ``sz`` bytes into the
+        # target-endian integer -- byte off+i is the LSB under LE, the MSB under
+        # BE -- exactly like _read_mem.  A missing byte is 0 (uninitialised).
+        base = 0
+        k = 0
+        while k < sz:
+            v = self.vecb.get(off + k)
+            if v is not None:
+                be_shift = (sz - 1 - k) * 8 if self._is_big_endian else k * 8
+                base |= (<uint64_t><int>v) << be_shift
+            k += 1
+        return _mask64(base, sz)
 
     # ------------------------------------------------------------------
     # Arbitrary-width (>8-byte) register access for the cold vector region.
     # SIMD registers (x86 XMM/YMM/ZMM, ARM q/z, PPC vs) all live in the cold
-    # self.regs dict (offset >= REGS_ARR_SIZE); the hot regs_arr fast path
-    # (offset < REGS_ARR_SIZE, GP + flags) is never touched by these.  Values
-    # are Python ints of arbitrary width, stored LE-internal: byte off+j at
-    # bits [8j, 8j+8).  Byte-parallel ops (COPY/AND/OR/XOR/NEGATE) need no endian
-    # handling because that convention cancels across read/op/write; endianness
-    # only matters when a position-sensitive op assembles the target-endian value.
+    # byte store self.vecb (offset >= REGS_ARR_SIZE); the hot regs_arr fast path
+    # (offset < REGS_ARR_SIZE, GP + flags) is never touched by these.  The store
+    # is endianness-neutral (one byte per sleigh offset); the target-endian
+    # integer value is assembled/decomposed only here, so scalar (<=8B) and wide
+    # (>8B) accesses to the same register bytes stay consistent under LE and BE.
     # ------------------------------------------------------------------
 
     cdef object _read_reg_wide(self, long off, int sz):
-        """Read ``sz`` bytes from the cold register file as one Python int.
-
-        Gathers every stored entry overlapping ``[off, off+sz)`` -- an exact wide
-        entry, a wider parent, and non-overlapping 8-byte input lanes all
-        reconstruct without truncation."""
-        cdef object base = 0
-        cdef object v, wmask
-        cdef long k_off, lo, hi
-        cdef int  k_sz, width_bytes
-        cdef object full = ((<object>1) << (sz * 8)) - 1
-        for k_off, k_sz_obj in self.reg_sizes.items():
-            k_sz = <int>k_sz_obj
-            lo = k_off if k_off > off else off
-            hi = (k_off + k_sz) if (k_off + k_sz) < (off + sz) else (off + sz)
-            if lo < hi:
-                v = self.regs.get(k_off)
-                if v is not None:
-                    width_bytes = <int>(hi - lo)
-                    wmask = ((<object>1) << (width_bytes * 8)) - 1
-                    base = base | ((((<object>v) >> ((lo - k_off) * 8)) & wmask) << ((lo - off) * 8))
-        return base & full
+        """Read ``sz`` bytes from the cold byte store as one target-endian Python
+        int (byte off+i = LSB under LE, MSB under BE), no 64-bit truncation."""
+        cdef object result = 0
+        cdef object b
+        cdef int i, shift
+        for i in range(sz):
+            b = self.vecb.get(off + i)
+            if b is not None:
+                shift = (sz - 1 - i) * 8 if self._is_big_endian else i * 8
+                result = result | ((<object><int>b) << shift)
+        return result
 
     cdef void _write_reg_wide(self, long off, int sz, object val):
-        """Store an arbitrary-width Python int as a single cold-region entry
-        (LE-internal) and drop any narrower entries strictly inside
-        ``(off, off+sz)`` so a later wide or lane read reconstructs cleanly."""
+        """Decompose a target-endian Python int into ``sz`` bytes in the cold
+        store (byte off+i = LSB under LE, MSB under BE)."""
+        cdef int i, shift
         cdef object full = ((<object>1) << (sz * 8)) - 1
-        cdef list stale
-        cdef object kk
-        self.regs[off] = val & full
-        self.reg_sizes[off] = sz
-        stale = [kk for kk in self.regs if off < (<long>kk) < off + sz]
-        for kk in stale:
-            self.regs.pop(kk, None)
-            self.reg_sizes.pop(kk, None)
+        val = val & full
+        for i in range(sz):
+            shift = (sz - 1 - i) * 8 if self._is_big_endian else i * 8
+            self.vecb[off + i] = <int>((val >> shift) & 0xFF)
 
     cdef object _read_wide(self, int sp, unsigned long off, int sz):
         """Arbitrary-width read of any operand space, as a Python int (no 64-bit
@@ -782,6 +766,18 @@ cdef class _PCodeFrame:
         if sp == SP_CONST:
             return (<object>off) & (((<object>1) << (sz * 8)) - 1)
         return <object>0
+
+    cdef void _write_wide(self, int sp, unsigned long off, int sz, object val):
+        """Arbitrary-width write of a Python int to a register or unique varnode
+        (the wide COPY/LOAD destinations).  Unique keeps the 128-bit low/high
+        split; register uses the byte store."""
+        if sp == SP_REGISTER:
+            self._write_reg_wide(<long>off, sz, val)
+        elif sp == SP_UNIQUE and off < 32:
+            self.uniq_arr[off]    = <uint64_t>(val & 0xFFFFFFFFFFFFFFFF)
+            self.uniq_set[off]    = 1
+            self.uniq_hi[off]     = <uint64_t>((val >> 64) & 0xFFFFFFFFFFFFFFFF)
+            self.uniq_hi_set[off] = 1
 
     cdef inline void _write_mem(self, uint64_t addr, uint64_t val, int size) noexcept:
         cdef int i, shift
@@ -802,6 +798,29 @@ cdef class _PCodeFrame:
                 result |= (<uint64_t><int>b) << shift
         return _mask64(result, size)
 
+    cdef object _read_mem_wide(self, uint64_t addr, int size):
+        """Arbitrary-width memory read as a target-endian Python int (wide vector
+        LOAD).  Mirrors _read_mem but is not capped at 64 bits."""
+        cdef object result = 0
+        cdef object b
+        cdef int i, shift
+        for i in range(size):
+            b = self.mem.get(addr + i)
+            if b is not None:
+                shift = (size - 1 - i) * 8 if self._is_big_endian else i * 8
+                result = result | ((<object><int>b) << shift)
+        return result
+
+    cdef void _write_mem_wide(self, uint64_t addr, object val, int size):
+        """Arbitrary-width memory write from a target-endian Python int (wide
+        vector STORE).  Mirrors _write_mem but is not capped at 64 bits."""
+        cdef int i, shift
+        cdef object full = ((<object>1) << (size * 8)) - 1
+        val = val & full
+        for i in range(size):
+            shift = (size - 1 - i) * 8 if self._is_big_endian else i * 8
+            self.mem[addr + i] = <int>((val >> shift) & 0xFF)
+
     cdef inline void clear(self) noexcept:
         cdef int i
         # Only zero the slots that were actually written (dirty list vs scanning all 1104)
@@ -814,10 +833,8 @@ cdef class _PCodeFrame:
                 self.uniq_set[i] = 0
             if self.uniq_hi_set[i]:
                 self.uniq_hi_set[i] = 0
-        if self.regs:
-            self.regs.clear()
-        if self.reg_sizes:
-            self.reg_sizes.clear()
+        if self.vecb:
+            self.vecb.clear()
         self.mem.clear()
 
     # ------------------------------------------------------------------
@@ -933,23 +950,54 @@ cdef void _execute_decoded(
         # fast-path guard: enter the wide block whenever ANY varnode exceeds 8
         # bytes.  Previously this only checked the OUTPUT (o_sz) plus wide-source
         # SUBPIECE, so a comparison of 128-bit operands -- 1-byte output, wide
-        # inputs -- slipped straight to the 64-bit dispatch and truncated.  Still
-        # False for >99.9% of ops, so no measurable hot-path cost.
-        if o_sz > 8 or i0_sz > 8 or i1_sz > 8:
+        # inputs -- slipped straight to the 64-bit dispatch and truncated.  i2_sz
+        # covers a wide STORE value (STORE has no output, and its value is input
+        # 2).  Still False for >99.9% of ops, so no measurable hot-path cost.
+        if o_sz > 8 or i0_sz > 8 or i1_sz > 8 or i2_sz > 8:
 
-            # Register-space wide ops (vector registers live in the cold dict,
-            # offset >= REGS_ARR_SIZE, and exceed the 64-bit scalar dispatch).
-            # Movement and byte-parallel bitwise propagate at arbitrary width via
+            # Wide vector LOAD: reg/unique = LOAD(space_const, addr).  Read o_sz
+            # bytes from memory (target-endian) and store the full width, so a
+            # 16/32/64-byte movdqu / ldr q / lvx keeps every byte's taint instead
+            # of truncating to the low 8.
+            if oid == OP_LOAD and o_sz > 8:
+                _wide_val = frame._read_mem_wide(
+                    frame.read_d(i1_sp, i1_off, i1_sz), o_sz)
+                if o_sp == SP_REGISTER:
+                    frame._write_reg_wide(o_off, o_sz, _wide_val)
+                elif o_sp == SP_UNIQUE and o_off < 32:
+                    frame.uniq_arr[o_off]    = <uint64_t>(_wide_val & 0xFFFFFFFFFFFFFFFF)
+                    frame.uniq_set[o_off]    = 1
+                    frame.uniq_hi[o_off]     = <uint64_t>((_wide_val >> 64) & 0xFFFFFFFFFFFFFFFF)
+                    frame.uniq_hi_set[o_off] = 1
+                pc += 1
+                continue
+
+            # Wide vector STORE: STORE(space_const, addr, value) with a >8-byte
+            # value (input 2).  Write the full width to memory (target-endian).
+            if oid == OP_STORE and i2_sz > 8:
+                frame._write_mem_wide(
+                    frame.read_d(i1_sp, i1_off, i1_sz),
+                    frame._read_wide(i2_sp, i2_off, i2_sz), i2_sz)
+                pc += 1
+                continue
+
+            # Wide COPY across any space pair (reg<->reg, reg->unique for a store,
+            # unique->reg for a load).  Reads/writes the full width, so the source
+            # varnode's high lanes are never dropped.
+            if oid == OP_COPY and o_sz > 8:
+                frame._write_wide(o_sp, o_off, o_sz,
+                    frame._read_wide(i0_sp, i0_off, i0_sz))
+                pc += 1
+                continue
+
+            # Register-space wide bitwise ops (vector registers live in the cold
+            # byte store, offset >= REGS_ARR_SIZE, and exceed the 64-bit scalar
+            # dispatch).  Byte-parallel propagation at arbitrary width via
             # Python-int values, so the high lanes are exact instead of being
             # truncated / mirrored from the low lane by the 64-bit cold path.
             # The value read (V) and the differential's forced V|T / V&~T inputs
             # each run through here, so the taint (their XOR) is exact for free.
             if o_sp == SP_REGISTER and o_sz > 8:
-                if oid == OP_COPY:
-                    frame._write_reg_wide(o_off, o_sz,
-                        frame._read_wide(i0_sp, i0_off, i0_sz))
-                    pc += 1
-                    continue
                 if oid == OP_INT_XOR:
                     frame._write_reg_wide(o_off, o_sz,
                         frame._read_wide(i0_sp, i0_off, i0_sz)
