@@ -340,20 +340,19 @@ def test_simd_paddq_xmm_roundtrip_sound():
     )
 
 
-def test_simd_paddq_without_xmm_state_format_documents_limitation():
-    """When XMM regs are NOT in state_format the engine cannot track taint
-    across the GP↔XMM boundary.  This is a documented limitation of the
-    worker contract: callers MUST include XMM regs to get bit-precise
-    taint tracking through SIMD.  This test pins that contract — if the
-    engine ever changes to widen automatically, this test will break and
-    the comment should be updated."""
+def test_simd_paddq_without_xmm_state_format_now_tracked():
+    """SIMD taint is now tracked across the GP<->XMM boundary even when XMM regs
+    are NOT in the state_format.  The width-native cell kernel stores the full
+    XMM register natively, so a ``movq xmm0,rax; movq xmm1,rbx; paddq; movq
+    rax,xmm0`` roundtrip propagates RBX's taint into RAX.  This previously
+    under-tainted (reported T_RAX=0) -- the documented limitation that folding
+    SIMD into native wide cell support removed.  We assert soundness against the
+    2^k brute-force ground truth (no missed bit), and exactness for this case."""
     state = {'RAX': 0, 'RBX': 0xFF, 'RCX': 0, 'RDX': 0}
     taint = {'RBX': 0xFF}
+    gt = _brute_force_gt(_SIMD_PADDQ_ROUNDTRIP, state, taint)
     mt = _eval_microtaint(_SIMD_PADDQ_ROUNDTRIP, state, taint, regs=_REGS_GP)
-    # Without XMM in state_format, RAX is reported clean (under-tainted vs GT).
-    # That's the limitation the worker fix addresses.
-    assert mt['RAX'] == 0, (
-        'Without XMM in state_format the engine reports T_RAX=0 — '
-        'callers must include XMM<n>_LO/_HI in state_format to get '
-        'sound SIMD taint propagation.'
-    )
+    # No under-taint: every ground-truth bit of RAX is reported (soundness).
+    assert (mt['RAX'] & gt['RAX']) == gt['RAX'], (hex(mt['RAX']), hex(gt['RAX']))
+    # Exact for this roundtrip: RBX byte 0 -> RAX byte 0.
+    assert mt['RAX'] == 0xFF

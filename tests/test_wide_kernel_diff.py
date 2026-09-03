@@ -716,3 +716,54 @@ def test_cellc_vpand_ymm_avalanche_matches_pyx() -> None:
     py = _cell_wide_taint(Architecture.AMD64, instr, _YMM0, 32, {}, taints, PCodeCellEvaluator)
     c = _cell_wide_taint(Architecture.AMD64, instr, _YMM0, 32, {}, taints, PCodeCellEvaluatorC)
     assert py == c == set(range(32))  # both avalanche across 32 bytes
+
+
+# ===========================================================================
+# 10. cell_c parity for wide movement / bitwise, 128-bit and 256-bit, LE + BE.
+#     The C kernel's lane-split handler now covers COPY/XOR/AND/OR/ZEXT/SEXT at
+#     arbitrary width (register and unique), so it must agree byte-for-byte with
+#     the cell.pyx reference.  (LOAD/STORE, shifts and ARM offsets >= 17000 are
+#     still being ported and are not asserted here.)
+# ===========================================================================
+
+
+def _both_kernels(arch: Architecture, instr_hex: str, out_base: int, nbytes: int,
+                  in_values: dict[str, int], in_taints: dict[str, int]) -> set[int]:
+    py = _cell_wide_taint(arch, instr_hex, out_base, nbytes, in_values, in_taints,
+                          PCodeCellEvaluator)
+    c = _cell_wide_taint(arch, instr_hex, out_base, nbytes, in_values, in_taints,
+                         PCodeCellEvaluatorC)
+    assert py == c, f'cell.pyx {py} != cell_c {c}'
+    return py
+
+
+def test_cellc_movdqa_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'movdqa xmm0, xmm1').hex()
+    _, t = _lanes_from_wide(0, 0xFF | (0xFF << (15 * 8)), _XMM1, 16)
+    assert _both_kernels(Architecture.AMD64, instr, _XMM0, 16, {}, t) == {0, 15}
+
+
+def test_cellc_pxor_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'pxor xmm0, xmm1').hex()
+    _, ta = _lanes_from_wide(0, 0x00000000FFFFFFFF, _XMM0, 16)
+    _, tb = _lanes_from_wide(0, 0xFFFFFFFF00000000, _XMM1, 16)
+    assert _both_kernels(Architecture.AMD64, instr, _XMM0, 16, {}, {**ta, **tb}) == set(range(8))
+
+
+def test_cellc_vmovdqa_ymm_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'vmovdqa ymm0, ymm1').hex()
+    _, t = _lanes_from_wide(0, 0xFF | (0xFF << (16 * 8)) | (0xFF << (31 * 8)), _YMM1, 32)
+    assert _both_kernels(Architecture.AMD64, instr, _YMM0, 32, {}, t) == {0, 16, 31}
+
+
+def test_cellc_vpxor_ymm_matches_pyx() -> None:
+    instr = _asm(_KS_X86, 'vpxor ymm0, ymm1, ymm2').hex()
+    _, ta = _lanes_from_wide(0, 0xFF, _YMM1, 32)
+    _, tb = _lanes_from_wide(0, 0xFF << (31 * 8), _YMM2, 32)
+    assert _both_kernels(Architecture.AMD64, instr, _YMM0, 32, {}, {**ta, **tb}) == {0, 31}
+
+
+def test_cellc_ppc_vxor_be_matches_pyx() -> None:
+    instr = _asm(_KS_PPC, 'vxor 0, 1, 2').hex()
+    _, t = _lanes_from_wide(0, 0xFF | (0xFF << (15 * 8)), _VR1, 16)
+    assert _both_kernels(Architecture.PPC32BE, instr, _VR0, 16, {}, t) == {0, 15}

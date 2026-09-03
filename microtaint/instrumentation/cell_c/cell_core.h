@@ -415,62 +415,44 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
                               || oid == OP_INT_ZEXT
                               || oid == OP_INT_SEXT);
             if (splittable) {
+                /* Split into 8-byte lanes and apply the op lane-by-lane.  Byte-
+                 * parallel bitwise / movement is width-agnostic; ZEXT/SEXT zero-
+                 * or sign-fill the lanes above the source.  For total==16 this is
+                 * exactly the old low+high pair (register lanes at o_off/o_off+8,
+                 * the 128-bit unique embryo's uniq_arr[off]/uniq_arr[off+8]); for
+                 * 32/64-byte YMM/ZMM it continues to the higher register lanes.
+                 * A register o_off is a sleigh byte offset so o_off+lane is the
+                 * right lane. */
                 int total_sz = op->o_sz;
-                int lo_sz = 8;
-                int hi_sz = total_sz - 8;
-                /* Low 8 bytes */
-                {
-                    uint64_t v0 = frame_read_d(f, op->i0_sp, op->i0_off, lo_sz);
-                    uint64_t v1 = (op->n_ins >= 2)
-                        ? frame_read_d(f, op->i1_sp, op->i1_off, lo_sz)
-                        : 0;
-                    uint64_t r;
-                    switch (oid) {
-                        case OP_INT_XOR: r = v0 ^ v1; break;
-                        case OP_INT_AND: r = v0 & v1; break;
-                        case OP_INT_OR:  r = v0 | v1; break;
-                        case OP_COPY:
-                        case OP_INT_ZEXT:
-                        case OP_INT_SEXT: r = v0; break;
-                        default: r = 0;  /* unreachable */
-                    }
-                    frame_write_d(f, op->o_sp, op->o_off, lo_sz, r);
+                uint64_t sext_fill = 0;
+                if (oid == OP_INT_SEXT) {
+                    int msb_lane = ((op->i0_sz - 1) / 8) * 8;
+                    int msb_within = op->i0_sz - msb_lane;
+                    uint64_t src_hi = frame_read_d(f, op->i0_sp,
+                                                   op->i0_off + msb_lane, msb_within);
+                    sext_fill = ((src_hi >> (msb_within * 8 - 1)) & 1)
+                              ? UINT64_MAX : 0;
                 }
-                /* High bytes (offset+8 ... offset+total_sz).
-                 * For INT_ZEXT widening from a smaller input: high is zero.
-                 * For INT_SEXT: high is all-ones if the source sign bit is set,
-                 *               all-zeros otherwise.  Source is op->i0_sz bytes;
-                 *               its MSB is at bit (i0_sz*8-1) of the low half. */
-                {
-                    uint64_t v0, v1, r;
+                for (int lane = 0; lane < total_sz; lane += 8) {
+                    int lsz = (total_sz - lane < 8) ? (total_sz - lane) : 8;
+                    uint64_t v0, v1 = 0, r;
                     if ((oid == OP_INT_ZEXT || oid == OP_INT_SEXT)
-                            && op->i0_sz <= lo_sz) {
-                        if (oid == OP_INT_SEXT) {
-                            /* Sign-extend: replicate MSB of source into all high bits */
-                            uint64_t src_lo = frame_read_d(f, op->i0_sp, op->i0_off, op->i0_sz);
-                            uint64_t msb = (src_lo >> (op->i0_sz * 8 - 1)) & 1;
-                            v0 = msb ? UINT64_MAX : 0;
-                        } else {
-                            v0 = 0;
-                        }
+                            && lane >= op->i0_sz) {
+                        v0 = (oid == OP_INT_SEXT) ? sext_fill : 0;
                     } else {
-                        v0 = frame_read_d(f, op->i0_sp, op->i0_off + lo_sz, hi_sz);
+                        v0 = frame_read_d(f, op->i0_sp, op->i0_off + lane, lsz);
                     }
-                    if (op->n_ins >= 2 && op->i1_sz > lo_sz) {
-                        v1 = frame_read_d(f, op->i1_sp, op->i1_off + lo_sz, hi_sz);
-                    } else {
-                        v1 = 0;
+                    if (op->n_ins >= 2 && lane < op->i1_sz) {
+                        int l1 = (op->i1_sz - lane < lsz) ? (op->i1_sz - lane) : lsz;
+                        v1 = frame_read_d(f, op->i1_sp, op->i1_off + lane, l1);
                     }
                     switch (oid) {
                         case OP_INT_XOR: r = v0 ^ v1; break;
                         case OP_INT_AND: r = v0 & v1; break;
                         case OP_INT_OR:  r = v0 | v1; break;
-                        case OP_COPY:
-                        case OP_INT_ZEXT:
-                        case OP_INT_SEXT: r = v0; break;
-                        default: r = 0;  /* unreachable */
+                        default:         r = v0; break;  /* COPY/ZEXT/SEXT */
                     }
-                    frame_write_d(f, op->o_sp, op->o_off + lo_sz, hi_sz, r);
+                    frame_write_d(f, op->o_sp, op->o_off + lane, lsz, r);
                 }
                 pc++;
                 continue;  /* skip the regular dispatch for this op */

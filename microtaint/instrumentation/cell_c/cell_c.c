@@ -104,6 +104,14 @@ static inline int reg_lookup(const EvalC *self, const char *name) {
 
 /* Get (offset, size) from name; returns 1 on success, 0 on miss. */
 static inline int reg_off_size(const EvalC *self, const char *name, int *off, int *sz) {
+    /* Synthetic vector lane VL_<hex>: an 8-byte window at an absolute sleigh
+     * offset (mirrors cell.pyx _resolve_off), so any ISA's wide vector register
+     * is byte-addressable without a per-arch table. */
+    if (name[0] == 'V' && name[1] == 'L' && name[2] == '_') {
+        char *endp = NULL;
+        long v = strtol(name + 3, &endp, 16);
+        if (endp && *endp == '\0' && v >= 0) { *off = (int)v; *sz = 8; return 1; }
+    }
     int idx = reg_lookup(self, name);
     if (idx < 0) return 0;
     *off = self->reg_table[idx].off;
