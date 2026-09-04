@@ -59,6 +59,12 @@ typedef enum {
      * Push 1 iff the bit selected by the (possibly tainted) index can vary. */
     OP_VAR_BIT_SELECT,    /* args: width (1..64) */
 
+    /* Comparison-bit taint (ComparisonTaintExpr [a<b]/[a<=b], signed/unsigned):
+     * args width, flags (bit0=signed, bit1=or_equal). Stack (bottom->top)
+     * a_val, a_taint, b_val, b_taint. Push can_be_true XOR always_true over the
+     * taint cube: cross corners min(a) OP max(b) vs max(a) OP min(b). */
+    OP_CMP_TAINT,         /* args: width, flags */
+
     /* Call into C kernel.
      *   args: cell_idx n_inputs name_idx_0 name_idx_1 ... name_idx_(n-1)
      * Pops n inputs from stack (last pushed is name_idx_(n-1)),
