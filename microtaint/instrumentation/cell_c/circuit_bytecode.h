@@ -65,6 +65,12 @@ typedef enum {
      * taint cube: cross corners min(a) OP max(b) vs max(a) OP min(b). */
     OP_CMP_TAINT,         /* args: width, flags */
 
+    /* Signed-overflow taint (SignedOverflowTaintExpr, SCARRY/SBORROW -> OF):
+     * args width, flags (bit0=is_sub, bit1=has_carry_in). Stack (bottom->top)
+     * a_val, a_taint, b_val, b_taint[, c_val, c_taint]. Sign-decomposition:
+     * push non-constancy of OF(a_s, b_s, carry-into-msb) over the taint cube. */
+    OP_SIGNED_OVF,        /* args: width, flags */
+
     /* Call into C kernel.
      *   args: cell_idx n_inputs name_idx_0 name_idx_1 ... name_idx_(n-1)
      * Pops n inputs from stack (last pushed is name_idx_(n-1)),

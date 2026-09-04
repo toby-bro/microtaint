@@ -496,6 +496,43 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         emit(e, (uint32_t)flags);
         return;
     }
+    if (strcmp(cn, "SignedOverflowTaintExpr") == 0) {
+        Py_DECREF(cls_name);
+        PyObject *av = PyObject_GetAttrString(expr, "a_val");
+        PyObject *at = PyObject_GetAttrString(expr, "a_taint");
+        PyObject *bv = PyObject_GetAttrString(expr, "b_val");
+        PyObject *bt = PyObject_GetAttrString(expr, "b_taint");
+        PyObject *cv = PyObject_GetAttrString(expr, "c_val");
+        PyObject *ct = PyObject_GetAttrString(expr, "c_taint");
+        PyObject *w  = PyObject_GetAttrString(expr, "width");
+        PyObject *sub = PyObject_GetAttrString(expr, "is_sub");
+        if (!av || !at || !bv || !bt || !w || !sub) {
+            Py_XDECREF(av); Py_XDECREF(at); Py_XDECREF(bv); Py_XDECREF(bt);
+            Py_XDECREF(cv); Py_XDECREF(ct); Py_XDECREF(w); Py_XDECREF(sub);
+            e->fallback = 1; return;
+        }
+        int width = (int)PyLong_AsLong(w);
+        int is_sub = PyObject_IsTrue(sub);
+        int has_c = (cv && cv != Py_None && ct && ct != Py_None);
+        Py_DECREF(w); Py_DECREF(sub);
+        if (width < 2 || width > 64) {   /* need a sign bit; >64 can't fit uint64 */
+            Py_DECREF(av); Py_DECREF(at); Py_DECREF(bv); Py_DECREF(bt);
+            Py_XDECREF(cv); Py_XDECREF(ct);
+            e->fallback = 1; return;
+        }
+        compile_expr(cc, e, av);   /* stack: a_val,a_taint,b_val,b_taint[,c_val,c_taint] */
+        compile_expr(cc, e, at);
+        compile_expr(cc, e, bv);
+        compile_expr(cc, e, bt);
+        if (has_c) { compile_expr(cc, e, cv); compile_expr(cc, e, ct); }
+        Py_DECREF(av); Py_DECREF(at); Py_DECREF(bv); Py_DECREF(bt);
+        Py_XDECREF(cv); Py_XDECREF(ct);
+        if (e->fallback) return;
+        emit(e, OP_SIGNED_OVF);
+        emit(e, (uint32_t)width);
+        emit(e, (uint32_t)(is_sub | (has_c ? 2 : 0)));
+        return;
+    }
     if (strcmp(cn, "InstructionCellExpr") == 0) {
         Py_DECREF(cls_name);
         emit_call_cell(cc, e, expr);
@@ -780,6 +817,12 @@ static uint64_t mask_range(int width) {
     return (((uint64_t)1) << width) - 1;
 }
 
+/* OF as a function of (a_s, b_s, borrow|carry-into-msb) -- mirrors
+ * SignedOverflowTaintExpr._g. x,y,z are 0/1. */
+static inline int sof_g(int is_sub, int x, int y, int z) {
+    return is_sub ? ((x ^ y) & (y ^ z)) : ((1 - (x ^ y)) & (y ^ z));
+}
+
 /* Evaluate a single bytecode program for one assignment.
  * Returns the result as Python int (PyLong) or NULL on error. */
 static PyObject *eval_program(CompiledCircuit *cc,
@@ -889,6 +932,40 @@ static PyObject *eval_program(CompiledCircuit *cc,
             int equal_ach   = (((a ^ b) & ~free & mask) == 0);
             int unequal_ach = (free != 0);
             stack[sp++] = (equal_ach && unequal_ach) ? 1 : 0;
+            break;
+        }
+        case OP_SIGNED_OVF: {
+            int w = (int)bc[pc++];
+            int flags = (int)bc[pc++];
+            int is_sub = flags & 1, has_c = (flags & 2) ? 1 : 0;
+            int need = has_c ? 6 : 4;
+            if (sp < need) goto err;
+            uint64_t c = 0, tc = 0;
+            if (has_c) { tc = stack[--sp]; c = stack[--sp]; }
+            uint64_t tb = stack[--sp], b = stack[--sp], ta = stack[--sp], a = stack[--sp];
+            uint64_t mask = mask_range(w), lowmask = mask_range(w - 1);
+            a &= mask; ta &= mask; b &= mask; tb &= mask; c &= lowmask; tc &= lowmask;
+            int a_s = (int)((a >> (w - 1)) & 1), b_s = (int)((b >> (w - 1)) & 1);
+            int ta_s = (int)((ta >> (w - 1)) & 1), tb_s = (int)((tb >> (w - 1)) & 1);
+            uint64_t al = a & lowmask, bl = b & lowmask, tal = ta & lowmask, tbl = tb & lowmask;
+            int base_c, hi, lo;
+            if (is_sub) {
+                base_c = (al < bl + c);
+                hi = ((al & ~tal & lowmask) < (bl | tbl) + (c | tc));
+                lo = ((al | tal) < (bl & ~tbl & lowmask) + (c & ~tc & lowmask));
+            } else {
+                base_c = ((al + bl + c) > lowmask);
+                hi = (((al | tal) + (bl | tbl) + (c | tc)) > lowmask);
+                lo = (((al & ~tal & lowmask) + (bl & ~tbl & lowmask) + (c & ~tc & lowmask)) > lowmask);
+            }
+            int t_c = hi ^ lo;
+            int base = sof_g(is_sub, a_s, b_s, base_c);
+            int result = 0;
+            for (int da = 0; da < (ta_s ? 2 : 1) && !result; da++)
+                for (int db = 0; db < (tb_s ? 2 : 1) && !result; db++)
+                    for (int dc = 0; dc < (t_c ? 2 : 1) && !result; dc++)
+                        if (sof_g(is_sub, a_s ^ da, b_s ^ db, base_c ^ dc) != base) result = 1;
+            stack[sp++] = (uint64_t)result;
             break;
         }
         case OP_CMP_TAINT: {
@@ -1546,7 +1623,7 @@ static const char *SUPPORTED_EXPR_TYPES[] = {
     "TaintOperand", "Constant", "BinaryExpr", "UnaryExpr",
     "AvalancheExpr", "InstructionCellExpr", "MemoryOperand",
     "FullMaskAvalancheExpr", "EqualityTaintExpr", "VariableBitSelectTaintExpr",
-    "ComparisonTaintExpr",
+    "ComparisonTaintExpr", "SignedOverflowTaintExpr",
 };
 
 static PyObject *py_supported_expr_types(PyObject *self, PyObject *args) {
