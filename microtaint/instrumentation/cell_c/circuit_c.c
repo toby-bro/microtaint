@@ -572,6 +572,46 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         emit(e, (uint32_t)out_hi);
         return;
     }
+    if (strcmp(cn, "VariableShiftTaintExpr") == 0) {
+        Py_DECREF(cls_name);
+        PyObject *sv = PyObject_GetAttrString(expr, "src_val");
+        PyObject *st = PyObject_GetAttrString(expr, "src_taint");
+        PyObject *mv = PyObject_GetAttrString(expr, "amt_val");
+        PyObject *mt = PyObject_GetAttrString(expr, "amt_taint");
+        PyObject *w  = PyObject_GetAttrString(expr, "width");
+        PyObject *kd = PyObject_GetAttrString(expr, "kind");
+        PyObject *am = PyObject_GetAttrString(expr, "amt_mask");
+        if (!sv || !st || !mv || !mt || !w || !kd || !am) {
+            Py_XDECREF(sv); Py_XDECREF(st); Py_XDECREF(mv); Py_XDECREF(mt);
+            Py_XDECREF(w); Py_XDECREF(kd); Py_XDECREF(am);
+            e->fallback = 1; return;
+        }
+        int width = (int)PyLong_AsLong(w);
+        int kind = (int)PyLong_AsLong(kd);
+        Py_DECREF(w); Py_DECREF(kd);
+        /* amt_mask must fit uint64 (folded MIPS 64-bit masks are exactly 64-bit). */
+        if (!PyLong_Check(am)) { Py_DECREF(am); goto vsh_fb; }
+        (void)PyLong_AsUnsignedLongLong(am);
+        if (PyErr_Occurred()) { PyErr_Clear(); Py_DECREF(am); goto vsh_fb; }
+        if (width <= 0 || width > 64) { Py_DECREF(am); goto vsh_fb; }
+        compile_expr(cc, e, sv);   /* stack: src_val, src_taint, amt_val, amt_taint */
+        compile_expr(cc, e, st);
+        compile_expr(cc, e, mv);
+        compile_expr(cc, e, mt);
+        Py_DECREF(sv); Py_DECREF(st); Py_DECREF(mv); Py_DECREF(mt);
+        if (e->fallback) { Py_DECREF(am); return; }
+        int amci = (int)PyList_GET_SIZE(cc->constants);
+        PyList_Append(cc->constants, am);
+        Py_DECREF(am);
+        emit(e, OP_VAR_SHIFT);
+        emit(e, (uint32_t)width);
+        emit(e, (uint32_t)kind);
+        emit(e, (uint32_t)amci);
+        return;
+    vsh_fb:
+        Py_XDECREF(sv); Py_XDECREF(st); Py_XDECREF(mv); Py_XDECREF(mt);
+        e->fallback = 1; return;
+    }
     if (strcmp(cn, "InstructionCellExpr") == 0) {
         Py_DECREF(cls_name);
         emit_call_cell(cc, e, expr);
@@ -887,6 +927,31 @@ static inline __int128 vmul_sx(uint64_t v, int w) {
     return (__int128)v;
 }
 
+/* ---- VariableShiftTaintExpr helpers (mirror _shift / _smear) ---- */
+/* kind: 0=left, 1=logical right, 2=arithmetic right. w<=64. */
+static inline uint64_t vsh_one(int kind, uint64_t y, int s, uint64_t mask, int w) {
+    if (s >= w) {
+        if (kind == 2) return ((y >> (w - 1)) & 1) ? mask : 0;
+        return 0;
+    }
+    if (kind == 0) return (y << s) & mask;
+    if (kind == 1) return (y & mask) >> s;
+    uint64_t r = (y & mask) >> s;                 /* arithmetic right */
+    if (((y >> (w - 1)) & 1) && s > 0) r |= (mask << (w - s)) & mask;
+    return r;
+}
+static inline uint64_t vsh_smear(int kind, uint64_t y, uint64_t ts, int s0,
+                                 int is_and, uint64_t mask, int w, int lg) {
+    uint64_t r = vsh_one(kind, y, s0, mask, w);
+    for (int j = 0; j < lg; j++) {
+        if ((ts >> j) & 1) {
+            uint64_t shifted = vsh_one(kind, r, 1 << j, mask, w);
+            r = is_and ? (r & shifted) : (r | shifted);
+        }
+    }
+    return r;
+}
+
 /* Evaluate a single bytecode program for one assignment.
  * Returns the result as Python int (PyLong) or NULL on error. */
 static PyObject *eval_program(CompiledCircuit *cc,
@@ -996,6 +1061,37 @@ static PyObject *eval_program(CompiledCircuit *cc,
             int equal_ach   = (((a ^ b) & ~free & mask) == 0);
             int unequal_ach = (free != 0);
             stack[sp++] = (equal_ach && unequal_ach) ? 1 : 0;
+            break;
+        }
+        case OP_VAR_SHIFT: {
+            int w = (int)bc[pc++];
+            int kind = (int)bc[pc++];
+            int amci = (int)bc[pc++];
+            if (sp < 4) goto err;
+            uint64_t tamt = stack[--sp], vamt = stack[--sp], tx = stack[--sp], x = stack[--sp];
+            uint64_t mask = mask_range(w);
+            PyObject *amcv = PyList_GET_ITEM(cc->constants, amci);
+            uint64_t amt_mask = (uint64_t)PyLong_AsUnsignedLongLong(amcv);
+            if (PyErr_Occurred()) PyErr_Clear();
+            int lg = 0; { unsigned int y = (unsigned int)(w - 1); while (y) { lg++; y >>= 1; } }
+            x &= mask; tx &= mask;
+            uint64_t ts = tamt & amt_mask;
+            uint64_t s0_full = (vamt & amt_mask) & ~ts;
+            int s0 = (s0_full < (uint64_t)w) ? (int)s0_full : w;
+            uint64_t ts_lo = ts & mask_range(lg);
+            uint64_t reach = vsh_smear(kind, tx, ts_lo, s0, 0, mask, w, lg);
+            uint64_t hi = vsh_smear(kind, x, ts_lo, s0, 0, mask, w, lg);
+            uint64_t lo = vsh_smear(kind, x, ts_lo, s0, 1, mask, w, lg);
+            if ((((uint64_t)s0) | ts) >= (uint64_t)w) {   /* saturating amounts reachable */
+                if (kind == 2) {
+                    if ((tx >> (w - 1)) & 1) { hi |= mask; lo = 0; reach |= mask; }
+                    else if ((x >> (w - 1)) & 1) { hi |= mask; lo &= mask; }
+                    else { lo = 0; }
+                } else {
+                    lo = 0;
+                }
+            }
+            stack[sp++] = (reach | (hi ^ lo)) & mask;
             break;
         }
         case OP_VAR_MUL_TAINT: {
@@ -1728,6 +1824,7 @@ static const char *SUPPORTED_EXPR_TYPES[] = {
     "AvalancheExpr", "InstructionCellExpr", "MemoryOperand",
     "FullMaskAvalancheExpr", "EqualityTaintExpr", "VariableBitSelectTaintExpr",
     "ComparisonTaintExpr", "SignedOverflowTaintExpr", "VariableMultiplyTaintExpr",
+    "VariableShiftTaintExpr",
 };
 
 static PyObject *py_supported_expr_types(PyObject *self, PyObject *args) {

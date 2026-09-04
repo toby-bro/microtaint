@@ -78,6 +78,12 @@ typedef enum {
      * bit is tainted). */
     OP_VAR_MUL_TAINT,     /* args: in_width, flags, out_lo, out_hi */
 
+    /* Data-dependent shift taint (VariableShiftTaintExpr): args width, kind
+     * (0=left,1=lsr,2=asr), const_idx(amt_mask). Stack (bottom->top) src_val,
+     * src_taint, amt_val, amt_taint. Log-fold subcube smear: exact taint of a
+     * shift by a tainted amount. */
+    OP_VAR_SHIFT,         /* args: width, kind, const_idx */
+
     /* Call into C kernel.
      *   args: cell_idx n_inputs name_idx_0 name_idx_1 ... name_idx_(n-1)
      * Pops n inputs from stack (last pushed is name_idx_(n-1)),
