@@ -2044,6 +2044,9 @@ cdef class PCodeCellEvaluator:
         self._load(frame, flat_inputs)
         _execute_decoded(frame, decoded)
         self.native_calls += 1
+        if cell.out_bit_end - cell.out_bit_start + 1 > 64:
+            return self._read_output_wide(frame, cell.out_reg, cell.out_bit_start,
+                                          cell.out_bit_end - cell.out_bit_start + 1)
         return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
 
     def evaluate_concrete_state(self, cell, dict regs, dict mem):
@@ -2059,6 +2062,9 @@ cdef class PCodeCellEvaluator:
         self._load_state(frame, regs, mem)
         _execute_decoded(frame, decoded)
         self.native_calls += 1
+        if cell.out_bit_end - cell.out_bit_start + 1 > 64:
+            return self._read_output_wide(frame, cell.out_reg, cell.out_bit_start,
+                                          cell.out_bit_end - cell.out_bit_start + 1)
         return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
 
     cdef object _read_output_wide(self, _PCodeFrame frame, str out_reg,

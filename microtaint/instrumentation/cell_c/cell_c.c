@@ -449,6 +449,21 @@ static uint64_t read_output_full(EvalC *self, Frame *f,
     return (val >> bit_start) & m;
 }
 
+/* Concrete output as a Python int: a WIDE (>64-bit) vector slice is read at full
+ * width (native SIMD), a <=64-bit slice via the scalar read_output_full.  Used by
+ * every evaluate_concrete* entry so an InstructionCellExpr over a wide output
+ * returns the whole value (its XOR with the other polarity is the wide taint). */
+static PyObject *output_pylong(EvalC *self, Frame *f, const char *out_reg, int bs, int be) {
+    int width = be - bs + 1;
+    if (width > 64) {
+        char up[24]; int off, sz;
+        if (upper_into(up, sizeof(up), out_reg) && reg_off_size(self, up, &off, &sz))
+            return read_wide_pylong(f, (long)off + (bs / 8), width / 8, f->is_big_endian);
+        return PyLong_FromLong(0);
+    }
+    return PyLong_FromUnsignedLongLong(read_output_full(self, f, out_reg, bs, be));
+}
+
 /* ──────────── Type lifecycle ──────────── */
 
 static PyObject *EvalC_new(PyTypeObject *type, PyObject *args, PyObject *kw) {
@@ -866,10 +881,10 @@ static PyObject *EvalC_evaluate_concrete(EvalC *self, PyObject *args) {
         PyErr_SetString(self->fallback_exc, "execution requires Unicorn");
         return NULL;
     }
-    uint64_t out = read_output_full(self, f, out_reg, bs, be);
+    PyObject *out = output_pylong(self, f, out_reg, bs, be);
     free(out_reg);
     self->native_calls++;
-    return PyLong_FromUnsignedLongLong(out);
+    return out;
 }
 
 static PyObject *EvalC_evaluate_concrete_state(EvalC *self, PyObject *args) {
@@ -901,10 +916,10 @@ static PyObject *EvalC_evaluate_concrete_state(EvalC *self, PyObject *args) {
         PyErr_SetString(self->fallback_exc, "execution requires Unicorn");
         return NULL;
     }
-    uint64_t out = read_output_full(self, f, out_reg, bs, be);
+    PyObject *out = output_pylong(self, f, out_reg, bs, be);
     free(out_reg);
     self->native_calls++;
-    return PyLong_FromUnsignedLongLong(out);
+    return out;
 }
 
 /* Avalanche floor: an input is tainted iff its value differs between the V|T
@@ -1050,10 +1065,10 @@ static PyObject *EvalC_evaluate_concrete_flat(EvalC *self, PyObject *args) {
         PyErr_SetString(self->fallback_exc, "execution requires Unicorn");
         return NULL;
     }
-    uint64_t out = read_output_full(self, f, out_reg, bs, be);
+    PyObject *out = output_pylong(self, f, out_reg, bs, be);
     free(out_reg);
     self->native_calls++;
-    return PyLong_FromUnsignedLongLong(out);
+    return out;
 }
 
 static PyObject *EvalC_stats(EvalC *self, PyObject *_unused) {
