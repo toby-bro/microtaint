@@ -142,14 +142,18 @@ def test_branch_instruction(x86_registers: list[Register]) -> None:
 
 
 def test_x86_flags_mapping() -> None:
-    # X86 flags mapping test (when FLAGS register is provided)
+    # x86 flags are individual named registers (CF/OF/SF/ZF/PF), mapped through
+    # the same general named-register path as ARM's N/Z/C/V -- no x86-specific
+    # packed-EFLAGS routing in the compute path.  `add eax,ebx` writes each flag.
     arch = Architecture.X86
-    regs = [Register(name='EAX', bits=32), Register(name='EBX', bits=32), Register(name='EFLAGS', bits=32)]
+    regs = [Register(name='EAX', bits=32), Register(name='EBX', bits=32)] + [
+        Register(name=f, bits=1) for f in ('CF', 'OF', 'SF', 'ZF', 'PF')
+    ]
     # ADD EAX, EBX -> \x01\xd8
     byte_string = b'\x01\xd8'
     rule = generate_static_rule(arch, byte_string, regs)
     targets = {a.target.name for a in rule.assignments}
-    assert 'EFLAGS' in targets
+    assert {'CF', 'OF', 'SF', 'ZF', 'PF'} <= targets
 
 
 def test_jump_const(x86_registers: list[Register]) -> None:

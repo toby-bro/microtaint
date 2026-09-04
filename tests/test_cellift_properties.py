@@ -46,19 +46,9 @@ def check_property_vs_golden_model(  # noqa: C901
     # Read the raw dictionary output
     ast_output = rule.evaluate(ctx)
 
-    # Extract the AST taint using the proper EFLAGS bit shifts for boolean flags
-    if out_reg == 'CF':
-        ast_taint = (ast_output.get('EFLAGS', 0) >> 0) & 1
-    elif out_reg == 'PF':
-        ast_taint = (ast_output.get('EFLAGS', 0) >> 2) & 1
-    elif out_reg == 'ZF':
-        ast_taint = (ast_output.get('EFLAGS', 0) >> 6) & 1
-    elif out_reg == 'SF':
-        ast_taint = (ast_output.get('EFLAGS', 0) >> 7) & 1
-    elif out_reg == 'OF':
-        ast_taint = (ast_output.get('EFLAGS', 0) >> 11) & 1
-    else:
-        ast_taint = ast_output.get(out_reg, 0)
+    # Flags are individual named registers (CF/PF/ZF/SF/OF), read directly like
+    # any other register -- no x86 packed-EFLAGS bit knowledge in the test.
+    ast_taint = ast_output.get(out_reg, 0)
 
     # 2. Extract exactly which bits are tainted
     t_vars: list[tuple[str, int]] = []

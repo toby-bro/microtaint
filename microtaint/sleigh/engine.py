@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 from pypcode import Context, PcodeOp, Translation, Varnode
 
@@ -340,10 +340,7 @@ class StateMapper:
         self.arch = arch
         self.state_format = state_format
         self.arm_aliases: dict[str, str] = {'N': 'ng', 'Z': 'zr', 'C': 'cy', 'V': 'ov'}
-        # is_x86 covers both "X86" (32-bit) and "AMD64" (64-bit) — they share
-        # the Sleigh register space layout (XMM0 at 0x1200, EFLAGS at 0x200, ...).
         arch_upper = str(arch).upper()
-        self.is_x86 = 'X86' in arch_upper or 'AMD64' in arch_upper
         self.is_arm = 'ARM' in arch_upper
         # Byte->bit arithmetic for SUB-register reads depends on endianness: on a
         # big-endian target byte 0 of a register is its MOST significant one.  The
@@ -438,26 +435,7 @@ class StateMapper:
             return max((reg_bytes - rel_byte - size) * 8, 0)
         return rel_byte * 8
 
-    def _map_x86_flag(self, offset: int) -> RegMapping | None:
-        """x86 EFLAGS bit at Sleigh offset [512,560) -> its state_format entry
-        (a dedicated CF/PF/ZF/SF/OF register, else the packed FLAGS reg)."""
-        bit_idx = offset - 512
-        flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
-        requested_flag = flag_names.get(bit_idx)
-        for sf_reg in self.state_format:
-            if requested_flag and sf_reg.name.upper() == requested_flag:
-                return RegMapping(sf_reg.name, 0, 0)
-        for sf_reg in self.state_format:
-            if 'FLAGS' in sf_reg.name.upper():
-                return RegMapping(sf_reg.name, bit_idx, bit_idx)
-        return None
-
     def map_to_state(self, offset: int, size: int) -> RegMapping | None:
-        if self.is_x86 and 512 <= offset < 560:
-            flag_map = self._map_x86_flag(offset)
-            if flag_map is not None:
-                return flag_map
-
         best_match = None
         end_offset = offset + size
         for sf_reg, s_r in self.sf_resolved:
@@ -481,17 +459,6 @@ class StateMapper:
 
     def map_to_state_all(self, offset: int, size: int) -> list[RegMapping]:
         mappings: list[RegMapping] = []
-        if self.is_x86 and 512 <= offset < 560:
-            bit_idx = offset - 512
-            flag_names = {0: 'CF', 2: 'PF', 6: 'ZF', 7: 'SF', 11: 'OF'}
-            req_flag = flag_names.get(bit_idx)
-            for sf_reg in self.state_format:
-                if 'FLAGS' in sf_reg.name.upper():
-                    mappings.append(RegMapping(sf_reg.name, bit_idx, bit_idx))
-                elif req_flag and sf_reg.name.upper() == req_flag:
-                    mappings.append(RegMapping(sf_reg.name, 0, 0))
-            return mappings
-
         end_offset = offset + size
         for sf_reg, s_r in self.sf_resolved:
             overlap_start = max(s_r.offset, offset)
@@ -1023,8 +990,20 @@ def _sequence_needs_monolithic(
     return False
 
 
+# P-code opcodes whose output is a 1-bit boolean (0/1) even though Sleigh stores
+# it in a 1-byte register.  A condition flag (x86 CF/OF, ARM64 C, PPC xer_ca,
+# SPARC i_cf, ...) is exactly a register written only by such ops -- detected
+# from the p-code, so it is ISA-agnostic and needs no per-arch flag table.
+_BOOL_OUTPUT_OPCODES: frozenset[str] = frozenset({
+    'INT_EQUAL', 'INT_NOTEQUAL', 'INT_LESS', 'INT_SLESS',
+    'INT_LESSEQUAL', 'INT_SLESSEQUAL', 'INT_CARRY', 'INT_SCARRY', 'INT_SBORROW',
+    'BOOL_NEGATE', 'BOOL_XOR', 'BOOL_AND', 'BOOL_OR',
+    'FLOAT_EQUAL', 'FLOAT_NOTEQUAL', 'FLOAT_LESS', 'FLOAT_LESSEQUAL', 'FLOAT_NAN',
+})
+
+
 def _chain_intermediate_flags(
-    translation: Any,
+    translation: Translation,
     ctx: Context,
     arch: Architecture,
     reg_names_tuple: tuple[tuple[str, int], ...],
@@ -1062,9 +1041,12 @@ def _chain_intermediate_flags(
     }
     written: set[tuple[int, int]] = set()
     read: set[tuple[int, int]] = set()
+    write_ops: dict[tuple[int, int], set[str]] = {}
     for op in translation.ops:
         if op.output is not None and op.output.space.name == 'register':
-            written.add((op.output.offset, op.output.size))
+            key = (op.output.offset, op.output.size)
+            written.add(key)
+            write_ops.setdefault(key, set()).add(op.opcode.name)
         for inp in op.inputs:
             if inp.space.name == 'register':
                 read.add((inp.offset, inp.size))
@@ -1088,8 +1070,14 @@ def _chain_intermediate_flags(
         if k[1] > 8:
             continue
         nm = name_by_key.get(k)
-        if nm is not None:
-            _emit(nm, k[1] * 8)
+        if nm is None:
+            continue
+        # A 1-byte register written only by boolean-output p-code ops is a 1-bit
+        # condition flag: thread it at 1 bit so its taint sits at bit 0 (where the
+        # carry-in reads it), matching a user-supplied 1-bit flag.  Any other
+        # intermediate (a byte GP sub-register, a wider temp) keeps its full width.
+        is_flag = k[1] == 1 and write_ops[k] <= _BOOL_OUTPUT_OPCODES
+        _emit(nm, 1 if is_flag else k[1] * 8)
     return tuple(extra)
 
 
