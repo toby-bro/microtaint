@@ -329,38 +329,3 @@ class InstructionCellExpr(Expr):
         inputs: dict[str, Expr],
     ) -> None: ...
     def evaluate(self, context: EvalContext) -> int: ...
-
-class MemoryDifferentialExpr(Expr):
-    bytestring: bytes
-    target: tuple[Any, ...]
-    reg_inputs: list[tuple[str, int, int]]
-    mem_inputs: list[tuple[str, int, int]]
-    addr_only_regs: list[str]
-    # Negatively-polarised (subtracted) inputs.  Registers are keyed per SLICE --
-    # (name, bit_start, bit_end) -- because apply_sless_msb_split gives one register
-    # two slices with opposite polarity.  Memory keys stay strings.
-    neg_inputs: list[object]
-
-    _instr_hex: str
-    _target_out_reg: str
-    _target_bit_start: int
-    _target_bit_end: int
-
-    def __init__(
-        self,
-        bytestring: bytes,
-        target: tuple[str, str, int, int],
-        reg_inputs: list[tuple[str, int, int]],
-        mem_inputs: list[tuple[str, int, int]],
-        addr_only_regs: list[str],
-        neg_inputs: list[object] | None = ...,
-    ) -> None: ...
-    def evaluate(self, context: EvalContext) -> int: ...
-    @property
-    def instruction(self) -> str: ...
-    @property
-    def out_reg(self) -> str: ...
-    @property
-    def out_bit_start(self) -> int: ...
-    @property
-    def out_bit_end(self) -> int: ...

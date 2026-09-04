@@ -15,7 +15,8 @@ Bug index
      `generate_taint_assignments` treated all memory targets as pure
      stores.  Pure stores HAVE no LOAD in slice_ops; RMW does.
    - Fix: detect RMW (`is_store_target` AND any LOAD op in slice_ops),
-     route through `MemoryDifferentialExpr`.
+     route through the standard C1 XOR C2 cell differential (two
+     `InstructionCellExpr` replicas over the Format-B memory cell inputs).
 
 2. Memory inputs with non-zero offsets land at the wrong address
    - Symptom: `add rax, [rbp-0x10]` produced popcount=1 even though the
@@ -38,9 +39,9 @@ Bug index
      under bare `<reg>` for `state.regs`.  The simulator cleared all
      registers and ran the instruction with `RAX=0`, reading from
      `mem[0]` instead of `mem[<RAX>]`.
-   - Fix: `MemoryDifferentialExpr` accepts an explicit
-     `addr_only_regs` list and populates them as concrete (V, V) in
-     both `or_inputs` and `and_inputs`.
+   - Fix: `process_dependencies` adds each memory operand's address-base
+     register to the cell inputs as concrete (V, V) in both replicas, so
+     the differential resolves `[reg+off]` correctly.
 
 4. cell.pyx _read_output cannot parse dynamic MEM keys
    - Symptom: even with engine emitting correct cell out_reg names
@@ -72,7 +73,6 @@ import pytest
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import (
     EvalContext,
-    MemoryDifferentialExpr,
 )
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
@@ -155,8 +155,7 @@ class TestBug1RMWDifferential:
         # additionally set bit 0 (giving 0x1FF).  Either is correct.
         assert mem_taint & 0x1FE == 0x1FE, (
             f'add carry should include differential mask 0x1FE, got {mem_taint:#x}.  '
-            'This indicates the RMW path is no longer using MemoryDifferentialExpr '
-            'or the differential is not detecting the carry chain.'
+            'This indicates the RMW differential is not detecting the carry chain.'
         )
         # And the popcount must be at least 8 (the differential alone).
         assert bin(mem_taint).count('1') >= 8, f'add carry must produce popcount>=8, got {bin(mem_taint).count("1")}.'
@@ -187,11 +186,12 @@ class TestBug1RMWDifferential:
         ), f'sub borrow should produce popcount>=9, got {bin(mem_taint).count("1")} (mask={mem_taint:#x}).'
 
     def test_pure_store_uses_or_path(self, simulator, regs):
-        """`mov [rbp-0x10], rax` is a PURE store — NOT RMW.  It must NOT
-        get routed through MemoryDifferentialExpr.  Asserting the cheap
-        path (OR-of-input-taints) is taken: a tainted RAX with full mask
-        gives a fully-tainted memory output, but the expression class
-        must NOT be MemoryDifferentialExpr."""
+        """`mov [rbp-0x10], rax` is a PURE store — NOT RMW.  It must take
+        the cheap OR-of-input-taints path, NOT the C1 XOR C2 cell
+        differential (which executes the instruction via InstructionCellExpr
+        replicas).  We assert the memory-target expression tree contains no
+        InstructionCellExpr, and that a fully-tainted RAX yields a
+        fully-tainted memory output."""
         rbp = 0x80000000DD00
         mem_addr = rbp - 0x10
         ctx = EvalContext(
@@ -204,12 +204,25 @@ class TestBug1RMWDifferential:
         )
         # mov [rbp-0x10], rax (48 89 45 f0)
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('488945f0'), regs)
-        # Find the memory-target assignment and check its expression class.
+        # Find the memory-target assignment; its expression must not execute
+        # the instruction (no InstructionCellExpr in the tree) — the pure-store
+        # OR path is value-only.
         mem_assignments = [a for a in circuit.assignments if hasattr(a.target, 'address_expr')]
         assert len(mem_assignments) == 1
-        kind = type(mem_assignments[0].expression).__name__
-        assert kind != 'MemoryDifferentialExpr', (
-            f'pure store routed through differential (got {kind}); '
+
+        def _has_cell(expr, depth=0):
+            if expr is None or depth > 40:
+                return False
+            if type(expr).__name__ == 'InstructionCellExpr':
+                return True
+            for attr in ('lhs', 'rhs', 'expr', 'operand', 'address_expr'):
+                child = getattr(expr, attr, None)
+                if child is not None and _has_cell(child, depth + 1):
+                    return True
+            return False
+
+        assert not _has_cell(mem_assignments[0].expression), (
+            'pure store routed through the cell differential; '
             'the cheap OR-only path should be used for performance.'
         )
         out = circuit.evaluate(ctx)
@@ -555,90 +568,3 @@ class TestSipHashAvalanche:
             f'on the input bit (mask={captured[0]:#018x}).  This regression '
             'almost certainly means one of bugs 1-5 has reappeared.'
         )
-
-
-# ===========================================================================
-# MemoryDifferentialExpr direct tests (Cython class)
-# ===========================================================================
-
-
-class TestMemoryDifferentialExpr:
-    """Direct unit tests on the Cython class itself, without going
-    through the rule generator."""
-
-    def test_construction_caches_target_strings(self):
-        """The constructor pre-computes _target_out_reg etc. so the
-        hot path doesn't re-format strings on every evaluate()."""
-        expr = MemoryDifferentialExpr(
-            bytestring=b'\x48\x01\x45\xf0',
-            target=('MEM', 'RBP', -0x10, 8),
-            reg_inputs=[('RAX', 0, 63)],
-            mem_inputs=[('RBP', -0x10, 8)],
-            addr_only_regs=['RBP'],
-        )
-        assert expr.out_reg == 'MEM_RBP_-16_8'
-        assert expr.out_bit_start == 0
-        assert expr.out_bit_end == 63
-        assert expr.instruction == '480145f0'
-
-    def test_register_target_uses_same_format(self):
-        expr = MemoryDifferentialExpr(
-            bytestring=b'\x48\x01\xd8',
-            target=('REG', 'RAX', 0, 63),
-            reg_inputs=[('RAX', 0, 63), ('RBX', 0, 63)],
-            mem_inputs=[],
-            addr_only_regs=[],
-        )
-        assert expr.out_reg == 'RAX'
-        assert expr.out_bit_start == 0
-        assert expr.out_bit_end == 63
-
-    def test_or_input_polarisation_full_register(self, simulator):
-        """For full-register slices (b_start=0, b_end>=63), or_inputs[reg]
-        must equal V|T and and_inputs[reg] must equal V&~T, NOT a partial mask."""
-        # We can't introspect the inputs directly, but we can verify by
-        # constructing a known-output instruction.
-        # mov rbx, rax  (48 89 c3) — copies RAX into RBX.
-        # If V_RAX=0xCAFE and T_RAX=0x000F, the differential of RBX is:
-        #   C1 = (0xCAFE | 0x000F) = 0xCAFF
-        #   C2 = (0xCAFE & ~0x000F) = 0xCAF0
-        #   diff = 0x000F
-        expr = MemoryDifferentialExpr(
-            bytestring=bytes.fromhex('4889c3'),
-            target=('REG', 'RBX', 0, 63),
-            reg_inputs=[('RAX', 0, 63)],
-            mem_inputs=[],
-            addr_only_regs=[],
-        )
-        ctx = EvalContext(
-            input_taint={'RAX': 0x000F},
-            input_values={'RAX': 0xCAFE},
-            simulator=simulator,
-            shadow_memory=BitPreciseShadowMemory(),
-            implicit_policy=ImplicitTaintPolicy.IGNORE,
-        )
-        result = expr.evaluate(ctx)
-        assert result == 0x000F
-
-    def test_simulator_failure_falls_back_to_or(self, simulator):
-        """If the simulator raises (e.g. unsupported instruction), the
-        Cython class must fall back to OR-of-input-taints rather than
-        returning 0 silently."""
-        # Use clearly-invalid instruction bytes; cell.pyx will raise.
-        expr = MemoryDifferentialExpr(
-            bytestring=b'\xff\xff\xff\xff\xff\xff\xff\xff',
-            target=('REG', 'RAX', 0, 63),
-            reg_inputs=[('RAX', 0, 63), ('RBX', 0, 63)],
-            mem_inputs=[],
-            addr_only_regs=[],
-        )
-        ctx = EvalContext(
-            input_taint={'RAX': 0x0F, 'RBX': 0xF0},
-            input_values={'RAX': 0, 'RBX': 0},
-            simulator=simulator,
-            shadow_memory=BitPreciseShadowMemory(),
-            implicit_policy=ImplicitTaintPolicy.IGNORE,
-        )
-        result = expr.evaluate(ctx)
-        # Fallback should give us at least the OR of input taints.
-        assert result == 0xFF

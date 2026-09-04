@@ -933,10 +933,11 @@ class CellSimulator:
         `and_inputs` is the low-polarity image   (V & ~T).
 
         Returns ``cell(or_inputs) XOR cell(and_inputs)`` masked to the
-        target's bit slice.  Used by ``MemoryDifferentialExpr`` to drive
-        the cell.pyx native ``evaluate_differential`` for instructions
-        whose ``MachineState``-based path produces wrong addresses (e.g.
-        memory inputs with offsets, address-only registers).
+        target's bit slice.  A convenience wrapper over the cell.pyx native
+        ``evaluate_differential`` primitive (the production path builds the
+        two polarity images as ``InstructionCellExpr`` replicas instead and
+        XORs them; this direct entry point remains for callers that already
+        hold the two flat dicts).
 
         Both input dicts use cell.pyx's flat key format:
           - register name  -> integer value         (e.g. ``'RAX': 0xFF``)

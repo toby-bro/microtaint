@@ -97,9 +97,10 @@ typedef enum {
      * target descriptor. */
     OP_END,
 
-    /* Memory differential — for MemoryDifferentialExpr leaves.  We do
-     * not compile these; the bytecode emitter sets the assignment's
-     * "needs_python" flag and falls back. */
+    /* Uncompilable assignment sentinel.  The bytecode emitter sets the
+     * assignment's Python-fallback flag and falls back (e.g. an
+     * InstructionCellExpr with MEM_ inputs, which cell_eval_fast cannot yet
+     * load). */
     OP_HALT_FALLBACK = 255,
 } CircuitOp;
 

@@ -160,10 +160,6 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr);
 
 /* Emit an OP_CALL_CELL. `cell_obj` is the InstructionCellExpr. */
 static void emit_call_cell(CompiledCircuit *cc, BCEmit *e, PyObject *cell_obj) {
-    /* Add cell to cells list */
-    int cell_idx = (int)PyList_GET_SIZE(cc->cells);
-    PyList_Append(cc->cells, cell_obj);
-
     /* Get .inputs dict and walk in dict-iteration order, emitting
      * per-input expressions, then a final OP_CALL_CELL with the count
      * and per-input name-idx args. */
@@ -173,6 +169,37 @@ static void emit_call_cell(CompiledCircuit *cc, BCEmit *e, PyObject *cell_obj) {
         e->fallback = 1;
         return;
     }
+
+    /* Memory-keyed cell inputs (MEM_<...>) are not yet handled by the fast
+     * cell-call path: cell_eval_fast pre-resolves each input name to a
+     * register (offset, size) and SILENTLY SKIPS any name that is not a
+     * register (CellHandle.inp_off < 0), which would drop the memory
+     * operand's value/taint and under-taint the result.  Fall back to the
+     * Python InstructionCellExpr evaluator (evaluate_concrete_flat), which
+     * loads MEM_<hex>_<size> and MEM_<reg>_<off>_<size> keys correctly.  Mark
+     * has_mem_ops so the wrapper's per-instruction cache stays sound (this is
+     * needed here because expr_tree_reads_memory does not descend into an
+     * InstructionCellExpr's inputs dict).  (TODO: teach the CellHandle /
+     * cell_eval_fast path to load MEM_ inputs so memory stays in compiled C.) */
+    {
+        PyObject *k, *v;
+        Py_ssize_t sp = 0;
+        while (PyDict_Next(inputs, &sp, &k, &v)) {
+            const char *kn = PyUnicode_AsUTF8(k);
+            if (!kn) { PyErr_Clear(); continue; }
+            if (strncmp(kn, "MEM_", 4) == 0) {
+                cc->has_mem_ops = 1;
+                e->fallback = 1;
+                Py_DECREF(inputs);
+                return;
+            }
+        }
+    }
+
+    /* Add cell to cells list */
+    int cell_idx = (int)PyList_GET_SIZE(cc->cells);
+    PyList_Append(cc->cells, cell_obj);
+
     Py_ssize_t n = PyDict_Size(inputs);
 
     /* Pre-emit each input expression in order, then collect names */
@@ -228,8 +255,7 @@ static int expr_tree_reads_memory(PyObject *expr, int depth) {
     const char *name = PyUnicode_AsUTF8(name_obj);
     int hit = 0;
     if (name) {
-        if (strcmp(name, "MemoryOperand") == 0
-            || strcmp(name, "MemoryDifferentialExpr") == 0) {
+        if (strcmp(name, "MemoryOperand") == 0) {
             hit = 1;
         }
     }
@@ -637,7 +663,7 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         cc->has_mem_ops = 1;
         return;
     }
-    /* Unknown / MemoryDifferentialExpr / etc — fall back */
+    /* Unknown expression form — fall back to the Python evaluator */
     Py_DECREF(cls_name);
     e->fallback = 1;
 }

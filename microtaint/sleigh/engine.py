@@ -18,7 +18,6 @@ from microtaint.instrumentation.ast import (
     FullMaskAvalancheExpr,
     InstructionCellExpr,
     LogicCircuit,
-    MemoryDifferentialExpr,
     MemoryOperand,
     Op,
     SignedOverflowTaintExpr,
@@ -2320,84 +2319,41 @@ def generate_taint_assignments(  # noqa: C901
         return
 
     # -----------------------------------------------------------------------
-    # RMW MEMORY TARGET — uses MemoryDifferentialExpr (sleigh.mem_diff) which
-    # bypasses the buggy `_build_machine_state` path that drops memory-input
-    # offsets and address-only register values.  See sleigh/mem_diff.py for
-    # the detailed background on the two underlying bugs in the standard
-    # InstructionCellExpr path.
+    # RMW MEMORY TARGET — read-modify-write (e.g. `add [rbp-0x10], rax`).
     #
-    # The C1 XOR C2 differential captures carry/borrow chains and per-bit
-    # dependency structure that the OR-only fast path drops.  We still OR
-    # with the explicit value-taint fallback so bits explicitly tainted in
-    # inputs are never lost even on simulator failure.
+    # The taint of the written memory word is the standard C1 XOR C2 cell
+    # differential, capturing carry/borrow chains and per-bit dependency
+    # structure that the OR-only pure-store path drops.  process_dependencies
+    # builds cell_inputs with Format-B/A memory keys (so the old memory value is
+    # read at the right address and polarised), and out_name is the Format-B key
+    # MEM_<reg>_<off>_<size> so the differential reads the written word back from
+    # the executed frame at the exact destination address.  The destination's
+    # own address-base register is added as address-only so [reg+off] resolves.
     #
-    # addr_deps taint is still excluded here — same security property as
-    # the pure-store path: a tainted destination POINTER is an AIW signal,
-    # not data taint, and must not poison shadow memory.
+    # addr_deps taint is still excluded — same security property as the pure-store
+    # path: a tainted destination POINTER is an AIW signal, not data taint, and
+    # must not poison shadow memory.
     # -----------------------------------------------------------------------
     if is_rmw:
         if not isinstance(mapping, MemMapping):
             raise RuntimeError('RMW target without MemMapping')
 
-        # Collect value-deps as (reg_inputs, mem_inputs) lists for the
-        # MemoryDifferentialExpr constructor.  Address-only registers are
-        # built from the union of input addresses minus value-deps.
-        reg_inputs: list[tuple[str, int, int]] = []
-        mem_inputs: list[tuple[str, int, int]] = []
-        addr_only_regs_set: set[str] = set()
-        # Subtracted operands must be polarised oppositely (D^{+-}); see the
-        # register-target make_differential path for the detailed rationale.
-        # Registers are keyed per SLICE (name, bit_start, bit_end); memory keys stay
-        # strings.  See MemoryDifferentialExpr: polarity belongs to the dependency
-        # slice, not the register name.
-        neg_inputs: list[object] = []
+        value_dependencies, _, rmw_rep1, rmw_rep2 = process_dependencies(dep_set.value_deps)
 
-        # Always add the destination's own address register as address-only.
-        addr_only_regs_set.add(mapping.addr_reg.name)
+        # The destination's address-base register must be present so the cell
+        # resolves [reg+off] for the write-back read.  process_dependencies has
+        # already added it if it also bases a memory value-dep (the common RMW
+        # case, where the old value is read from the same location); add it here
+        # for the general case.  A compile-time-constant address needs no base.
+        _dst_reg = mapping.addr_reg.name
+        if _dst_reg != _CONST_ADDR_MARKER and _dst_reg not in rmw_rep1:
+            _dst_base = _get_taint_operand(_dst_reg, mapping.addr_reg.bit_start, mapping.addr_reg.bit_end, False)
+            rmw_rep1[_dst_reg] = _dst_base
+            rmw_rep2[_dst_reg] = _dst_base
 
-        for dep_map in dep_set.value_deps.keys():
-            if isinstance(dep_map, MemMapping):
-                mem_inputs.append(
-                    (
-                        dep_map.addr_reg.name,
-                        dep_map.addr_const_offset,
-                        dep_map.size_bytes,
-                    ),
-                )
-                addr_only_regs_set.add(dep_map.addr_reg.name)
-                if dep_set.value_deps[dep_map] <= 0:
-                    neg_inputs.append(
-                        f'MEM_{dep_map.addr_reg.name}_{dep_map.addr_const_offset}_{dep_map.size_bytes}',
-                    )
-            else:
-                reg_inputs.append((dep_map.name, dep_map.bit_start, dep_map.bit_end))
-                if dep_set.value_deps[dep_map] <= 0:
-                    # Per-SLICE key: apply_sless_msb_split gives one register two
-                    # slices with opposite polarity (see MemoryDifferentialExpr).
-                    neg_inputs.append((dep_map.name, dep_map.bit_start, dep_map.bit_end))
-
-        # Remove from addr_only_regs any register that is also a value dep.
-        value_reg_names = {r[0] for r in reg_inputs}
-        addr_only_regs = sorted(addr_only_regs_set - value_reg_names)
-
-        target_spec = (
-            'MEM',
-            mapping.addr_reg.name,
-            mapping.addr_const_offset,
-            mapping.size_bytes,
-        )
-
-        diff_expr: Expr = MemoryDifferentialExpr(
-            bytestring=bytestring,
-            target=target_spec,
-            reg_inputs=reg_inputs,
-            mem_inputs=mem_inputs,
-            addr_only_regs=addr_only_regs,
-            neg_inputs=neg_inputs,
-        )
-
-        value_dependencies, _, _, _ = process_dependencies(dep_set.value_deps)
-        expr = diff_expr
+        C1_mem = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, rmw_rep1)
+        C2_mem = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, rmw_rep2)
+        expr = BinaryExpr(Op.XOR, C1_mem, C2_mem)
 
         # addr_deps deliberately excluded — same reason as pure-store path.
 
@@ -2555,58 +2511,20 @@ def generate_taint_assignments(  # noqa: C901
                     is_load_like = True
                     break
 
-    # Detect whether this register-target instruction has memory inputs
-    # OR address-only registers — both cases need MemoryDifferentialExpr
-    # (the standard make_differential() path resolves memory addresses
-    # incorrectly because cell_inputs uses the legacy MEM_<reg> key
-    # format that drops the offset).  See MemoryDifferentialExpr for
-    # the detailed bug background.
+    # Whether this register-target instruction reads memory.  Memory inputs are
+    # now handled by the standard differential: process_dependencies builds
+    # complete cell_inputs (Format-B/A memory keys + address-base registers +
+    # per-slice polarity), so the two InstructionCellExpr replicas resolve
+    # memory exactly.  The flag only gates the mapped-single-call affine
+    # shortcut, which is not valid when a second dynamic input (the memory
+    # value) is present.
     _has_mem_inputs = any(isinstance(d, MemMapping) for d in dep_set.value_deps.keys())
-    _value_reg_names = {d.name for d in dep_set.value_deps.keys() if not isinstance(d, MemMapping)}
-    _addr_only_regs_set: set[str] = set()
-    for d in dep_set.value_deps.keys():
-        if isinstance(d, MemMapping) and d.addr_reg.name not in _value_reg_names:
-            _addr_only_regs_set.add(d.addr_reg.name)
-    _has_addr_only = bool(_addr_only_regs_set)
-    _use_mem_diff = _has_mem_inputs or _has_addr_only
 
     def make_differential() -> Expr:
-        if _use_mem_diff:
-            # Memory-aware path: route through MemoryDifferentialExpr which
-            # builds the simulator state with correct addresses and
-            # address-only register values.  Performance: ~2x faster than
-            # the BinaryExpr(XOR, C1_cell, C2_cell) path because it shares
-            # cell.pyx's _frame_a/_frame_b buffers via evaluate_differential.
-            _reg_inputs: list[tuple[str, int, int]] = []
-            _mem_inputs: list[tuple[str, int, int]] = []
-            # Inputs whose value-dep polarity is negative (subtracted operand)
-            # must be polarised oppositely in the differential so it captures the
-            # sound D^{+-} borrow chain rather than a lossy D^{++}.
-            # Polarity is a property of the dependency SLICE, not the register
-            # name: apply_sless_msb_split splits ONE register into two slices with
-            # OPPOSITE polarity (sign bit -1, magnitude +1).  Key the negative set
-            # per (name, bit_start, bit_end) so MemoryDifferentialExpr can polarise
-            # each slice independently, exactly as build_polarized_reg does on the
-            # pure-register path.
-            _neg_inputs: list[object] = []
-            for d in dep_set.value_deps.keys():
-                if isinstance(d, MemMapping):
-                    _mem_inputs.append((d.addr_reg.name, d.addr_const_offset, d.size_bytes))
-                    if dep_set.value_deps[d] <= 0:
-                        _neg_inputs.append(f'MEM_{d.addr_reg.name}_{d.addr_const_offset}_{d.size_bytes}')
-                else:
-                    _reg_inputs.append((d.name, d.bit_start, d.bit_end))
-                    if dep_set.value_deps[d] <= 0:
-                        _neg_inputs.append((d.name, d.bit_start, d.bit_end))
-            return MemoryDifferentialExpr(
-                bytestring=bytestring,
-                target=('REG', out_name, out_bit_start, out_bit_end),
-                reg_inputs=_reg_inputs,
-                mem_inputs=_mem_inputs,
-                addr_only_regs=sorted(_addr_only_regs_set),
-                neg_inputs=_neg_inputs,
-            )
-        # Pure-register fast path: cell.pyx's static-cell evaluation.
+        # C1 XOR C2 static-cell differential.  cell_inputs_rep1/rep2 carry the
+        # V|T / V&~T polarity images for every register AND memory value-dep, so
+        # this single path is exact for pure-register, memory-input, and
+        # address-only-register instructions alike.
         C1_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep1)
         C2_cell = InstructionCellExpr(arch, bytestring.hex(), out_name, out_bit_start, out_bit_end, cell_inputs_rep2)
         return BinaryExpr(Op.XOR, C1_cell, C2_cell)
@@ -2638,7 +2556,7 @@ def generate_taint_assignments(  # noqa: C901
           two-run differential cancels by XOR but a single run cannot (e.g.
           RISC-V ``jalr``'s link-register write is otherwise pure routing).
         """
-        if _use_mem_diff or is_load_like:
+        if _has_mem_inputs or is_load_like:
             return None
         reg_groups: set[str] = set()
         for d in dep_set.value_deps.keys():
@@ -4067,12 +3985,11 @@ def process_dependencies(
     dependency_names: list[str] = []
 
     reg_groups: dict[str, list[tuple[int, int, int]]] = {}
-    mem_groups: dict[str, list[MemMapping]] = {}
+    mem_deps: list[tuple[MemMapping, int]] = []
 
     for dep_map, p in deps.items():
         if isinstance(dep_map, MemMapping):
-            key = f'MEM_{dep_map.addr_reg.name}'
-            mem_groups.setdefault(key, []).append(dep_map)
+            mem_deps.append((dep_map, p))
         else:
             reg_groups.setdefault(dep_map.name, []).append((dep_map.bit_start, dep_map.bit_end, p))
             dependencies.append(_get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True))
@@ -4085,22 +4002,54 @@ def process_dependencies(
         cell_inputs_rep1[name] = build_polarized_reg(name, slices, 1)
         cell_inputs_rep2[name] = build_polarized_reg(name, slices, 2)
 
-    for name, mem_list in mem_groups.items():
-        m = mem_list[0]
-        addr_base = _get_taint_operand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, False)
-
-        if m.addr_const_offset != 0:
-            addr_expr: Expr = BinaryExpr(Op.ADD, addr_base, Constant(m.addr_const_offset, 8))
+    # Memory value-deps.  Each keeps its own address key so distinct offsets on
+    # the same base register never collide, and its polarity so a subtracted
+    # (negative) memory operand images oppositely.  This makes cell_inputs a
+    # complete, correct machine-state description for a cell that has memory
+    # inputs — the InstructionCellExpr differential then resolves memory exactly
+    # as build_polarized_reg does for registers (folding away the old
+    # MemoryDifferentialExpr special path).
+    value_reg_names = set(reg_groups.keys())
+    for m, p in mem_deps:
+        # Cell-input KEY + address expression.  A compile-time-constant address
+        # (_CONST_ADDR_MARKER base) becomes a Format-A key MEM_0x<addr>_<size>;
+        # a register-relative operand becomes Format-B MEM_<reg>_<off>_<size>.
+        # Both are parsed natively by _build_machine_state (Cython) and by
+        # load_flat / read_output_full (C kernel).
+        if m.addr_reg.name == _CONST_ADDR_MARKER:
+            const_addr = m.addr_const_offset & 0xFFFFFFFFFFFFFFFF
+            key = f'MEM_{hex(const_addr)}_{m.size_bytes}'
+            addr_expr: Expr = Constant(const_addr, 8)
         else:
-            addr_expr = addr_base
+            key = f'MEM_{m.addr_reg.name}_{m.addr_const_offset}_{m.size_bytes}'
+            addr_base = _get_taint_operand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, False)
+            if m.addr_const_offset != 0:
+                addr_expr = BinaryExpr(Op.ADD, addr_base, Constant(m.addr_const_offset, 8))
+            else:
+                addr_expr = addr_base
+            # The address-base register must be present in the cell inputs (same
+            # value in both corners, taint excluded — a tainted pointer is an AIW
+            # signal, not data taint) so the in-frame instruction resolves
+            # [reg+off] to the right address.  Skip if it is also a value-dep
+            # (already polarised above).
+            if m.addr_reg.name not in value_reg_names and m.addr_reg.name not in cell_inputs_rep1:
+                v_base = _get_taint_operand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, False)
+                cell_inputs_rep1[m.addr_reg.name] = v_base
+                cell_inputs_rep2[m.addr_reg.name] = v_base
 
         T_mem = MemoryOperand(addr_expr, m.size_bytes, is_taint=True)
         V_mem = MemoryOperand(addr_expr, m.size_bytes, is_taint=False)
-
-        cell_inputs_rep1[name] = BinaryExpr(Op.OR, V_mem, T_mem)
-        cell_inputs_rep2[name] = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
+        # Polarity mirrors build_polarized_reg: positive dep -> rep1 = V|T,
+        # rep2 = V&~T; negative (subtracted) dep -> swapped, so the differential
+        # captures the sound D^{+-} borrow chain rather than a lossy D^{++}.
+        if p <= 0:
+            cell_inputs_rep1[key] = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
+            cell_inputs_rep2[key] = BinaryExpr(Op.OR, V_mem, T_mem)
+        else:
+            cell_inputs_rep1[key] = BinaryExpr(Op.OR, V_mem, T_mem)
+            cell_inputs_rep2[key] = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
         dependencies.append(T_mem)
-        dependency_names.append(name)
+        dependency_names.append(key)
 
     return dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2
 
@@ -4108,13 +4057,25 @@ def process_dependencies(
 def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOperand | MemoryOperand, str, int, int]:
     out_target: TaintOperand | MemoryOperand
     if isinstance(mapping, MemMapping):
-        addr_base: Expr = _get_taint_operand(mapping.addr_reg.name, 0, 63, False)
-        if mapping.addr_const_offset != 0:
-            addr_expr: Expr = BinaryExpr(Op.ADD, addr_base, Constant(mapping.addr_const_offset, 8))
+        # out_name is the cell's out_reg: the key a memory-target differential
+        # reads back from the executed frame.  It MUST carry the offset and size
+        # (Format-B MEM_<reg>_<off>_<size>, or Format-A MEM_0x<addr>_<size> for a
+        # compile-time-constant address) so read_output_full / _read_output
+        # resolve the exact written address.  The legacy MEM_<reg> form dropped
+        # the offset, collapsing the RMW differential — the bug the old
+        # MemoryDifferentialExpr special path existed to work around.
+        if mapping.addr_reg.name == _CONST_ADDR_MARKER:
+            const_addr = mapping.addr_const_offset & 0xFFFFFFFFFFFFFFFF
+            addr_expr: Expr = Constant(const_addr, 8)
+            out_name = f'MEM_{hex(const_addr)}_{mapping.size_bytes}'
         else:
-            addr_expr = addr_base
+            addr_base: Expr = _get_taint_operand(mapping.addr_reg.name, 0, 63, False)
+            if mapping.addr_const_offset != 0:
+                addr_expr = BinaryExpr(Op.ADD, addr_base, Constant(mapping.addr_const_offset, 8))
+            else:
+                addr_expr = addr_base
+            out_name = f'MEM_{mapping.addr_reg.name}_{mapping.addr_const_offset}_{mapping.size_bytes}'
         out_target = MemoryOperand(addr_expr, mapping.size_bytes, is_taint=True)
-        out_name = f'MEM_{mapping.addr_reg.name}'
         out_bit_start, out_bit_end = 0, (mapping.size_bytes * 8) - 1
     else:
         out_target = _get_taint_operand(mapping.name, mapping.bit_start, mapping.bit_end, True)
