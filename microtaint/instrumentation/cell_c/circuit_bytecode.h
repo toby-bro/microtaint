@@ -54,6 +54,11 @@ typedef enum {
      * break over the taint cube: ((a^b)&~(ta|tb)&mask)==0 AND (ta|tb)!=0. */
     OP_EQ_TAINT,          /* args: width (1..64) */
 
+    /* Data-dependent bit-select taint (VariableBitSelectTaintExpr, e.g. bt->CF):
+     * args width. Stack (bottom->top) src_val, src_taint, idx_val, idx_taint.
+     * Push 1 iff the bit selected by the (possibly tainted) index can vary. */
+    OP_VAR_BIT_SELECT,    /* args: width (1..64) */
+
     /* Call into C kernel.
      *   args: cell_idx n_inputs name_idx_0 name_idx_1 ... name_idx_(n-1)
      * Pops n inputs from stack (last pushed is name_idx_(n-1)),

@@ -437,6 +437,33 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         emit(e, (uint32_t)width);
         return;
     }
+    if (strcmp(cn, "VariableBitSelectTaintExpr") == 0) {
+        Py_DECREF(cls_name);
+        PyObject *sv = PyObject_GetAttrString(expr, "src_val");
+        PyObject *st = PyObject_GetAttrString(expr, "src_taint");
+        PyObject *iv = PyObject_GetAttrString(expr, "idx_val");
+        PyObject *it = PyObject_GetAttrString(expr, "idx_taint");
+        PyObject *w  = PyObject_GetAttrString(expr, "width");
+        if (!sv || !st || !iv || !it || !w) {
+            Py_XDECREF(sv); Py_XDECREF(st); Py_XDECREF(iv); Py_XDECREF(it); Py_XDECREF(w);
+            e->fallback = 1; return;
+        }
+        int width = (int)PyLong_AsLong(w);
+        Py_DECREF(w);
+        if (width <= 0 || width > 64) {
+            Py_DECREF(sv); Py_DECREF(st); Py_DECREF(iv); Py_DECREF(it);
+            e->fallback = 1; return;
+        }
+        compile_expr(cc, e, sv);   /* stack: src_val, src_taint, idx_val, idx_taint */
+        compile_expr(cc, e, st);
+        compile_expr(cc, e, iv);
+        compile_expr(cc, e, it);
+        Py_DECREF(sv); Py_DECREF(st); Py_DECREF(iv); Py_DECREF(it);
+        if (e->fallback) return;
+        emit(e, OP_VAR_BIT_SELECT);
+        emit(e, (uint32_t)width);
+        return;
+    }
     if (strcmp(cn, "InstructionCellExpr") == 0) {
         Py_DECREF(cls_name);
         emit_call_cell(cc, e, expr);
@@ -830,6 +857,26 @@ static PyObject *eval_program(CompiledCircuit *cc,
             int equal_ach   = (((a ^ b) & ~free & mask) == 0);
             int unequal_ach = (free != 0);
             stack[sp++] = (equal_ach && unequal_ach) ? 1 : 0;
+            break;
+        }
+        case OP_VAR_BIT_SELECT: {
+            int w = (int)bc[pc++];
+            if (sp < 4) goto err;
+            uint64_t tb = stack[--sp], b = stack[--sp], ta = stack[--sp], a = stack[--sp];
+            uint64_t mask = mask_range(w);
+            a &= mask; ta &= mask; b &= mask; tb &= mask;
+            int nbits = 0; { unsigned int x = (unsigned int)(w - 1); while (x) { nbits++; x >>= 1; } }
+            uint64_t low = mask_range(nbits);   /* nbits==0 -> 0 */
+            uint64_t t_idx = tb & low;
+            uint64_t fixed = b & ~t_idx & low;
+            int seen0 = 0, seen1 = 0, result = 0;
+            for (int i = 0; i < w; i++) {
+                if (((uint64_t)i & ~t_idx & low) != fixed) continue;
+                if ((ta >> i) & 1) { result = 1; break; }
+                if ((a >> i) & 1) seen1 = 1; else seen0 = 1;
+                if (seen0 && seen1) { result = 1; break; }
+            }
+            stack[sp++] = (uint64_t)result;
             break;
         }
         case OP_PUSH_MEM_TAINT: {
@@ -1447,7 +1494,7 @@ static PyTypeObject CompiledCircuitType = {
 static const char *SUPPORTED_EXPR_TYPES[] = {
     "TaintOperand", "Constant", "BinaryExpr", "UnaryExpr",
     "AvalancheExpr", "InstructionCellExpr", "MemoryOperand",
-    "FullMaskAvalancheExpr", "EqualityTaintExpr",
+    "FullMaskAvalancheExpr", "EqualityTaintExpr", "VariableBitSelectTaintExpr",
 };
 
 static PyObject *py_supported_expr_types(PyObject *self, PyObject *args) {
