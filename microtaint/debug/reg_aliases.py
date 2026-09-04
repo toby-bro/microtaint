@@ -247,12 +247,15 @@ class RegisterAliases:
             if vec is None:
                 out[keys[0]] = out.get(keys[0], 0) | val
                 continue
-            # Vector: the value is relative to the entity's low bit, so each lane
-            # takes the slice at (its value-bit minus that base).
+            # Vector: the value is relative to the entity's low bit.  Entity bit v
+            # sits at lane-local bit (v - d), d = lane_value_bit - base_lo, so the
+            # lane value is `val >> d` (d>=0) or `val << -d` (d<0, when the slice
+            # starts above the lane base, e.g. XMM0[95:88] in the byte-8..15 lane).
             off, size = vec
             for key in keys:
-                shift = self._lane_value_bit(off, size, int(key[3:], 16)) - base_lo
-                out[key] = out.get(key, 0) | ((val >> shift) & mask)
+                d = self._lane_value_bit(off, size, int(key[3:], 16)) - base_lo
+                lane_val = (val >> d) if d >= 0 else (val << -d)
+                out[key] = out.get(key, 0) | (lane_val & mask)
         return out
 
     def read(self, values: dict[str, int], human: str) -> int:
@@ -269,8 +272,10 @@ class RegisterAliases:
         mask = (1 << LANE_BITS) - 1
         result = 0
         for key in keys:
-            shift = self._lane_value_bit(off, size, int(key[3:], 16)) - base_lo
-            result |= (values.get(key, 0) & mask) << shift
+            # Inverse of to_engine: lane bit b holds entity bit (b + d), d as above.
+            d = self._lane_value_bit(off, size, int(key[3:], 16)) - base_lo
+            lane_val = values.get(key, 0) & mask
+            result |= (lane_val << d) if d >= 0 else (lane_val >> -d)
         return result
 
     def from_engine(self, values: dict[str, int]) -> dict[str, int]:
