@@ -390,6 +390,26 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         emit(e, (uint32_t)size_bits);
         return;
     }
+    if (strcmp(cn, "FullMaskAvalancheExpr") == 0) {
+        Py_DECREF(cls_name);
+        PyObject *sub = PyObject_GetAttrString(expr, "dep");
+        PyObject *fm  = PyObject_GetAttrString(expr, "full_mask");
+        if (!sub || !fm) { Py_XDECREF(sub); Py_XDECREF(fm); e->fallback = 1; return; }
+        if (!PyLong_Check(fm)) { Py_DECREF(sub); Py_DECREF(fm); e->fallback = 1; return; }
+        /* full_mask > 64 bits can't fit the uint64 stack -> Python fallback. */
+        unsigned long long fmv = PyLong_AsUnsignedLongLong(fm);
+        (void)fmv;
+        if (PyErr_Occurred()) { PyErr_Clear(); Py_DECREF(sub); Py_DECREF(fm); e->fallback = 1; return; }
+        compile_expr(cc, e, sub);
+        Py_DECREF(sub);
+        if (e->fallback) { Py_DECREF(fm); return; }
+        int ci = (int)PyList_GET_SIZE(cc->constants);
+        PyList_Append(cc->constants, fm);
+        Py_DECREF(fm);
+        emit(e, OP_FULLMASK_AVAL);
+        emit(e, (uint32_t)ci);
+        return;
+    }
     if (strcmp(cn, "InstructionCellExpr") == 0) {
         Py_DECREF(cls_name);
         emit_call_cell(cc, e, expr);
@@ -761,6 +781,16 @@ static PyObject *eval_program(CompiledCircuit *cc,
             if (sp < 1) goto err;
             uint64_t v = stack[sp-1];
             stack[sp-1] = (v != 0) ? mask_range(size_bits) : 0;
+            break;
+        }
+        case OP_FULLMASK_AVAL: {
+            int ci = (int)bc[pc++];
+            if (sp < 1) goto err;
+            PyObject *cv = PyList_GET_ITEM(cc->constants, ci);
+            uint64_t fm = (uint64_t)PyLong_AsUnsignedLongLong(cv);
+            if (PyErr_Occurred()) PyErr_Clear();
+            uint64_t v = stack[sp-1];
+            stack[sp-1] = (v == fm && v != 0) ? 1 : 0;
             break;
         }
         case OP_PUSH_MEM_TAINT: {
@@ -1370,8 +1400,34 @@ static PyTypeObject CompiledCircuitType = {
 };
 
 /* Module */
+/* Introspection: the Expr class names compile_expr() can emit to bytecode
+ * WITHOUT falling back to the Python evaluator. MUST be kept in exact sync with
+ * the strcmp dispatch in compile_expr. The expr-coverage guard test compares
+ * this against every Expr subclass so a newly added Expr the C compiler cannot
+ * handle fails CI (and would silently recross the Python boundary). */
+static const char *SUPPORTED_EXPR_TYPES[] = {
+    "TaintOperand", "Constant", "BinaryExpr", "UnaryExpr",
+    "AvalancheExpr", "InstructionCellExpr", "MemoryOperand",
+    "FullMaskAvalancheExpr",
+};
+
+static PyObject *py_supported_expr_types(PyObject *self, PyObject *args) {
+    (void)self; (void)args;
+    int n = (int)(sizeof(SUPPORTED_EXPR_TYPES) / sizeof(SUPPORTED_EXPR_TYPES[0]));
+    PyObject *list = PyList_New(n);
+    if (!list) return NULL;
+    for (int i = 0; i < n; i++) {
+        PyObject *s = PyUnicode_FromString(SUPPORTED_EXPR_TYPES[i]);
+        if (!s) { Py_DECREF(list); return NULL; }
+        PyList_SET_ITEM(list, i, s);
+    }
+    return list;
+}
+
 static PyMethodDef module_methods[] = {
     {"compile_circuit", py_compile_circuit, METH_VARARGS, "Compile a LogicCircuit to bytecode."},
+    {"supported_expr_types", py_supported_expr_types, METH_NOARGS,
+     "List of Expr class names the bytecode compiler handles without Python fallback."},
     {NULL}
 };
 static struct PyModuleDef moduledef = {

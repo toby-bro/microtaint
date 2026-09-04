@@ -44,6 +44,11 @@ typedef enum {
     /* Avalanche: args size_bits.  Pop 1; if non-zero push (1<<size_bits)-1 else 0 */
     OP_AVALANCHE,         /* args: size_bits  (1..64; >64 not compiled) */
 
+    /* Full-mask avalanche (FullMaskAvalancheExpr): args const_idx(full_mask).
+     * Pop dep taint v; push 1 iff v == full_mask && v != 0, else 0. The 1-bit
+     * flag soundness floor: fires only when the dep is FULLY tainted. */
+    OP_FULLMASK_AVAL,     /* args: const_idx (the full_mask value) */
+
     /* Call into C kernel.
      *   args: cell_idx n_inputs name_idx_0 name_idx_1 ... name_idx_(n-1)
      * Pops n inputs from stack (last pushed is name_idx_(n-1)),

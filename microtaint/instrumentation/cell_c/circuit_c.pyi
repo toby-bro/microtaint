@@ -81,3 +81,12 @@ def compile_circuit(
     unsupported expression forms; the caller is expected to fall back
     to the Python AST walker.
     """
+
+
+def supported_expr_types() -> list[str]:
+    """Expr class names the bytecode compiler emits without Python fallback.
+
+    Kept in sync with compile_expr in circuit_c.c; the expr-coverage guard test
+    compares this against every Expr subclass so a newly added Expr the C path
+    cannot compile fails CI.
+    """
