@@ -282,6 +282,13 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         int bit_end   = (int)PyLong_AsLong(be);
         int is_taint  = PyObject_IsTrue(it);
 
+        /* Sanity gate: a wide (>64-bit) operand cannot fit the uint64 bytecode
+         * stack (mask_range is uint64, PUSH_* truncates).  Bail to the Python
+         * evaluator (arbitrary width) instead of feeding do_evaluate a value it
+         * would mangle.  One compile-time check per operand; the uint64 fast path
+         * is unchanged. */
+        if (bit_end - bit_start + 1 > 64) goto err_taintop;
+
         /* Resolve to canonical parent register at compile time, mirroring
          * what TaintOperand.evaluate does at runtime. */
         PyObject *parent_str = NULL;
@@ -528,6 +535,15 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
         Py_DECREF(t_name); t_name = NULL;
         Py_DECREF(t_bs);   t_bs   = NULL;
         Py_DECREF(t_be);   t_be   = NULL;
+
+        /* Sanity gate: a wide (>64-bit) output cannot fit the uint64 bytecode
+         * stack / result mask.  Route the whole assignment to the Python
+         * evaluator (arbitrary width) rather than mangle it. */
+        if (p->target_bit_end - p->target_bit_start + 1 > 64) {
+            p->python_assignment = a; Py_INCREF(a);
+            cc->has_python_fallback = 1;
+            continue;
+        }
 
         /* Compile the rhs expression */
         PyObject *expr = PyObject_GetAttrString(a, "expression");
