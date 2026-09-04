@@ -1995,16 +1995,6 @@ cdef class PCodeCellEvaluator:
         sz_obj = self._sizes.get(key)
         sz     = <int>sz_obj if sz_obj is not None else 8
         val    = frame._read_reg(off, sz)
-        # x86 EFLAGS (offset 640, size 4) is never written directly by pcode —
-        # the Sleigh spec writes individual flag registers (CF@512, ZF@518, etc.).
-        # Reconstruct EFLAGS from those when the direct read returns 0.
-        if val == 0 and off == 640 and sz == 4:
-            val = (frame._read_reg(512, 1)       |   # CF  bit 0
-                   (frame._read_reg(514, 1) << 2) |   # PF  bit 2
-                   (frame._read_reg(518, 1) << 6) |   # ZF  bit 6
-                   (frame._read_reg(519, 1) << 7) |   # SF  bit 7
-                   (frame._read_reg(522, 1) << 10)|   # DF  bit 10
-                   (frame._read_reg(523, 1) << 11))   # OF  bit 11
         if width >= 64:
             return val >> bit_start
         mask   = (<uint64_t>1 << width) - 1

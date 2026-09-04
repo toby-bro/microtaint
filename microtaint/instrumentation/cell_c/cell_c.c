@@ -10,11 +10,6 @@
  *
  * Architecture-aware: register table is built per-instance from
  * microtaint.instrumentation.cell._build_reg_maps(arch).
- *
- * x86 EFLAGS quirk: the Sleigh spec writes individual flag registers
- * (CF@512, PF@514, ZF@518, SF@519, DF@522, OF@523).  When the user
- * reads EFLAGS (offset 640, size 4) we reconstruct it from those, mirroring
- * cell.pyx _read_output exactly.
  */
 
 #define PY_SSIZE_T_CLEAN
@@ -85,9 +80,6 @@ typedef struct {
     int      reg_hash[REG_HASH_CAP];
     int      pc_off;
     int      pc_sz;
-    /* Cached EFLAGS reconstruction info for fast x86 path */
-    int      eflags_off;        /* -1 if not x86 */
-    int      cf_off, pf_off, zf_off, sf_off, df_off, of_off;
 } EvalC;
 
 /* O(1) hash-table register lookup. Returns index in reg_table or -1. */
@@ -381,8 +373,7 @@ static int load_flat(EvalC *self, Frame *f, PyObject *inputs_dict) {
     return 0;
 }
 
-/* Read output: handles register, MEM_<hex>, MEM_<reg>_<off>, plus x86
- * EFLAGS reconstruction from individual flag registers. */
+/* Read output: handles register, MEM_<hex>, MEM_<reg>_<off>. */
 static uint64_t read_output_full(EvalC *self, Frame *f,
                                   const char *out_reg, int bit_start, int bit_end) {
     int width = bit_end - bit_start + 1;
@@ -432,18 +423,6 @@ static uint64_t read_output_full(EvalC *self, Frame *f,
     if (!reg_off_size(self, up, &off, &sz)) return 0;
     val = frame_read_reg(f, off, sz);
 
-    /* x86 EFLAGS reconstruction (mirrors cell.pyx _read_output exactly):
-     * EFLAGS@640 size 4 is never written by Sleigh; rebuild from per-flag regs. */
-    if (val == 0 && self->eflags_off >= 0 && off == self->eflags_off && sz == 4) {
-        val = 0;
-        if (self->cf_off >= 0) val |= frame_read_reg(f, self->cf_off, 1) <<  0;
-        if (self->pf_off >= 0) val |= frame_read_reg(f, self->pf_off, 1) <<  2;
-        if (self->zf_off >= 0) val |= frame_read_reg(f, self->zf_off, 1) <<  6;
-        if (self->sf_off >= 0) val |= frame_read_reg(f, self->sf_off, 1) <<  7;
-        if (self->df_off >= 0) val |= frame_read_reg(f, self->df_off, 1) << 10;
-        if (self->of_off >= 0) val |= frame_read_reg(f, self->of_off, 1) << 11;
-    }
-
     if (width >= 64) return val >> bit_start;
     m = ((uint64_t)1 << width) - 1;
     return (val >> bit_start) & m;
@@ -484,8 +463,6 @@ static PyObject *EvalC_new(PyTypeObject *type, PyObject *args, PyObject *kw) {
     for (int i = 0; i < REG_HASH_CAP; i++) self->reg_hash[i] = REG_HASH_EMPTY;
     self->pc_off = 0;
     self->pc_sz = 0;
-    self->eflags_off = -1;
-    self->cf_off = self->pf_off = self->zf_off = self->sf_off = self->df_off = self->of_off = -1;
     return (PyObject *)self;
 }
 
@@ -572,17 +549,6 @@ static int EvalC_init(EvalC *self, PyObject *args, PyObject *kw) {
             self->frame_b.arch_pc_sz  = self->pc_sz;
             break;
         }
-    }
-
-    /* x86 flag register offsets (set if EFLAGS exists in the table) */
-    self->eflags_off = reg_offset_in(self->reg_table, self->n_regs, "EFLAGS");
-    if (self->eflags_off >= 0) {
-        self->cf_off = reg_offset_in(self->reg_table, self->n_regs, "CF");
-        self->pf_off = reg_offset_in(self->reg_table, self->n_regs, "PF");
-        self->zf_off = reg_offset_in(self->reg_table, self->n_regs, "ZF");
-        self->sf_off = reg_offset_in(self->reg_table, self->n_regs, "SF");
-        self->df_off = reg_offset_in(self->reg_table, self->n_regs, "DF");
-        self->of_off = reg_offset_in(self->reg_table, self->n_regs, "OF");
     }
 
     return 0;
@@ -705,16 +671,11 @@ static int cell_handle_init(EvalC *self, PyObject *cell_obj,
     h->bit_end   = (int)PyLong_AsLong(be);
     Py_DECREF(bs); Py_DECREF(be);
 
-    /* Detect whether out_reg needs the slow path (MEM_*, EFLAGS quirk).
+    /* Detect whether out_reg needs the slow path (MEM_*).
      * Fast path uses direct frame_read_reg + masking. */
     int needs_slow = 0;
     if (strncmp(out_reg, "MEM_", 4) == 0 || strncmp(out_reg, "mem_", 4) == 0) {
         needs_slow = 1;
-    }
-    if (!needs_slow && self->eflags_off >= 0) {
-        /* EFLAGS read needs reconstruction */
-        char up[16]; upper_into(up, sizeof(up), out_reg);
-        if (strcmp(up, "EFLAGS") == 0) needs_slow = 1;
     }
     h->use_slow_read = needs_slow;
 
