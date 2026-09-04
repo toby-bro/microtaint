@@ -46,8 +46,8 @@ def _regs() -> list[Register]:
     # XMM0 must be in the state format (as it is in production X64_FORMAT) to be
     # tracked at all; it is split into two 64-bit halves.
     return [Register(name=n, bits=64) for n in ('RAX', 'RSI', 'RDI')] + [
-        Register(name='XMM0_LO', bits=64),
-        Register(name='XMM0_HI', bits=64),
+        Register(name='VL_0x1200', bits=64),
+        Register(name='VL_0x1208', bits=64),
     ]
 
 
@@ -79,7 +79,7 @@ def _load_tainted_bytes(opcode_hex: str, tainted_src: set[int]) -> set[int]:
         input_values={'RAX': _SRC}, input_taint={},
         simulator=CellSimulator(Architecture.AMD64), shadow_memory=shadow,
     ))
-    lo, hi = out.get('XMM0_LO', 0), out.get('XMM0_HI', 0)
+    lo, hi = out.get('VL_0x1200', 0), out.get('VL_0x1208', 0)
     return (
         {i for i in range(8) if (lo >> (i * 8)) & 0xFF}
         | {8 + i for i in range(8) if (hi >> (i * 8)) & 0xFF}
@@ -88,11 +88,11 @@ def _load_tainted_bytes(opcode_hex: str, tainted_src: set[int]) -> set[int]:
 
 @pytest.mark.parametrize(('name', 'opcode'), list(_STORE_OPS.items()))
 @pytest.mark.parametrize(('in_taint', 'expected'), [
-    ({'XMM0_LO': _FULL, 'XMM0_HI': _FULL}, set(range(16))),   # full copy
-    ({'XMM0_LO': _FULL}, set(range(8))),                   # low half only
-    ({'XMM0_HI': _FULL}, set(range(8, 16))),                  # high half only
-    ({'XMM0_LO': 0xFF << 16}, {2}),                           # single byte (lane 0, byte 2)
-    ({'XMM0_HI': 0xFF << 24}, {11}),                          # single byte (lane 1, byte 3)
+    ({'VL_0x1200': _FULL, 'VL_0x1208': _FULL}, set(range(16))),   # full copy
+    ({'VL_0x1200': _FULL}, set(range(8))),                   # low half only
+    ({'VL_0x1208': _FULL}, set(range(8, 16))),                  # high half only
+    ({'VL_0x1200': 0xFF << 16}, {2}),                           # single byte (lane 0, byte 2)
+    ({'VL_0x1208': 0xFF << 24}, {11}),                          # single byte (lane 1, byte 3)
     ({}, set()),                                              # clean input clears the store
 ])
 def test_xmm_store_is_byte_exact(name: str, opcode: str, in_taint: dict[str, int], expected: set[int]) -> None:
@@ -155,8 +155,8 @@ def test_sse_memcpy_roundtrip_is_byte_exact(tainted_src: set[int]) -> None:
 
 def _regs_two_xmm() -> list[Register]:
     return [Register(name=n, bits=64) for n in ('RAX', 'RSI', 'RDI')] + [
-        Register(name='XMM0_LO', bits=64), Register(name='XMM0_HI', bits=64),
-        Register(name='XMM1_LO', bits=64), Register(name='XMM1_HI', bits=64),
+        Register(name='VL_0x1200', bits=64), Register(name='VL_0x1208', bits=64),
+        Register(name='VL_0x1240', bits=64), Register(name='VL_0x1248', bits=64),
     ]
 
 
@@ -166,7 +166,7 @@ def _bitwise_out(opcode_hex: str, in_values: dict[str, int], in_taint: dict[str,
         input_values=in_values, input_taint=in_taint,
         simulator=CellSimulator(Architecture.AMD64), shadow_memory=BitPreciseShadowMemory(),
     ))
-    return out.get('XMM0_LO', 0), out.get('XMM0_HI', 0)
+    return out.get('VL_0x1200', 0), out.get('VL_0x1208', 0)
 
 
 @pytest.mark.parametrize(('name', 'opcode'), [
@@ -177,25 +177,25 @@ def _bitwise_out(opcode_hex: str, in_values: dict[str, int], in_taint: dict[str,
 def test_sse2_bitwise_taint_stays_in_lane(name: str, opcode: str) -> None:
     """A 128-bit bitwise/move op must keep taint within its 64-bit lane: tainting
     one input half must not bleed into the other output half (the pre-fix bug)."""
-    lo, hi = _bitwise_out(opcode, {}, {'XMM1_HI': _FULL})
-    assert (lo, hi) == (0, _FULL), f'{name}: XMM1_HI taint -> (LO={lo:#x}, HI={hi:#x}), expected only HI'
-    lo, hi = _bitwise_out(opcode, {}, {'XMM1_LO': _FULL})
-    assert (lo, hi) == (_FULL, 0), f'{name}: XMM1_LO taint -> (LO={lo:#x}, HI={hi:#x}), expected only LO'
+    lo, hi = _bitwise_out(opcode, {}, {'VL_0x1248': _FULL})
+    assert (lo, hi) == (0, _FULL), f'{name}: VL_0x1248 taint -> (LO={lo:#x}, HI={hi:#x}), expected only HI'
+    lo, hi = _bitwise_out(opcode, {}, {'VL_0x1240': _FULL})
+    assert (lo, hi) == (_FULL, 0), f'{name}: VL_0x1240 taint -> (LO={lo:#x}, HI={hi:#x}), expected only LO'
 
 
 def test_pand_is_lane_exact_and_value_aware() -> None:
     """pand keeps taint in-lane AND respects masking: a lane ANDed with a concrete
     0 clears its taint; ANDed with all-ones passes it through, in that lane only."""
-    ones = {'XMM0_LO': _FULL, 'XMM0_HI': _FULL, 'XMM1_LO': _FULL, 'XMM1_HI': _FULL}
+    ones = {'VL_0x1200': _FULL, 'VL_0x1208': _FULL, 'VL_0x1240': _FULL, 'VL_0x1248': _FULL}
     # mask = all-ones -> taint passes through, in-lane only
-    assert _bitwise_out('660fdbc1', ones, {'XMM1_HI': _FULL}) == (0, _FULL)
-    assert _bitwise_out('660fdbc1', ones, {'XMM1_LO': _FULL}) == (_FULL, 0)
+    assert _bitwise_out('660fdbc1', ones, {'VL_0x1248': _FULL}) == (0, _FULL)
+    assert _bitwise_out('660fdbc1', ones, {'VL_0x1240': _FULL}) == (_FULL, 0)
     # the other operand as a concrete zero mask clears the taint (value-aware AND)
-    assert _bitwise_out('660fdbc1', {}, {'XMM1_HI': _FULL}) == (0, 0)
+    assert _bitwise_out('660fdbc1', {}, {'VL_0x1248': _FULL}) == (0, 0)
 
 
 # --- AVX / 256-bit YMM (four 64-bit lanes: XMM_LO/HI = bytes 0-15, YMM_LO/HI = 16-31) ---
-_YMM_LANES = ('XMM0_LO', 'XMM0_HI', 'YMM0_LO', 'YMM0_HI')  # byte 0-7, 8-15, 16-23, 24-31
+_YMM_LANES = ('VL_0x1200', 'VL_0x1208', 'VL_0x1210', 'VL_0x1218')  # byte 0-7, 8-15, 16-23, 24-31
 
 
 def _regs_ymm() -> list[Register]:
@@ -248,10 +248,10 @@ def test_avx_ymm_load_is_lane_exact(name: str, opcode: str, rng: range) -> None:
 
 
 @pytest.mark.parametrize(('half', 'expected'), [
-    ('XMM0_LO', set(range(8))),
-    ('XMM0_HI', set(range(8, 16))),
-    ('YMM0_LO', set(range(16, 24))),
-    ('YMM0_HI', set(range(24, 32))),
+    ('VL_0x1200', set(range(8))),
+    ('VL_0x1208', set(range(8, 16))),
+    ('VL_0x1210', set(range(16, 24))),
+    ('VL_0x1218', set(range(24, 32))),
 ])
 def test_avx_ymm_store_is_lane_exact(half: str, expected: set[int]) -> None:
     """vmovdqu [rax],ymm0: each tainted 64-bit lane reaches exactly its 8 bytes."""
@@ -262,9 +262,11 @@ def test_avx_ymm_store_is_lane_exact(half: str, expected: set[int]) -> None:
 def test_avx_vpxor_ymm_is_lane_exact() -> None:
     """vpxor ymm0,ymm1,ymm2 keeps taint in its 64-bit lane across the 256-bit op."""
     circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('c5f5efc2'), _regs_ymm())
-    for src, dst in (('YMM2_LO', 'YMM0_LO'), ('XMM1_HI', 'XMM0_HI'), ('XMM2_LO', 'XMM0_LO')):
+    for src, dst in (('VL_0x1290', 'VL_0x1210'), ('VL_0x1248', 'VL_0x1208'), ('VL_0x1280', 'VL_0x1200')):
         out = circuit.evaluate(EvalContext(
             input_values={}, input_taint={src: _FULL},
             simulator=CellSimulator(Architecture.AMD64), shadow_memory=BitPreciseShadowMemory()))
-        tainted_out = {k for k, v in out.items() if v and k.startswith(('XMM0', 'YMM0'))}
+        # Only the XMM0/YMM0 region lanes (offset 0x1200..0x123f).
+        tainted_out = {k for k, v in out.items()
+                       if v and k.startswith('VL_') and 0x1200 <= int(k[3:], 16) < 0x1240}
         assert tainted_out == {dst}, f'vpxor {src} -> output {tainted_out}, expected only {dst}'

@@ -41,7 +41,9 @@ _REGS_GP = [Register('RAX', 64), Register('RBX', 64), Register('RCX', 64), Regis
 # taint flow across the GP↔XMM boundary.  Fix 3 changes the worker (and
 # any downstream caller) to include these.
 _REGS_GP_XMM = (
-    _REGS_GP + [Register(f'XMM{n}_LO', 64) for n in range(8)] + [Register(f'XMM{n}_HI', 64) for n in range(8)]
+    _REGS_GP
+    + [Register(f'VL_{0x1200 + n * 0x40:#x}', 64) for n in range(8)]       # XMM<n> low 64
+    + [Register(f'VL_{0x1200 + n * 0x40 + 8:#x}', 64) for n in range(8)]   # XMM<n> high 64
 )
 _SIM = CellSimulator(Architecture.AMD64)
 _UC_REGS = {

@@ -54,31 +54,13 @@ X64_FORMAT = [
     Register('OF', 1),
     Register('PF', 1),
 ]
-# XMM register taint tracking — each 128-bit XMM is split into two
-# 64-bit halves (_LO = bits 0-63, _HI = bits 64-127) so the state-passing
-# infrastructure (uint64 taint masks, dict[str,int] state) can handle
-# them without changing every signature to 128-bit.  The sleigh.engine
-# StateMapper resolves these synthetic names back to the underlying
-# pypcode XMM<n> varnode at byte offsets 0 and 8 respectively, so
-# Ghidra-emitted XMM0[63:0] correctly maps to T_XMM0_LO[63:0] and
-# XMM0[127:64] to T_XMM0_HI[63:0].
-for _i in range(16):
-    X64_FORMAT.append(Register(f'XMM{_i}_LO', 64))
-    X64_FORMAT.append(Register(f'XMM{_i}_HI', 64))
-# Upper vector lanes.  The sleigh.engine StateMapper resolves these synthetic
-# names to the vector register (0x1200 + n*0x40) at 64-bit lane offsets, so
-# 256-bit AVX (YMM, bytes 16-31) and 512-bit AVX-512 (ZMM, bytes 32-63) values
-# are tracked one 64-bit lane at a time, exactly like the XMM halves.  These
-# lanes carry taint only; they need no Unicorn value install because the AVX
-# ops that would need a concrete value lift to the avalanche (CALLOTHER) path,
-# which is value-independent.
-for _i in range(16):
-    X64_FORMAT.append(Register(f'YMM{_i}_LO', 64))   # bytes 16-23
-    X64_FORMAT.append(Register(f'YMM{_i}_HI', 64))   # bytes 24-31
-    for _l in range(4, 8):
-        X64_FORMAT.append(Register(f'ZMM{_i}_L{_l}', 64))  # bytes 32-63
-del _i, _l
-# Pre-computed cache key for X64_FORMAT — avoids rebuilding a 24-element tuple
+# x86 vector registers (XMM/YMM/ZMM) are NOT enumerated here.  They are tracked
+# exactly like every other ISA's SIMD file (ARM64 NEON, PPC AltiVec): the
+# sleigh.engine StateMapper synthesises geometry-derived VL_<offset> 8-byte lanes
+# for any wide (>8-byte) register varnode the state_format does not cover.  The
+# wrapper installs XMM values on those same VL_ lanes via _SLEIGH_XMM_OFFSETS
+# below; upper AVX lanes carry taint only (their value-dependent ops avalanche).
+# Pre-computed cache key for X64_FORMAT — avoids rebuilding a tuple
 # via genexpr on every generate_static_rule call (was 2.26s in profiling).
 _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X64_FORMAT)
 
@@ -274,7 +256,8 @@ _SLEIGH_OFFSET_TO_UC: dict[int, tuple[str, int, bool]] = {
 # The same uc_id reads the full 16 bytes; _build_offsets_arrays splits
 # the result into the two state slots.
 _SLEIGH_XMM_OFFSETS: dict[int, tuple[str, str, int]] = {
-    0x1200 + i * 0x40: (f'XMM{i}_LO', f'XMM{i}_HI', 122 + i) for i in range(16)
+    0x1200 + i * 0x40: (f'VL_{0x1200 + i * 0x40:#x}', f'VL_{0x1200 + i * 0x40 + 8:#x}', 122 + i)
+    for i in range(16)
 }
 
 

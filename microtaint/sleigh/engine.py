@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 from pypcode import Context, PcodeOp, Translation, Varnode
 
@@ -284,28 +284,6 @@ class DependencySet:
         return result
 
 
-@dataclass(frozen=True, slots=True)
-class _SynthVarnode:
-    """Minimal Varnode-shaped object for synthetic state_format entries
-    (the XMM<n>/YMM<n> 64-bit lanes).  StateMapper only reads .offset and
-    .size from these, never anything else, so the shim is sufficient."""
-
-    offset: int
-    size: int
-
-
-# 64-bit lane -> byte offset within a vector register (ZMM<n> at 0x1200+n*0x40,
-# 64 bytes).  The eight lanes cover the whole 512-bit AVX-512 register: XMM is
-# bytes 0-15 (LO/HI), YMM adds the upper 128 bits (bytes 16-31), and ZMM_L4..L7
-# add the upper 256 bits (bytes 32-63).  The prefix+suffix in a state-register
-# name picks the lane, so a Ghidra XMM/YMM/ZMM varnode maps to the right 8 bytes.
-_VEC_LANE_OFFSET = {
-    ('XMM', 'LO'): 0, ('XMM', 'HI'): 8,
-    ('YMM', 'LO'): 16, ('YMM', 'HI'): 24,
-    ('ZMM', 'L4'): 32, ('ZMM', 'L5'): 40, ('ZMM', 'L6'): 48, ('ZMM', 'L7'): 56,
-}
-
-
 # Vector-register lane bases, derived purely from pypcode's own register geometry
 # (no per-ISA offset tables).  Every register-space varnode wider than one 64-bit
 # lane (size > 8) is a vector register; its bytes are decomposed into 8-byte
@@ -354,21 +332,17 @@ class StateMapper:
         # SPARC32BE); x86/ARM64/RISCV64 are little-endian and keep the LE path.
         self.is_big_endian = arch_upper.endswith('BE')
 
-        self.sf_resolved: list[tuple[Register, Varnode | _SynthVarnode]] = []
+        self.sf_resolved: list[tuple[Register, Varnode]] = []
         for sf_reg in state_format:
-            s_r: Varnode | _SynthVarnode | None = ctx.registers.get(sf_reg.name) or ctx.registers.get(
+            s_r: Varnode | None = ctx.registers.get(sf_reg.name) or ctx.registers.get(
                 sf_reg.name.lower(),
             )
             if not s_r and self.is_arm and sf_reg.name in self.arm_aliases:
                 alias = self.arm_aliases[sf_reg.name]
                 s_r = ctx.registers.get(alias) or ctx.registers.get(alias.upper())
-            if not s_r and self.is_x86:
-                # Synthetic XMM<n>_LO / XMM<n>_HI: pypcode has a single
-                # XMM<n> at offset 0x1200+n*0x40 size 16.  We register
-                # _LO at the base offset (low 64 bits) and _HI 8 bytes
-                # in (high 64 bits) so Ghidra-emitted varnodes targeting
-                # XMM<n>[63:0]  / XMM<n>[127:64] map correctly.
-                s_r = self._synth_xmm_varnode(sf_reg.name)
+            # Vector registers (x86 XMM/YMM/ZMM included) are NOT resolved here:
+            # a wide varnode no state_format entry covers is tracked on synthetic
+            # geometry lanes (VL_<offset>) by _synth_vec_lane, uniformly across ISAs.
             if s_r:
                 self.sf_resolved.append((sf_reg, s_r))
         # Sleigh byte-offset of each state register, so a wide register output
@@ -394,29 +368,6 @@ class StateMapper:
             except ValueError:
                 pass
         return default
-
-    @staticmethod
-    def _synth_xmm_varnode(name: str) -> _SynthVarnode | None:
-        """Build a lightweight Varnode-like object for an XMM/YMM/ZMM 64-bit lane.
-
-        The StateMapper only reads `.offset` and `.size` from these objects, so a
-        tiny shim suffices.  Returns None for any name that is not a recognised
-        vector lane (XMM<n>_LO/_HI, YMM<n>_LO/_HI, ZMM<n>_L4..L7).
-        """
-        if len(name) < 3:
-            return None
-        prefix, rest = name[:3], name[3:]
-        if prefix not in ('XMM', 'YMM', 'ZMM'):
-            return None
-        num_str, _, half = rest.partition('_')
-        try:
-            n = int(num_str)
-        except ValueError:
-            return None
-        lane = _VEC_LANE_OFFSET.get((prefix, half))
-        if lane is None or not (0 <= n < 16):
-            return None
-        return _SynthVarnode(offset=0x1200 + n * 0x40 + lane, size=8)
 
     def _synth_vec_lane(self, offset: int, size: int) -> RegMapping | None:
         """A single synthetic 8-byte vector lane (VL_<lane_base>) covering
@@ -1053,6 +1004,45 @@ def _sequence_needs_monolithic(
     return False
 
 
+def _chain_intermediate_flags(
+    translation: Any,
+    ctx: Context,
+    arch: Architecture,
+    reg_names_tuple: tuple[tuple[str, int], ...],
+) -> tuple[tuple[str, int], ...]:
+    """Extra state entries a multi-instruction chain must thread: every
+    register-space varnode WRITTEN by one op and READ by another in the sequence
+    (an intra-sequence intermediate).  Discovered from the p-code, so it is
+    ISA-agnostic (x86 CF/OF, ARM64 C, PPC xer_ca, SPARC i_cf, ...).  Only <=8-byte
+    scalars are threaded -- a wider register-space varnode is a vector register
+    handled by the SIMD lane machinery (adding one builds a >64-bit Register and
+    corrupts the mask path).  A vector-region lane uses its geometry name
+    VL_<offset> (matching the SIMD path + caller state_format), not pypcode's
+    sub-register name (e.g. XMM0_Qa) which would not survive the caller-format
+    filter in ChainedCircuit.evaluate.  Over-inclusion is safe (filtered back)."""
+    name_by_key: dict[tuple[int, int], str] = {
+        (vn.offset, vn.size): nm for nm, vn in ctx.registers.items() if vn.space.name == 'register'
+    }
+    written: set[tuple[int, int]] = set()
+    read: set[tuple[int, int]] = set()
+    for op in translation.ops:
+        if op.output is not None and op.output.space.name == 'register':
+            written.add((op.output.offset, op.output.size))
+        for inp in op.inputs:
+            if inp.space.name == 'register':
+                read.add((inp.offset, inp.size))
+    existing = {name for name, _ in reg_names_tuple}
+    vec_bases = _vector_lane_bases(ctx, str(arch))
+    extra: list[tuple[str, int]] = []
+    for k in sorted(written & read):
+        if k[1] > 8:
+            continue
+        nm = f'VL_{k[0]:#x}' if k[0] in vec_bases else name_by_key.get(k)
+        if nm is not None and nm not in existing:
+            extra.append((nm, k[1] * 8))
+    return tuple(extra)
+
+
 def generate_static_rule(
     arch: Architecture,
     bytestring: bytes,
@@ -1117,28 +1107,7 @@ def generate_static_rule(
     # register are all picked up by geometry, with no hardcoded per-arch flag list.
     # Over-inclusion is safe: the final output dict is filtered back to the
     # caller's state_format by ChainedCircuit.evaluate.
-    _name_by_key: dict[tuple[int, int], str] = {
-        (vn.offset, vn.size): nm for nm, vn in ctx.registers.items() if vn.space.name == 'register'
-    }
-    _written: set[tuple[int, int]] = set()
-    _read: set[tuple[int, int]] = set()
-    for _op in translation.ops:
-        if _op.output is not None and _op.output.space.name == 'register':
-            _written.add((_op.output.offset, _op.output.size))
-        for _inp in _op.inputs:
-            if _inp.space.name == 'register':
-                _read.add((_inp.offset, _inp.size))
-    _existing_names = {name for name, _ in reg_names_tuple}
-    # Only thread scalar intermediates (<=8 bytes: flags, carries, GPRs) -- these
-    # are what a carry/condition chain flows through.  Wider register-space
-    # varnodes are vector registers, handled by the SIMD lane machinery, not this
-    # 64-bit-mask state threading; adding one here builds a >64-bit Register and
-    # corrupts the mask path (a 128-bit XMM roundtrip segfaults the native cell).
-    _extra_flags = tuple(
-        (_name_by_key[_k], _k[1] * 8)
-        for _k in sorted(_written & _read)
-        if _k[1] <= 8 and _k in _name_by_key and _name_by_key[_k] not in _existing_names
-    )
+    _extra_flags = _chain_intermediate_flags(translation, ctx, arch, reg_names_tuple)
     sub_reg_names_tuple = reg_names_tuple + _extra_flags if _extra_flags else reg_names_tuple
 
     sub_circuits: list[LogicCircuit] = []

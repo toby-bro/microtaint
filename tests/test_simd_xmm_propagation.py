@@ -60,8 +60,8 @@ def regs() -> list[Register]:
         Register(name='EFLAGS', bits=32),
     ]
     for i in range(16):
-        base.append(Register(name=f'XMM{i}_LO', bits=64))
-        base.append(Register(name=f'XMM{i}_HI', bits=64))
+        base.append(Register(name=f'VL_{0x1200 + i * 0x40:#x}', bits=64))
+        base.append(Register(name=f'VL_{0x1200 + i * 0x40 + 8:#x}', bits=64))
     return base
 
 
@@ -102,11 +102,11 @@ class TestBitwiseSSE:
             simulator,
             regs,
             bytes([0x66, 0x0F, 0xEF, 0xC1]),
-            taint={'XMM1_LO': 0xDEADBEEF, 'XMM1_HI': 0},
-            values={'XMM0_LO': 0, 'XMM0_HI': 0, 'XMM1_LO': 0xDEADBEEF, 'XMM1_HI': 0},
+            taint={'VL_0x1240': 0xDEADBEEF, 'VL_0x1248': 0},
+            values={'VL_0x1200': 0, 'VL_0x1208': 0, 'VL_0x1240': 0xDEADBEEF, 'VL_0x1248': 0},
         )
         # Must have non-zero taint on XMM0 — XMM1 was tainted.
-        total = out.get('XMM0_LO', 0) | out.get('XMM0_HI', 0)
+        total = out.get('VL_0x1200', 0) | out.get('VL_0x1208', 0)
         assert total != 0, f'pxor failed to propagate XMM1 taint to XMM0; got {out}'
 
     def test_pxor_zeroing_idiom_emits_no_taint(self, simulator, regs) -> None:
@@ -118,16 +118,16 @@ class TestBitwiseSSE:
             simulator,
             regs,
             bytes([0x66, 0x0F, 0xEF, 0xC0]),
-            taint={'XMM0_LO': 0xFFFFFFFFFFFFFFFF, 'XMM0_HI': 0xFFFFFFFFFFFFFFFF},
-            values={'XMM0_LO': 0xCAFE, 'XMM0_HI': 0xBABE},
+            taint={'VL_0x1200': 0xFFFFFFFFFFFFFFFF, 'VL_0x1208': 0xFFFFFFFFFFFFFFFF},
+            values={'VL_0x1200': 0xCAFE, 'VL_0x1208': 0xBABE},
         )
-        assert out.get('XMM0_LO', 0) == 0, f'zeroing pxor leaked taint: {out}'
-        assert out.get('XMM0_HI', 0) == 0, f'zeroing pxor leaked taint: {out}'
+        assert out.get('VL_0x1200', 0) == 0, f'zeroing pxor leaked taint: {out}'
+        assert out.get('VL_0x1208', 0) == 0, f'zeroing pxor leaked taint: {out}'
 
     def test_pand_xmm_xmm_propagates_taint(self, simulator, regs) -> None:
         """pand xmm0, xmm1 — AND of two 128-bit registers.
 
-        With V_XMM0_LO=0, T_XMM0_LO=0xFF, and V_XMM1_LO=0xFF
+        With V_VL_0x1200=0, T_VL_0x1200=0xFF, and V_VL_0x1240=0xFF
         (mask preserves the tainted bits) the differential output is:
             pand(V|T) = 0xFF AND 0xFF = 0xFF
             pand(V&~T) = 0x00 AND 0xFF = 0x00
@@ -138,10 +138,10 @@ class TestBitwiseSSE:
             simulator,
             regs,
             bytes([0x66, 0x0F, 0xDB, 0xC1]),
-            taint={'XMM0_LO': 0xFF, 'XMM0_HI': 0, 'XMM1_LO': 0, 'XMM1_HI': 0},
-            values={'XMM0_LO': 0, 'XMM0_HI': 0, 'XMM1_LO': 0xFF, 'XMM1_HI': 0},
+            taint={'VL_0x1200': 0xFF, 'VL_0x1208': 0, 'VL_0x1240': 0, 'VL_0x1248': 0},
+            values={'VL_0x1200': 0, 'VL_0x1208': 0, 'VL_0x1240': 0xFF, 'VL_0x1248': 0},
         )
-        assert out.get('XMM0_LO', 0) != 0, f'pand failed to propagate: {out}'
+        assert out.get('VL_0x1200', 0) != 0, f'pand failed to propagate: {out}'
 
     def test_por_xmm_xmm_propagates_taint(self, simulator, regs) -> None:
         """por xmm0, xmm1 — OR of two 128-bit registers."""
@@ -150,10 +150,10 @@ class TestBitwiseSSE:
             simulator,
             regs,
             bytes([0x66, 0x0F, 0xEB, 0xC1]),
-            taint={'XMM1_LO': 0xCAFEBABE, 'XMM1_HI': 0, 'XMM0_LO': 0},
-            values={'XMM0_LO': 0, 'XMM0_HI': 0, 'XMM1_LO': 0xCAFEBABE, 'XMM1_HI': 0},
+            taint={'VL_0x1240': 0xCAFEBABE, 'VL_0x1248': 0, 'VL_0x1200': 0},
+            values={'VL_0x1200': 0, 'VL_0x1208': 0, 'VL_0x1240': 0xCAFEBABE, 'VL_0x1248': 0},
         )
-        assert out.get('XMM0_LO', 0) != 0, f'por failed to propagate XMM1 taint: {out}'
+        assert out.get('VL_0x1200', 0) != 0, f'por failed to propagate XMM1 taint: {out}'
 
 
 # ---------------------------------------------------------------------------
@@ -170,29 +170,29 @@ class TestSimdMoves:
             simulator,
             regs,
             bytes([0x0F, 0x28, 0xC1]),
-            taint={'XMM1_LO': 0xFFFFFFFFFFFFFFFF, 'XMM1_HI': 0xFFFFFFFFFFFFFFFF, 'XMM0_LO': 0, 'XMM0_HI': 0},
-            values={'XMM0_LO': 0, 'XMM0_HI': 0, 'XMM1_LO': 0xDEADBEEFCAFEBABE, 'XMM1_HI': 0x1122334455667788},
+            taint={'VL_0x1240': 0xFFFFFFFFFFFFFFFF, 'VL_0x1248': 0xFFFFFFFFFFFFFFFF, 'VL_0x1200': 0, 'VL_0x1208': 0},
+            values={'VL_0x1200': 0, 'VL_0x1208': 0, 'VL_0x1240': 0xDEADBEEFCAFEBABE, 'VL_0x1248': 0x1122334455667788},
         )
         # Both halves of XMM0 should be fully tainted.
-        assert out.get('XMM0_LO', 0) != 0, f'movaps lost LO half taint: {out}'
-        assert out.get('XMM0_HI', 0) != 0, f'movaps lost HI half taint: {out}'
+        assert out.get('VL_0x1200', 0) != 0, f'movaps lost LO half taint: {out}'
+        assert out.get('VL_0x1208', 0) != 0, f'movaps lost HI half taint: {out}'
 
     def test_movaps_low_only_taint(self, simulator, regs) -> None:
-        """If only XMM1's low half is tainted, XMM0_HI must end up
+        """If only XMM1's low half is tainted, VL_0x1208 must end up
         clean — high-half taint must NOT leak into the low half via
         over-approximation in the rule generator."""
         out = _eval(
             simulator,
             regs,
             bytes([0x0F, 0x28, 0xC1]),  # movaps xmm0, xmm1
-            taint={'XMM1_LO': 0xFFFFFFFFFFFFFFFF, 'XMM1_HI': 0, 'XMM0_LO': 0, 'XMM0_HI': 0},
-            values={'XMM0_LO': 0, 'XMM0_HI': 0, 'XMM1_LO': 0xCAFE, 'XMM1_HI': 0xBABE},
+            taint={'VL_0x1240': 0xFFFFFFFFFFFFFFFF, 'VL_0x1248': 0, 'VL_0x1200': 0, 'VL_0x1208': 0},
+            values={'VL_0x1200': 0, 'VL_0x1208': 0, 'VL_0x1240': 0xCAFE, 'VL_0x1248': 0xBABE},
         )
-        # XMM0_LO must be tainted (since XMM1_LO is fully tainted).
-        assert out.get('XMM0_LO', 0) != 0
-        # XMM0_HI may be over-approximated to non-zero by the rule
+        # VL_0x1200 must be tainted (since VL_0x1240 is fully tainted).
+        assert out.get('VL_0x1200', 0) != 0
+        # VL_0x1208 may be over-approximated to non-zero by the rule
         # generator (which conservatively ORs both halves at the AST
-        # level), but must NOT exceed the concrete taint of XMM1_HI = 0
+        # level), but must NOT exceed the concrete taint of VL_0x1248 = 0
         # — i.e. should be 0 here, but since the generator's
         # over-approximation is intentional we accept any value.
 
@@ -202,10 +202,10 @@ class TestSimdMoves:
         XMM0's deps correctly; we just smoke-test that the rule
         generator doesn't crash."""
         circuit = generate_static_rule(Architecture.AMD64, bytes([0xF3, 0x0F, 0x6F, 0x00]), regs)
-        # Should produce two assignments (XMM0_LO, XMM0_HI).
+        # Should produce two assignments (VL_0x1200, VL_0x1208).
         targets = [str(a.target) for a in circuit.assignments]
-        assert any('XMM0_LO' in t for t in targets)
-        assert any('XMM0_HI' in t for t in targets)
+        assert any('VL_0x1200' in t for t in targets)
+        assert any('VL_0x1208' in t for t in targets)
 
 
 # ---------------------------------------------------------------------------
@@ -223,14 +223,14 @@ class TestFloatAvalanche:
             simulator,
             regs,
             bytes([0xF2, 0x0F, 0x58, 0xC1]),
-            taint={'XMM1_LO': 0x01, 'XMM1_HI': 0, 'XMM0_LO': 0, 'XMM0_HI': 0},
-            values={'XMM0_LO': 0, 'XMM0_HI': 0, 'XMM1_LO': 0x3FF0000000000001, 'XMM1_HI': 0},
+            taint={'VL_0x1240': 0x01, 'VL_0x1248': 0, 'VL_0x1200': 0, 'VL_0x1208': 0},
+            values={'VL_0x1200': 0, 'VL_0x1208': 0, 'VL_0x1240': 0x3FF0000000000001, 'VL_0x1248': 0},
         )
         # AVALANCHE means: any tainted input bit -> the entire output
         # half goes fully tainted (avalanche over the destination width).
         assert (
-            out.get('XMM0_LO', 0) != 0
-        ), f'addsd: avalanche failed to propagate to XMM0_LO from XMM1_LO taint; got {out}'
+            out.get('VL_0x1200', 0) != 0
+        ), f'addsd: avalanche failed to propagate to VL_0x1200 from VL_0x1240 taint; got {out}'
 
     def test_mulps_taints_low_half(self, simulator, regs) -> None:
         """mulps xmm0, xmm1 — packed single-precision float multiply.
@@ -240,11 +240,11 @@ class TestFloatAvalanche:
             simulator,
             regs,
             bytes([0x0F, 0x59, 0xC1]),
-            taint={'XMM0_LO': 0x01, 'XMM0_HI': 0, 'XMM1_LO': 0, 'XMM1_HI': 0},
-            values={'XMM0_LO': 0x40000000_3F800000, 'XMM0_HI': 0, 'XMM1_LO': 0x40000000_40000000, 'XMM1_HI': 0},
+            taint={'VL_0x1200': 0x01, 'VL_0x1208': 0, 'VL_0x1240': 0, 'VL_0x1248': 0},
+            values={'VL_0x1200': 0x40000000_3F800000, 'VL_0x1208': 0, 'VL_0x1240': 0x40000000_40000000, 'VL_0x1248': 0},
         )
         # Output must have some taint; AVALANCHE makes the mask non-trivial.
-        assert out.get('XMM0_LO', 0) != 0, f'mulps: float avalanche failed; got {out}'
+        assert out.get('VL_0x1200', 0) != 0, f'mulps: float avalanche failed; got {out}'
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +278,9 @@ class TestCallOtherFallback:
             regs,
         )
         targets = [str(a.target) for a in circuit.assignments]
-        assert any('XMM0' in t for t in targets), f'aesenc did not produce XMM0 assignments; got {targets}'
+        # XMM0 is the geometry lanes VL_0x1200 / VL_0x1208 (bytes 0-15).
+        assert any('VL_0x1200' in t or 'VL_0x1208' in t for t in targets), \
+            f'aesenc did not produce XMM0 (VL_0x1200/08) assignments; got {targets}'
 
     def test_sha256rnds2_rule_generation_does_not_crash(self, simulator, regs) -> None:
         """sha256rnds2 xmm0, xmm1 — SHA extension (CALLOTHER)."""
@@ -289,7 +291,7 @@ class TestCallOtherFallback:
             regs,
         )
         targets = [str(a.target) for a in circuit.assignments]
-        assert any('XMM0' in t for t in targets)
+        assert any('VL_0x1200' in t or 'VL_0x1208' in t for t in targets)
 
 
 # ---------------------------------------------------------------------------

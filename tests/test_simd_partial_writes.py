@@ -68,8 +68,9 @@ def _full_state(**overrides: int) -> dict[str, int]:
     evaluator needs to know about, with caller-supplied overrides."""
     state = {'RAX': 0, 'RBX': 0, 'RCX': 0, 'RDX': 0}
     for n in range(8):
-        state[f'XMM{n}_LO'] = 0
-        state[f'XMM{n}_HI'] = 0
+        base = 0x1200 + n * 0x40
+        state[f'VL_{base:#x}'] = 0       # XMM<n> low 64 bits
+        state[f'VL_{base + 8:#x}'] = 0   # XMM<n> high 64 bits
     state.update(overrides)
     return state
 
@@ -113,8 +114,8 @@ def test_paddq_xmm_lo(xmm0_lo: int, xmm1_lo: int, label: str) -> None:
     _assert_c_matches_unicorn(
         f'paddq xmm0,xmm1 ({label})',
         '660fd4c1',
-        _full_state(XMM0_LO=xmm0_lo, XMM1_LO=xmm1_lo),
-        'XMM0_LO',
+        _full_state(VL_0x1200=xmm0_lo, VL_0x1240=xmm1_lo),
+        'VL_0x1200',
     )
 
 
@@ -133,12 +134,12 @@ def test_paddb_fans_out_to_byte_writes(
 ) -> None:
     """PADDB lifts to 16 separate 1-byte INT_ADDs at offsets 0x1200..0x120f.
     The C path must store these as per-byte slots and the read-back at
-    XMM0_LO size 8 must merge them with the original parent value."""
+    VL_0x1200 size 8 must merge them with the original parent value."""
     _assert_c_matches_unicorn(
         f'paddb xmm0,xmm1 ({label})',
         '660ffcc1',
-        _full_state(XMM0_LO=xmm0_lo, XMM1_LO=xmm1_lo),
-        'XMM0_LO',
+        _full_state(VL_0x1200=xmm0_lo, VL_0x1240=xmm1_lo),
+        'VL_0x1200',
     )
 
 
@@ -156,8 +157,8 @@ def test_pxor_xmm_lo(xmm0_lo: int, xmm1_lo: int) -> None:
     _assert_c_matches_unicorn(
         'pxor xmm0,xmm1',
         '660fefc1',
-        _full_state(XMM0_LO=xmm0_lo, XMM1_LO=xmm1_lo),
-        'XMM0_LO',
+        _full_state(VL_0x1200=xmm0_lo, VL_0x1240=xmm1_lo),
+        'VL_0x1200',
     )
 
 
@@ -175,8 +176,8 @@ def test_psllq_xmm_lo(xmm0_lo: int, shift_imm: int, encoding: str) -> None:
     _assert_c_matches_unicorn(
         f'psllq xmm0, {shift_imm}',
         encoding,
-        _full_state(XMM0_LO=xmm0_lo),
-        'XMM0_LO',
+        _full_state(VL_0x1200=xmm0_lo),
+        'VL_0x1200',
     )
 
 
@@ -197,13 +198,13 @@ def test_psllq_xmm_lo(xmm0_lo: int, shift_imm: int, encoding: str) -> None:
 )
 def test_movq_xmm_from_gp(rax_in: int) -> None:
     """``movq xmm0, rax`` lifts to ``INT_ZEXT register:0x0/8 ->
-    register:0x1200/16``.  The 16-byte write must populate XMM0_LO
+    register:0x1200/16``.  The 16-byte write must populate VL_0x1200
     exactly with rax (zero-extended into the high 8 bytes of XMM0)."""
     _assert_c_matches_unicorn(
         f'movq xmm0, rax (RAX={hex(rax_in)})',
         '66480f6ec0',
         _full_state(RAX=rax_in),
-        'XMM0_LO',
+        'VL_0x1200',
     )
 
 
@@ -221,9 +222,9 @@ def test_movq_gp_from_xmm(xmm0_lo: int) -> None:
     LOW 8 bytes of XMM0 — the SUBPIECE then takes byte 0 of that
     16-byte read into RAX."""
     _assert_c_matches_unicorn(
-        f'movq rax, xmm0 (XMM0_LO={hex(xmm0_lo)})',
+        f'movq rax, xmm0 (VL_0x1200={hex(xmm0_lo)})',
         '66480f7ec0',
-        _full_state(XMM0_LO=xmm0_lo),
+        _full_state(VL_0x1200=xmm0_lo),
         'RAX',
     )
 
@@ -256,22 +257,22 @@ def test_paddb_then_pxor_lo_lane() -> None:
     _assert_c_matches_unicorn(
         'paddb; pxor',
         '660ffcc1660fefc1',
-        _full_state(XMM0_LO=0xAB, XMM1_LO=0xCD),
-        'XMM0_LO',
+        _full_state(VL_0x1200=0xAB, VL_0x1240=0xCD),
+        'VL_0x1200',
     )
 
 
 def test_paddb_pxor_psllq_chain() -> None:
     """PADDB; PXOR; PSLLQ — exercises the write-invalidation logic at
     every step.  After PSLLQ writes the wider lane, a final read at
-    XMM0_LO must yield the shifted value, not be re-overlaid by the
+    VL_0x1200 must yield the shifted value, not be re-overlaid by the
     stale per-byte PADDB writes.
     """
     _assert_c_matches_unicorn(
         'paddb; pxor; psllq 8',
         '660ffcc1660fefc1660f73f008',
-        _full_state(XMM0_LO=0xAB, XMM1_LO=0xCD),
-        'XMM0_LO',
+        _full_state(VL_0x1200=0xAB, VL_0x1240=0xCD),
+        'VL_0x1200',
     )
 
 
@@ -308,10 +309,10 @@ def test_simd_chain_id_824_real_state() -> None:
 #
 # The C-pcode evaluator's register slots are uint64_t.  A 16-byte INT_XOR
 # (PXOR over both halves) reads register:0x1200/16 — but the slot at
-# 0x1200 only holds 8 bytes.  The high 8 bytes (XMM0_HI at offset 0x1208)
+# 0x1200 only holds 8 bytes.  The high 8 bytes (VL_0x1208 at offset 0x1208)
 # are NOT pulled into the XOR computation: the read still returns
 # 8 bytes, the XOR happens at 8-byte width, and the write back to
-# 0x1200/16 only updates the low 8 bytes.  XMM0_HI keeps its original
+# 0x1200/16 only updates the low 8 bytes.  VL_0x1208 keeps its original
 # value instead of being XORed.
 #
 # This is a structural limitation of the uint64_t-per-slot model.  The
@@ -328,10 +329,10 @@ def test_simd_chain_id_824_real_state() -> None:
 def test_pxor_full_xmm_hi_lane_xfail() -> None:
     """PXOR XMM0, XMM1 should XOR both halves.  C path only XORs LO,
     leaves XMM_HI untouched, so reading XMM_HI gives the original
-    XMM0_HI value instead of XMM0_HI ^ XMM1_HI."""
+    VL_0x1208 value instead of VL_0x1208 ^ VL_0x1248."""
     _assert_c_matches_unicorn(
         'pxor full lane HI',
         '660fefc1',
-        _full_state(XMM0_LO=0xAAAA, XMM0_HI=0xCCCC, XMM1_LO=0x5555, XMM1_HI=0x3333),
-        'XMM0_HI',
+        _full_state(VL_0x1200=0xAAAA, VL_0x1208=0xCCCC, VL_0x1240=0x5555, VL_0x1248=0x3333),
+        'VL_0x1208',
     )

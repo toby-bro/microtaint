@@ -186,7 +186,7 @@ def test_issuem1_sparc_borrow_chain_threads_carry() -> None:
 # ---------------------------------------------------------------------------
 
 _X64_VEC_FMT = [Register('RAX', 64)] + [
-    Register(f'XMM{n}_{half}', 64) for n in range(3) for half in ('LO', 'HI')
+    Register(f'VL_{0x1200 + n * 0x40 + lane:#x}', 64) for n in range(3) for lane in (0, 8)
 ]
 
 
@@ -197,5 +197,5 @@ def test_chained_augmentation_excludes_wide_vector_regs() -> None:
     code = bytes.fromhex('660fd4c1660fd4c2')  # paddq xmm0,xmm1 ; paddq xmm0,xmm2
     # Must not raise (regression: wide XMM in the chain state format segfaulted).
     out = _eval(Architecture.AMD64, code, _X64_VEC_FMT,
-                {'XMM1_LO': _FULL}, {})
-    assert out.get('XMM0_LO', 0), 'paddq chain must still propagate the vector taint'
+                {'VL_0x1240': _FULL}, {})
+    assert out.get('VL_0x1200', 0), 'paddq chain must still propagate the vector taint'
