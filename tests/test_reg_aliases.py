@@ -97,6 +97,30 @@ def test_single_lane_taint_is_readable() -> None:
     assert a.to_engine({'XMM1[127:64]': _FULL64}) == {'VL_0x1248': _FULL64}
 
 
+def test_read_gathers_whole_vector() -> None:
+    a = RegisterAliases(Architecture.AMD64)
+    # A YMM read must combine all four lanes into one 256-bit value (from_engine
+    # would fragment it across XMM0/YMM0_H/ZMM0; read() is unambiguous).
+    out = a.to_engine({'YMM0': 0xDEADBEEF_00000000_CAFEBABE_11112222_33334444})
+    assert a.read(out, 'YMM0') == 0xDEADBEEF_00000000_CAFEBABE_11112222_33334444
+
+
+def test_read_single_lane_and_scalar() -> None:
+    a = RegisterAliases(Architecture.AMD64)
+    out = {'VL_0x1208': 0xABCD, 'RAX': 0x1234}
+    assert a.read(out, 'XMM0[127:64]') == 0xABCD   # high half at bit 0
+    assert a.read(out, 'XMM0') == (0xABCD << 64)    # whole XMM0, high half set
+    assert a.read(out, 'RAX') == 0x1234             # scalar passthrough
+
+
+def test_read_is_to_engine_inverse() -> None:
+    a = RegisterAliases(Architecture.AMD64)
+    for human, val in [('XMM3', 0xAABBCCDD_11223344_55667788_99001122),
+                        ('XMM7[63:0]', 0xFEEDFACECAFEBEEF),
+                        ('RCX', 0x0123456789ABCDEF)]:
+        assert a.read(a.to_engine({human: val}), human) == val
+
+
 # ---------------------------------------------------------------------------
 # state_format construction
 # ---------------------------------------------------------------------------
@@ -130,7 +154,8 @@ def test_state_format_no_wide_registers() -> None:
 def test_arm64_q_register_lanes() -> None:
     a = RegisterAliases(Architecture.ARM64)
     lanes = a.to_engine_names('Q0')
-    assert len(lanes) == 2 and all(k.startswith('VL_') for k in lanes)
+    assert len(lanes) == 2
+    assert all(k.startswith('VL_') for k in lanes)
     # Round-trip a lane back to a human name mentioning q0 (Sleigh's own case).
     assert a.to_human_name(lanes[0]).upper().startswith('Q0[')
 

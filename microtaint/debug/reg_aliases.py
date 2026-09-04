@@ -171,6 +171,26 @@ class RegisterAliases:
             return self._lane_human.get(off, engine)
         return self._canonical.get(engine.upper(), engine)
 
+    def _entity(self, human: str) -> tuple[list[str], int, tuple[int, int] | None]:
+        """Parse a human name into (engine keys, base value-bit, (offset,size) of
+        the vector, or None for a scalar).  The base value-bit is the LSB of the
+        named entity: 0 for a whole register, `lo` for NAME[hi:lo], 0/64 for
+        _LO/_HI.  Shared by :meth:`to_engine` and :meth:`read`."""
+        keys = self.to_engine_names(human)
+        if not keys or not keys[0].startswith('VL_'):
+            return keys, 0, None
+        s = human.strip()
+        mr = _RANGE_RE.match(s)
+        mh = _HALF_RE.match(s)
+        if mr:
+            vname, base_lo = mr.group('name').upper(), int(mr.group('lo'))
+        elif mh:
+            vname = mh.group('name').upper()
+            base_lo = 0 if mh.group('half').upper() == 'LO' else LANE_BITS
+        else:
+            vname, base_lo = s.upper(), 0
+        return keys, base_lo, self._vectors[vname]
+
     # -- bulk helpers for tests -------------------------------------------
 
     def state_format(self, names: list[str | Register]) -> list[Register]:
@@ -202,29 +222,35 @@ class RegisterAliases:
         out: dict[str, int] = {}
         mask = (1 << LANE_BITS) - 1
         for human, val in values.items():
-            keys = self.to_engine_names(human)
-            if len(keys) == 1 and not keys[0].startswith('VL_'):
+            keys, base_lo, vec = self._entity(human)
+            if vec is None:
                 out[keys[0]] = out.get(keys[0], 0) | val
                 continue
-            # Vector: the value is relative to the LOW bit of the named entity
-            # (0 for a whole register, `lo` for NAME[hi:lo], 0/64 for _LO/_HI),
-            # so each lane takes the slice at (its value-bit minus that base).
-            s = human.strip()
-            mr = _RANGE_RE.match(s)
-            mh = _HALF_RE.match(s)
-            if mr:
-                vname, base_lo = mr.group('name').upper(), int(mr.group('lo'))
-            elif mh:
-                vname = mh.group('name').upper()
-                base_lo = 0 if mh.group('half').upper() == 'LO' else LANE_BITS
-            else:
-                vname, base_lo = s.upper(), 0
-            off, size = self._vectors[vname]
+            # Vector: the value is relative to the entity's low bit, so each lane
+            # takes the slice at (its value-bit minus that base).
+            off, size = vec
             for key in keys:
-                lane_off = int(key[3:], 16)
-                shift = self._lane_value_bit(off, size, lane_off) - base_lo
+                shift = self._lane_value_bit(off, size, int(key[3:], 16)) - base_lo
                 out[key] = out.get(key, 0) | ((val >> shift) & mask)
         return out
+
+    def read(self, values: dict[str, int], human: str) -> int:
+        """Whole value of ONE human-named register or slice, gathered from an
+        engine-keyed output dict (the inverse of one :meth:`to_engine` entry).
+        ``read(out, 'YMM0')`` combines YMM0's four lanes into one 256-bit value;
+        ``read(out, 'XMM0[127:64]')`` returns just that half at bit 0; a scalar
+        name returns its value directly.  Unambiguous because the caller names
+        the register (unlike :meth:`from_engine`, which must guess per lane)."""
+        keys, base_lo, vec = self._entity(human)
+        if vec is None:
+            return values.get(keys[0], 0)
+        off, size = vec
+        mask = (1 << LANE_BITS) - 1
+        result = 0
+        for key in keys:
+            shift = self._lane_value_bit(off, size, int(key[3:], 16)) - base_lo
+            result |= (values.get(key, 0) & mask) << shift
+        return result
 
     def from_engine(self, values: dict[str, int]) -> dict[str, int]:
         """Recombine an engine-keyed value/taint dict into human names, merging a

@@ -34,9 +34,12 @@ from keystone import (
 )
 
 import microtaint.sleigh.engine as engine
+from microtaint.debug.reg_aliases import RegisterAliases
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
+
+_AMD64_ALIASES = RegisterAliases(Architecture.AMD64)
 
 _FULL = 0xFFFFFFFFFFFFFFFF
 
@@ -185,9 +188,7 @@ def test_issuem1_sparc_borrow_chain_threads_carry() -> None:
 # corrupts the 64-bit-mask path and segfaults the native cell (paddq roundtrip).
 # ---------------------------------------------------------------------------
 
-_X64_VEC_FMT = [Register('RAX', 64)] + [
-    Register(f'VL_{0x1200 + n * 0x40 + lane:#x}', 64) for n in range(3) for lane in (0, 8)
-]
+_X64_VEC_FMT = _AMD64_ALIASES.state_format(['RAX', 'XMM0', 'XMM1', 'XMM2'])
 
 
 def test_chained_augmentation_excludes_wide_vector_regs() -> None:
@@ -197,5 +198,5 @@ def test_chained_augmentation_excludes_wide_vector_regs() -> None:
     code = bytes.fromhex('660fd4c1660fd4c2')  # paddq xmm0,xmm1 ; paddq xmm0,xmm2
     # Must not raise (regression: wide XMM in the chain state format segfaulted).
     out = _eval(Architecture.AMD64, code, _X64_VEC_FMT,
-                {'VL_0x1240': _FULL}, {})
-    assert out.get('VL_0x1200', 0), 'paddq chain must still propagate the vector taint'
+                _AMD64_ALIASES.to_engine({'XMM1': _FULL}), {})
+    assert _AMD64_ALIASES.read(out, 'XMM0'), 'paddq chain must still propagate the vector taint'
