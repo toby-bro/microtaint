@@ -533,6 +533,45 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         emit(e, (uint32_t)(is_sub | (has_c ? 2 : 0)));
         return;
     }
+    if (strcmp(cn, "VariableMultiplyTaintExpr") == 0) {
+        Py_DECREF(cls_name);
+        PyObject *av = PyObject_GetAttrString(expr, "a_val");
+        PyObject *at = PyObject_GetAttrString(expr, "a_taint");
+        PyObject *bv = PyObject_GetAttrString(expr, "b_val");
+        PyObject *bt = PyObject_GetAttrString(expr, "b_taint");
+        PyObject *iw = PyObject_GetAttrString(expr, "in_width");
+        PyObject *sg = PyObject_GetAttrString(expr, "is_signed");
+        PyObject *ol = PyObject_GetAttrString(expr, "out_lo");
+        PyObject *oh = PyObject_GetAttrString(expr, "out_hi");
+        if (!av || !at || !bv || !bt || !iw || !sg || !ol || !oh) {
+            Py_XDECREF(av); Py_XDECREF(at); Py_XDECREF(bv); Py_XDECREF(bt);
+            Py_XDECREF(iw); Py_XDECREF(sg); Py_XDECREF(ol); Py_XDECREF(oh);
+            e->fallback = 1; return;
+        }
+        int in_width = (int)PyLong_AsLong(iw);
+        int is_signed = PyObject_IsTrue(sg);
+        int out_lo = (int)PyLong_AsLong(ol);
+        int out_hi = (int)PyLong_AsLong(oh);
+        Py_DECREF(iw); Py_DECREF(sg); Py_DECREF(ol); Py_DECREF(oh);
+        /* operands must fit the uint64 stack; product is 2w<=128 (handled via
+         * __int128); output window must fit uint64. */
+        if (in_width < 1 || in_width > 64 || out_hi - out_lo > 64 || out_hi - out_lo <= 0) {
+            Py_DECREF(av); Py_DECREF(at); Py_DECREF(bv); Py_DECREF(bt);
+            e->fallback = 1; return;
+        }
+        compile_expr(cc, e, av);   /* stack: a_val, a_taint, b_val, b_taint */
+        compile_expr(cc, e, at);
+        compile_expr(cc, e, bv);
+        compile_expr(cc, e, bt);
+        Py_DECREF(av); Py_DECREF(at); Py_DECREF(bv); Py_DECREF(bt);
+        if (e->fallback) return;
+        emit(e, OP_VAR_MUL_TAINT);
+        emit(e, (uint32_t)in_width);
+        emit(e, (uint32_t)(is_signed ? 1 : 0));
+        emit(e, (uint32_t)out_lo);
+        emit(e, (uint32_t)out_hi);
+        return;
+    }
     if (strcmp(cn, "InstructionCellExpr") == 0) {
         Py_DECREF(cls_name);
         emit_call_cell(cc, e, expr);
@@ -823,6 +862,31 @@ static inline int sof_g(int is_sub, int x, int y, int z) {
     return is_sub ? ((x ^ y) & (y ^ z)) : ((1 - (x ^ y)) & (y ^ z));
 }
 
+/* ---- VariableMultiplyTaintExpr helpers (128-bit product for w up to 64) ---- */
+/* Lowest bit that can be 1 (untainted-set or tainted); w if none. w<=64. */
+static inline int vmul_tz_lo(uint64_t v, uint64_t t, int w) {
+    uint64_t poss = (v & ~t) | t;
+    if (w < 64) poss &= (((uint64_t)1 << w) - 1);
+    if (poss == 0) return w;
+    return __builtin_ctzll(poss);
+}
+static inline unsigned __int128 mask128(int n) {
+    if (n <= 0) return 0;
+    if (n >= 128) return ~(unsigned __int128)0;
+    return ((unsigned __int128)1 << n) - 1;
+}
+static inline int bitlen128(unsigned __int128 x) {
+    if (x == 0) return 0;
+    uint64_t hi = (uint64_t)(x >> 64);
+    if (hi) return 128 - __builtin_clzll(hi);
+    return 64 - __builtin_clzll((uint64_t)x);
+}
+/* Interpret low w bits of v (v<2^w) as two's-complement, as a signed __int128. */
+static inline __int128 vmul_sx(uint64_t v, int w) {
+    if ((v >> (w - 1)) & 1) return (__int128)v - ((__int128)1 << w);
+    return (__int128)v;
+}
+
 /* Evaluate a single bytecode program for one assignment.
  * Returns the result as Python int (PyLong) or NULL on error. */
 static PyObject *eval_program(CompiledCircuit *cc,
@@ -932,6 +996,46 @@ static PyObject *eval_program(CompiledCircuit *cc,
             int equal_ach   = (((a ^ b) & ~free & mask) == 0);
             int unequal_ach = (free != 0);
             stack[sp++] = (equal_ach && unequal_ach) ? 1 : 0;
+            break;
+        }
+        case OP_VAR_MUL_TAINT: {
+            int w      = (int)bc[pc++];
+            int flags  = (int)bc[pc++];
+            int out_lo = (int)bc[pc++];
+            int out_hi = (int)bc[pc++];
+            int is_signed = flags & 1;
+            if (sp < 4) goto err;
+            uint64_t tb = stack[--sp], vb = stack[--sp], ta = stack[--sp], va = stack[--sp];
+            uint64_t mask = mask_range(w);
+            va &= mask; ta &= mask; vb &= mask; tb &= mask;
+            int lo = vmul_tz_lo(va, ta, w) + vmul_tz_lo(vb, tb, w);
+            int fbits = 2 * w;
+            unsigned __int128 fm = mask128(fbits);
+            int signed_hi = is_signed && (out_hi > w);
+            int hi;
+            if (!signed_hi) {
+                unsigned __int128 pmin = (unsigned __int128)(va & ~ta) * (unsigned __int128)(vb & ~tb);
+                unsigned __int128 pmax = (unsigned __int128)(va | ta) * (unsigned __int128)(vb | tb);
+                unsigned __int128 d = (pmin ^ pmax) & fm;
+                hi = d ? bitlen128(d) - 1 : -1;
+            } else if (((ta >> (w - 1)) & 1) || ((tb >> (w - 1)) & 1)) {
+                hi = 2 * w - 1;
+            } else {
+                __int128 alo = vmul_sx(va & ~ta, w), ahi = vmul_sx(va | ta, w);
+                __int128 blo = vmul_sx(vb & ~tb, w), bhi = vmul_sx(vb | tb, w);
+                __int128 p[4] = { alo * blo, alo * bhi, ahi * blo, ahi * bhi };
+                __int128 mn = p[0], mx = p[0];
+                for (int i = 1; i < 4; i++) { if (p[i] < mn) mn = p[i]; if (p[i] > mx) mx = p[i]; }
+                unsigned __int128 pmin = (unsigned __int128)mn & fm;
+                unsigned __int128 pmax = (unsigned __int128)mx & fm;
+                unsigned __int128 d = (pmin ^ pmax) & fm;
+                hi = d ? bitlen128(d) - 1 : -1;
+            }
+            unsigned __int128 full = 0;
+            if (hi >= lo) full = mask128(hi + 1) ^ mask128(lo);
+            int ow = out_hi - out_lo;
+            unsigned __int128 windowed = (full >> out_lo) & mask128(ow);
+            stack[sp++] = (uint64_t)windowed;
             break;
         }
         case OP_SIGNED_OVF: {
@@ -1623,7 +1727,7 @@ static const char *SUPPORTED_EXPR_TYPES[] = {
     "TaintOperand", "Constant", "BinaryExpr", "UnaryExpr",
     "AvalancheExpr", "InstructionCellExpr", "MemoryOperand",
     "FullMaskAvalancheExpr", "EqualityTaintExpr", "VariableBitSelectTaintExpr",
-    "ComparisonTaintExpr", "SignedOverflowTaintExpr",
+    "ComparisonTaintExpr", "SignedOverflowTaintExpr", "VariableMultiplyTaintExpr",
 };
 
 static PyObject *py_supported_expr_types(PyObject *self, PyObject *args) {

@@ -71,6 +71,13 @@ typedef enum {
      * push non-constancy of OF(a_s, b_s, carry-into-msb) over the taint cube. */
     OP_SIGNED_OVF,        /* args: width, flags */
 
+    /* Multiply taint (VariableMultiplyTaintExpr): args in_width, flags(bit0=signed),
+     * out_lo, out_hi. Stack (bottom->top) a_val, a_taint, b_val, b_taint. Sound
+     * fill ones[L..H] of the 2w-bit product (128-bit internally), windowed to
+     * [out_lo,out_hi). L=tz_lo(a)+tz_lo(b); H=highbit(max^min) (or 2w-1 if a sign
+     * bit is tainted). */
+    OP_VAR_MUL_TAINT,     /* args: in_width, flags, out_lo, out_hi */
+
     /* Call into C kernel.
      *   args: cell_idx n_inputs name_idx_0 name_idx_1 ... name_idx_(n-1)
      * Pops n inputs from stack (last pushed is name_idx_(n-1)),
