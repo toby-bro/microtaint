@@ -1,0 +1,3 @@
+# The root .gitignore ignores *.json (build artifacts). The perf ratchet's
+# golden baseline is a committed reference, so re-include it explicitly.
+!perf_baseline.json

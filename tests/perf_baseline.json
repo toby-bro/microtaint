@@ -1,0 +1,6160 @@
+{
+  "AMD64": {
+    "ADD r16,r16": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "AND r16,r16": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "AND r32,imm32": {
+      "assigns": 7,
+      "cells": 9
+    },
+    "BSF r32,r32 AX": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "BSR r32,r32 AX": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "BT r64,imm8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "CALL r64": {
+      "assigns": 3,
+      "cells": 4
+    },
+    "CMP r64,imm8": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "CMP r8,imm8": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "IMUL r32,r32,imm8": {
+      "assigns": 4,
+      "cells": 6
+    },
+    "IMUL r64,r64,imm32": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "IMUL r64,r64,imm8": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "LEA r64,[r64*4]": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "LEA r64,[r64+r64]": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "MOV r16,r16": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "MOV r32,r32": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "MOV r32,r32 zext": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "MOV r64,0": {
+      "assigns": 6,
+      "cells": 2
+    },
+    "MOV r64,imm64": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "MOV r64,r64": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "MOV r8,r8": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "MOVSX r64,r16": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "MOVSX r64,r8": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "MOVZX r32,r16": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "MOVZX r32,r8": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "MOVZX r64,r8": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "NOP": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "POPCNT r64,r64": {
+      "assigns": 7,
+      "cells": 8
+    },
+    "PUSH imm32": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "PUSH r64": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "RET": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "ROL r64,imm8": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ROR r64,imm8": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "SAR r64,imm8": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "SHL r32,imm8": {
+      "assigns": 7,
+      "cells": 16
+    },
+    "SHL r64,imm8": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "SHR r32,imm8": {
+      "assigns": 7,
+      "cells": 16
+    },
+    "SHR r64,imm8": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "TEST r32,r32": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "TEST r64,r64": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "XCHG r64,r64": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "XOR r32,imm32": {
+      "assigns": 7,
+      "cells": 5
+    },
+    "adc al, bl": {
+      "assigns": 6,
+      "cells": 12
+    },
+    "adc ax, bx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "adc eax, ebx": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "adc r10d, r11d": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "adc r12w, r13w": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "adc r14b, r15b": {
+      "assigns": 6,
+      "cells": 12
+    },
+    "adc r8, r9": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "adc rax, 0x7f": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "adc rax, 0x7fffffff": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "adc rax, 1": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "adc rax, 1365": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "adc rax, rbx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "adcx eax, ebx": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "adcx r10d, r11d": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "adcx r8, r9": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "adcx rax, rbx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "adcx rbp, rsp": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "add al, bl": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "add ax, 0x7f": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "add ax, bx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "add eax, 0xffff": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "add eax, ebx": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "add rax, 0x7f": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "add rax, 0x7fffffff": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "add rax, 1": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "add rax, 1365": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "add rax, 15": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "add rax, 3": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "add rax, rbx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "adox eax, ebx": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "adox r10d, r11d": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "adox r8, r9": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "adox rax, rbx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "adox rbp, rsp": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "and ah, bh": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "and al, bl": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "and ax, 0x7f": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "and ax, bx": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "and eax, 0xffff": {
+      "assigns": 7,
+      "cells": 9
+    },
+    "and eax, ebx": {
+      "assigns": 7,
+      "cells": 13
+    },
+    "and rax, 0x7f": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "and rax, 0x7fffffff": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "and rax, 0xff0f": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "and rax, 1": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "and rax, 15": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "and rax, 3": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "and rax, rbx": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "andn eax, ebx, ecx": {
+      "assigns": 7,
+      "cells": 13
+    },
+    "andn rax, rbx, rcx": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "bextr rax, rbx, rcx": {
+      "assigns": 4,
+      "cells": 10
+    },
+    "blsi eax, ebx": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "blsi rax, rbx": {
+      "assigns": 5,
+      "cells": 12
+    },
+    "blsmsk eax, ebx": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "blsmsk rax, rbx": {
+      "assigns": 5,
+      "cells": 9
+    },
+    "blsr eax, ebx": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "blsr rax, rbx": {
+      "assigns": 5,
+      "cells": 12
+    },
+    "bsf rax, rbx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "bsr rax, rbx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "bswap eax": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "bswap ebx": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "bswap rax": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "bswap rbx": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "bt ax, 0x7f": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "bt ax, bx": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "bt eax, ebx": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "bt rax, 0x7f": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "bt rax, 1": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "bt rax, 15": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "bt rax, 3": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "bt rax, 31": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "bt rax, 37": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "bt rax, 63": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "bt rax, rbx": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "btc ax, 0x7f": {
+      "assigns": 2,
+      "cells": 3
+    },
+    "btc ax, bx": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "btc eax, ebx": {
+      "assigns": 3,
+      "cells": 4
+    },
+    "btc rax, 0x7f": {
+      "assigns": 2,
+      "cells": 3
+    },
+    "btc rax, 1": {
+      "assigns": 2,
+      "cells": 3
+    },
+    "btc rax, 15": {
+      "assigns": 2,
+      "cells": 3
+    },
+    "btc rax, 3": {
+      "assigns": 2,
+      "cells": 3
+    },
+    "btc rax, 31": {
+      "assigns": 2,
+      "cells": 3
+    },
+    "btc rax, 63": {
+      "assigns": 2,
+      "cells": 3
+    },
+    "btc rax, rbx": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "btr ax, 0x7f": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "btr ax, bx": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "btr eax, ebx": {
+      "assigns": 3,
+      "cells": 4
+    },
+    "btr rax, 0x7f": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "btr rax, 1": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "btr rax, 15": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "btr rax, 3": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "btr rax, 31": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "btr rax, 63": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "btr rax, rbx": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "bts ax, 0x7f": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "bts ax, bx": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "bts eax, ebx": {
+      "assigns": 3,
+      "cells": 4
+    },
+    "bts rax, 0x7f": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "bts rax, 1": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "bts rax, 15": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "bts rax, 3": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "bts rax, 31": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "bts rax, 63": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "bts rax, rbx": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "bzhi eax, ebx, ecx": {
+      "assigns": 6,
+      "cells": 5
+    },
+    "bzhi rax, rbx, rcx": {
+      "assigns": 5,
+      "cells": 5
+    },
+    "cbw": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "cdq": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "cdqe": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "cmova ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmova eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmova r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmova r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmova r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmova rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmova rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovae ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovae eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovae r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovae r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovae r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovae rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovae rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovb ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovb eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovb r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovb r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovb r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovb rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovb rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovbe ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovbe eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovbe r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovbe r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovbe r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovbe rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovbe rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmove ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmove eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmove r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmove r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmove r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmove rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmove rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovg ax, bx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovg eax, ebx": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "cmovg r10d, r11d": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "cmovg r12w, r13w": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovg r8, r9": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovg rax, rbx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovg rbp, rsp": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovge ax, bx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovge eax, ebx": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "cmovge r10d, r11d": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "cmovge r12w, r13w": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovge r8, r9": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovge rax, rbx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovge rbp, rsp": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovl ax, bx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovl eax, ebx": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "cmovl r10d, r11d": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "cmovl r12w, r13w": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovl r8, r9": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovl rax, rbx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovl rbp, rsp": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovle ax, bx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovle eax, ebx": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "cmovle r10d, r11d": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "cmovle r12w, r13w": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovle r8, r9": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovle rax, rbx": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovle rbp, rsp": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmovne ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovne eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovne r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovne r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovne r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovne rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovne rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovno ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovno eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovno r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovno r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovno r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovno rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovno rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovns ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovns eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovns r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovns r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovns r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovns rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovns rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovo ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovo eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovo r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovo r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovo r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovo rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovo rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovs ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovs eax, ebx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovs r10d, r11d": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "cmovs r12w, r13w": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovs r8, r9": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovs rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmovs rbp, rsp": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "cmp al, bl": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp ax, 0x7f": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp ax, bx": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp eax, 0xffff": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp eax, ebx": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp rax, 0x7f": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp rax, 0x7fffffff": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp rax, 1": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp rax, 1365": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp rax, 15": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp rax, 3": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cmp rax, rbx": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "cqo": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "crc32 eax, bl": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "crc32 eax, ebx": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "crc32 rax, bl": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "crc32 rax, cl": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "crc32 rax, rbx": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cwd": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "cwde": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "dec al": {
+      "assigns": 5,
+      "cells": 8
+    },
+    "dec eax": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "dec ebx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "dec rax": {
+      "assigns": 5,
+      "cells": 8
+    },
+    "dec rbx": {
+      "assigns": 5,
+      "cells": 8
+    },
+    "imul ax, 0x7f": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "imul ax, bx": {
+      "assigns": 3,
+      "cells": 0
+    },
+    "imul eax, 0xffff": {
+      "assigns": 4,
+      "cells": 6
+    },
+    "imul eax, ebx": {
+      "assigns": 4,
+      "cells": 0
+    },
+    "imul rax, 0x7f": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "imul rax, 0x7fffffff": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "imul rax, 1": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "imul rax, 15": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "imul rax, 3": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "imul rax, rbx": {
+      "assigns": 3,
+      "cells": 0
+    },
+    "imul rax, rbx, 1365": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "imul rax, rbx, 7": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "imul rbx": {
+      "assigns": 4,
+      "cells": 0
+    },
+    "inc al": {
+      "assigns": 5,
+      "cells": 8
+    },
+    "inc eax": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "inc ebx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "inc rax": {
+      "assigns": 5,
+      "cells": 8
+    },
+    "inc rbx": {
+      "assigns": 5,
+      "cells": 8
+    },
+    "lahf": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "lea eax, [ebx + ecx*8]": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "lea rax, [rbx + rcx*4 + 8]": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "lzcnt ax, bx": {
+      "assigns": 3,
+      "cells": 3
+    },
+    "lzcnt eax, ebx": {
+      "assigns": 4,
+      "cells": 3
+    },
+    "lzcnt rax, rbx": {
+      "assigns": 3,
+      "cells": 3
+    },
+    "mov [rsp-1], al; mov bl, [rsp-1]": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "mov [rsp-2], ax; mov bx, [rsp-2]": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "mov [rsp-8], eax; mov ebx, [rsp-8]": {
+      "assigns": 3,
+      "cells": 2
+    },
+    "mov [rsp-8], rax; mov rbx, [rsp-8]": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "mov al, bl": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "mov eax, ebx": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "movsx eax, bl": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "movsx rax, bl": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movsx rax, bx": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movsx rax, cl": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movsxd rax, ebx": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movzx eax, bl": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "movzx rax, bl": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movzx rax, bx": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movzx rax, cl": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "mul al": {
+      "assigns": 3,
+      "cells": 0
+    },
+    "mul eax": {
+      "assigns": 6,
+      "cells": 0
+    },
+    "mul ebx": {
+      "assigns": 6,
+      "cells": 0
+    },
+    "mul r8": {
+      "assigns": 4,
+      "cells": 0
+    },
+    "mul r8b": {
+      "assigns": 3,
+      "cells": 0
+    },
+    "mul r8d": {
+      "assigns": 6,
+      "cells": 0
+    },
+    "mul rax": {
+      "assigns": 4,
+      "cells": 0
+    },
+    "mul rbx": {
+      "assigns": 4,
+      "cells": 0
+    },
+    "mulx eax, ebx, ecx": {
+      "assigns": 4,
+      "cells": 0
+    },
+    "mulx r8, r9, r10": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "mulx rax, rbx, rcx": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "neg al": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "neg eax": {
+      "assigns": 7,
+      "cells": 13
+    },
+    "neg ebx": {
+      "assigns": 7,
+      "cells": 13
+    },
+    "neg rax": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "neg rbx": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "not al": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "not eax": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "not ebx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "not rax": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "not rbx": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or al, bl": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "or ax, 0x7f": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "or ax, bx": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "or eax, 0xffff": {
+      "assigns": 7,
+      "cells": 9
+    },
+    "or eax, ebx": {
+      "assigns": 7,
+      "cells": 13
+    },
+    "or rax, 0x0ff0": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "or rax, 0x7f": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "or rax, 0x7fffffff": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "or rax, 1": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "or rax, 15": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "or rax, 3": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "or rax, rbx": {
+      "assigns": 6,
+      "cells": 11
+    },
+    "popcnt ax, bx": {
+      "assigns": 7,
+      "cells": 8
+    },
+    "popcnt eax, ebx": {
+      "assigns": 8,
+      "cells": 8
+    },
+    "popcnt rax, rbx": {
+      "assigns": 7,
+      "cells": 8
+    },
+    "push rax; adc qword ptr [rsp], rbx; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "push rax; add qword ptr [rsp], 0x33; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "push rax; add qword ptr [rsp], rbx; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "push rax; and qword ptr [rsp], 0x33; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "push rax; and qword ptr [rsp], rbx; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "push rax; dec qword ptr [rsp]; pop rcx": {
+      "assigns": 8,
+      "cells": 7
+    },
+    "push rax; inc qword ptr [rsp]; pop rcx": {
+      "assigns": 8,
+      "cells": 7
+    },
+    "push rax; neg qword ptr [rsp]; pop rcx": {
+      "assigns": 9,
+      "cells": 9
+    },
+    "push rax; not qword ptr [rsp]; pop rcx": {
+      "assigns": 4,
+      "cells": 3
+    },
+    "push rax; or qword ptr [rsp], 0x33; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "push rax; or qword ptr [rsp], rbx; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "push rax; pop rax": {
+      "assigns": 3,
+      "cells": 2
+    },
+    "push rax; pop rbx": {
+      "assigns": 3,
+      "cells": 2
+    },
+    "push rax; push rbx; pop rcx; pop rdx": {
+      "assigns": 5,
+      "cells": 3
+    },
+    "push rax; shl qword ptr [rsp], 7; pop rcx": {
+      "assigns": 9,
+      "cells": 11
+    },
+    "push rax; sub qword ptr [rsp], 0x33; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "push rax; xadd qword ptr [rsp], rbx; pop rcx": {
+      "assigns": 10,
+      "cells": 9
+    },
+    "push rax; xchg qword ptr [rsp], rbx; pop rcx": {
+      "assigns": 5,
+      "cells": 4
+    },
+    "push rax; xor qword ptr [rsp], 0x33; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "push rax; xor qword ptr [rsp], rbx; pop rcx": {
+      "assigns": 9,
+      "cells": 8
+    },
+    "rcl al": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "rcl ax, 0x7f": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "rcl eax": {
+      "assigns": 4,
+      "cells": 8
+    },
+    "rcl rax, 0x7f": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcl rax, 1": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "rcl rax, 15": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcl rax, 3": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcl rax, 31": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcl rax, 63": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcl rax, cl": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "rcl rbx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "rcr al": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "rcr ax, 0x7f": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "rcr eax": {
+      "assigns": 4,
+      "cells": 9
+    },
+    "rcr rax, 0x7f": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcr rax, 1": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "rcr rax, 15": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcr rax, 3": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcr rax, 31": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcr rax, 63": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rcr rax, cl": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "rcr rbx": {
+      "assigns": 3,
+      "cells": 7
+    },
+    "rol al": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "rol ax, 0x7f": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "rol eax": {
+      "assigns": 4,
+      "cells": 8
+    },
+    "rol eax, cl": {
+      "assigns": 4,
+      "cells": 10
+    },
+    "rol rax, 0x7f": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "rol rax, 1": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "rol rax, 15": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "rol rax, 3": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "rol rax, 31": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "rol rax, 63": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "rol rax, 7": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "rol rax, cl": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "rol rbx": {
+      "assigns": 3,
+      "cells": 6
+    },
+    "ror al": {
+      "assigns": 3,
+      "cells": 5
+    },
+    "ror ax, 0x7f": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ror eax": {
+      "assigns": 4,
+      "cells": 10
+    },
+    "ror rax, 0x7f": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ror rax, 1": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ror rax, 15": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ror rax, 3": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ror rax, 31": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ror rax, 63": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ror rax, 7": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ror rax, cl": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "ror rbx": {
+      "assigns": 3,
+      "cells": 8
+    },
+    "rorx rax, rbx, 0x7f": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rorx rax, rbx, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sahf": {
+      "assigns": 5,
+      "cells": 15
+    },
+    "sal ebx": {
+      "assigns": 7,
+      "cells": 11
+    },
+    "sar al": {
+      "assigns": 6,
+      "cells": 8
+    },
+    "sar ax, 0x7f": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "sar eax": {
+      "assigns": 7,
+      "cells": 11
+    },
+    "sar eax, 5": {
+      "assigns": 7,
+      "cells": 16
+    },
+    "sar eax, 7": {
+      "assigns": 7,
+      "cells": 16
+    },
+    "sar rax, 0x7f": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "sar rax, 1": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sar rax, 15": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "sar rax, 3": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "sar rax, 31": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "sar rax, 63": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "sar rax, 7": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "sar rax, cl": {
+      "assigns": 6,
+      "cells": 12
+    },
+    "sar rbx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sarx eax, ebx, ecx": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "sarx rax, rbx, rcx": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sbb al, bl": {
+      "assigns": 6,
+      "cells": 12
+    },
+    "sbb ax, bx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sbb eax, ebx": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "sbb r10d, r11d": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "sbb r12w, r13w": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sbb r14b, r15b": {
+      "assigns": 6,
+      "cells": 12
+    },
+    "sbb r8, r9": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sbb rax, 0x7f": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sbb rax, 0x7fffffff": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sbb rax, 1": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sbb rax, rbx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "seta al": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "seta bl": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "seta r8b": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setae al": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setae r8b": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setb al": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "setb r8b": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "setbe al": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setbe r8b": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sete al": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sete r8b": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "setg al": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "setg r8b": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "setge al": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "setge r8b": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "setl al": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "setl r8b": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "setle al": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "setle r8b": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "setne al": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setne r8b": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setno al": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setno r8b": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setnp al": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setnp r8b": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setns al": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "setns r8b": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "seto al": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "seto r8b": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "setp al": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "setp r8b": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sets al": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sets r8b": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "shl al": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "shl ax, 0x7f": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shl eax": {
+      "assigns": 7,
+      "cells": 11
+    },
+    "shl eax, 5": {
+      "assigns": 7,
+      "cells": 16
+    },
+    "shl eax, 7": {
+      "assigns": 7,
+      "cells": 16
+    },
+    "shl rax, 0x7f": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shl rax, 1": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "shl rax, 15": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shl rax, 3": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shl rax, 31": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shl rax, 63": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shl rax, 7": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shl rax, cl": {
+      "assigns": 6,
+      "cells": 12
+    },
+    "shl rbx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "shld r10d, r11d": {
+      "assigns": 7,
+      "cells": 16
+    },
+    "shld r12w, r13w": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shld r8, r9": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shld rax, rbx, 0x7f": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shld rax, rbx, 7": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shld rax, rbx, cl": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shlx eax, ebx, ecx": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "shlx rax, rbx, rcx": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "shr ax, 0x7f": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shr rax, 0x7f": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shr rax, 15": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shr rax, 3": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shr rax, 31": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shr rax, 63": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shr rax, 7": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shr rax, cl": {
+      "assigns": 6,
+      "cells": 12
+    },
+    "shrd r10d, r11d": {
+      "assigns": 7,
+      "cells": 16
+    },
+    "shrd r12w, r13w": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shrd r8, r9": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shrd rax, rbx, 0x7f": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shrd rax, rbx, 7": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shrd rax, rbx, cl": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shrd rbp, rsp": {
+      "assigns": 6,
+      "cells": 14
+    },
+    "shrx eax, ebx, ecx": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "shrx rax, rbx, rcx": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sub al, bl": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sub ax, 0x7f": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sub ax, bx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sub eax, 0xffff": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "sub eax, ebx": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "sub rax, 0x7f": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sub rax, 0x7fffffff": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sub rax, 1": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sub rax, 1365": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sub rax, 15": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sub rax, 3": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "sub rax, rbx": {
+      "assigns": 6,
+      "cells": 10
+    },
+    "test al, bl": {
+      "assigns": 5,
+      "cells": 9
+    },
+    "test ax, 0x7f": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "test ax, bx": {
+      "assigns": 5,
+      "cells": 9
+    },
+    "test eax, 0xffff": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "test eax, ebx": {
+      "assigns": 5,
+      "cells": 9
+    },
+    "test rax, 0x7f": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "test rax, 0x7fffffff": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "test rax, 1": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "test rax, 15": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "test rax, 3": {
+      "assigns": 5,
+      "cells": 7
+    },
+    "test rax, rbx": {
+      "assigns": 5,
+      "cells": 9
+    },
+    "tzcnt ax, bx": {
+      "assigns": 3,
+      "cells": 9
+    },
+    "tzcnt eax, ebx": {
+      "assigns": 4,
+      "cells": 11
+    },
+    "tzcnt rax, rbx": {
+      "assigns": 3,
+      "cells": 9
+    },
+    "xadd al, bl": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "xadd ax, bx": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "xadd eax, ebx": {
+      "assigns": 9,
+      "cells": 16
+    },
+    "xadd rax, rbx": {
+      "assigns": 7,
+      "cells": 12
+    },
+    "xchg al, bl": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "xchg ax, bx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "xchg eax, ebx": {
+      "assigns": 4,
+      "cells": 8
+    },
+    "xchg rax, rbx": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "xor al, bl": {
+      "assigns": 6,
+      "cells": 7
+    },
+    "xor ax, 0x7f": {
+      "assigns": 6,
+      "cells": 5
+    },
+    "xor ax, bx": {
+      "assigns": 6,
+      "cells": 7
+    },
+    "xor eax, 0xffff": {
+      "assigns": 7,
+      "cells": 5
+    },
+    "xor eax, ebx": {
+      "assigns": 7,
+      "cells": 7
+    },
+    "xor rax, 0x7f": {
+      "assigns": 6,
+      "cells": 5
+    },
+    "xor rax, 0x7fffffff": {
+      "assigns": 6,
+      "cells": 5
+    },
+    "xor rax, 0xf00f": {
+      "assigns": 6,
+      "cells": 5
+    },
+    "xor rax, 1": {
+      "assigns": 6,
+      "cells": 5
+    },
+    "xor rax, 15": {
+      "assigns": 6,
+      "cells": 5
+    },
+    "xor rax, 3": {
+      "assigns": 6,
+      "cells": 5
+    },
+    "xor rax, rbx": {
+      "assigns": 6,
+      "cells": 7
+    }
+  },
+  "ARM64": {
+    "adc w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adc x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adcs w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adcs x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, #0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, #1365": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, w2, sxtb": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, w2, sxth #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, w2, uxtb": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, w2, uxtb #2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, w2, uxth #2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add x0, x1, x2, lsr #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, #0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, #1365": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, w2, sxtw": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, w2, uxtb #2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2, lsl #2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2, lsr #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "adds x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, #0xff00ff00ff00ff": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and x0, x1, #4095": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, asr #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, lsl #6": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and x0, x1, x2, ror #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ands w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ands x0, x1, #4095": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ands x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ands x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ands x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ands x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ands x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ands x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ands x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ands x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "asr w0, w1, #3": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "asr w0, w1, #5": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "asr x0, x1, #0": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "asr x0, x1, #1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "asr x0, x1, #5": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "asr x0, x1, #63": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "asr x0, x1, #7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "asrv w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "asrv x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "bfc x0, #4, #8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfi x0, x1, #0, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfi x0, x1, #16, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfi x0, x1, #4, #10": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfi x0, x1, #8, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfi x0, x1, #8, #8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfm x0, x1, #0, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfm x0, x1, #16, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfm x0, x1, #4, #10": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfm x0, x1, #8, #8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfxil x0, x1, #16, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfxil x0, x1, #4, #10": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfxil x0, x1, #4, #20": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bfxil x0, x1, #8, #8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bic w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bic x0, x1, #4095": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "bic x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bic x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bic x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bic x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bic x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bic x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bic x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bic x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics x0, x1, #4095": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "bics x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics x0, x1, x2, asr #2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "bics x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ccmn x0, x1, #0, ne": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "ccmn x1, x2, #0, al": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "ccmn x1, x2, #10, lt": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "ccmp x0, x1, #0, ne": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "ccmp x1, #7, #3, ne": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "ccmp x1, x2, #0, al": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "ccmp x1, x2, #5, eq": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cinc x0, x1, eq": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "cinc x0, x1, lt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "cinc x0, x1, ne": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "cinv x0, x1, eq": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "cinv x0, x1, ne": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "cls w0, w1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cls x0, x1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cls x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "clz w0, w1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "clz x0, x1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "clz x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cmn w0, w1": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cmn x0, x1": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cmn x1, #1365": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cmn x1, x2": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cmn x1, x2, lsl #3": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cmp w0, w1": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cmp x0, x1": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cmp x1, #1365": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cmp x1, x2": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cmp x1, x2, lsl #3": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "cneg x0, x1, eq": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "cneg x0, x1, ge": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "cneg x0, x1, ne": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "crc32b w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "crc32cb w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "crc32ch w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "crc32cw w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "crc32h w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "crc32w w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "csel x0, x1, x2, cs": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csel x0, x1, x2, eq": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csel x0, x1, x2, ge": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csel x0, x1, x2, gt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csel x0, x1, x2, hi": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csel x0, x1, x2, lt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csel x0, x1, x2, mi": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csel x0, x1, x2, ne": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csel x0, x1, x2, vs": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "cset x0, cc": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, cs": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, eq": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, ge": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, gt": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, hi": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, le": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, ls": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, lt": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, mi": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, ne": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, pl": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, vc": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "cset x0, vs": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "csetm x0, eq": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "csetm x0, ge": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "csinc x0, x1, x2, cs": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinc x0, x1, x2, eq": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinc x0, x1, x2, ge": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinc x0, x1, x2, gt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinc x0, x1, x2, hi": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinc x0, x1, x2, lt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinc x0, x1, x2, mi": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinc x0, x1, x2, ne": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinc x0, x1, x2, vs": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinv x0, x1, x2, cs": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinv x0, x1, x2, eq": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinv x0, x1, x2, ge": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinv x0, x1, x2, gt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinv x0, x1, x2, lt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinv x0, x1, x2, mi": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csinv x0, x1, x2, ne": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csneg x0, x1, x2, cs": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csneg x0, x1, x2, eq": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csneg x0, x1, x2, ge": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csneg x0, x1, x2, gt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csneg x0, x1, x2, lt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csneg x0, x1, x2, mi": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "csneg x0, x1, x2, ne": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "eon w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "eon x0, x1, #4095": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eon x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "eon x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eon x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eon x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eon x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eon x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eon x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eon x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eon x0, x1, x2, lsr #6": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, #0xffff0000ffff": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, #4095": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2, asr #7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eor x0, x1, x2, ror #11": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "extr x0, x1, x2, #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "extr x0, x1, x2, #13": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "extr x0, x1, x2, #63": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "lsl w0, w1, #3": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsl w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "lsl x0, x1, #0": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsl x0, x1, #1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsl x0, x1, #5": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsl x0, x1, #63": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsl x0, x1, #7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lslv x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "lsr w0, w1, #3": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsr w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "lsr x0, x1, #1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsr x0, x1, #5": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsr x0, x1, #63": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsr x0, x1, #7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "lsrv x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "madd w0, w1, w2, w3": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "madd x0, x1, x2, x3": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mneg w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mneg x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mov x0, x1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movk x0, #0x1234": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movk x0, #0x1234, lsl #16": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movk x0, #0x1234, lsl #32": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "movn x0, #0x1234": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "movz x0, #0x1234, lsl #16": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "msub x0, x1, x2, x3": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mul w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mul x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mvn w0, w1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "mvn x0, x1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "mvn x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "mvn x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "neg w0, w1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "neg x0, x1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "neg x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "neg x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "negs w0, w1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "negs x0, x1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "negs x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "negs x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ngc w0, w1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ngc x0, x1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ngc x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ngcs w0, w1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ngcs x0, x1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ngcs x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn x0, x1, #4095": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "orn x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn x0, x1, x2, lsl #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orn x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, #0x5555555555555555": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "orr x0, x1, #4095": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "orr x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, x2, asr #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orr x0, x1, x2, lsr #9": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rbit w0, w1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rbit x0, x1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rbit x1, x2": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rev w0, w1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rev x0, x1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rev x1, x2": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rev16 w0, w1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rev16 x0, x1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rev16 x1, x2": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rev32 x0, x1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rev32 x1, x2": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ror w0, w1, #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ror w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ror x0, x1, #0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ror x0, x1, #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ror x0, x1, #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ror x0, x1, #63": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ror x0, x1, #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rorv x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbc w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbc x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbcs w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbcs x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfiz x0, x1, #16, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfiz x0, x1, #4, #10": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfiz x0, x1, #8, #8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfiz x0, x1, #9, #12": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfm x0, x1, #0, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfm x0, x1, #16, #16": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sbfm x0, x1, #4, #10": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfm x0, x1, #8, #8": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sbfx x0, x1, #16, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfx x0, x1, #4, #10": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfx x0, x1, #5, #17": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sbfx x0, x1, #8, #8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sdiv w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sdiv x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "smaddl x0, w1, w2, x3": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "smnegl x0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "smsubl x0, w1, w2, x3": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "smulh x0, x1, x1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "smulh x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "smull x0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "stp x1, x2, [sp, #-16]!; ldp x0, x3, [sp], #16": {
+      "assigns": 5,
+      "cells": 3
+    },
+    "str w1, [sp, #-16]; ldr w0, [sp, #-16]": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "str x1, [sp, #-16]!; ldr w0, [sp], #16": {
+      "assigns": 3,
+      "cells": 2
+    },
+    "str x1, [sp, #-16]!; ldr x0, [sp], #16": {
+      "assigns": 3,
+      "cells": 2
+    },
+    "str x1, [sp, #-16]!; ldr x0, [sp]; add x0, x0, x2; add sp, sp, #16": {
+      "assigns": 3,
+      "cells": 2
+    },
+    "str x1, [sp, #-16]!; ldr x0, [sp]; eor x0, x0, x2; add sp, sp, #16": {
+      "assigns": 3,
+      "cells": 2
+    },
+    "str x1, [sp, #-16]; ldr x0, [sp, #-16]": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "strb w1, [sp, #-16]!; ldrb w0, [sp], #16": {
+      "assigns": 3,
+      "cells": 2
+    },
+    "strb w1, [sp, #-16]; ldrb w0, [sp, #-16]": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "strh w1, [sp, #-16]!; ldrsh x0, [sp], #16": {
+      "assigns": 3,
+      "cells": 2
+    },
+    "strh w1, [sp, #-16]; ldrh w0, [sp, #-16]": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "sub w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, #0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, #1365": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, w2, uxtw #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sub x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs w0, w1, w2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, #0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, x2": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, x2, asr #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, x2, asr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, x2, asr #5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, x2, lsl #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, x2, lsl #3": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, x2, lsl #7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, x2, lsr #32": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subs x0, x1, x2, lsr #4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sxtb w0, w1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sxtb x0, w1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sxtb x1, x2": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sxth w0, w1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sxth x0, w1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sxth x1, x2": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sxtw x0, w1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sxtw x1, x2": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "tst w0, w1": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "tst x0, x1": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "tst x1, x2": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "tst x1, x2, lsl #3": {
+      "assigns": 0,
+      "cells": 0
+    },
+    "ubfiz x0, x1, #16, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfiz x0, x1, #4, #10": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfiz x0, x1, #8, #8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfiz x0, x1, #9, #12": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfm x0, x1, #0, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfm x0, x1, #16, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfm x0, x1, #4, #10": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfm x0, x1, #8, #8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfx x0, x1, #0, #1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfx x0, x1, #0, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfx x0, x1, #16, #16": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfx x0, x1, #4, #10": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfx x0, x1, #5, #17": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ubfx x0, x1, #8, #8": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "udiv w0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "udiv x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "umaddl x0, w1, w2, x3": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "umnegl x0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "umsubl x0, w1, w2, x3": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "umulh x0, x1, x2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "umull x0, w1, w2": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "uxtb x0, w1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "uxth x0, w1": {
+      "assigns": 1,
+      "cells": 1
+    }
+  },
+  "MIPS64BE": {
+    "add $2, $4": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $2, $4, $5": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $2, $4, -1": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $2, $4, 0": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $2, $4, 0x7fff": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $2, $4, 1": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $2, $4, 100": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $2, $4, 15": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $2, $4, 31": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $2, $4, 7": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "add $4, $5": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addi $2, 0x1234": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addiu $2, $4, -1365": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addiu $2, $4, 1365": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addiu $2, 0x1234": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4, $5": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4, -1": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4, 0": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4, 0x7fff": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4, 1": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4, 100": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4, 15": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4, 31": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $2, $4, 7": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "addu $4, $5": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "and $2, $4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and $2, $4, $4": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and $2, $4, -1": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "and $2, $4, 0": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and $2, $4, 0x7fff": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and $2, $4, 1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and $2, $4, 100": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and $2, $4, 15": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and $2, $4, 31": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and $2, $4, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "and $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "andi $2, $4, 0xff0f": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "andi $2, 0x1234": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "clo $2, $4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "clo $4, $5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "clz $2, $4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "clz $4, $5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "dadd $2, $4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $2, $4, -1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $2, $4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $2, $4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $2, $4, 1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $2, $4, 100": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $2, $4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $2, $4, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $2, $4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dadd $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddiu $2, 0x1234": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4, -1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4, 1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4, 100": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $2, $4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "daddu $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dclo $2, $4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "dclo $4, $5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "dclz $2, $4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "dclz $4, $5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "div $zero, $4, $5": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "divu $zero, $4, $5": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "dsll $2, $4, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "dsll32 $2, $4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsll32 $2, $4, 1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsll32 $2, $4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsll32 $2, $4, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsll32 $2, $4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsra $2, $4, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "dsra32 $2, $4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsra32 $2, $4, 1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsra32 $2, $4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsra32 $2, $4, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsra32 $2, $4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsrl $2, $4, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "dsrl32 $2, $4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsrl32 $2, $4, 1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsrl32 $2, $4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsrl32 $2, $4, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsrl32 $2, $4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsub $2, $4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsub $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsub $2, $4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsub $2, $4, 100": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsub $2, $4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsub $2, $4, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsub $2, $4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsub $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsubu $2, $4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsubu $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsubu $2, $4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsubu $2, $4, 100": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsubu $2, $4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsubu $2, $4, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsubu $2, $4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "dsubu $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "lui $2, 0x1234": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "movn $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "movz $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "mul $2, $4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mul $2, $4, $4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mul $2, $4, $5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mul $4, $5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "negu $4, $5": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "nor $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nor $2, $4, -1": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "nor $2, $4, 0": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "nor $2, $4, 0x7fff": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "nor $2, $4, 1": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "nor $2, $4, 100": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "nor $2, $4, 15": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "nor $2, $4, 31": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "nor $2, $4, 7": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "or $2, $4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or $2, $4, -1": {
+      "assigns": 4,
+      "cells": 4
+    },
+    "or $2, $4, 0": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "or $2, $4, 0x7fff": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "or $2, $4, 1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "or $2, $4, 100": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "or $2, $4, 15": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "or $2, $4, 31": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "or $2, $4, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "or $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ori $2, $4, 0x0ff0": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ori $2, 0x1234": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sb $4, -16($sp); lb $2, -16($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sb $4, 0($sp); lb $2, 0($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sb $4, 0($sp); lbu $2, 0($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sd $4, -16($sp); ld $2, -16($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sd $4, 0($sp); ld $2, 0($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sh $4, -16($sp); lhu $2, -16($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sh $4, 0($sp); lh $2, 0($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sh $4, 0($sp); lhu $2, 0($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sll $2, $4, 0": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sll $2, $4, 1": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sll $2, $4, 15": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sll $2, $4, 31": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sll $2, $4, 7": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sllv $2, $4, $5": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "slt $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slt $2, $4, -1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slt $2, $4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slt $2, $4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slt $2, $4, 1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slt $2, $4, 100": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slt $2, $4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slt $2, $4, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slt $2, $4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slti $2, $4, 1365": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltiu $2, $4, 1365": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $4, $5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $4, -1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $4, 1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $4, 100": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $4, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu $2, $zero, $4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sra $2, $4, 0": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sra $2, $4, 1": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sra $2, $4, 15": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sra $2, $4, 31": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sra $2, $4, 7": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "srav $2, $4, $5": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "srl $2, $4, 0": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "srl $2, $4, 1": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "srl $2, $4, 15": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "srl $2, $4, 31": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "srl $2, $4, 7": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "srlv $2, $4, $4": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "srlv $2, $4, $5": {
+      "assigns": 2,
+      "cells": 0
+    },
+    "sub $2, $4": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "sub $2, $4, $5": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "sub $2, $4, 0x7fff": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "sub $2, $4, 100": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "sub $2, $4, 15": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "sub $2, $4, 31": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "sub $2, $4, 7": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "sub $4, $5": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "subu $2, $4": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "subu $2, $4, $5": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "subu $2, $4, 0x7fff": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "subu $2, $4, 100": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "subu $2, $4, 15": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "subu $2, $4, 31": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "subu $2, $4, 7": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "subu $2, $zero, $4": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "subu $4, $5": {
+      "assigns": 2,
+      "cells": 4
+    },
+    "sw $4, -16($sp); lw $2, -16($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sw $4, -16($sp); lw $2, -16($sp); addu $2, $2, $5": {
+      "assigns": 3,
+      "cells": 4
+    },
+    "sw $4, -16($sp); lw $2, -16($sp); xor $2, $2, $5": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "sw $4, 0($sp); lw $2, 0($sp)": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "xor $2, $4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor $2, $4, $5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor $2, $4, -1": {
+      "assigns": 4,
+      "cells": 0
+    },
+    "xor $2, $4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor $2, $4, 0x7fff": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor $2, $4, 1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor $2, $4, 100": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor $2, $4, 15": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor $2, $4, 31": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor $2, $4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor $4, $5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori $2, $4, 0xf00f": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori $2, 0x1234": {
+      "assigns": 1,
+      "cells": 0
+    }
+  },
+  "PPC32BE": {
+    "add 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "add. 3, 4, 5": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "addc 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addc 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addc 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addc 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addc 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addc 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 3, 4, -1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 3, 4, 1365": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addic 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addic 3, 4, -1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addic 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addic 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addic 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addic 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addic 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addic 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addic 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 3, 4, -1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 3, 4, 1365": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addis 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and. 3, 4, 5": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andc 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "andc 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "andc 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "andc 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "andc 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "andc 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "andi. 0, 3, 4": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andi. 3, 4, 0": {
+      "assigns": 2,
+      "cells": 2
+    },
+    "andi. 3, 4, 0x1234": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andi. 3, 4, 0x7fff": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andi. 3, 4, 0xff0f": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andi. 3, 4, 15": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andi. 3, 4, 5": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andi. 3, 4, 7": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andi. 5, 6, 7": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andi. 6, 7, 8": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andis. 0, 3, 4": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andis. 3, 4, 0": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andis. 3, 4, 0x1234": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andis. 3, 4, 0x7fff": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andis. 3, 4, 15": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andis. 3, 4, 5": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andis. 3, 4, 7": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andis. 5, 6, 7": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "andis. 6, 7, 8": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "cmplw 0, 4, 5": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplw 3, 4": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplw 3, 4, 0": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplw 3, 4, 15": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplw 3, 4, 5": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplw 3, 4, 7": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplw 5, 6, 7": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplwi 0, 4, 1365": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplwi 3, 4": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplwi 3, 4, 0": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplwi 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplwi 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplwi 3, 4, 15": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplwi 3, 4, 5": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplwi 3, 4, 7": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmplwi 5, 6, 7": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpw 0, 4, 5": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpw 1, 4, 5": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpw 3, 4": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpw 3, 4, 0": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpw 3, 4, 15": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpw 3, 4, 5": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpw 3, 4, 7": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpw 5, 6, 7": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 0, 4, 1365": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 3, 4": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 3, 4, -1": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 3, 4, 0": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 3, 4, 15": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 3, 4, 5": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 3, 4, 7": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cmpwi 5, 6, 7": {
+      "assigns": 1,
+      "cells": 3
+    },
+    "cntlzw 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "divw 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "divwu 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eqv 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eqv 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eqv 3, 4, 15": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eqv 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eqv 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "eqv 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "extsb 3, 4": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "extsh 3, 4": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "mulhw 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhw 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhw 3, 4, 15": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhw 3, 4, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhw 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhw 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhw 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhwu 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhwu 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhwu 3, 4, 15": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhwu 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhwu 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhwu 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulli 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "mulli 3, 4, -1": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulli 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulli 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulli 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulli 3, 4, 1365": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulli 3, 4, 15": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulli 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulli 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulli 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mullw 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mullw 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mullw 3, 4, 15": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mullw 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mullw 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mullw 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "nand 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nand 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nand 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nand 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nand 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nand 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "neg 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "neg. 3, 4": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "nor 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nor 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nor 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nor 3, 4, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nor 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nor 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "nor 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "or. 3, 4, 5": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "orc 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orc 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orc 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orc 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orc 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "orc 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ori 0, 3, 4": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ori 3, 4, 0": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ori 3, 4, 0x0ff0": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ori 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ori 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ori 3, 4, 15": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ori 3, 4, 5": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ori 3, 4, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "ori 5, 6, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "oris 0, 3, 4": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "oris 3, 4, 0": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "oris 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "oris 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "oris 3, 4, 15": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "oris 3, 4, 5": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "oris 3, 4, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "oris 5, 6, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rlwimi 3, 4, 1, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwimi 3, 4, 4, 28, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwimi 3, 4, 5, 0, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwimi 3, 4, 5, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwimi 3, 4, 5, 16, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwimi 3, 4, 5, 6": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwimi 3, 4, 5, 8, 20": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwimi 3, 4, 5, 8, 23": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwimi 3, 4, 7, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 0, 16, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 1, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 12, 0, 19": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 31, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 4, 28, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 5, 0, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 5, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 5, 16, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 5, 6": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 5, 8, 20": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 5, 8, 23": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm 3, 4, 7, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwinm. 3, 4, 5, 8, 20": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "rlwnm 3, 4, 1, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwnm 3, 4, 4, 28, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwnm 3, 4, 5, 0, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwnm 3, 4, 5, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwnm 3, 4, 5, 16, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwnm 3, 4, 5, 6": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwnm 3, 4, 5, 8, 20": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwnm 3, 4, 5, 8, 23": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rlwnm 3, 4, 7, 0, 31": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "rotlwi 3, 4, 9": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slw 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "slw 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "slw 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slw 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "slw 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "slw 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "slwi 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sraw 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sraw 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sraw 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sraw 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sraw 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sraw 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "srawi 0, 3, 4": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srawi 3, 4, 0": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srawi 3, 4, 1": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srawi 3, 4, 15": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srawi 3, 4, 31": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srawi 3, 4, 5": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srawi 3, 4, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srawi 5, 6, 7": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srawi. 3, 4, 7": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "srw 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "srw 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "srw 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "srw 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "srw 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "srw 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "srwi 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "stb 4, -16(1); lbz 3, -16(1)": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "stb 4, -8(1); lbz 3, -8(1)": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "sth 4, -16(1); lha 3, -16(1)": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "sth 4, -8(1); lhz 3, -8(1)": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "stw 4, -16(1); lwz 3, -16(1)": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "stw 4, -16(1); lwz 3, -16(1); add 3, 3, 5": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "stw 4, -16(1); lwz 3, -16(1); xor 3, 3, 5": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "stw 4, -8(1); lwz 3, -8(1)": {
+      "assigns": 2,
+      "cells": 1
+    },
+    "subf 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subf 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subf 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subf 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subf 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subf 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subf. 3, 4, 5": {
+      "assigns": 2,
+      "cells": 5
+    },
+    "subfc 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfc 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfc 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfc 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfc 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfc 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 0, 3, 4": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 3, 4, -1": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 3, 4, 0": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 3, 4, 1365": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 3, 4, 15": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 3, 4, 5": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 3, 4, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subfic 5, 6, 7": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "xor 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor 3, 4, 15": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xor 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori 3, 4, 0xf00f": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori 3, 4, 15": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xoris 0, 3, 4": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xoris 3, 4, 0": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xoris 3, 4, 0x1234": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xoris 3, 4, 0x7fff": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xoris 3, 4, 15": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xoris 3, 4, 5": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xoris 3, 4, 7": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xoris 5, 6, 7": {
+      "assigns": 1,
+      "cells": 0
+    }
+  },
+  "RISCV64": {
+    "add": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addi_neg": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addiw": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "addw": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "and": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "andi": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "auipc": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "div": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "divu": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "divuw": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "divw": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "lui": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mul": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulh": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhsu": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulhu": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "mulw": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "or": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "ori": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "rem": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "remu": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "remuw": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "remw": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sll": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "slli": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "slli_31": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "slliw": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sllw": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "slt": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "slti": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltiu": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sltu": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "sra": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "srai": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srai_63": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sraiw": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "sraw": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "srl": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "srli": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srliw": {
+      "assigns": 1,
+      "cells": 1
+    },
+    "srlw": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "sub": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "subw": {
+      "assigns": 1,
+      "cells": 2
+    },
+    "xor": {
+      "assigns": 1,
+      "cells": 0
+    },
+    "xori": {
+      "assigns": 1,
+      "cells": 2
+    }
+  },
+  "_meta": {
+    "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
+    "generated": "2026-09-04T15:06:33.875729+00:00",
+    "metrics": {
+      "assigns": "top-level taint assignments emitted by the rule",
+      "cells": "native cell re-executions per evaluate"
+    }
+  }
+}

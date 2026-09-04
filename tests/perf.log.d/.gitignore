@@ -1,0 +1,6 @@
+# Per-run taint-propagation performance logs (one JSON file per run, machine-
+# specific). Kept OUT of git: the committed ratchet reference is
+# tests/perf_baseline.json; this .d directory is only a local time-series for
+# tracking progression over time. Ignore everything here except this file.
+*
+!.gitignore
