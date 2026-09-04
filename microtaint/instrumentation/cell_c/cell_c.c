@@ -104,6 +104,16 @@ static inline int reg_lookup(const EvalC *self, const char *name) {
 
 /* Get (offset, size) from name; returns 1 on success, 0 on miss. */
 static inline int reg_off_size(const EvalC *self, const char *name, int *off, int *sz) {
+    /* Whole wide vector varnode VW_<hex>_<size>: carries both absolute offset and
+     * byte size (native SIMD, no lane split).  Mirrors cell.pyx _resolve_off. */
+    if (name[0] == 'V' && name[1] == 'W' && name[2] == '_') {
+        char *endp = NULL;
+        long v = strtol(name + 3, &endp, 16);
+        if (endp && *endp == '_' && v >= 0) {
+            long s = strtol(endp + 1, &endp, 10);
+            if (endp && *endp == '\0' && s > 0) { *off = (int)v; *sz = (int)s; return 1; }
+        }
+    }
     /* Synthetic vector lane VL_<hex>: an 8-byte window at an absolute sleigh
      * offset (mirrors cell.pyx _resolve_off), so any ISA's wide vector register
      * is byte-addressable without a per-arch table. */
@@ -203,6 +213,8 @@ static DecodedBundle *get_bundle(EvalC *self, PyObject *bytestring) {
 
 /* ──────────── Frame loaders ──────────── */
 
+static int load_wide_reg(Frame *f, int off, int sz, PyObject *val, int be);
+
 static void load_regs_state(EvalC *self, Frame *f, PyObject *regs_dict) {
     PyObject *key, *val;
     Py_ssize_t pos = 0;
@@ -210,9 +222,15 @@ static void load_regs_state(EvalC *self, Frame *f, PyObject *regs_dict) {
         if (!PyUnicode_Check(key)) continue;
         const char *name = PyUnicode_AsUTF8(key);
         if (!name) continue;
-        char up[16]; if (!upper_into(up, sizeof(up), name)) continue;
+        char up[24]; if (!upper_into(up, sizeof(up), name)) continue;
         int off, sz;
         if (!reg_off_size(self, up, &off, &sz)) continue;
+        if (sz > 8) {
+            /* Wide vector input: store the full value (no 64-bit truncation). */
+            if (load_wide_reg(f, off, sz, val, f->is_big_endian) < 0 && PyErr_Occurred())
+                PyErr_Clear();
+            continue;
+        }
         uint64_t v = (uint64_t)(PyLong_AsUnsignedLongLong(val) & 0xFFFFFFFFFFFFFFFFULL);
         if (PyErr_Occurred()) PyErr_Clear();
         frame_write_reg(f, off, sz, mask64(v, sz));
@@ -240,6 +258,52 @@ static void load_mem_state(EvalC *self, Frame *f, PyObject *mem_dict) {
     }
 }
 
+/* Store a WIDE (>8-byte) vector input value into the frame, lane by lane.  The
+ * Python int `val` is the target-endian value; we place its bytes so that a
+ * later lane read (frame_read_d off+k) returns the right 8 bytes.  Returns 0 on
+ * success, -1 on error (caller clears). */
+static int load_wide_reg(Frame *f, int off, int sz, PyObject *val, int be) {
+    if (sz <= 0 || sz > 64) return -1;
+    PyObject *bytes = PyObject_CallMethod(val, "to_bytes", "is", sz, "little");
+    if (!bytes) return -1;
+    char *buf; Py_ssize_t blen;
+    if (PyBytes_AsStringAndSize(bytes, &buf, &blen) < 0 || blen < sz) {
+        Py_DECREF(bytes); return -1;
+    }
+    for (int k = 0; k < sz; k += 8) {
+        int lsz = (sz - k < 8) ? (sz - k) : 8;
+        uint64_t lane = 0;
+        for (int j = 0; j < lsz; j++) {
+            int src = be ? (sz - 1 - (k + j)) : (k + j);  /* sleigh byte off+k+j = value byte src */
+            lane |= ((uint64_t)(uint8_t)buf[src]) << (j * 8);
+        }
+        frame_write_reg(f, off + k, lsz, lane);
+    }
+    Py_DECREF(bytes);
+    return 0;
+}
+
+/* Read a WIDE (>8-byte) register output as a target-endian Python int, lane by
+ * lane (symmetric with load_wide_reg).  Returns a new ref or NULL on error. */
+static PyObject *read_wide_pylong(const Frame *f, long off, int sz, int be) {
+    unsigned char buf[64];
+    if (sz <= 0 || sz > 64) return PyLong_FromLong(0);
+    memset(buf, 0, (size_t)sz);
+    for (int k = 0; k < sz; k += 8) {
+        int lsz = (sz - k < 8) ? (sz - k) : 8;
+        uint64_t lane = frame_read_reg(f, off + k, lsz);
+        for (int j = 0; j < lsz; j++) {
+            int pos = be ? (sz - 1 - (k + j)) : (k + j);
+            buf[pos] = (uint8_t)(lane >> (j * 8));
+        }
+    }
+    PyObject *bytes = PyBytes_FromStringAndSize((char *)buf, sz);
+    if (!bytes) return NULL;
+    PyObject *r = PyObject_CallMethod((PyObject *)&PyLong_Type, "from_bytes", "Os", bytes, "little");
+    Py_DECREF(bytes);
+    return r;
+}
+
 static int load_flat(EvalC *self, Frame *f, PyObject *inputs_dict) {
     PyObject *key, *val;
     Py_ssize_t pos = 0;
@@ -255,9 +319,15 @@ static int load_flat(EvalC *self, Frame *f, PyObject *inputs_dict) {
             PyList_Append(deferred, key);
             continue;
         }
-        char up[16]; if (!upper_into(up, sizeof(up), name)) continue;
+        char up[24]; if (!upper_into(up, sizeof(up), name)) continue;
         int off, sz;
         if (!reg_off_size(self, up, &off, &sz)) continue;
+        if (sz > 8) {
+            /* Wide vector input: store the full value (no 64-bit truncation). */
+            if (load_wide_reg(f, off, sz, val, f->is_big_endian) < 0 && PyErr_Occurred())
+                PyErr_Clear();
+            continue;
+        }
         uint64_t v = (uint64_t)(PyLong_AsUnsignedLongLong(val) & 0xFFFFFFFFFFFFFFFFULL);
         if (PyErr_Occurred()) PyErr_Clear();
         frame_write_reg(f, off, sz, mask64(v, sz));
@@ -871,12 +941,20 @@ static PyObject *EvalC_evaluate_differential(EvalC *self, PyObject *args) {
         if (cell_output_info(cell_obj, &av_reg, &av_bs, &av_be) < 0) return NULL;
         free(av_reg);
         int width = av_be - av_bs + 1;
-        uint64_t full = 0;
-        if (any_input_differs(or_inputs, and_inputs)) {
-            full = (width >= 64) ? 0xFFFFFFFFFFFFFFFFULL
-                                 : (((uint64_t)1 << width) - 1);
-        }
+        int differ = any_input_differs(or_inputs, and_inputs);
         self->native_calls++;
+        if (!differ) return PyLong_FromLong(0);
+        if (width > 64) {
+            /* Wide output: full mask of `width` bits as a Python int. */
+            PyObject *one = PyLong_FromLong(1);
+            PyObject *w = PyLong_FromLong(width);
+            PyObject *sh = one && w ? PyNumber_Lshift(one, w) : NULL;
+            PyObject *mask = sh ? PyNumber_Subtract(sh, one) : NULL;
+            Py_XDECREF(one); Py_XDECREF(w); Py_XDECREF(sh);
+            return mask;
+        }
+        uint64_t full = (width >= 64) ? 0xFFFFFFFFFFFFFFFFULL
+                                      : (((uint64_t)1 << width) - 1);
         return PyLong_FromUnsignedLongLong(full);
     }
     if (bundle->has_fallback) {
@@ -902,6 +980,25 @@ static PyObject *EvalC_evaluate_differential(EvalC *self, PyObject *args) {
         self->fallback_calls++;
         PyErr_SetString(self->fallback_exc, "execution requires Unicorn");
         return NULL;
+    }
+    /* Native wide SIMD output (>64-bit slice): read the full width per lane and
+     * return the wide Python-int taint -- no per-8-byte-lane VL_ splitting. */
+    int width = be - bs + 1;
+    if (width > 64) {
+        char up[24];
+        int off, sz;
+        self->native_calls++;
+        if (upper_into(up, sizeof(up), out_reg) && reg_off_size(self, up, &off, &sz)) {
+            PyObject *pa = read_wide_pylong(fa, (long)off + (bs / 8), width / 8, fa->is_big_endian);
+            PyObject *pb = read_wide_pylong(fb, (long)off + (bs / 8), width / 8, fb->is_big_endian);
+            free(out_reg);
+            if (!pa || !pb) { Py_XDECREF(pa); Py_XDECREF(pb); return NULL; }
+            PyObject *r = PyNumber_Xor(pa, pb);
+            Py_DECREF(pa); Py_DECREF(pb);
+            return r;
+        }
+        free(out_reg);
+        return PyLong_FromLong(0);
     }
     uint64_t va = read_output_full(self, fa, out_reg, bs, be);
     uint64_t vb = read_output_full(self, fb, out_reg, bs, be);

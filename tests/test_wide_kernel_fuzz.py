@@ -165,3 +165,63 @@ def test_wide_kernels_agree_and_are_exact(seed: int) -> None:
             if op is not None:
                 oracle = _oracle_bytes(op, bases, values, taints, nbytes)
                 assert py == oracle, f'EXACT: {py} != oracle {oracle} :: {ctx}'
+
+
+# ---------------------------------------------------------------------------
+# Native wide path (VW_<off>_<size>): one wide operand per vector register, one
+# cell differential call for the whole output -- the readout that lets the engine
+# drop VL_ lane-splitting.  Both kernels must agree and (for the oracle-able ops)
+# be exact.
+# ---------------------------------------------------------------------------
+
+def _cell_wide_native(evaluator, arch, instr, out_base, nbytes, in_vals, in_taints) -> set[int]:
+    ev = evaluator(arch)
+    or_in: dict[str, int] = {}
+    and_in: dict[str, int] = {}
+    mask = (1 << (nbytes * 8)) - 1
+    for base in in_vals:
+        key = f'VW_{base:#x}_{nbytes}'
+        or_in[key] = (in_vals[base] | in_taints[base]) & mask
+        and_in[key] = (in_vals[base] & ~in_taints[base]) & mask
+    cell = types.SimpleNamespace(instruction=instr, out_reg=f'VW_{out_base:#x}_{nbytes}',
+                                 out_bit_start=0, out_bit_end=nbytes * 8 - 1)
+    diff = ev.evaluate_differential(cell, dict(or_in), dict(and_in))
+    return {j for j in range(nbytes) if (diff >> (j * 8)) & 0xFF}
+
+
+def _wide_oracle(op, bases, vals, taints, nbytes) -> set[int]:
+    mask = (1 << (nbytes * 8)) - 1
+    ops = [(((vals[b] | taints[b]) & mask), ((vals[b] & ~taints[b]) & mask)) for b in bases]
+    if op == 'copy':
+        hi, lo = ops[0]
+    elif op == 'xor':
+        hi, lo = ops[0][0] ^ ops[1][0], ops[0][1] ^ ops[1][1]
+    elif op == 'and':
+        hi, lo = ops[0][0] & ops[1][0], ops[0][1] & ops[1][1]
+    elif op == 'or':
+        hi, lo = ops[0][0] | ops[1][0], ops[0][1] | ops[1][1]
+    else:
+        raise AssertionError(op)
+    diff = (hi ^ lo) & mask
+    return {j for j in range(nbytes) if (diff >> (j * 8)) & 0xFF}
+
+
+@pytest.mark.parametrize('seed', range(40))
+def test_wide_native_kernels_agree_and_exact(seed: int) -> None:
+    rng = random.Random(seed + 1000)
+    for entry in _CORPUS:
+        ks, arch, asm, out_base, nbytes, bases, op = entry
+        instr = _asm(ks, asm)
+        for _ in range(6):
+            vals = {b: rng.getrandbits(nbytes * 8) for b in bases}
+            taints = dict.fromkeys(bases, 0)
+            for b in bases:
+                for k in range(0, nbytes, 8):
+                    taints[b] |= _rand_lane(rng) << (k * 8)
+            py = _cell_wide_native(PCodeCellEvaluator, arch, instr, out_base, nbytes, vals, taints)
+            c = _cell_wide_native(PCodeCellEvaluatorC, arch, instr, out_base, nbytes, vals, taints)
+            ctx = f'{asm} seed={seed}'
+            assert py == c, f'WIDE PARITY: cell.pyx {py} != cell_c {c} :: {ctx}'
+            if op is not None:
+                oracle = _wide_oracle(op, bases, vals, taints, nbytes)
+                assert py == oracle, f'WIDE EXACT: {py} != oracle {oracle} :: {ctx}'

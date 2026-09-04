@@ -1807,7 +1807,19 @@ cdef class PCodeCellEvaluator:
         the native frame without a per-arch table.  The (offset, size) pair is
         cached into _offsets/_sizes on first use.  Returns None for unknown keys."""
         cdef object off_obj = self._offsets.get(key)
+        cdef int _us
         if off_obj is not None:
+            return off_obj
+        # VW_<hex>_<size>: a whole wide vector varnode (native SIMD, no lane
+        # split) -- carries both its absolute offset and byte size in the name.
+        if key[:3] == 'VW_':
+            try:
+                _us = key.rfind('_')
+                off_obj = int(key[3:_us], 16)
+                self._sizes[key] = int(key[_us + 1:])
+            except (ValueError, IndexError):
+                return None
+            self._offsets[key] = off_obj
             return off_obj
         if key[:3] == 'VL_':
             try:
@@ -1853,7 +1865,12 @@ cdef class PCodeCellEvaluator:
                     off    = <long>off_obj
                     sz_obj = self._sizes.get(key)
                     sz     = <int>sz_obj if sz_obj is not None else 8
-                    frame._write_reg(off, sz, _mask64(v, sz))
+                    if sz > 8:
+                        # Wide vector input: store the full value byte-wise (no
+                        # 64-bit truncation).  Uses the original Python int, not v.
+                        frame._write_reg_wide(off, sz, val & (((<object>1) << (sz * 8)) - 1))
+                    else:
+                        frame._write_reg(off, sz, _mask64(v, sz))
 
         # Pass 2: resolve MEM_<...> entries.
         # Format A:  MEM_<hex>_<size>           (static address)
@@ -2044,24 +2061,33 @@ cdef class PCodeCellEvaluator:
         self.native_calls += 1
         return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
 
-    cdef uint64_t _avalanche_taint(self, cell, dict or_inputs, dict and_inputs):
+    cdef object _read_output_wide(self, _PCodeFrame frame, str out_reg,
+                                  int bit_start, int width):
+        """Read a WIDE (>64-bit) register output slice as one Python int -- the
+        native-SIMD readout that replaces per-lane VL_ reads.  Byte-aligned."""
+        cdef object off_obj = self._resolve_off(out_reg.upper())
+        if off_obj is None:
+            return <object>0
+        return frame._read_reg_wide((<long>off_obj) + (bit_start // 8), width // 8)
+
+    cdef object _avalanche_taint(self, cell, dict or_inputs, dict and_inputs):
         """Avalanche floor for an opaque data op (CALLOTHER/FLOAT): if ANY input
         is tainted (differs between the V|T and V&~T polarities) the whole output
         slice is tainted.  Sound over-approximation; no concrete execution, so no
-        Unicorn dependency for shuffles / crypto / float SIMD."""
+        Unicorn dependency for shuffles / crypto / float SIMD.  Returns a
+        Python int so an arbitrarily wide (>64-bit) output avalanches fully too."""
         cdef int width = cell.out_bit_end - cell.out_bit_start + 1
         cdef object k
         for k in or_inputs:
             if or_inputs[k] != and_inputs.get(k, 0):
-                if width >= 64:
-                    return 0xFFFFFFFFFFFFFFFF
-                return (<uint64_t>1 << width) - 1
-        return 0
+                return (((<object>1) << width) - 1)
+        return <object>0
 
     def evaluate_differential(self, cell, or_inputs, and_inputs):
         cdef _PCodeFrame fa = self._frame_a
         cdef _PCodeFrame fb = self._frame_b
         cdef uint64_t out_or, out_and
+        cdef int width
         decoded = _get_decoded(self.arch, bytes.fromhex(cell.instruction))
         # Opaque data op (shuffle / crypto / float SIMD): avalanche its taint
         # instead of executing it via Unicorn.  Matches the static rule-gen
@@ -2071,6 +2097,17 @@ cdef class PCodeCellEvaluator:
             return self._avalanche_taint(cell, or_inputs, and_inputs)
         if decoded.has_fallback:
             raise PCodeFallbackNeeded('instruction requires Unicorn')
+        width = cell.out_bit_end - cell.out_bit_start + 1
+        if width > 64:
+            # Native wide SIMD output: run the whole wide op once per polarity and
+            # read the full output width -- no per-8-byte-lane splitting.
+            self._load(fa, or_inputs)
+            _execute_decoded(fa, decoded)
+            self._load(fb, and_inputs)
+            _execute_decoded(fb, decoded)
+            self.native_calls += 1
+            return (self._read_output_wide(fa, cell.out_reg, cell.out_bit_start, width)
+                    ^ self._read_output_wide(fb, cell.out_reg, cell.out_bit_start, width))
         self._load(fa, or_inputs)
         _execute_decoded(fa, decoded)
         out_or = self._read_output(fa, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
