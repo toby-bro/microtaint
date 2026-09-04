@@ -334,6 +334,34 @@ def _vector_lane_bases(ctx: Context, arch: str) -> frozenset[int]:
     return frozen
 
 
+_FLAG_OFFSETS_CACHE: dict[str, frozenset[int]] = {}
+
+
+def _standalone_flag_offsets(ctx: Context, arch: str) -> frozenset[int]:
+    """Sleigh offsets of every STANDALONE 1-byte register: a 1-byte register-space
+    varnode that no wider register contains.  These are the condition flags (x86
+    CF/OF/..., ARM64 C, PPC xer_ca, ...), which Sleigh stores 1-per-byte but which
+    hold a single boolean bit.  A GP sub-byte (AL/CL/...) is EXCLUDED because it
+    sits inside its parent GPR, so this distinguishes a carry-fill bit (a flag)
+    from a shift-amount byte (a GPR sub-piece) with no per-ISA table.  Cached per
+    arch (depends only on the Sleigh register layout)."""
+    cached = _FLAG_OFFSETS_CACHE.get(arch)
+    if cached is not None:
+        return cached
+    one_byte: set[int] = set()
+    covered: set[int] = set()
+    for _vn in ctx.registers.values():
+        if _vn.space.name != 'register':
+            continue
+        if _vn.size == 1:
+            one_byte.add(_vn.offset)
+        elif _vn.size > 1:
+            covered.update(o for o in range(_vn.offset, _vn.offset + _vn.size))
+    frozen = frozenset(one_byte - covered)
+    _FLAG_OFFSETS_CACHE[arch] = frozen
+    return frozen
+
+
 class StateMapper:
     def __init__(self, ctx: Context, arch: str, state_format: list[Register]):
         self.ctx = ctx
@@ -369,6 +397,10 @@ class StateMapper:
         # A wide register varnode no state_format entry covers is lane-synthesised
         # onto VL_<lane_base> here, tracking any ISA's SIMD file without enumeration.
         self._vec_lane_bases: frozenset[int] = _vector_lane_bases(ctx, str(arch))
+        # Standalone 1-byte flag offsets (geometry-derived) -- used to tell a
+        # carry-fill flag from a shift-amount GPR sub-byte in rotate-through-carry
+        # categorisation, ISA-generally (no hardcoded x86 flag-offset table).
+        self.flag_offsets: frozenset[int] = _standalone_flag_offsets(ctx, str(arch))
 
     def lane_base_offset(self, name: str, default: int) -> int:
         """Sleigh byte offset of a state entry / synthetic lane by name.  A listed
@@ -2432,7 +2464,9 @@ def generate_taint_assignments(  # noqa: C901
         assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expr))
         return
 
-    cat = determine_category(slice_ops, out_width_bits=(out_bit_end - out_bit_start + 1))
+    cat = determine_category(
+        slice_ops, out_width_bits=(out_bit_end - out_bit_start + 1), flag_offsets=mapper.flag_offsets,
+    )
 
     # Software-loop override: PEXT/PDEP and similar BMI2 ops lift to a
     # CBRANCH-driven loop whose body, when linearised by the slicer, gives

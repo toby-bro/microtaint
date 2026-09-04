@@ -175,7 +175,9 @@ def _pow2_mult_shift(op: PcodeOp, folded: dict[tuple[str, int, int], int]) -> in
     return None
 
 
-def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
+def is_mapped_permutation(  # noqa: C901
+    slice_ops: list[PcodeOp], flag_offsets: frozenset[int] = frozenset(),
+) -> bool:
     """
     Heuristic: A true permutation only uses routing/shifting opcodes
     AND relies on only ONE dynamic input (register/memory). All other inputs must be constants.
@@ -309,16 +311,16 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
         # Explicitly excluded: shift instructions like `shl rax, cl` where the 1-bit
         # source is CL (sub-byte of RCX, offset 0x8) — that is a shift *amount*, not
         # a fill bit, so it must remain TRANSLATABLE (variable-amount shift → avalanche).
-        # We distinguish carry-fill bits from shift-amount bits by checking whether the
-        # 1-bit source lives at a known x86 flag register offset.
-        _X86_FLAG_OFFSETS = frozenset({0x200, 0x20B, 0x206, 0x207, 0x202, 0x203})
+        # We distinguish carry-fill bits from shift-amount bits by checking whether
+        # the 1-bit source is a STANDALONE flag register (geometry-derived, passed
+        # in as flag_offsets) rather than a GPR sub-byte like CL.
         one_bit_sources = [(sp, off, sz) for sp, off, sz in dynamic_sources if sz == 1]
         multi_bit_sources = [(sp, off, sz) for sp, off, sz in dynamic_sources if sz > 1]
         if (
             len(one_bit_sources) == 1
             and len(multi_bit_sources) == 1
             and has_shift
-            and one_bit_sources[0][1] in _X86_FLAG_OFFSETS
+            and one_bit_sources[0][1] in flag_offsets
         ):
             return True
 
@@ -328,6 +330,7 @@ def is_mapped_permutation(slice_ops: list[PcodeOp]) -> bool:  # noqa: C901
 def determine_category(  # noqa: C901
     slice_ops: list[PcodeOp],
     out_width_bits: int = 64,
+    flag_offsets: frozenset[int] = frozenset(),
 ) -> InstructionCategory:
     if not slice_ops:
         return InstructionCategory.MAPPED
@@ -338,7 +341,7 @@ def determine_category(  # noqa: C901
     if any(op.opcode.name in OPAQUE_OPCODES for op in slice_ops):
         return InstructionCategory.AVALANCHE
 
-    if is_mapped_permutation(slice_ops):
+    if is_mapped_permutation(slice_ops, flag_offsets):
         return InstructionCategory.MAPPED
 
     # Safely filter out ignored and extension operations from the core evaluation
