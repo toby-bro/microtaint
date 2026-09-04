@@ -3,6 +3,11 @@
 import os
 from enum import Enum
 from microtaint.instrumentation.cell_c.circuit_c import compile_circuit
+
+# perop frame-sharing opt-in (Increment 1: Cython walker path). When set, the
+# Cython LogicCircuit.evaluate arms a per-evaluate cell frame cache so an
+# instruction's result + flags share one execution. Bit-exact; off by default.
+_PEROP_SHARE = os.environ.get('MICROTAINT_PEROP_SHARE') == '1'
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture, Register
 
@@ -253,6 +258,7 @@ cdef class EvalContext:
     cdef public object shadow_memory
     cdef public object mem_reader
     cdef public str arch_str  # cached once, avoids str(simulator.arch) per TaintOperand miss
+    cdef public bint share_frames  # perop: route cell exec through the per-evaluate frame cache
 
     def __init__(
         self,
@@ -268,6 +274,7 @@ cdef class EvalContext:
         self.simulator = simulator
         self.shadow_memory = shadow_memory
         self.mem_reader = mem_reader
+        self.share_frames = False
 
         if implicit_policy is None:
             from microtaint.types import ImplicitTaintPolicy
@@ -1284,6 +1291,15 @@ cdef class LogicCircuit:
             return self._compiled.evaluate(context)
 
         # Cython AST fallback (the original implementation):
+        # perop: arm the per-evaluate cell frame cache so this instruction's
+        # result + flags share one execution instead of re-running the program
+        # per output. Bit-exact; off unless MICROTAINT_PEROP_SHARE=1.
+        cdef object _pc
+        if _PEROP_SHARE and context.simulator is not None:
+            _pc = getattr(context.simulator, '_pcode', None)
+            if _pc is not None and hasattr(_pc, 'reset_frame_cache'):
+                _pc.reset_frame_cache(True)
+                context.share_frames = True
         # Cache frequently accessed context fields as C locals — avoids repeated
         # Python property dispatch for each field access in the hot loop.
         cdef dict output_taint = context.input_taint.copy()
@@ -1570,6 +1586,15 @@ cdef class InstructionCellExpr(Expr):
                     # Fall through to the standard MachineState path below.
 
         m_state = _build_machine_state(evaluated_inputs, context)
+        # perop frame-sharing: route through the per-evaluate frame cache so this
+        # instruction's other output slices read an already-executed frame.
+        if context.share_frames:
+            pcode = sim._pcode
+            if pcode is not None:
+                try:
+                    return pcode.evaluate_concrete_state_shared(self, m_state.regs, m_state.mem)
+                except sim._pcode_fallback_exc:
+                    pcode.fallback_calls += 1
         return sim.evaluate_concrete(self, m_state)
 
 cdef class MemoryDifferentialExpr(Expr):

@@ -239,6 +239,10 @@ cdef int _sp_id(object vn):
 # Covers all normal x86-64 Sleigh register offsets (0 … 1103).
 # Exotic registers (segment descriptors, BND, …) fall back to the dict.
 DEF REGS_ARR_SIZE = 1104
+# Pre-allocated frames for per-evaluate frame-sharing (perop). One instruction
+# needs <=8 distinct frames; chains a few more. 32 covers all bank instructions;
+# on exhaustion the shared path executes uncached (still correct).
+DEF _FRAME_POOL_SIZE = 32
 
 # Max pcode ops per instruction (empirically: BT ~44, SHR ~38, typical ~16).
 DEF MAX_PCODE_OPS = 96
@@ -1762,6 +1766,15 @@ cdef class PCodeCellEvaluator:
     cdef public dict _sizes
     cdef public int  native_calls
     cdef public int  fallback_calls
+    # perop frame-sharing (opt-in): a per-evaluate cache of already-executed
+    # frames keyed by (instruction, loaded register inputs).  A flag-setting
+    # instruction's result + flags load the identical frame, so the second..Nth
+    # output read their slice off the first execution instead of re-running the
+    # whole p-code program.  None => sharing off (unchanged fast path).  Frames
+    # are drawn from a pre-allocated pool so a cache hit costs no allocation.
+    cdef public object _frame_cache      # dict[(str,tuple)-> _PCodeFrame] or None
+    cdef list          _frame_pool
+    cdef int           _pool_idx
 
     def __init__(self, arch):
         self.arch           = arch
@@ -1773,6 +1786,54 @@ cdef class PCodeCellEvaluator:
         self._offsets, self._sizes = _build_reg_maps(arch)
         self.native_calls   = 0
         self.fallback_calls = 0
+        self._frame_cache   = None
+        self._frame_pool    = [_PCodeFrame() for _ in range(_FRAME_POOL_SIZE)]
+        for _pf in self._frame_pool:
+            (<_PCodeFrame>_pf)._is_big_endian = self._is_big_endian
+        self._pool_idx      = 0
+
+    def reset_frame_cache(self, bint enable):
+        """Called once per top-level evaluate. enable=True arms per-evaluate frame
+        sharing and empties the cache + pool; enable=False disables it (fast path)."""
+        if enable:
+            self._frame_cache = {}
+            self._pool_idx = 0
+        else:
+            self._frame_cache = None
+
+    def evaluate_concrete_state_shared(self, cell, dict regs, dict mem):
+        """Frame-sharing variant of evaluate_concrete_state: execute the whole
+        instruction ONCE per distinct (instruction, register inputs) and read each
+        output's slice off the cached frame.  Bit-identical to evaluate_concrete_state
+        (same load + execute + read); it only removes redundant re-executions."""
+        # Sharing off, or memory inputs present (cache key would need mem too):
+        # fall back to the unshared path -- always correct.
+        if self._frame_cache is None or mem:
+            return self.evaluate_concrete_state(cell, regs, mem)
+        cdef tuple key = (cell.instruction, tuple(sorted(regs.items())))
+        cdef _PCodeFrame frame = <_PCodeFrame>self._frame_cache.get(key)
+        cdef int width = cell.out_bit_end - cell.out_bit_start + 1
+        if frame is None:
+            decoded = _get_decoded(self.arch, bytes.fromhex(cell.instruction))
+            if decoded.has_fallback:
+                raise PCodeFallbackNeeded('instruction requires Unicorn')
+            if self._pool_idx < _FRAME_POOL_SIZE:
+                frame = <_PCodeFrame>self._frame_pool[self._pool_idx]
+                self._pool_idx += 1
+                self._load_state(frame, regs, mem)
+                _execute_decoded(frame, decoded)
+                self.native_calls += 1
+                self._frame_cache[key] = frame
+            else:
+                # pool exhausted (unusually many distinct frames this evaluate):
+                # execute uncached -- still correct, just not shared.
+                frame = self._frame_a
+                self._load_state(frame, regs, mem)
+                _execute_decoded(frame, decoded)
+                self.native_calls += 1
+        if width > 64:
+            return self._read_output_wide(frame, cell.out_reg, cell.out_bit_start, width)
+        return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
 
     cdef inline object _resolve_off(self, str key):
         """Sleigh byte offset for a register-name key, resolving synthetic vector
