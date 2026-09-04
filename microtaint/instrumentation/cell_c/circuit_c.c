@@ -410,6 +410,33 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         emit(e, (uint32_t)ci);
         return;
     }
+    if (strcmp(cn, "EqualityTaintExpr") == 0) {
+        Py_DECREF(cls_name);
+        PyObject *av = PyObject_GetAttrString(expr, "a_val");
+        PyObject *at = PyObject_GetAttrString(expr, "a_taint");
+        PyObject *bv = PyObject_GetAttrString(expr, "b_val");
+        PyObject *bt = PyObject_GetAttrString(expr, "b_taint");
+        PyObject *w  = PyObject_GetAttrString(expr, "width");
+        if (!av || !at || !bv || !bt || !w) {
+            Py_XDECREF(av); Py_XDECREF(at); Py_XDECREF(bv); Py_XDECREF(bt); Py_XDECREF(w);
+            e->fallback = 1; return;
+        }
+        int width = (int)PyLong_AsLong(w);
+        Py_DECREF(w);
+        if (width <= 0 || width > 64) {  /* mask can't fit uint64 */
+            Py_DECREF(av); Py_DECREF(at); Py_DECREF(bv); Py_DECREF(bt);
+            e->fallback = 1; return;
+        }
+        compile_expr(cc, e, av);   /* stack bottom->top: a_val, a_taint, b_val, b_taint */
+        compile_expr(cc, e, at);
+        compile_expr(cc, e, bv);
+        compile_expr(cc, e, bt);
+        Py_DECREF(av); Py_DECREF(at); Py_DECREF(bv); Py_DECREF(bt);
+        if (e->fallback) return;
+        emit(e, OP_EQ_TAINT);
+        emit(e, (uint32_t)width);
+        return;
+    }
     if (strcmp(cn, "InstructionCellExpr") == 0) {
         Py_DECREF(cls_name);
         emit_call_cell(cc, e, expr);
@@ -791,6 +818,18 @@ static PyObject *eval_program(CompiledCircuit *cc,
             if (PyErr_Occurred()) PyErr_Clear();
             uint64_t v = stack[sp-1];
             stack[sp-1] = (v == fm && v != 0) ? 1 : 0;
+            break;
+        }
+        case OP_EQ_TAINT: {
+            int w = (int)bc[pc++];
+            if (sp < 4) goto err;
+            uint64_t tb = stack[--sp], b = stack[--sp], ta = stack[--sp], a = stack[--sp];
+            uint64_t mask = mask_range(w);
+            a &= mask; ta &= mask; b &= mask; tb &= mask;
+            uint64_t free = ta | tb;
+            int equal_ach   = (((a ^ b) & ~free & mask) == 0);
+            int unequal_ach = (free != 0);
+            stack[sp++] = (equal_ach && unequal_ach) ? 1 : 0;
             break;
         }
         case OP_PUSH_MEM_TAINT: {
@@ -1408,7 +1447,7 @@ static PyTypeObject CompiledCircuitType = {
 static const char *SUPPORTED_EXPR_TYPES[] = {
     "TaintOperand", "Constant", "BinaryExpr", "UnaryExpr",
     "AvalancheExpr", "InstructionCellExpr", "MemoryOperand",
-    "FullMaskAvalancheExpr",
+    "FullMaskAvalancheExpr", "EqualityTaintExpr",
 };
 
 static PyObject *py_supported_expr_types(PyObject *self, PyObject *args) {

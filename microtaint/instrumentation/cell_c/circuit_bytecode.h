@@ -49,6 +49,11 @@ typedef enum {
      * flag soundness floor: fires only when the dep is FULLY tainted. */
     OP_FULLMASK_AVAL,     /* args: const_idx (the full_mask value) */
 
+    /* Equality-bit taint (EqualityTaintExpr): args width. Stack (bottom->top)
+     * a_val, a_taint, b_val, b_taint. Push 1 iff equality can BOTH hold and
+     * break over the taint cube: ((a^b)&~(ta|tb)&mask)==0 AND (ta|tb)!=0. */
+    OP_EQ_TAINT,          /* args: width (1..64) */
+
     /* Call into C kernel.
      *   args: cell_idx n_inputs name_idx_0 name_idx_1 ... name_idx_(n-1)
      * Pops n inputs from stack (last pushed is name_idx_(n-1)),
