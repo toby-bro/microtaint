@@ -40,6 +40,7 @@ from microtaint.simulator import CellSimulator
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 _AMD64_ALIASES = RegisterAliases(Architecture.AMD64)
+_ARM64_ALIASES = RegisterAliases(Architecture.ARM64)
 
 _FULL = 0xFFFFFFFFFFFFFFFF
 
@@ -131,14 +132,18 @@ def test_issue0_ppc32be_add_propagates_taint() -> None:
 # ---------------------------------------------------------------------------
 
 _KS_ARM = Ks(KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN)
-_ARM_FMT = [Register('X0', 64)] + [Register(f, 1) for f in ('N', 'Z', 'C', 'V')]
+# Friendly ARM flag names N/Z/C/V via the helper (engine no longer aliases them).
+_ARM_FMT = _ARM64_ALIASES.state_format(
+    [Register('X0', 64), *(Register(f, 1) for f in ('N', 'Z', 'C', 'V'))],
+)
 
 
 def test_issuem1_arm64_cset_taints_wide_gpr_from_flag() -> None:
     # cset x0, lt  (x0 = ZEXT(N != V)); tainting N must taint X0 bit 0.
     out = _eval(Architecture.ARM64, _asm(_KS_ARM, 'cset x0, lt'), _ARM_FMT,
-                {'N': 1}, {'N': 1, 'V': 0, 'Z': 0, 'C': 1})
-    assert out.get('X0', 0) & 1, 'ARM64 cset must taint the wide GPR from its condition flag'
+                _ARM64_ALIASES.to_engine({'N': 1}),
+                _ARM64_ALIASES.to_engine({'N': 1, 'V': 0, 'Z': 0, 'C': 1}))
+    assert _ARM64_ALIASES.read(out, 'X0') & 1, 'ARM64 cset must taint the wide GPR from its condition flag'
 
 
 def test_issuem1_ppc32be_mfcr_taints_gpr_from_cr() -> None:

@@ -1717,15 +1717,6 @@ cdef void _execute_decoded(
 # Register map cache
 # ---------------------------------------------------------------------------
 
-# Architecture-specific aliases: state_format name → Sleigh register name.
-# Used when the state_format uses a friendly name (e.g. 'Z') but the Sleigh
-# spec uses a different name for the same register (e.g. 'ZR' in ARM64).
-# Must match the aliases in engine.py StateMapper.arm_aliases.
-_ARCH_REG_ALIASES: dict[str, dict[str, str]] = {
-    'ARM64': {'N': 'NG', 'Z': 'ZR', 'C': 'CY', 'V': 'OV'},
-}
-
-
 # PC register offset per arch — populated by _build_reg_maps on first call.
 _ARCH_PC: dict = {}  # arch_str -> (reg_offset: long, reg_size: int)
 
@@ -1738,17 +1729,10 @@ def _build_reg_maps(arch):
         key = name.upper()
         offsets[key] = vn.offset
         sizes[key]   = vn.size
-    # Add friendly aliases so _read_output can resolve state_format names
-    # that differ from the raw Sleigh register names (e.g. ARM64 'Z' → 'ZR').
-    _arch_parts = str(arch).upper().split('.')
-    arch_str = _arch_parts[len(_arch_parts) - 1]  # e.g. 'ARM64' from Architecture.ARM64
-    for alias_str in ('ARM64', 'AMD64', 'X86'):
-        if alias_str in arch_str:
-            for friendly, sleigh in _ARCH_REG_ALIASES.get(alias_str, {}).items():
-                if sleigh in offsets and friendly not in offsets:
-                    offsets[friendly] = offsets[sleigh]
-                    sizes[friendly]   = sizes[sleigh]
-            break
+    # The state_format uses OFFICIAL Sleigh register names; friendly aliases
+    # (e.g. ARM64 N/Z/C/V for ng/zr/cy/ov) are translated to Sleigh names by the
+    # debug/test RegisterAliases helper before reaching the kernel, so no per-ISA
+    # alias table lives here.
     # x86 XMM/YMM/ZMM are addressed through the ISA-general geometry lanes
     # (VL_<hex>, resolved on demand in _resolve_off), exactly like every other
     # ISA's SIMD file -- no XMM<n>_LO/_HI aliases.

@@ -1,10 +1,14 @@
 # ruff: noqa: PLC0415
 import pytest
 
+from microtaint.debug.reg_aliases import RegisterAliases
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
+
+# ARM friendly flag names N/Z/C/V -> Sleigh ng/zr/cy/ov (engine no longer aliases).
+_ARM64_ALIASES = RegisterAliases(Architecture.ARM64)
 
 # --- Fixtures ---
 
@@ -93,10 +97,10 @@ def arm64_registers() -> list[Register]:
         Register(name='SP', bits=64),
         Register(name='PC', bits=64),
         Register(name='NZCV', bits=4),
-        Register(name='N', bits=1),
-        Register(name='Z', bits=1),
-        Register(name='C', bits=1),
-        Register(name='V', bits=1),
+        # ARM condition flags via the helper: friendly N/Z/C/V -> Sleigh ng/zr/cy/ov.
+        *_ARM64_ALIASES.state_format(
+            [Register('N', 1), Register('Z', 1), Register('C', 1), Register('V', 1)],
+        ),
         Register(name='W0', bits=32),
         Register(name='W1', bits=32),
         Register(name='W2', bits=32),
@@ -106,6 +110,11 @@ def arm64_registers() -> list[Register]:
 def extract_flag(ast_output: dict[str, int], flag_name: str) -> int:  # noqa: C901
     if flag_name in ast_output:
         return ast_output[flag_name]
+    # ARM friendly flags resolve to their Sleigh names (N -> ng) via the helper.
+    if flag_name in ('N', 'Z', 'C', 'V'):
+        sleigh = _ARM64_ALIASES.to_engine_names(flag_name)[0]
+        if sleigh in ast_output:
+            return ast_output[sleigh]
     eflags = ast_output.get('EFLAGS', 0)
     if flag_name == 'CF':
         return (eflags >> 0) & 1

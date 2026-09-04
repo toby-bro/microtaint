@@ -157,15 +157,18 @@ _CONST_ADDR_BASE = RegMapping(_CONST_ADDR_MARKER, 0, 63)
 _TRANSLATE_BASE = 0x1000
 
 
-def _pc_reg_mapping(arch: Architecture, state_format: list[Register]) -> RegMapping | None:
-    """The program-counter register (RIP / EIP / PC) as a whole-register mapping,
-    or None if the state_format has no PC.  Used as the base for PC-relative
-    memory so the address resolves against the RUNTIME pc, not the translate base."""
-    up = str(arch).upper()
-    name = 'RIP' if 'AMD64' in up else 'EIP' if 'X86' in up else 'PC'
-    reg = next((r for r in state_format if r.name.upper() == name), None)
-    if reg is None:
-        reg = next((r for r in state_format if r.name.upper() in ('RIP', 'EIP', 'PC')), None)
+# Candidate program-counter register names across ISAs, tried by name (Sleigh
+# exposes no generic PC accessor).  Matches cell.pyx's own PC detection.
+_PC_REG_NAMES = ('RIP', 'EIP', 'PC')
+
+
+def _pc_reg_mapping(state_format: list[Register]) -> RegMapping | None:
+    """The program-counter register as a whole-register mapping, or None if the
+    state_format has no PC.  Used as the base for PC-relative memory so the
+    address resolves against the RUNTIME pc, not the translate base.  The PC is
+    found by name from the ISA-general candidate set (matching cell.pyx's own
+    PC detection), not an arch-string branch."""
+    reg = next((r for r in state_format if r.name.upper() in _PC_REG_NAMES), None)
     return RegMapping(reg.name, 0, reg.bits - 1) if reg is not None else None
 
 
@@ -367,9 +370,7 @@ class StateMapper:
         self.ctx = ctx
         self.arch = arch
         self.state_format = state_format
-        self.arm_aliases: dict[str, str] = {'N': 'ng', 'Z': 'zr', 'C': 'cy', 'V': 'ov'}
         arch_upper = str(arch).upper()
-        self.is_arm = 'ARM' in arch_upper
         # Byte->bit arithmetic for SUB-register reads depends on endianness: on a
         # big-endian target byte 0 of a register is its MOST significant one.  The
         # BE architectures name themselves with a `BE` suffix (MIPS64BE, PPC32BE,
@@ -381,9 +382,10 @@ class StateMapper:
             s_r: Varnode | None = ctx.registers.get(sf_reg.name) or ctx.registers.get(
                 sf_reg.name.lower(),
             )
-            if not s_r and self.is_arm and sf_reg.name in self.arm_aliases:
-                alias = self.arm_aliases[sf_reg.name]
-                s_r = ctx.registers.get(alias) or ctx.registers.get(alias.upper())
+            # The state_format uses OFFICIAL Sleigh register names.  Friendly
+            # aliases (e.g. ARM64 N/Z/C/V for ng/zr/cy/ov) are translated to
+            # Sleigh names by the debug/test RegisterAliases helper before they
+            # reach the engine, so no per-ISA alias table lives here.
             # Vector registers (x86 XMM/YMM/ZMM included) are NOT resolved here:
             # a wide varnode no state_format entry covers is tracked on synthetic
             # geometry lanes (VL_<offset>) by _synth_vec_lane, uniformly across ISAs.
@@ -709,10 +711,9 @@ def _cached_generate_static_rule(  # noqa: C901
     # Which compile-time-constant memory addresses are PC-relative (resolve against
     # the runtime pc) vs genuinely absolute (baked).  Shared by outputs and deps.
     pc_relative = _pc_relative_addrs(arch, bytestring, state_format_tuple)
-    pc_reg = _pc_reg_mapping(arch, state_format)
+    pc_reg = _pc_reg_mapping(state_format)
 
     targets_to_evaluate, assignments = map_outputs_to_targets(
-        arch,
         state_format,
         translation,
         store_ops,
@@ -4611,7 +4612,6 @@ def extract_dependencies(  # noqa: C901
 
 
 def map_outputs_to_targets(  # noqa: C901
-    arch: Architecture,
     state_format: list[Register],
     translation: Translation,
     store_ops: list[PcodeOp],
@@ -4655,12 +4655,11 @@ def map_outputs_to_targets(  # noqa: C901
     for op in translation.ops:
         op_name = op.opcode.name
         if op_name in ('CBRANCH', 'BRANCHIND', 'CALLIND'):
-            pc_name = 'EIP' if 'X86' in arch.upper() else 'RIP' if 'AMD64' in arch.upper() else 'PC'
             # Local Register for the branch target's PC; must NOT shadow the
             # `pc_reg` parameter (a RegMapping used later for const-address
             # stores/ram outputs) -- reusing the name clobbered it for the rest
-            # of the function.
-            pc_reg_r = next((r for r in state_format if r.name.upper() == pc_name), None)
+            # of the function.  Found by the ISA-general PC candidate set.
+            pc_reg_r = next((r for r in state_format if r.name.upper() in _PC_REG_NAMES), None)
             if not pc_reg_r:
                 continue
 

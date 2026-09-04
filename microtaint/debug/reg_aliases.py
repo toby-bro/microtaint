@@ -68,6 +68,21 @@ class RegisterAliases:
             else:
                 self._scalars[up] = (vn.offset, vn.size)
 
+        # ISA friendly-name aliases: names a human writes that differ from the
+        # official Sleigh register name.  This is the correspondence table the
+        # compute path no longer carries (ARM64 condition flags are ng/zr/cy/ov
+        # in Sleigh, but people write N/Z/C/V).  Arch-gated and geometry-checked
+        # (only added when the Sleigh register actually exists).  friendly(upper)
+        # -> canonical Sleigh name, plus the reverse for to_human_name.
+        self._friendly: dict[str, str] = {}
+        self._friendly_rev: dict[str, str] = {}
+        if 'ARM' in self.arch.upper():
+            for fr, sl in (('N', 'ng'), ('Z', 'zr'), ('C', 'cy'), ('V', 'ov')):
+                canon = self._canonical.get(sl.upper())
+                if canon is not None:
+                    self._friendly[fr] = canon
+                    self._friendly_rev[sl.upper()] = fr
+
         # Geometry lane byte-offset -> canonical human name (e.g. 'XMM0[63:0]').
         self._lane_human: dict[int, str] = {}
         for lane_off in self._all_lane_offsets():
@@ -157,12 +172,18 @@ class RegisterAliases:
             return [f'VL_{b:#x}' for b in range(off, off + size, LANE_BYTES)]
         if up in self._scalars:
             return [self._canonical[up]]
+        if up in self._friendly:
+            return [self._friendly[up]]
         return [s]
 
     def to_human_name(self, engine: str) -> str:
         """Human name for an engine register key (inverse of the common cases of
-        :meth:`to_engine_names`).  ``VL_0x1200`` -> ``XMM0[63:0]``; a scalar is
-        returned in its canonical case; an unknown key is returned unchanged."""
+        :meth:`to_engine_names`).  ``VL_0x1200`` -> ``XMM0[63:0]``; an ISA flag is
+        returned in its friendly form (ng -> N); a scalar in its canonical case;
+        an unknown key is returned unchanged."""
+        friendly = self._friendly_rev.get(engine.upper())
+        if friendly is not None:
+            return friendly
         if engine.startswith('VL_'):
             try:
                 off = int(engine[3:], 16)

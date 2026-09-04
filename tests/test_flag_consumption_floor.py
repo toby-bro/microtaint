@@ -23,14 +23,20 @@ differential anyway).
 from __future__ import annotations
 
 import microtaint.sleigh.engine as engine
+from microtaint.debug.reg_aliases import RegisterAliases
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 ARCH = Architecture.ARM64
-_FMT = [Register('X0', 64), Register('N', 1), Register('Z', 1), Register('C', 1), Register('V', 1)]
+# Tests use the friendly ARM flag names N/Z/C/V; the helper translates them to
+# the official Sleigh names (ng/zr/cy/ov) -- the engine no longer aliases them.
+_A = RegisterAliases(ARCH)
+_FMT = _A.state_format(
+    [Register('X0', 64), Register('N', 1), Register('Z', 1), Register('C', 1), Register('V', 1)],
+)
 _SIM = CellSimulator(ARCH, use_unicorn=False, use_c=False)
-_ZERO = {r.name: 0 for r in _FMT}
+_ZERO = dict.fromkeys(('X0', 'N', 'Z', 'C', 'V'), 0)
 
 # cset x0, lt  (reads N,V);  cset x0, hi (reads Z,C)
 _CSET_LT = b'\xe0\xa7\x9f\x9a'
@@ -42,12 +48,12 @@ def _x0_taint(code: bytes, taint: dict[str, int]) -> int:
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(ARCH, code, _FMT)
     ctx = EvalContext(
-        input_taint={**_ZERO, **taint},
-        input_values={**_ZERO, 'N': 1, 'V': 0, 'Z': 0, 'C': 1},
+        input_taint=_A.to_engine({**_ZERO, **taint}),
+        input_values=_A.to_engine({**_ZERO, 'N': 1, 'V': 0, 'Z': 0, 'C': 1}),
         simulator=_SIM,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circ.evaluate(ctx).get('X0', 0)
+    return _A.read(circ.evaluate(ctx), 'X0')
 
 
 def test_cset_lt_taints_wide_output_from_its_flags():
@@ -88,21 +94,21 @@ def test_cset_hi_is_exact_not_floored():
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(ARCH, _CSET_HI, _FMT)
     ctx = EvalContext(
-        input_taint={**_ZERO, 'C': 1},
-        input_values={**_ZERO, 'Z': 1, 'C': 1},  # Z=1 -> C&!Z == 0 always
+        input_taint=_A.to_engine({**_ZERO, 'C': 1}),
+        input_values=_A.to_engine({**_ZERO, 'Z': 1, 'C': 1}),  # Z=1 -> C&!Z == 0 always
         simulator=_SIM,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert circ.evaluate(ctx).get('X0', 0) == 0
+    assert _A.read(circ.evaluate(ctx), 'X0') == 0
 
 
 # csel x0, x1, x2, lt  -- a 2-way select gated by NZCV
 _CSEL_LT = b'\x20\xb0\x82\x9a'
-_FMT_SEL = [
+_FMT_SEL = _A.state_format([
     Register('X0', 64), Register('X1', 64), Register('X2', 64),
     Register('N', 1), Register('Z', 1), Register('C', 1), Register('V', 1),
-]
-_ZERO_SEL = {r.name: 0 for r in _FMT_SEL}
+])
+_ZERO_SEL = dict.fromkeys(('X0', 'X1', 'X2', 'N', 'Z', 'C', 'V'), 0)
 
 
 def test_csel_tainted_condition_uses_isa_general_passthrough():
@@ -114,14 +120,14 @@ def test_csel_tainted_condition_uses_isa_general_passthrough():
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(ARCH, _CSEL_LT, _FMT_SEL)
     ctx = EvalContext(
-        input_taint={**_ZERO_SEL, 'N': 1, 'X1': 0xF},
-        input_values={**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xF, 'X2': 0xF},
+        input_taint=_A.to_engine({**_ZERO_SEL, 'N': 1, 'X1': 0xF}),
+        input_values=_A.to_engine({**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xF, 'X2': 0xF}),
         simulator=CellSimulator(ARCH, use_unicorn=False, use_c=False),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
     # tainted condition + cancelling operands: differential alone -> 0; the
     # passthrough must recover x1's taint.
-    assert circ.evaluate(ctx).get('X0', 0) & 0xF == 0xF
+    assert _A.read(circ.evaluate(ctx), 'X0') & 0xF == 0xF
 
 
 def test_csel_tainted_condition_taints_operand_value_difference():
@@ -134,20 +140,20 @@ def test_csel_tainted_condition_taints_operand_value_difference():
     # N tainted -> condition (N != V) tainted; operands UNtainted but differ in
     # value (0xFF00 vs 0x00FF -> differ in the low 16 bits).
     ctx = EvalContext(
-        input_taint={**_ZERO_SEL, 'N': 1},
-        input_values={**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xFF00, 'X2': 0x00FF},
+        input_taint=_A.to_engine({**_ZERO_SEL, 'N': 1}),
+        input_values=_A.to_engine({**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xFF00, 'X2': 0x00FF}),
         simulator=CellSimulator(ARCH, use_unicorn=False, use_c=False),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert circ.evaluate(ctx).get('X0', 0) & 0xFFFF == 0xFFFF  # (x1 XOR x2)
+    assert _A.read(circ.evaluate(ctx), 'X0') & 0xFFFF == 0xFFFF  # (x1 XOR x2)
     # condition UNtainted -> select is concrete -> no value-difference taint
     ctx2 = EvalContext(
-        input_taint={**_ZERO_SEL},
-        input_values={**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xFF00, 'X2': 0x00FF},
+        input_taint=_A.to_engine({**_ZERO_SEL}),
+        input_values=_A.to_engine({**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xFF00, 'X2': 0x00FF}),
         simulator=CellSimulator(ARCH, use_unicorn=False, use_c=False),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert circ.evaluate(ctx2).get('X0', 0) == 0
+    assert _A.read(circ.evaluate(ctx2), 'X0') == 0
 
 
 _MIPS = Architecture.MIPS64BE

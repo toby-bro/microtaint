@@ -32,10 +32,13 @@ import unicorn
 import unicorn.arm64_const as ua
 import unicorn.x86_const as ux
 
+from microtaint.debug.reg_aliases import RegisterAliases
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
+
+_ARM64_ALIASES = RegisterAliases(Architecture.ARM64)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -641,14 +644,18 @@ def _z64(regs: list[Register]) -> dict[str, int]:
 
 
 def _mt64(sim, regs, code, taint, values):
-    circuit = generate_static_rule(Architecture.ARM64, code, regs)
+    # Tests use friendly ARM names (X0.., N/Z/C/V); translate the state_format,
+    # inputs and outputs through the helper so the engine sees Sleigh names only.
+    engine_fmt = _ARM64_ALIASES.state_format(regs)
+    circuit = generate_static_rule(Architecture.ARM64, code, engine_fmt)
     ctx = EvalContext(
-        input_taint=taint,
-        input_values=values,
+        input_taint=_ARM64_ALIASES.to_engine(taint),
+        input_values=_ARM64_ALIASES.to_engine(values),
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circuit.evaluate(ctx)
+    out = circuit.evaluate(ctx)
+    return {r.name: _ARM64_ALIASES.read(out, r.name) for r in regs}
 
 
 class TestARM64Precision:

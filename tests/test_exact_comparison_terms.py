@@ -14,6 +14,7 @@ from __future__ import annotations
 import itertools
 
 import microtaint.sleigh.engine as engine
+from microtaint.debug.reg_aliases import RegisterAliases
 from microtaint.instrumentation.ast import (
     ComparisonTaintExpr,
     Constant,
@@ -140,8 +141,12 @@ def test_cmpw_builder_falls_through_without_xer():
 
 
 _ARM = Architecture.ARM64
-_ARM_FMT = [Register('X0', 64), Register('N', 1), Register('Z', 1), Register('C', 1), Register('V', 1)]
-_ARM_ZERO = {r.name: 0 for r in _ARM_FMT}
+# Friendly ARM flag names N/Z/C/V; the helper maps them to Sleigh ng/zr/cy/ov.
+_ARM_A = RegisterAliases(_ARM)
+_ARM_FMT = _ARM_A.state_format(
+    [Register('X0', 64), Register('N', 1), Register('Z', 1), Register('C', 1), Register('V', 1)],
+)
+_ARM_ZERO = dict.fromkeys(('X0', 'N', 'Z', 'C', 'V'), 0)
 _CSET_LT = b'\xe0\xa7\x9f\x9a'  # cset x0, lt = ZEXT(N != V)
 _CSET_GE = b'\xe0\xb7\x9f\x9a'  # cset x0, ge = ZEXT(N == V)
 
@@ -150,12 +155,12 @@ def _arm_x0(code, vals, taint):
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(_ARM, code, _ARM_FMT)
     ctx = EvalContext(
-        input_taint={**_ARM_ZERO, **taint},
-        input_values={**_ARM_ZERO, **vals},
+        input_taint=_ARM_A.to_engine({**_ARM_ZERO, **taint}),
+        input_values=_ARM_A.to_engine({**_ARM_ZERO, **vals}),
         simulator=CellSimulator(_ARM, use_unicorn=False, use_c=False),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circ.evaluate(ctx).get('X0', 0)
+    return _ARM_A.read(circ.evaluate(ctx), 'X0')
 
 
 def test_cset_lt_ge_exact_via_equality_term():

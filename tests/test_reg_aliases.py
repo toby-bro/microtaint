@@ -151,6 +151,26 @@ def test_state_format_no_wide_registers() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_arm64_friendly_flag_aliases() -> None:
+    # ARM64 condition flags: humans write N/Z/C/V, Sleigh names them ng/zr/cy/ov.
+    # The helper carries this correspondence (the engine no longer does).
+    a = RegisterAliases(Architecture.ARM64)
+    assert a.to_engine_names('N') == [a.to_engine_names('N')[0]]  # resolves to one key
+    for friendly in ('N', 'Z', 'C', 'V'):
+        (sleigh,) = a.to_engine_names(friendly)
+        assert sleigh.upper() in ('NG', 'ZR', 'CY', 'OV')
+        assert a.to_human_name(sleigh) == friendly  # round-trips back to friendly
+    # to_engine/read round-trip a friendly flag.
+    assert a.read(a.to_engine({'N': 1}), 'N') == 1
+
+
+def test_x86_has_no_arm_flag_aliases() -> None:
+    # N/Z/C/V are ARM friendly names; on x86 they are not aliased (pass through).
+    x = RegisterAliases(Architecture.AMD64)
+    assert x.to_engine_names('N') == ['N']
+    assert x.to_engine_names('Z') == ['Z']
+
+
 def test_arm64_q_register_lanes() -> None:
     a = RegisterAliases(Architecture.ARM64)
     lanes = a.to_engine_names('Q0')
