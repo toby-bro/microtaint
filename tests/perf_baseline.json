@@ -2,6159 +2,7695 @@
   "AMD64": {
     "ADD r16,r16": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 216
     },
     "AND r16,r16": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 222
     },
     "AND r32,imm32": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 124
     },
     "BSF r32,r32 AX": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 63
     },
     "BSR r32,r32 AX": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 63
     },
     "BT r64,imm8": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 36
     },
     "CALL r64": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 32
     },
     "CMP r64,imm8": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 81
     },
     "CMP r8,imm8": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 87
     },
     "IMUL r32,r32,imm8": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 54
     },
     "IMUL r64,r64,imm32": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 52
     },
     "IMUL r64,r64,imm8": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 64
     },
     "LEA r64,[r64*4]": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "LEA r64,[r64+r64]": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "MOV r16,r16": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "MOV r32,r32": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "MOV r32,r32 zext": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "MOV r64,0": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 34
     },
     "MOV r64,imm64": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "MOV r64,r64": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "MOV r8,r8": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "MOVSX r64,r16": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "MOVSX r64,r8": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "MOVZX r32,r16": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "MOVZX r32,r8": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "MOVZX r64,r8": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "NOP": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "POPCNT r64,r64": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 104
     },
     "PUSH imm32": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "PUSH r64": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "RET": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 22
     },
     "ROL r64,imm8": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 224
     },
     "ROR r64,imm8": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 247
     },
     "SAR r64,imm8": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 850
     },
     "SHL r32,imm8": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 398
     },
     "SHL r64,imm8": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 320
     },
     "SHR r32,imm8": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 564
     },
     "SHR r64,imm8": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 488
     },
     "TEST r32,r32": {
       "assigns": 5,
-      "cells": 4
+      "cells": 4,
+      "nodes": 94
     },
     "TEST r64,r64": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 94
     },
     "XCHG r64,r64": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "XOR r32,imm32": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 62
     },
     "adc al, bl": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 390
     },
     "adc ax, bx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 320
     },
     "adc eax, ebx": {
       "assigns": 7,
-      "cells": 6
+      "cells": 6,
+      "nodes": 362
     },
     "adc r10d, r11d": {
       "assigns": 7,
-      "cells": 1
+      "cells": 1,
+      "nodes": 362
     },
     "adc r12w, r13w": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 320
     },
     "adc r14b, r15b": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 390
     },
     "adc r8, r9": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 320
     },
     "adc rax, 0x7f": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 183
     },
     "adc rax, 0x7fffffff": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 183
     },
     "adc rax, 1": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 183
     },
     "adc rax, 1365": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 183
     },
     "adc rax, rbx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 320
     },
     "adcx eax, ebx": {
       "assigns": 3,
-      "cells": 3
+      "cells": 3,
+      "nodes": 159
     },
     "adcx r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "adcx r8, r9": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 117
     },
     "adcx rax, rbx": {
       "assigns": 2,
-      "cells": 3
+      "cells": 3,
+      "nodes": 117
     },
     "adcx rbp, rsp": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 117
     },
     "add al, bl": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 216
     },
     "add ax, 0x7f": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 101
     },
     "add ax, bx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 216
     },
     "add eax, 0xffff": {
       "assigns": 7,
-      "cells": 1
+      "cells": 1,
+      "nodes": 117
     },
     "add eax, ebx": {
       "assigns": 7,
-      "cells": 6
+      "cells": 6,
+      "nodes": 245
     },
     "add rax, 0x7f": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 101
     },
     "add rax, 0x7fffffff": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 101
     },
     "add rax, 1": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 101
     },
     "add rax, 1365": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 101
     },
     "add rax, 15": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 101
     },
     "add rax, 3": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 101
     },
     "add rax, rbx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 216
     },
     "adox eax, ebx": {
       "assigns": 3,
-      "cells": 3
+      "cells": 3,
+      "nodes": 159
     },
     "adox r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "adox r8, r9": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 117
     },
     "adox rax, rbx": {
       "assigns": 2,
-      "cells": 3
+      "cells": 3,
+      "nodes": 117
     },
     "adox rbp, rsp": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 117
     },
     "and ah, bh": {
       "assigns": 6,
-      "cells": 3
+      "cells": 3,
+      "nodes": 162
     },
     "and al, bl": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 222
     },
     "and ax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "and ax, bx": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 222
     },
     "and eax, 0xffff": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 124
     },
     "and eax, ebx": {
       "assigns": 7,
-      "cells": 5
+      "cells": 5,
+      "nodes": 247
     },
     "and rax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "and rax, 0x7fffffff": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "and rax, 0xff0f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "and rax, 1": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "and rax, 15": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "and rax, 3": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "and rax, rbx": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 222
     },
     "andn eax, ebx, ecx": {
       "assigns": 7,
-      "cells": 6
+      "cells": 6,
+      "nodes": 247
     },
     "andn rax, rbx, rcx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 222
     },
     "bextr rax, rbx, rcx": {
       "assigns": 4,
-      "cells": 3
+      "cells": 3,
+      "nodes": 210
     },
     "blsi eax, ebx": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 138
     },
     "blsi rax, rbx": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 122
     },
     "blsmsk eax, ebx": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 124
     },
     "blsmsk rax, rbx": {
       "assigns": 5,
-      "cells": 4
+      "cells": 4,
+      "nodes": 108
     },
     "blsr eax, ebx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 144
     },
     "blsr rax, rbx": {
       "assigns": 5,
-      "cells": 6
+      "cells": 6,
+      "nodes": 128
     },
     "bsf rax, rbx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "bsr rax, rbx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "bswap eax": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bswap ebx": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bswap rax": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "bswap rbx": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "bt ax, 0x7f": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bt ax, bx": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "bt eax, ebx": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "bt rax, 0x7f": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bt rax, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bt rax, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bt rax, 3": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bt rax, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bt rax, 37": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bt rax, 63": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "bt rax, rbx": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "btc ax, 0x7f": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 36
     },
     "btc ax, bx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 34
     },
     "btc eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 67
     },
     "btc rax, 0x7f": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 36
     },
     "btc rax, 1": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 36
     },
     "btc rax, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 36
     },
     "btc rax, 3": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 36
     },
     "btc rax, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 36
     },
     "btc rax, 63": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 36
     },
     "btc rax, rbx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 34
     },
     "btr ax, 0x7f": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "btr ax, bx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 34
     },
     "btr eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 67
     },
     "btr rax, 0x7f": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "btr rax, 1": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "btr rax, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "btr rax, 3": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "btr rax, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "btr rax, 63": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "btr rax, rbx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 34
     },
     "bts ax, 0x7f": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "bts ax, bx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 34
     },
     "bts eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 67
     },
     "bts rax, 0x7f": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "bts rax, 1": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "bts rax, 15": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "bts rax, 3": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "bts rax, 31": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "bts rax, 63": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "bts rax, rbx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 34
     },
     "bzhi eax, ebx, ecx": {
       "assigns": 6,
-      "cells": 3
+      "cells": 3,
+      "nodes": 111
     },
     "bzhi rax, rbx, rcx": {
       "assigns": 5,
-      "cells": 3
+      "cells": 3,
+      "nodes": 107
     },
     "cbw": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "cdq": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "cdqe": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "cmova ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 111
     },
     "cmova eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 196
     },
     "cmova r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 196
     },
     "cmova r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 111
     },
     "cmova r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 111
     },
     "cmova rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 111
     },
     "cmova rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 111
     },
     "cmovae ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovae eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 159
     },
     "cmovae r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "cmovae r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovae r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovae rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovae rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovb ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovb eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 159
     },
     "cmovb r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "cmovb r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovb r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovb rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovb rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovbe ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 111
     },
     "cmovbe eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 196
     },
     "cmovbe r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 196
     },
     "cmovbe r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 111
     },
     "cmovbe r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 111
     },
     "cmovbe rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 111
     },
     "cmovbe rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 111
     },
     "cmove ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmove eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 159
     },
     "cmove r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "cmove r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmove r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmove rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmove rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovg ax, bx": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 186
     },
     "cmovg eax, ebx": {
       "assigns": 3,
-      "cells": 3
+      "cells": 3,
+      "nodes": 306
     },
     "cmovg r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 306
     },
     "cmovg r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 186
     },
     "cmovg r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 186
     },
     "cmovg rax, rbx": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 186
     },
     "cmovg rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 186
     },
     "cmovge ax, bx": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 144
     },
     "cmovge eax, ebx": {
       "assigns": 3,
-      "cells": 3
+      "cells": 3,
+      "nodes": 247
     },
     "cmovge r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 247
     },
     "cmovge r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 144
     },
     "cmovge r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 144
     },
     "cmovge rax, rbx": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 144
     },
     "cmovge rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 144
     },
     "cmovl ax, bx": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 144
     },
     "cmovl eax, ebx": {
       "assigns": 3,
-      "cells": 3
+      "cells": 3,
+      "nodes": 247
     },
     "cmovl r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 247
     },
     "cmovl r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 144
     },
     "cmovl r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 144
     },
     "cmovl rax, rbx": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 144
     },
     "cmovl rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 144
     },
     "cmovle ax, bx": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 186
     },
     "cmovle eax, ebx": {
       "assigns": 3,
-      "cells": 3
+      "cells": 3,
+      "nodes": 306
     },
     "cmovle r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 306
     },
     "cmovle r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 186
     },
     "cmovle r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 186
     },
     "cmovle rax, rbx": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 186
     },
     "cmovle rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 186
     },
     "cmovne ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovne eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 159
     },
     "cmovne r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "cmovne r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovne r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovne rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovne rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovno ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovno eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 159
     },
     "cmovno r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "cmovno r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovno r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovno rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovno rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovns ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovns eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 159
     },
     "cmovns r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "cmovns r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovns r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovns rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovns rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovo ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovo eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 159
     },
     "cmovo r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "cmovo r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovo r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovo rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovo rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovs ax, bx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovs eax, ebx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 159
     },
     "cmovs r10d, r11d": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 159
     },
     "cmovs r12w, r13w": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovs r8, r9": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmovs rax, rbx": {
       "assigns": 2,
-      "cells": 4
+      "cells": 4,
+      "nodes": 87
     },
     "cmovs rbp, rsp": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 87
     },
     "cmp al, bl": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 183
     },
     "cmp ax, 0x7f": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 87
     },
     "cmp ax, bx": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 183
     },
     "cmp eax, 0xffff": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 87
     },
     "cmp eax, ebx": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 183
     },
     "cmp rax, 0x7f": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 87
     },
     "cmp rax, 0x7fffffff": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 87
     },
     "cmp rax, 1": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 87
     },
     "cmp rax, 1365": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 87
     },
     "cmp rax, 15": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 87
     },
     "cmp rax, 3": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 87
     },
     "cmp rax, rbx": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 183
     },
     "cqo": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "crc32 eax, bl": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "crc32 eax, ebx": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "crc32 rax, bl": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "crc32 rax, cl": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "crc32 rax, rbx": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "cwd": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "cwde": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "dec al": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 91
     },
     "dec eax": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 107
     },
     "dec ebx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 107
     },
     "dec rax": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 91
     },
     "dec rbx": {
       "assigns": 5,
-      "cells": 6
+      "cells": 6,
+      "nodes": 91
     },
     "imul ax, 0x7f": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "imul ax, bx": {
       "assigns": 3,
-      "cells": 0
+      "cells": 0,
+      "nodes": 9
     },
     "imul eax, 0xffff": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 54
     },
     "imul eax, ebx": {
       "assigns": 4,
-      "cells": 0
+      "cells": 0,
+      "nodes": 10
     },
     "imul rax, 0x7f": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "imul rax, 0x7fffffff": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "imul rax, 1": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 64
     },
     "imul rax, 15": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "imul rax, 3": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "imul rax, rbx": {
       "assigns": 3,
-      "cells": 0
+      "cells": 0,
+      "nodes": 9
     },
     "imul rax, rbx, 1365": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 52
     },
     "imul rax, rbx, 7": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 52
     },
     "imul rbx": {
       "assigns": 4,
-      "cells": 0
+      "cells": 0,
+      "nodes": 10
     },
     "inc al": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 85
     },
     "inc eax": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 101
     },
     "inc ebx": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 101
     },
     "inc rax": {
       "assigns": 5,
-      "cells": 1
+      "cells": 1,
+      "nodes": 85
     },
     "inc rbx": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 85
     },
     "lahf": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 58
     },
     "lea eax, [ebx + ecx*8]": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 80
     },
     "lea rax, [rbx + rcx*4 + 8]": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "lzcnt ax, bx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 31
     },
     "lzcnt eax, ebx": {
       "assigns": 4,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "lzcnt rax, rbx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 31
     },
     "mov [rsp-1], al; mov bl, [rsp-1]": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 48
     },
     "mov [rsp-2], ax; mov bx, [rsp-2]": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 48
     },
     "mov [rsp-8], eax; mov ebx, [rsp-8]": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 90
     },
     "mov [rsp-8], rax; mov rbx, [rsp-8]": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 48
     },
     "mov al, bl": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "mov eax, ebx": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "movsx eax, bl": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "movsx rax, bl": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movsx rax, bx": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movsx rax, cl": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movsxd rax, ebx": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movzx eax, bl": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "movzx rax, bl": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movzx rax, bx": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movzx rax, cl": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "mul al": {
       "assigns": 3,
-      "cells": 0
+      "cells": 0,
+      "nodes": 5
     },
     "mul eax": {
       "assigns": 6,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "mul ebx": {
       "assigns": 6,
-      "cells": 0
+      "cells": 0,
+      "nodes": 12
     },
     "mul r8": {
       "assigns": 4,
-      "cells": 0
+      "cells": 0,
+      "nodes": 10
     },
     "mul r8b": {
       "assigns": 3,
-      "cells": 0
+      "cells": 0,
+      "nodes": 9
     },
     "mul r8d": {
       "assigns": 6,
-      "cells": 0
+      "cells": 0,
+      "nodes": 12
     },
     "mul rax": {
       "assigns": 4,
-      "cells": 0
+      "cells": 0,
+      "nodes": 6
     },
     "mul rbx": {
       "assigns": 4,
-      "cells": 0
+      "cells": 0,
+      "nodes": 10
     },
     "mulx eax, ebx, ecx": {
       "assigns": 4,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "mulx r8, r9, r10": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulx rax, rbx, rcx": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "neg al": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 110
     },
     "neg eax": {
       "assigns": 7,
-      "cells": 1
+      "cells": 1,
+      "nodes": 126
     },
     "neg ebx": {
       "assigns": 7,
-      "cells": 5
+      "cells": 5,
+      "nodes": 126
     },
     "neg rax": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 110
     },
     "neg rbx": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 110
     },
     "not al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "not eax": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 28
     },
     "not ebx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "not rax": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "not rbx": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "or al, bl": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 222
     },
     "or ax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "or ax, bx": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 222
     },
     "or eax, 0xffff": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 124
     },
     "or eax, ebx": {
       "assigns": 7,
-      "cells": 5
+      "cells": 5,
+      "nodes": 247
     },
     "or rax, 0x0ff0": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "or rax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "or rax, 0x7fffffff": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "or rax, 1": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "or rax, 15": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "or rax, 3": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "or rax, rbx": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 222
     },
     "popcnt ax, bx": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 102
     },
     "popcnt eax, ebx": {
       "assigns": 8,
-      "cells": 2
+      "cells": 2,
+      "nodes": 108
     },
     "popcnt rax, rbx": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 104
     },
     "push rax; adc qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5
+      "cells": 5,
+      "nodes": 672
     },
     "push rax; add qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
-      "cells": 2
+      "cells": 2,
+      "nodes": 332
     },
     "push rax; add qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5
+      "cells": 5,
+      "nodes": 499
     },
     "push rax; and qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
-      "cells": 2
+      "cells": 2,
+      "nodes": 328
     },
     "push rax; and qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5
+      "cells": 5,
+      "nodes": 479
     },
     "push rax; dec qword ptr [rsp]; pop rcx": {
       "assigns": 8,
-      "cells": 2
+      "cells": 2,
+      "nodes": 295
     },
     "push rax; inc qword ptr [rsp]; pop rcx": {
       "assigns": 8,
-      "cells": 2
+      "cells": 2,
+      "nodes": 295
     },
     "push rax; neg qword ptr [rsp]; pop rcx": {
       "assigns": 9,
-      "cells": 2
+      "cells": 2,
+      "nodes": 363
     },
     "push rax; not qword ptr [rsp]; pop rcx": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 125
     },
     "push rax; or qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
-      "cells": 2
+      "cells": 2,
+      "nodes": 328
     },
     "push rax; or qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5
+      "cells": 5,
+      "nodes": 479
     },
     "push rax; pop rax": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 90
     },
     "push rax; pop rbx": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 90
     },
     "push rax; push rbx; pop rcx; pop rdx": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 181
     },
     "push rax; shl qword ptr [rsp], 7; pop rcx": {
       "assigns": 9,
-      "cells": 3
+      "cells": 3,
+      "nodes": 1482
     },
     "push rax; sub qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
-      "cells": 2
+      "cells": 2,
+      "nodes": 332
     },
     "push rax; xadd qword ptr [rsp], rbx; pop rcx": {
       "assigns": 10,
-      "cells": 5
+      "cells": 5,
+      "nodes": 554
     },
     "push rax; xchg qword ptr [rsp], rbx; pop rcx": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 219
     },
     "push rax; xor qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
-      "cells": 2
+      "cells": 2,
+      "nodes": 328
     },
     "push rax; xor qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5
+      "cells": 5,
+      "nodes": 479
     },
     "rcl al": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 132
     },
     "rcl ax, 0x7f": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "rcl eax": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 157
     },
     "rcl rax, 0x7f": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcl rax, 1": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 132
     },
     "rcl rax, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcl rax, 3": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcl rax, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcl rax, 63": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcl rax, cl": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 55
     },
     "rcl rbx": {
       "assigns": 3,
-      "cells": 4
+      "cells": 4,
+      "nodes": 132
     },
     "rcr al": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 118
     },
     "rcr ax, 0x7f": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "rcr eax": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 143
     },
     "rcr rax, 0x7f": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcr rax, 1": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 118
     },
     "rcr rax, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcr rax, 3": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcr rax, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcr rax, 63": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 78
     },
     "rcr rax, cl": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 55
     },
     "rcr rbx": {
       "assigns": 3,
-      "cells": 5
+      "cells": 5,
+      "nodes": 118
     },
     "rol al": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 98
     },
     "rol ax, 0x7f": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 224
     },
     "rol eax": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 125
     },
     "rol eax, cl": {
       "assigns": 4,
-      "cells": 4
+      "cells": 4,
+      "nodes": 371
     },
     "rol rax, 0x7f": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 224
     },
     "rol rax, 1": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 98
     },
     "rol rax, 15": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 224
     },
     "rol rax, 3": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 224
     },
     "rol rax, 31": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 224
     },
     "rol rax, 63": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 224
     },
     "rol rax, 7": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 224
     },
     "rol rax, cl": {
       "assigns": 3,
-      "cells": 4
+      "cells": 4,
+      "nodes": 316
     },
     "rol rbx": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 98
     },
     "ror al": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 81
     },
     "ror ax, 0x7f": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 247
     },
     "ror eax": {
       "assigns": 4,
-      "cells": 2
+      "cells": 2,
+      "nodes": 104
     },
     "ror rax, 0x7f": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 247
     },
     "ror rax, 1": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 90
     },
     "ror rax, 15": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 247
     },
     "ror rax, 3": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 247
     },
     "ror rax, 31": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 247
     },
     "ror rax, 63": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 247
     },
     "ror rax, 7": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 247
     },
     "ror rax, cl": {
       "assigns": 3,
-      "cells": 3
+      "cells": 3,
+      "nodes": 341
     },
     "ror rbx": {
       "assigns": 3,
-      "cells": 4
+      "cells": 4,
+      "nodes": 90
     },
     "rorx rax, rbx, 0x7f": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 19
     },
     "rorx rax, rbx, 7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 19
     },
     "sahf": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 125
     },
     "sal ebx": {
       "assigns": 7,
-      "cells": 4
+      "cells": 4,
+      "nodes": 155
     },
     "sar al": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 99
     },
     "sar ax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 850
     },
     "sar eax": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 124
     },
     "sar eax, 5": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 924
     },
     "sar eax, 7": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 924
     },
     "sar rax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 850
     },
     "sar rax, 1": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 109
     },
     "sar rax, 15": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 850
     },
     "sar rax, 3": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 850
     },
     "sar rax, 31": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 850
     },
     "sar rax, 63": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 850
     },
     "sar rax, 7": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 850
     },
     "sar rax, cl": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 973
     },
     "sar rbx": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 109
     },
     "sarx eax, ebx, ecx": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "sarx rax, rbx, rcx": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "sbb al, bl": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 390
     },
     "sbb ax, bx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 320
     },
     "sbb eax, ebx": {
       "assigns": 7,
-      "cells": 6
+      "cells": 6,
+      "nodes": 362
     },
     "sbb r10d, r11d": {
       "assigns": 7,
-      "cells": 1
+      "cells": 1,
+      "nodes": 362
     },
     "sbb r12w, r13w": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 320
     },
     "sbb r14b, r15b": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 390
     },
     "sbb r8, r9": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 320
     },
     "sbb rax, 0x7f": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 183
     },
     "sbb rax, 0x7fffffff": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 183
     },
     "sbb rax, 1": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 183
     },
     "sbb rax, rbx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 320
     },
     "seta al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "seta bl": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "seta r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "setae al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "setae r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "setb al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "setb r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "setbe al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "setbe r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "sete al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sete r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "setg al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 81
     },
     "setg r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 81
     },
     "setge al": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "setge r8b": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "setl al": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "setl r8b": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "setle al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 81
     },
     "setle r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 81
     },
     "setne al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "setne r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "setno al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "setno r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "setnp al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "setnp r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "setns al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "setns r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "seto al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "seto r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "setp al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "setp r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sets al": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sets r8b": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "shl al": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 140
     },
     "shl ax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 913
     },
     "shl eax": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 155
     },
     "shl eax, 5": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 398
     },
     "shl eax, 7": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 398
     },
     "shl rax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 320
     },
     "shl rax, 1": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 140
     },
     "shl rax, 15": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 320
     },
     "shl rax, 3": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 320
     },
     "shl rax, 31": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 320
     },
     "shl rax, 63": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 320
     },
     "shl rax, 7": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 320
     },
     "shl rax, cl": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 1047
     },
     "shl rbx": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 140
     },
     "shld r10d, r11d": {
       "assigns": 7,
-      "cells": 4
+      "cells": 4,
+      "nodes": 1547
     },
     "shld r12w, r13w": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 1448
     },
     "shld r8, r9": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 1448
     },
     "shld rax, rbx, 0x7f": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 919
     },
     "shld rax, rbx, 7": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 919
     },
     "shld rax, rbx, cl": {
       "assigns": 6,
-      "cells": 7
+      "cells": 7,
+      "nodes": 1448
     },
     "shlx eax, ebx, ecx": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "shlx rax, rbx, rcx": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "shr ax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 879
     },
     "shr rax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 488
     },
     "shr rax, 15": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 488
     },
     "shr rax, 3": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 488
     },
     "shr rax, 31": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 488
     },
     "shr rax, 63": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 488
     },
     "shr rax, 7": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 488
     },
     "shr rax, cl": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 1004
     },
     "shrd r10d, r11d": {
       "assigns": 7,
-      "cells": 4
+      "cells": 4,
+      "nodes": 1479
     },
     "shrd r12w, r13w": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 1380
     },
     "shrd r8, r9": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 1380
     },
     "shrd rax, rbx, 0x7f": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 1135
     },
     "shrd rax, rbx, 7": {
       "assigns": 6,
-      "cells": 5
+      "cells": 5,
+      "nodes": 1135
     },
     "shrd rax, rbx, cl": {
       "assigns": 6,
-      "cells": 7
+      "cells": 7,
+      "nodes": 1380
     },
     "shrd rbp, rsp": {
       "assigns": 6,
-      "cells": 4
+      "cells": 4,
+      "nodes": 1380
     },
     "shrx eax, ebx, ecx": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "shrx rax, rbx, rcx": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "sub al, bl": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 216
     },
     "sub ax, 0x7f": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 107
     },
     "sub ax, bx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 216
     },
     "sub eax, 0xffff": {
       "assigns": 7,
-      "cells": 1
+      "cells": 1,
+      "nodes": 123
     },
     "sub eax, ebx": {
       "assigns": 7,
-      "cells": 6
+      "cells": 6,
+      "nodes": 245
     },
     "sub rax, 0x7f": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 107
     },
     "sub rax, 0x7fffffff": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 107
     },
     "sub rax, 1": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 107
     },
     "sub rax, 1365": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 107
     },
     "sub rax, 15": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 107
     },
     "sub rax, 3": {
       "assigns": 6,
-      "cells": 1
+      "cells": 1,
+      "nodes": 107
     },
     "sub rax, rbx": {
       "assigns": 6,
-      "cells": 6
+      "cells": 6,
+      "nodes": 216
     },
     "test al, bl": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 197
     },
     "test ax, 0x7f": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 94
     },
     "test ax, bx": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 197
     },
     "test eax, 0xffff": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 94
     },
     "test eax, ebx": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 197
     },
     "test rax, 0x7f": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 94
     },
     "test rax, 0x7fffffff": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 94
     },
     "test rax, 1": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 94
     },
     "test rax, 15": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 94
     },
     "test rax, 3": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 94
     },
     "test rax, rbx": {
       "assigns": 5,
-      "cells": 5
+      "cells": 5,
+      "nodes": 197
     },
     "tzcnt ax, bx": {
       "assigns": 3,
-      "cells": 3
+      "cells": 3,
+      "nodes": 73
     },
     "tzcnt eax, ebx": {
       "assigns": 4,
-      "cells": 3
+      "cells": 3,
+      "nodes": 92
     },
     "tzcnt rax, rbx": {
       "assigns": 3,
-      "cells": 3
+      "cells": 3,
+      "nodes": 73
     },
     "xadd al, bl": {
       "assigns": 7,
-      "cells": 6
+      "cells": 6,
+      "nodes": 241
     },
     "xadd ax, bx": {
       "assigns": 7,
-      "cells": 6
+      "cells": 6,
+      "nodes": 241
     },
     "xadd eax, ebx": {
       "assigns": 9,
-      "cells": 6
+      "cells": 6,
+      "nodes": 295
     },
     "xadd rax, rbx": {
       "assigns": 7,
-      "cells": 6
+      "cells": 6,
+      "nodes": 241
     },
     "xchg al, bl": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "xchg ax, bx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "xchg eax, ebx": {
       "assigns": 4,
-      "cells": 2
+      "cells": 2,
+      "nodes": 100
     },
     "xchg rax, rbx": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 50
     },
     "xor al, bl": {
       "assigns": 6,
-      "cells": 3
+      "cells": 3,
+      "nodes": 112
     },
     "xor ax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 61
     },
     "xor ax, bx": {
       "assigns": 6,
-      "cells": 3
+      "cells": 3,
+      "nodes": 112
     },
     "xor eax, 0xffff": {
       "assigns": 7,
-      "cells": 2
+      "cells": 2,
+      "nodes": 62
     },
     "xor eax, ebx": {
       "assigns": 7,
-      "cells": 3
+      "cells": 3,
+      "nodes": 115
     },
     "xor rax, 0x7f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 61
     },
     "xor rax, 0x7fffffff": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 61
     },
     "xor rax, 0xf00f": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 61
     },
     "xor rax, 1": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 61
     },
     "xor rax, 15": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 61
     },
     "xor rax, 3": {
       "assigns": 6,
-      "cells": 2
+      "cells": 2,
+      "nodes": 61
     },
     "xor rax, rbx": {
       "assigns": 6,
-      "cells": 3
+      "cells": 3,
+      "nodes": 112
     }
   },
   "ARM64": {
     "adc w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "adc x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "adcs w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "adcs x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "add w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "add x0, x1, #0": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "add x0, x1, #1365": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "add x0, x1, w2, sxtb": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 430
     },
     "add x0, x1, w2, sxth #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 430
     },
     "add x0, x1, w2, uxtb": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "add x0, x1, w2, uxtb #2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "add x0, x1, w2, uxth #2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "add x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "add x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 39
     },
     "add x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 83
     },
     "add x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "add x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "add x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "add x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "add x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "add x0, x1, x2, lsr #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "adds w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "adds x0, x1, #0": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "adds x0, x1, #1365": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "adds x0, x1, w2, sxtw": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 430
     },
     "adds x0, x1, w2, uxtb #2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "adds x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "adds x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 39
     },
     "adds x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 83
     },
     "adds x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "adds x0, x1, x2, lsl #2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "adds x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "adds x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "adds x0, x1, x2, lsr #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "adds x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "adds x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "and w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, #0xff00ff00ff00ff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, asr #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, lsl #6": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and x0, x1, x2, ror #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "ands w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "ands x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ands x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "ands x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "ands x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "ands x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "ands x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "ands x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "ands x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "ands x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "asr w0, w1, #3": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "asr w0, w1, #5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "asr x0, x1, #0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "asr x0, x1, #1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "asr x0, x1, #5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "asr x0, x1, #63": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "asr x0, x1, #7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "asrv w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "asrv x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "bfc x0, #4, #8": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "bfi x0, x1, #0, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfi x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfi x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfi x0, x1, #8, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfi x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfm x0, x1, #0, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfm x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfm x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfm x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfxil x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfxil x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfxil x0, x1, #4, #20": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bfxil x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "bic w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "bic x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "bic x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "bic x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bic x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bic x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bic x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bic x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bic x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bic x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bics w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "bics x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "bics x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "bics x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bics x0, x1, x2, asr #2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bics x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bics x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bics x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bics x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bics x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "bics x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "ccmn x0, x1, #0, ne": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "ccmn x1, x2, #0, al": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "ccmn x1, x2, #10, lt": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "ccmp x0, x1, #0, ne": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "ccmp x1, #7, #3, ne": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "ccmp x1, x2, #0, al": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "ccmp x1, x2, #5, eq": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cinc x0, x1, eq": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 31
     },
     "cinc x0, x1, lt": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 31
     },
     "cinc x0, x1, ne": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 31
     },
     "cinv x0, x1, eq": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 27
     },
     "cinv x0, x1, ne": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 27
     },
     "cls w0, w1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "cls x0, x1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "cls x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "clz w0, w1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "clz x0, x1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "clz x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "cmn w0, w1": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cmn x0, x1": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cmn x1, #1365": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cmn x1, x2": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cmn x1, x2, lsl #3": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cmp w0, w1": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cmp x0, x1": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cmp x1, #1365": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cmp x1, x2": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cmp x1, x2, lsl #3": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "cneg x0, x1, eq": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 31
     },
     "cneg x0, x1, ge": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 31
     },
     "cneg x0, x1, ne": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 31
     },
     "crc32b w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "crc32cb w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "crc32ch w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "crc32cw w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "crc32h w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "crc32w w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "csel x0, x1, x2, cs": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csel x0, x1, x2, eq": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csel x0, x1, x2, ge": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csel x0, x1, x2, gt": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csel x0, x1, x2, hi": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csel x0, x1, x2, lt": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csel x0, x1, x2, mi": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csel x0, x1, x2, ne": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csel x0, x1, x2, vs": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "cset x0, cc": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, cs": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, eq": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, ge": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, gt": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, hi": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, le": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, ls": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, lt": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, mi": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, ne": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, pl": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, vc": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "cset x0, vs": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "csetm x0, eq": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "csetm x0, ge": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "csinc x0, x1, x2, cs": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csinc x0, x1, x2, eq": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csinc x0, x1, x2, ge": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csinc x0, x1, x2, gt": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csinc x0, x1, x2, hi": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csinc x0, x1, x2, lt": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csinc x0, x1, x2, mi": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csinc x0, x1, x2, ne": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csinc x0, x1, x2, vs": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csinv x0, x1, x2, cs": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csinv x0, x1, x2, eq": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csinv x0, x1, x2, ge": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csinv x0, x1, x2, gt": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csinv x0, x1, x2, lt": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csinv x0, x1, x2, mi": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csinv x0, x1, x2, ne": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "csneg x0, x1, x2, cs": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csneg x0, x1, x2, eq": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csneg x0, x1, x2, ge": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csneg x0, x1, x2, gt": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csneg x0, x1, x2, lt": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csneg x0, x1, x2, mi": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "csneg x0, x1, x2, ne": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 44
     },
     "eon w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "eon x0, x1, #4095": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "eon x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "eon x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 9
     },
     "eon x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 53
     },
     "eon x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "eon x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "eon x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "eon x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 5
     },
     "eon x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 5
     },
     "eon x0, x1, x2, lsr #6": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 5
     },
     "eor w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "eor x0, x1, #0xffff0000ffff": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "eor x0, x1, #4095": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "eor x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "eor x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 9
     },
     "eor x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 53
     },
     "eor x0, x1, x2, asr #7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 53
     },
     "eor x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "eor x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "eor x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 7
     },
     "eor x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 5
     },
     "eor x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 5
     },
     "eor x0, x1, x2, ror #11": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 11
     },
     "extr x0, x1, x2, #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "extr x0, x1, x2, #13": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "extr x0, x1, x2, #63": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "lsl w0, w1, #3": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsl w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 33
     },
     "lsl x0, x1, #0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsl x0, x1, #1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsl x0, x1, #5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsl x0, x1, #63": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsl x0, x1, #7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lslv x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "lsr w0, w1, #3": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsr w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 33
     },
     "lsr x0, x1, #1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsr x0, x1, #5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsr x0, x1, #63": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsr x0, x1, #7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "lsrv x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "madd w0, w1, w2, w3": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 6
     },
     "madd x0, x1, x2, x3": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 6
     },
     "mneg w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "mneg x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "mov x0, x1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movk x0, #0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movk x0, #0x1234, lsl #16": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movk x0, #0x1234, lsl #32": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "movn x0, #0x1234": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "movz x0, #0x1234, lsl #16": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "msub x0, x1, x2, x3": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 6
     },
     "mul w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "mul x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mvn w0, w1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "mvn x0, x1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "mvn x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "mvn x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "neg w0, w1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "neg x0, x1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "neg x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "neg x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 528
     },
     "negs w0, w1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "negs x0, x1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "negs x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "negs x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 528
     },
     "ngc w0, w1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "ngc x0, x1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "ngc x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "ngcs w0, w1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "ngcs x0, x1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "ngcs x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "orn w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "orn x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "orn x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "orn x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "orn x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "orn x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "orn x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "orn x0, x1, x2, lsl #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "orn x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "orn x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "orn x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 281
     },
     "orr w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, #0x5555555555555555": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "orr x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "orr x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, x2, asr #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orr x0, x1, x2, lsr #9": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "rbit w0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rbit x0, x1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rbit x1, x2": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rev w0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rev x0, x1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rev x1, x2": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rev16 w0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rev16 x0, x1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rev16 x1, x2": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rev32 x0, x1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rev32 x1, x2": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ror w0, w1, #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ror w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 33
     },
     "ror x0, x1, #0": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ror x0, x1, #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ror x0, x1, #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ror x0, x1, #63": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ror x0, x1, #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "rorv x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 33
     },
     "sbc w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "sbc x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "sbcs w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "sbcs x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "sbfiz x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 270
     },
     "sbfiz x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 270
     },
     "sbfiz x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 270
     },
     "sbfiz x0, x1, #9, #12": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 270
     },
     "sbfm x0, x1, #0, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "sbfm x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "sbfm x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "sbfm x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "sbfx x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "sbfx x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "sbfx x0, x1, #5, #17": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "sbfx x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "sdiv w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "sdiv x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "smaddl x0, w1, w2, x3": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 6
     },
     "smnegl x0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "smsubl x0, w1, w2, x3": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 6
     },
     "smulh x0, x1, x1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "smulh x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "smull x0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "stp x1, x2, [sp, #-16]!; ldp x0, x3, [sp], #16": {
       "assigns": 5,
-      "cells": 2
+      "cells": 2,
+      "nodes": 181
     },
     "str w1, [sp, #-16]; ldr w0, [sp, #-16]": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 48
     },
     "str x1, [sp, #-16]!; ldr w0, [sp], #16": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 90
     },
     "str x1, [sp, #-16]!; ldr x0, [sp], #16": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 90
     },
     "str x1, [sp, #-16]!; ldr x0, [sp]; add x0, x0, x2; add sp, sp, #16": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "str x1, [sp, #-16]!; ldr x0, [sp]; eor x0, x0, x2; add sp, sp, #16": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "str x1, [sp, #-16]; ldr x0, [sp, #-16]": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 48
     },
     "strb w1, [sp, #-16]!; ldrb w0, [sp], #16": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 90
     },
     "strb w1, [sp, #-16]; ldrb w0, [sp, #-16]": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 48
     },
     "strh w1, [sp, #-16]!; ldrsh x0, [sp], #16": {
       "assigns": 3,
-      "cells": 2
+      "cells": 2,
+      "nodes": 102
     },
     "strh w1, [sp, #-16]; ldrh w0, [sp, #-16]": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 48
     },
     "sub w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "sub x0, x1, #0": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "sub x0, x1, #1365": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "sub x0, x1, w2, uxtw #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "sub x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "sub x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 39
     },
     "sub x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 83
     },
     "sub x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "sub x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "sub x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "sub x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "sub x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "subs w0, w1, w2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "subs x0, x1, #0": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "subs x0, x1, x2": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "subs x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 39
     },
     "subs x0, x1, x2, asr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 59
     },
     "subs x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 83
     },
     "subs x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "subs x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "subs x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 37
     },
     "subs x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "subs x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 35
     },
     "sxtb w0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sxtb x0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sxtb x1, x2": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sxth w0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sxth x0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sxth x1, x2": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sxtw x0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sxtw x1, x2": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "tst w0, w1": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "tst x0, x1": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "tst x1, x2": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "tst x1, x2, lsl #3": {
       "assigns": 0,
-      "cells": 0
+      "cells": 0,
+      "nodes": 0
     },
     "ubfiz x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfiz x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfiz x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfiz x0, x1, #9, #12": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfm x0, x1, #0, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfm x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfm x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfm x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfx x0, x1, #0, #1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfx x0, x1, #0, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfx x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfx x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfx x0, x1, #5, #17": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "ubfx x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "udiv w0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "udiv x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "umaddl x0, w1, w2, x3": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 6
     },
     "umnegl x0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "umsubl x0, w1, w2, x3": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 6
     },
     "umulh x0, x1, x2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "umull x0, w1, w2": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "uxtb x0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "uxth x0, w1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     }
   },
   "MIPS64BE": {
     "add $2, $4": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 76
     },
     "add $2, $4, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 76
     },
     "add $2, $4, -1": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "add $2, $4, 0": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "add $2, $4, 0x7fff": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "add $2, $4, 1": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "add $2, $4, 100": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "add $2, $4, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "add $2, $4, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "add $2, $4, 7": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "add $4, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 76
     },
     "addi $2, 0x1234": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 46
     },
     "addiu $2, $4, -1365": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addiu $2, $4, 1365": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addiu $2, 0x1234": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 46
     },
     "addu $2, $4": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 76
     },
     "addu $2, $4, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 76
     },
     "addu $2, $4, -1": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addu $2, $4, 0": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addu $2, $4, 0x7fff": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addu $2, $4, 1": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addu $2, $4, 100": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addu $2, $4, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addu $2, $4, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addu $2, $4, 7": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "addu $4, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 76
     },
     "and $2, $4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and $2, $4, $4": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and $2, $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "and $2, $4, -1": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "and $2, $4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and $2, $4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and $2, $4, 100": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "and $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "andi $2, $4, 0xff0f": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "andi $2, 0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "clo $2, $4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "clo $4, $5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "clz $2, $4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "clz $4, $5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "dadd $2, $4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "dadd $2, $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "dadd $2, $4, -1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dadd $2, $4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dadd $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dadd $2, $4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dadd $2, $4, 100": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dadd $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dadd $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dadd $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dadd $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "daddiu $2, 0x1234": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "daddu $2, $4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "daddu $2, $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "daddu $2, $4, -1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "daddu $2, $4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "daddu $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "daddu $2, $4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "daddu $2, $4, 100": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "daddu $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "daddu $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "daddu $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "daddu $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "dclo $2, $4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "dclo $4, $5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "dclz $2, $4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "dclz $4, $5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "div $zero, $4, $5": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "divu $zero, $4, $5": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "dsll $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "dsll32 $2, $4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsll32 $2, $4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsll32 $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsll32 $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsll32 $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsra $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "dsra32 $2, $4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsra32 $2, $4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsra32 $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsra32 $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsra32 $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsrl $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "dsrl32 $2, $4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsrl32 $2, $4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsrl32 $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsrl32 $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsrl32 $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "dsub $2, $4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "dsub $2, $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "dsub $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsub $2, $4, 100": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsub $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsub $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsub $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsub $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "dsubu $2, $4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "dsubu $2, $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "dsubu $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsubu $2, $4, 100": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsubu $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsubu $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsubu $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "dsubu $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "lui $2, 0x1234": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "movn $2, $4, $5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "movz $2, $4, $5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 38
     },
     "mul $2, $4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "mul $2, $4, $4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mul $2, $4, $5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "mul $4, $5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "negu $4, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "nor $2, $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "nor $2, $4, -1": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "nor $2, $4, 0": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "nor $2, $4, 0x7fff": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "nor $2, $4, 1": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "nor $2, $4, 100": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "nor $2, $4, 15": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "nor $2, $4, 31": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "nor $2, $4, 7": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "or $2, $4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "or $2, $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "or $2, $4, -1": {
       "assigns": 4,
-      "cells": 1
+      "cells": 1,
+      "nodes": 52
     },
     "or $2, $4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "or $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "or $2, $4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "or $2, $4, 100": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "or $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "or $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "or $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "or $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "ori $2, $4, 0x0ff0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ori $2, 0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "sb $4, -16($sp); lb $2, -16($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 75
     },
     "sb $4, 0($sp); lb $2, 0($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 61
     },
     "sb $4, 0($sp); lbu $2, 0($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "sd $4, -16($sp); ld $2, -16($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 61
     },
     "sd $4, 0($sp); ld $2, 0($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "sh $4, -16($sp); lhu $2, -16($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 61
     },
     "sh $4, 0($sp); lh $2, 0($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 61
     },
     "sh $4, 0($sp); lhu $2, 0($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 49
     },
     "sll $2, $4, 0": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "sll $2, $4, 1": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "sll $2, $4, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "sll $2, $4, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "sll $2, $4, 7": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "sllv $2, $4, $5": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 386
     },
     "slt $2, $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 51
     },
     "slt $2, $4, -1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "slt $2, $4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "slt $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "slt $2, $4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "slt $2, $4, 100": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "slt $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "slt $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "slt $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "slti $2, $4, 1365": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "sltiu $2, $4, 1365": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu $2, $4, $5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "sltu $2, $4, -1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu $2, $4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu $2, $4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu $2, $4, 100": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu $2, $4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu $2, $4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu $2, $4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu $2, $zero, $4": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sra $2, $4, 0": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "sra $2, $4, 1": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "sra $2, $4, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "sra $2, $4, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "sra $2, $4, 7": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "srav $2, $4, $5": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 386
     },
     "srl $2, $4, 0": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "srl $2, $4, 1": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "srl $2, $4, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "srl $2, $4, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "srl $2, $4, 7": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 30
     },
     "srlv $2, $4, $4": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 44
     },
     "srlv $2, $4, $5": {
       "assigns": 2,
-      "cells": 0
+      "cells": 0,
+      "nodes": 386
     },
     "sub $2, $4": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 76
     },
     "sub $2, $4, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 76
     },
     "sub $2, $4, 0x7fff": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "sub $2, $4, 100": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "sub $2, $4, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "sub $2, $4, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "sub $2, $4, 7": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "sub $4, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 76
     },
     "subu $2, $4": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 76
     },
     "subu $2, $4, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 76
     },
     "subu $2, $4, 0x7fff": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "subu $2, $4, 100": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "subu $2, $4, 15": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "subu $2, $4, 31": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "subu $2, $4, 7": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "subu $2, $zero, $4": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 46
     },
     "subu $4, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 76
     },
     "sw $4, -16($sp); lw $2, -16($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 75
     },
     "sw $4, -16($sp); lw $2, -16($sp); addu $2, $2, $5": {
       "assigns": 3,
-      "cells": 1
+      "cells": 1,
+      "nodes": 174
     },
     "sw $4, -16($sp); lw $2, -16($sp); xor $2, $2, $5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 92
     },
     "sw $4, 0($sp); lw $2, 0($sp)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 61
     },
     "xor $2, $4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "xor $2, $4, $5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "xor $2, $4, -1": {
       "assigns": 4,
-      "cells": 0
+      "cells": 0,
+      "nodes": 8
     },
     "xor $2, $4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xor $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xor $2, $4, 1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xor $2, $4, 100": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xor $2, $4, 15": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xor $2, $4, 31": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xor $2, $4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xor $4, $5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "xori $2, $4, 0xf00f": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xori $2, 0x1234": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     }
   },
   "PPC32BE": {
     "add 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "add 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "add 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "add 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "add 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "add 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "add. 3, 4, 5": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 238
     },
     "addc 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "addc 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "addc 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addc 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "addc 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "addc 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "addi 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "addi 3, 4, -1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addi 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addi 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addi 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addi 3, 4, 1365": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addi 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addi 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addi 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addi 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addic 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "addic 3, 4, -1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addic 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addic 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addic 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addic 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addic 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addic 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addic 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addis 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "addis 3, 4, -1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addis 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addis 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addis 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addis 3, 4, 1365": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addis 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addis 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addis 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addis 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "and 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "and 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "and 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "and 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "and 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "and 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "and. 3, 4, 5": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 232
     },
     "andc 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "andc 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "andc 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "andc 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "andc 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "andc 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "andi. 0, 3, 4": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 118
     },
     "andi. 3, 4, 0": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "andi. 3, 4, 0x1234": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andi. 3, 4, 0x7fff": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andi. 3, 4, 0xff0f": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andi. 3, 4, 15": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andi. 3, 4, 5": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andi. 3, 4, 7": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andi. 5, 6, 7": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andi. 6, 7, 8": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andis. 0, 3, 4": {
       "assigns": 2,
-      "cells": 5
+      "cells": 5,
+      "nodes": 118
     },
     "andis. 3, 4, 0": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andis. 3, 4, 0x1234": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andis. 3, 4, 0x7fff": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andis. 3, 4, 15": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andis. 3, 4, 5": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andis. 3, 4, 7": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andis. 5, 6, 7": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "andis. 6, 7, 8": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "cmplw 0, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 57
     },
     "cmplw 3, 4": {
       "assigns": 1,
-      "cells": 3
+      "cells": 3,
+      "nodes": 57
     },
     "cmplw 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 57
     },
     "cmplw 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "cmplw 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 57
     },
     "cmplw 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 57
     },
     "cmplw 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 57
     },
     "cmplwi 0, 4, 1365": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "cmplwi 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 26
     },
     "cmplwi 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "cmplwi 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "cmplwi 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "cmplwi 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "cmplwi 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "cmplwi 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "cmplwi 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 26
     },
     "cmpw 0, 4, 5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 136
     },
     "cmpw 1, 4, 5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 136
     },
     "cmpw 3, 4": {
       "assigns": 1,
-      "cells": 3
+      "cells": 3,
+      "nodes": 136
     },
     "cmpw 3, 4, 0": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 136
     },
     "cmpw 3, 4, 15": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cmpw 3, 4, 5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 136
     },
     "cmpw 3, 4, 7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 136
     },
     "cmpw 5, 6, 7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 136
     },
     "cmpwi 0, 4, 1365": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cmpwi 3, 4": {
       "assigns": 1,
-      "cells": 3
+      "cells": 3,
+      "nodes": 53
     },
     "cmpwi 3, 4, -1": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cmpwi 3, 4, 0": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cmpwi 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cmpwi 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cmpwi 3, 4, 15": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cmpwi 3, 4, 5": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cmpwi 3, 4, 7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cmpwi 5, 6, 7": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 53
     },
     "cntlzw 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "divw 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "divwu 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "eqv 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "eqv 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "eqv 3, 4, 15": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "eqv 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "eqv 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "eqv 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "extsb 3, 4": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "extsh 3, 4": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "mulhw 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhw 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhw 3, 4, 15": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulhw 3, 4, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhw 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhw 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhw 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhwu 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhwu 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhwu 3, 4, 15": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulhwu 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhwu 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhwu 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulli 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 14
     },
     "mulli 3, 4, -1": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulli 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulli 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulli 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulli 3, 4, 1365": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulli 3, 4, 15": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulli 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulli 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mulli 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mullw 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mullw 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mullw 3, 4, 15": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 2
     },
     "mullw 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mullw 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mullw 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "nand 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "nand 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "nand 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "nand 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "nand 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "nand 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "neg 3, 4": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "neg. 3, 4": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 138
     },
     "nor 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "nor 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "nor 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "nor 3, 4, 4": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "nor 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "nor 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "nor 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "or 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "or 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "or 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "or 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "or 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "or 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "or. 3, 4, 5": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 232
     },
     "orc 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 25
     },
     "orc 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "orc 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "orc 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "orc 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "orc 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "ori 0, 3, 4": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ori 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ori 3, 4, 0x0ff0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ori 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ori 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ori 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ori 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ori 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "ori 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "oris 0, 3, 4": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "oris 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "oris 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "oris 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "oris 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "oris 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "oris 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "oris 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rlwimi 3, 4, 1, 0, 31": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "rlwimi 3, 4, 4, 28, 31": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "rlwimi 3, 4, 5, 0, 15": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "rlwimi 3, 4, 5, 0, 31": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "rlwimi 3, 4, 5, 16, 31": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "rlwimi 3, 4, 5, 6": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "rlwimi 3, 4, 5, 8, 20": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "rlwimi 3, 4, 5, 8, 23": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "rlwimi 3, 4, 7, 0, 31": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 28
     },
     "rlwinm 3, 4, 0, 16, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 1, 0, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 12, 0, 19": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 31, 0, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 4, 28, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 5, 0, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 5, 0, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 5, 16, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 5, 6": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 5, 8, 20": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 5, 8, 23": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm 3, 4, 7, 0, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "rlwinm. 3, 4, 5, 8, 20": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 124
     },
     "rlwnm 3, 4, 1, 0, 31": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 33
     },
     "rlwnm 3, 4, 4, 28, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 22
     },
     "rlwnm 3, 4, 5, 0, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 33
     },
     "rlwnm 3, 4, 5, 0, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 33
     },
     "rlwnm 3, 4, 5, 16, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 33
     },
     "rlwnm 3, 4, 5, 6": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 33
     },
     "rlwnm 3, 4, 5, 8, 20": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 33
     },
     "rlwnm 3, 4, 5, 8, 23": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 33
     },
     "rlwnm 3, 4, 7, 0, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 33
     },
     "rotlwi 3, 4, 9": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "slw 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "slw 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "slw 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "slw 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "slw 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "slw 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "slwi 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "sraw 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "sraw 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "sraw 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sraw 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "sraw 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "sraw 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "srawi 0, 3, 4": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "srawi 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "srawi 3, 4, 1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "srawi 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "srawi 3, 4, 31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "srawi 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "srawi 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "srawi 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "srawi. 3, 4, 7": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 118
     },
     "srw 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "srw 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "srw 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "srw 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "srw 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "srw 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "srwi 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 17
     },
     "stb 4, -16(1); lbz 3, -16(1)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 51
     },
     "stb 4, -8(1); lbz 3, -8(1)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 51
     },
     "sth 4, -16(1); lha 3, -16(1)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 63
     },
     "sth 4, -8(1); lhz 3, -8(1)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 51
     },
     "stw 4, -16(1); lwz 3, -16(1)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 51
     },
     "stw 4, -16(1); lwz 3, -16(1); add 3, 3, 5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 66
     },
     "stw 4, -16(1); lwz 3, -16(1); xor 3, 3, 5": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 66
     },
     "stw 4, -8(1); lwz 3, -8(1)": {
       "assigns": 2,
-      "cells": 1
+      "cells": 1,
+      "nodes": 51
     },
     "subf 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "subf 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "subf 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subf 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "subf 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "subf 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "subf. 3, 4, 5": {
       "assigns": 2,
-      "cells": 2
+      "cells": 2,
+      "nodes": 238
     },
     "subfc 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 29
     },
     "subfc 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "subfc 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subfc 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "subfc 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "subfc 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "subfic 0, 3, 4": {
       "assigns": 1,
-      "cells": 2
+      "cells": 2,
+      "nodes": 16
     },
     "subfic 3, 4, -1": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subfic 3, 4, 0": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subfic 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subfic 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subfic 3, 4, 1365": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subfic 3, 4, 15": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subfic 3, 4, 5": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subfic 3, 4, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "subfic 5, 6, 7": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "xor 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "xor 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "xor 3, 4, 15": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xor 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "xor 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "xor 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "xori 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xori 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xori 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xori 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xori 3, 4, 0xf00f": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xori 3, 4, 15": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xori 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xori 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xori 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xoris 0, 3, 4": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xoris 3, 4, 0": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xoris 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xoris 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xoris 3, 4, 15": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xoris 3, 4, 5": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xoris 3, 4, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "xoris 5, 6, 7": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     }
   },
   "RISCV64": {
     "add": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "addi": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addi_neg": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 16
     },
     "addiw": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 23
     },
     "addw": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 38
     },
     "and": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "andi": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "auipc": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "div": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "divu": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "divuw": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "divw": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "lui": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mul": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulh": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulhsu": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "mulhu": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "mulw": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "or": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "ori": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 15
     },
     "rem": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "remu": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "remuw": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "remw": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 4
     },
     "sll": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "slli": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 18
     },
     "slli_31": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 18
     },
     "slliw": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 18
     },
     "sllw": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 385
     },
     "slt": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 51
     },
     "slti": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 27
     },
     "sltiu": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     },
     "sltu": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 25
     },
     "sra": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "srai": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 18
     },
     "srai_63": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 18
     },
     "sraiw": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 18
     },
     "sraw": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 385
     },
     "srl": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 1
     },
     "srli": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 18
     },
     "srliw": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 18
     },
     "srlw": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 385
     },
     "sub": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 29
     },
     "subw": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 38
     },
     "xor": {
       "assigns": 1,
-      "cells": 0
+      "cells": 0,
+      "nodes": 3
     },
     "xori": {
       "assigns": 1,
-      "cells": 1
+      "cells": 1,
+      "nodes": 14
     }
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-05T02:45:08.590279+00:00",
+    "generated": "2026-09-05T15:47:26.417454+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
-      "cells": "native cell re-executions per evaluate"
+      "cells": "native cell re-executions per evaluate",
+      "nodes": "total AST nodes across the rule expressions (structural size)"
     }
   }
 }

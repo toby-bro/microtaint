@@ -24,6 +24,11 @@ Two artifacts, deliberately separate:
                       not timing, so it is identical on every machine, never flaky.
       - ``assigns`` : number of top-level taint assignments the static rule emits
                       (structural size of the propagation the hot path executes).
+      - ``nodes``   : total AST nodes across all of an instruction's taint
+                      expressions. An exact prop should be a handful of ops
+                      (polarised masks + a XOR + a sext/zext), so a 900-1500-node
+                      flag tree is a red flag; this metric makes that visible and
+                      only-ever-decreasing.
     The gate asserts current <= baseline for every instruction. Wall-clock ns is
     machine-dependent, so it is measured, printed and logged but NEVER asserted.
 
@@ -85,6 +90,9 @@ from instruction_bank import load_bank  # type: ignore[import-not-found]  # noqa
 
 FULL = 0xFFFFFFFFFFFFFFFF
 
+# Deterministic per-instruction metrics the ratchet gates (only ever decrease).
+_METRICS = ('cells', 'assigns', 'nodes')
+
 
 # ===========================================================================
 # Corpus: the unified instruction bank (~1,500 forms across AMD64 / ARM64 /
@@ -130,14 +138,36 @@ def _cases() -> tuple[_Case, ...]:
 # ===========================================================================
 
 
-def _work(case: _Case) -> tuple[int, int]:
-    """Deterministic work per evaluate: (cells, assigns). Machine-independent."""
+def _count_nodes(expr: object, depth: int = 0) -> int:
+    """Total AST nodes in a taint expression (structural size of the rule).
+
+    A high count is the symptom the user flagged: an exact taint prop should be a
+    handful of ops (polarised masks + a XOR + a sext/zext), so 900-1500-node flag
+    trees signal wasteful rule generation. Tracked so the ratchet drives it down
+    and catches regressions."""
+    if expr is None or depth > 200:
+        return 0
+    total = 1
+    for attr in ('lhs', 'rhs', 'expr', 'operand', 'address_expr'):
+        child = getattr(expr, attr, None)
+        if child is not None:
+            total += _count_nodes(child, depth + 1)
+    inputs = getattr(expr, 'inputs', None)
+    if isinstance(inputs, dict):
+        for child in inputs.values():
+            total += _count_nodes(child, depth + 1)
+    return total
+
+
+def _work(case: _Case) -> tuple[int, int, int]:
+    """Deterministic work per evaluate: (cells, assigns, nodes). Machine-independent."""
     for _ in range(3):  # warm any per-call memoization
         case.circ.evaluate(case.ctx)
     n0 = case.sim._pcode.native_calls
     case.circ.evaluate(case.ctx)
     cells = case.sim._pcode.native_calls - n0
-    return cells, len(case.circ.assignments)
+    nodes = sum(_count_nodes(a.expression) for a in case.circ.assignments)
+    return cells, len(case.circ.assignments), nodes
 
 
 def _time_ns(case: _Case, reps: int = 600, batches: int = 3) -> float:
@@ -283,14 +313,14 @@ def _deterministic_rows() -> tuple[list[dict], dict]:
     rows: list[dict] = []
     by_isa: dict[str, list[dict]] = {}
     for c in cases:
-        cells, assigns = _work(c)
-        row = {'isa': c.isa, 'asm': c.asm, 'cells': cells, 'assigns': assigns}
+        cells, assigns, nodes = _work(c)
+        row = {'isa': c.isa, 'asm': c.asm, 'cells': cells, 'assigns': assigns, 'nodes': nodes}
         rows.append(row)
         by_isa.setdefault(c.isa, []).append(row)
     rec = _base_record('ratchet', rows)
-    rec['summary'] = {'cells': _stats([r['cells'] for r in rows]), 'assigns': _stats([r['assigns'] for r in rows])}
+    rec['summary'] = {m: _stats([r[m] for r in rows]) for m in _METRICS}
     rec['per_isa'] = {
-        isa: {'cells': _stats([r['cells'] for r in rs]), 'assigns': _stats([r['assigns'] for r in rs])}
+        isa: {m: _stats([r[m] for r in rs]) for m in _METRICS}
         for isa, rs in by_isa.items()
     }
     return rows, rec
@@ -306,6 +336,7 @@ def _regenerate_baseline(rows: list[dict], baseline: dict, allow_reg: bool) -> N
             'metrics': {
                 'cells': 'native cell re-executions per evaluate',
                 'assigns': 'top-level taint assignments emitted by the rule',
+                'nodes': 'total AST nodes across the rule expressions (structural size)',
             },
             'generated': datetime.now(timezone.utc).isoformat(),
         },
@@ -315,10 +346,10 @@ def _regenerate_baseline(rows: list[dict], baseline: dict, allow_reg: bool) -> N
         old = baseline.get(r['isa'], {}).get(r['asm'])
         raised += [
             f'{r["isa"]} {r["asm"]} {m}: {old[m]} -> {r[m]}'
-            for m in ('cells', 'assigns')
-            if old is not None and r[m] > old.get(m, r[m])
+            for m in _METRICS
+            if old is not None and m in old and r[m] > old[m]
         ]
-        new.setdefault(r['isa'], {})[r['asm']] = {'cells': r['cells'], 'assigns': r['assigns']}
+        new.setdefault(r['isa'], {})[r['asm']] = {m: r[m] for m in _METRICS}
     if raised and not allow_reg:
         pytest.fail(
             'UPDATE_PERF_BASELINE refused: these would RAISE the baseline '
@@ -335,7 +366,9 @@ def _diff_baseline(rows: list[dict], baseline: dict) -> tuple[list[str], list[st
         if old is None:
             missing.append(f'{r["isa"]} {r["asm"]}')
             continue
-        for m in ('cells', 'assigns'):
+        for m in _METRICS:
+            if m not in old:
+                continue
             if r[m] > old[m]:
                 regressions.append(f'{r["isa"]} {r["asm"]} {m}: {old[m]} -> {r[m]} (+{r[m] - old[m]})')
             elif r[m] < old[m]:
@@ -390,13 +423,14 @@ def test_perf_timing_bench() -> None:
     rows: list[dict] = []
     by_isa: dict[str, list[dict]] = {}
     for c in cases:
-        cells, assigns = _work(c)
+        cells, assigns, nodes = _work(c)
         ns = _time_ns(c)
         row = {
             'isa': c.isa,
             'asm': c.asm,
             'cells': cells,
             'assigns': assigns,
+            'nodes': nodes,
             'ns': ns,
             'tp_s': (1e9 / ns if ns else 0.0),
         }
