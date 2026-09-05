@@ -263,8 +263,17 @@ def closed_form_taint(  # noqa: C901
     by_out = {_key(o.output): o for o in simp if o.output is not None}
     cur = by_out.get(flag_key)
     seen: set[tuple[str, int, int]] = set()
-    while cur is not None and cur.opcode.name == 'COPY':
-        src = cur.inputs[0]
+    # Follow forwarding ops to the real producer: a plain COPY, or a boolean mask
+    # `x & 1` (how a preserved flag like OF for count != 1 survives -- old_OF & 1,
+    # which for a 1-bit flag is just old_OF).
+    while cur is not None:
+        if cur.opcode.name == 'COPY':
+            src = cur.inputs[0]
+        elif cur.opcode.name == 'INT_AND' and len(cur.inputs) == 2 and 1 in (
+                _const_of(cur.inputs[0]), _const_of(cur.inputs[1])):
+            src = cur.inputs[1] if _const_of(cur.inputs[0]) == 1 else cur.inputs[0]
+        else:
+            break
         if src.space.name == 'const':
             return Constant(0, 8)  # constant flag: no taint
         if src.space.name == 'register':  # preserved flag (e.g. OF, count != 1)
