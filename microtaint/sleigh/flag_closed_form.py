@@ -29,7 +29,7 @@ Handled leaf grammar (everything else declines):
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from pypcode.pypcode_native import PcodeOp
@@ -78,6 +78,13 @@ class _Op(Protocol):
     def output(self) -> _Vn | None: ...
     @property
     def inputs(self) -> Sequence[_Vn]: ...
+
+
+# Resolves a LOAD address varnode + byte size to (value, taint) exprs for the
+# memory it reads, or None to decline. Supplied by the engine (which owns pointer
+# resolution and the stack-pointer policy) so this module stays free of the memory
+# subsystem and of an engine import cycle.
+_MemResolver = Callable[[_Vn, int], 'tuple[Expr, Expr] | None']
 
 
 # A closed form is only worth emitting if it is SMALL. A bit/byte permutation
@@ -177,10 +184,11 @@ def _last_write(ops: Sequence[_Op], vn: _Vn, limit: int) -> tuple[_Op | None, in
     return last, last_idx, last_exact
 
 
-def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: int = 0) -> _ChainExprs | None:  # noqa: C901
+def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int,  # noqa: C901
+           mem_resolver: _MemResolver | None = None, depth: int = 0) -> _ChainExprs | None:
     """Resolve `vn` (as read at program point `limit`) to (value, taint) exprs
-    over a single register operand transformed by constant shifts/masks, or None
-    if the shape is not handled."""
+    over a single register (or stack-memory) operand transformed by constant
+    shifts/masks, or None if the shape is not handled."""
     if depth > 24:
         return None
     d, idx, exact = _last_write(ops, vn, limit)
@@ -201,6 +209,23 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
         return None
     name = d.opcode.name
     obits = d.output.size * 8
+    if name == 'LOAD' and mem_resolver is not None and len(d.inputs) == 2 and exact:
+        # A stack-memory leaf: the engine's resolver returns (value, taint)
+        # MemoryOperands when the address is a stack pointer (no pointer-avalanche
+        # floor needed there), else None -> decline.
+        #
+        # A LOAD that follows a STORE in program order may be a RE-LOAD of a value
+        # this instruction just wrote (memory RMW: `shl [rsp],k` stores the shifted
+        # word and its SF/ZF re-read it back).  Reading shadow memory would give the
+        # PRE-instruction bytes, not the stored result -- an under-taint.  Decline
+        # when any STORE precedes this LOAD, so only true input reads (a pre-store
+        # LOAD, e.g. the operand of the shift and the CF's original-value read) fire.
+        if any(o.opcode.name == 'STORE' for o in ops[:idx]):
+            return None
+        mem = mem_resolver(d.inputs[1], d.output.size)
+        if mem is None:
+            return None
+        return _ChainExprs(mem[0], mem[1], obits)
     if not exact:
         # A wider COPY/ZEXT preserves the low bytes it wrote from, so reading a
         # low-aligned sub-range is the sub-range of that op's input.  Anything
@@ -209,10 +234,10 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
         if (name in ('COPY', 'INT_ZEXT') and src is not None
                 and d.output.offset == vn.offset and src.offset == vn.offset
                 and src.size >= vn.size):
-            return _chain(ops, vn, mapper, idx, depth + 1)
+            return _chain(ops, vn, mapper, idx, mem_resolver, depth + 1)
         return None
     if name in ('COPY', 'INT_ZEXT'):
-        inner = _chain(ops, d.inputs[0], mapper, idx, depth + 1)
+        inner = _chain(ops, d.inputs[0], mapper, idx, mem_resolver, depth + 1)
         if inner is None:
             return None
         # zext widens with zero taint in the new high bits; value/taint carry.
@@ -221,7 +246,7 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
         k = _const_of(d.inputs[1])
         if k is None or k >= obits:
             return None  # shift >= width: bits leave the operand, decline to ICE
-        inner = _chain(ops, d.inputs[0], mapper, idx, depth + 1)
+        inner = _chain(ops, d.inputs[0], mapper, idx, mem_resolver, depth + 1)
         if inner is None:
             return None
         op = Op.LEFT if name == 'INT_LEFT' else Op.RIGHT
@@ -232,7 +257,7 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
         k = _const_of(d.inputs[1])
         if k is None or k <= 0 or k >= obits:
             return None  # k==0 is a no-op elsewhere; k>=width sign-fills the whole word, decline
-        inner = _chain(ops, d.inputs[0], mapper, idx, depth + 1)
+        inner = _chain(ops, d.inputs[0], mapper, idx, mem_resolver, depth + 1)
         if inner is None:
             return None
         # Arithmetic shift replicates the sign bit; value and taint transform the
@@ -245,7 +270,7 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
         for i, j in ((0, 1), (1, 0)):
             c = _const_of(d.inputs[i])
             if c is not None:
-                inner = _chain(ops, d.inputs[j], mapper, idx, depth + 1)
+                inner = _chain(ops, d.inputs[j], mapper, idx, mem_resolver, depth + 1)
                 if inner is None:
                     return None
                 # masking removes the taint of masked-out bits exactly
@@ -257,8 +282,8 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
         # positions, so the taint is the union -- exact for disjoint operands
         # (sound in general). Only used when both sides resolve, which for these
         # is two constant shifts of registers.
-        left = _chain(ops, d.inputs[0], mapper, idx, depth + 1)
-        right = _chain(ops, d.inputs[1], mapper, idx, depth + 1)
+        left = _chain(ops, d.inputs[0], mapper, idx, mem_resolver, depth + 1)
+        right = _chain(ops, d.inputs[1], mapper, idx, mem_resolver, depth + 1)
         if left is None or right is None or not (left.shifted or right.shifted):
             return None
         val = BinaryExpr(Op.OR, left.value, right.value)
@@ -300,13 +325,15 @@ def closed_form_taint(  # noqa: C901
     slice_ops: list[PcodeOp],
     mapper: StateMapper,
     out_is_flag: bool,
+    mem_resolver: _MemResolver | None = None,
 ) -> Expr | None:
     """Return the exact closed-form taint Expr for the slice's output, or None.
 
     For a 1-bit flag: fires when a constant-count select collapsed (the
     shift-by-immediate signature). For a register RESULT: fires when the value is
     a constant shift of one register (taint = the shifted source taint), which
-    removes the shift result's ICE cell too.
+    removes the shift result's ICE cell too.  `mem_resolver`, when supplied,
+    lets a leaf be a STACK-memory read (shl/sar [rsp],imm), resolved by the engine.
     """
     if not slice_ops:
         return None
@@ -322,7 +349,7 @@ def closed_form_taint(  # noqa: C901
             return None
         idx_by_out = {_key(o.output): i for i, o in enumerate(simp) if o.output is not None}
         limit = idx_by_out.get(_key(out), len(simp)) + 1
-        ch = _chain(simp, out, mapper, limit)
+        ch = _chain(simp, out, mapper, limit, mem_resolver)
         if ch is not None and ch.shifted:
             return _capped(_mask(ch.taint, ch.width))
         return None
@@ -375,13 +402,13 @@ def closed_form_taint(  # noqa: C901
     if name in ('INT_EQUAL', 'INT_NOTEQUAL') and len(cur.inputs) == 2:
         for i, j in ((0, 1), (1, 0)):
             if _const_of(cur.inputs[i]) == 0:
-                ch = _chain(simp, cur.inputs[j], mapper, limit)
+                ch = _chain(simp, cur.inputs[j], mapper, limit, mem_resolver)
                 if ch is not None:
                     return _capped(EqualityTaintExpr(ch.value, ch.taint, Constant(0, 8), Constant(0, 8), ch.width))
         return None
     # CF/SF-shape: MSB via signed-less-than-zero, x a handled chain.
     if name == 'INT_SLESS' and len(cur.inputs) == 2 and _const_of(cur.inputs[1]) == 0:
-        ch = _chain(simp, cur.inputs[0], mapper, limit)
+        ch = _chain(simp, cur.inputs[0], mapper, limit, mem_resolver)
         if ch is not None:
             return _capped(_sign_bit_taint(ch))
     return None

@@ -1748,12 +1748,12 @@
     "push rax; add qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 332
+      "nodes": 296
     },
     "push rax; add qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
       "cells": 5,
-      "nodes": 499
+      "nodes": 444
     },
     "push rax; and qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
@@ -1812,18 +1812,18 @@
     },
     "push rax; shl qword ptr [rsp], 7; pop rcx": {
       "assigns": 9,
-      "cells": 3,
-      "nodes": 1482
+      "cells": 2,
+      "nodes": 655
     },
     "push rax; sub qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 332
+      "nodes": 296
     },
     "push rax; xadd qword ptr [rsp], rbx; pop rcx": {
       "assigns": 10,
       "cells": 5,
-      "nodes": 554
+      "nodes": 499
     },
     "push rax; xchg qword ptr [rsp], rbx; pop rcx": {
       "assigns": 5,
@@ -7686,7 +7686,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-05T19:56:03.959588+00:00",
+    "generated": "2026-09-05T20:17:11.421239+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

@@ -1472,6 +1472,42 @@ def _build_signed_overflow_taint(  # noqa: C901
     )
 
 
+# Stack-pointer register names.  A LOAD/STORE through one of these is a stack
+# access whose ADDRESS the engine deliberately does NOT treat as attacker-
+# controlled (see the pointer-avalanche's _STACK_POINTER_NAMES exclusion below):
+# RSP taint propagates arithmetically, not as an unknown read address.  So a
+# closed form that reads stack memory directly is consistent with the engine's
+# existing stack model and needs no pointer-avalanche floor.  A non-stack pointer
+# does need that floor, so the memory-operand closed forms decline for those.
+# Kept identical to the pointer-avalanche's own exclusion set so the memory-operand
+# closed form inherits exactly the engine's (deliberate) stack-taint model.
+_STACK_PTR_NAMES: frozenset[str] = frozenset({'RSP', 'ESP', 'SP'})
+
+
+def _stack_mem_operand(
+    addr_vn: Varnode,
+    size: int,
+    slice_ops: list[PcodeOp],
+    mapper: StateMapper,
+) -> tuple[MemoryOperand, MemoryOperand] | None:
+    """(value, taint) MemoryOperands for a LOAD whose address is a STACK pointer
+    (``[rsp]`` / ``[rsp+off]``), or None.
+
+    Restricted to stack pointers so no pointer-avalanche floor is needed: the
+    engine already models a stack read as a direct shadow-memory read at the
+    concrete address (RSP taint is not treated as an unknown address).  The
+    address expression evaluates to the same concrete address the ICE differential
+    resolves, so the two read the same bytes.
+    """
+    base, offset = resolve_ptr_with_offset(addr_vn, slice_ops, mapper)
+    if base is None or base.name not in _STACK_PTR_NAMES:
+        return None
+    addr: Expr = _get_taint_operand(base.name, base.bit_start, base.bit_end, False)
+    if offset:
+        addr = BinaryExpr(Op.ADD, addr, Constant(offset & 0xFFFFFFFFFFFFFFFF, 64))
+    return (MemoryOperand(addr, size, is_taint=False), MemoryOperand(addr, size, is_taint=True))
+
+
 def _build_carry_flag_taint(  # noqa: C901
     slice_ops: list[PcodeOp],
     mapper: StateMapper,
@@ -1507,7 +1543,8 @@ def _build_carry_flag_taint(  # noqa: C901
 
     def _operand(vn: Varnode) -> tuple[Expr, Expr, tuple[str, int, int] | None] | None:
         """(value expr, taint expr, independence key).  The key is a register's
-        (name, bit_start, bit_end) or None for a constant (independent of all)."""
+        (name, bit_start, bit_end); None for a constant or a STACK memory read
+        (both independent of the register operand in these two-operand shapes)."""
         if vn.space.name == 'const':
             bits = vn.size * 8
             return (Constant(vn.offset & ((1 << bits) - 1), bits), Constant(0, bits), None)
@@ -1532,8 +1569,14 @@ def _build_carry_flag_taint(  # noqa: C901
                 ),
                 None,
             )
-            if d is not None and d.opcode.name == 'COPY' and len(d.inputs) == 1 and d.inputs[0].size == vn.size:
+            if d is None:
+                return None
+            if d.opcode.name == 'COPY' and len(d.inputs) == 1 and d.inputs[0].size == vn.size:
                 return _operand(d.inputs[0])
+            if d.opcode.name == 'LOAD' and len(d.inputs) == 2:
+                mem = _stack_mem_operand(d.inputs[1], vn.size, slice_ops, mapper)
+                if mem is not None:
+                    return (mem[0], mem[1], None)
         return None
 
     ra = _operand(term.inputs[0])
@@ -2540,6 +2583,7 @@ def generate_taint_assignments(  # noqa: C901
     if _CLOSED_FORM_FLAGS and not isinstance(mapping, MemMapping):
         _cf = closed_form_taint(
             slice_ops, mapper, out_is_flag=(out_bit_end - out_bit_start + 1) == 1,
+            mem_resolver=lambda addr_vn, size: _stack_mem_operand(addr_vn, size, slice_ops, mapper),
         )
         if _cf is not None:
             assignments.append(
