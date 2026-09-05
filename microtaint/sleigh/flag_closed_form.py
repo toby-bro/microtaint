@@ -78,6 +78,36 @@ class _Op(Protocol):
     def inputs(self) -> Sequence[_Vn]: ...
 
 
+# A closed form is only worth emitting if it is SMALL. A bit/byte permutation
+# (bswap/rbit/rev) resolves to an OR of many shifted-and-masked bytes, whose
+# union blows up (rbit x0 -> 627 nodes) and is far bigger than the single-call
+# MAPPED form it would replace; cap the emitted expression so those decline.
+_MAX_NODES = 24
+
+
+def _count_nodes(expr: object, depth: int = 0) -> int:
+    if expr is None or depth > 200:
+        return 0
+    total = 1
+    for attr in ('lhs', 'rhs', 'expr', 'operand', 'address_expr'):
+        child = getattr(expr, attr, None)
+        if child is not None:
+            total += _count_nodes(child, depth + 1)
+    inputs = getattr(expr, 'inputs', None)
+    if isinstance(inputs, dict):
+        for child in inputs.values():
+            total += _count_nodes(child, depth + 1)
+    return total
+
+
+def _capped(expr: Expr | None) -> Expr | None:
+    """Emit the closed form only if it is smaller than the alternative it
+    replaces; otherwise decline so the existing (compact) path stands."""
+    if expr is None or _count_nodes(expr) > _MAX_NODES:
+        return None
+    return expr
+
+
 def _key(vn: _Vn) -> tuple[str, int, int]:
     return (vn.space.name, vn.offset, vn.size)
 
@@ -262,7 +292,7 @@ def closed_form_taint(  # noqa: C901
         limit = idx_by_out.get(_key(out), len(simp)) + 1
         ch = _chain(simp, out, mapper, limit)
         if ch is not None and ch.shifted:
-            return _mask(ch.taint, ch.width)
+            return _capped(_mask(ch.taint, ch.width))
         return None
 
     if not _select_collapsed(slice_ops, simp):
@@ -313,13 +343,13 @@ def closed_form_taint(  # noqa: C901
             if _const_of(cur.inputs[i]) == 0:
                 ch = _chain(simp, cur.inputs[j], mapper, limit)
                 if ch is not None:
-                    return EqualityTaintExpr(ch.value, ch.taint, Constant(0, 8), Constant(0, 8), ch.width)
+                    return _capped(EqualityTaintExpr(ch.value, ch.taint, Constant(0, 8), Constant(0, 8), ch.width))
         return None
     # CF/SF-shape: MSB via signed-less-than-zero, x a handled chain.
     if name == 'INT_SLESS' and len(cur.inputs) == 2 and _const_of(cur.inputs[1]) == 0:
         ch = _chain(simp, cur.inputs[0], mapper, limit)
         if ch is not None:
-            return _sign_bit_taint(ch)
+            return _capped(_sign_bit_taint(ch))
     return None
 
 

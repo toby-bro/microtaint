@@ -158,12 +158,12 @@
     "ROL r64,imm8": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 224
+      "nodes": 190
     },
     "ROR r64,imm8": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 247
+      "nodes": 121
     },
     "SAR r64,imm8": {
       "assigns": 6,
@@ -173,22 +173,22 @@
     "SHL r32,imm8": {
       "assigns": 7,
       "cells": 2,
-      "nodes": 398
+      "nodes": 260
     },
     "SHL r64,imm8": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 320
+      "nodes": 249
     },
     "SHR r32,imm8": {
       "assigns": 7,
       "cells": 2,
-      "nodes": 564
+      "nodes": 426
     },
     "SHR r64,imm8": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 488
+      "nodes": 417
     },
     "TEST r32,r32": {
       "assigns": 5,
@@ -1843,7 +1843,7 @@
     "rcl al": {
       "assigns": 3,
       "cells": 1,
-      "nodes": 132
+      "nodes": 116
     },
     "rcl ax, 0x7f": {
       "assigns": 2,
@@ -1853,37 +1853,37 @@
     "rcl eax": {
       "assigns": 4,
       "cells": 1,
-      "nodes": 157
+      "nodes": 121
     },
     "rcl rax, 0x7f": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcl rax, 1": {
       "assigns": 3,
       "cells": 1,
-      "nodes": 132
+      "nodes": 112
     },
     "rcl rax, 15": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcl rax, 3": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcl rax, 31": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcl rax, 63": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcl rax, cl": {
       "assigns": 2,
@@ -1892,13 +1892,13 @@
     },
     "rcl rbx": {
       "assigns": 3,
-      "cells": 4,
-      "nodes": 132
+      "cells": 2,
+      "nodes": 112
     },
     "rcr al": {
       "assigns": 3,
       "cells": 1,
-      "nodes": 118
+      "nodes": 106
     },
     "rcr ax, 0x7f": {
       "assigns": 2,
@@ -1908,37 +1908,37 @@
     "rcr eax": {
       "assigns": 4,
       "cells": 1,
-      "nodes": 143
+      "nodes": 115
     },
     "rcr rax, 0x7f": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcr rax, 1": {
       "assigns": 3,
       "cells": 1,
-      "nodes": 118
+      "nodes": 100
     },
     "rcr rax, 15": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcr rax, 3": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcr rax, 31": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcr rax, 63": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 78
+      "nodes": 59
     },
     "rcr rax, cl": {
       "assigns": 2,
@@ -1948,7 +1948,7 @@
     "rcr rbx": {
       "assigns": 3,
       "cells": 5,
-      "nodes": 118
+      "nodes": 100
     },
     "rol al": {
       "assigns": 3,
@@ -1958,7 +1958,7 @@
     "rol ax, 0x7f": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 224
+      "nodes": 196
     },
     "rol eax": {
       "assigns": 4,
@@ -1973,7 +1973,7 @@
     "rol rax, 0x7f": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 224
+      "nodes": 190
     },
     "rol rax, 1": {
       "assigns": 3,
@@ -1983,27 +1983,27 @@
     "rol rax, 15": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 224
+      "nodes": 190
     },
     "rol rax, 3": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 224
+      "nodes": 190
     },
     "rol rax, 31": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 224
+      "nodes": 190
     },
     "rol rax, 63": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 224
+      "nodes": 190
     },
     "rol rax, 7": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 224
+      "nodes": 190
     },
     "rol rax, cl": {
       "assigns": 3,
@@ -2023,7 +2023,7 @@
     "ror ax, 0x7f": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 247
+      "nodes": 131
     },
     "ror eax": {
       "assigns": 4,
@@ -2033,7 +2033,7 @@
     "ror rax, 0x7f": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 247
+      "nodes": 121
     },
     "ror rax, 1": {
       "assigns": 3,
@@ -2043,27 +2043,27 @@
     "ror rax, 15": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 247
+      "nodes": 121
     },
     "ror rax, 3": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 247
+      "nodes": 121
     },
     "ror rax, 31": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 247
+      "nodes": 121
     },
     "ror rax, 63": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 247
+      "nodes": 121
     },
     "ror rax, 7": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 247
+      "nodes": 121
     },
     "ror rax, cl": {
       "assigns": 3,
@@ -2077,13 +2077,13 @@
     },
     "rorx rax, rbx, 0x7f": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 19
+      "cells": 0,
+      "nodes": 7
     },
     "rorx rax, rbx, 7": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 19
+      "cells": 0,
+      "nodes": 7
     },
     "sahf": {
       "assigns": 5,
@@ -2093,7 +2093,7 @@
     "sal ebx": {
       "assigns": 7,
       "cells": 4,
-      "nodes": 155
+      "nodes": 135
     },
     "sar al": {
       "assigns": 6,
@@ -2397,8 +2397,8 @@
     },
     "shl al": {
       "assigns": 6,
-      "cells": 2,
-      "nodes": 140
+      "cells": 1,
+      "nodes": 132
     },
     "shl ax, 0x7f": {
       "assigns": 6,
@@ -2407,53 +2407,53 @@
     },
     "shl eax": {
       "assigns": 7,
-      "cells": 2,
-      "nodes": 155
+      "cells": 1,
+      "nodes": 135
     },
     "shl eax, 5": {
       "assigns": 7,
       "cells": 2,
-      "nodes": 398
+      "nodes": 260
     },
     "shl eax, 7": {
       "assigns": 7,
       "cells": 2,
-      "nodes": 398
+      "nodes": 260
     },
     "shl rax, 0x7f": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 320
+      "nodes": 249
     },
     "shl rax, 1": {
       "assigns": 6,
-      "cells": 2,
-      "nodes": 140
+      "cells": 1,
+      "nodes": 128
     },
     "shl rax, 15": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 320
+      "nodes": 249
     },
     "shl rax, 3": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 320
+      "nodes": 249
     },
     "shl rax, 31": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 320
+      "nodes": 249
     },
     "shl rax, 63": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 320
+      "nodes": 249
     },
     "shl rax, 7": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 320
+      "nodes": 249
     },
     "shl rax, cl": {
       "assigns": 6,
@@ -2463,7 +2463,7 @@
     "shl rbx": {
       "assigns": 6,
       "cells": 4,
-      "nodes": 140
+      "nodes": 128
     },
     "shld r10d, r11d": {
       "assigns": 7,
@@ -2482,13 +2482,13 @@
     },
     "shld rax, rbx, 0x7f": {
       "assigns": 6,
-      "cells": 5,
-      "nodes": 919
+      "cells": 3,
+      "nodes": 335
     },
     "shld rax, rbx, 7": {
       "assigns": 6,
-      "cells": 5,
-      "nodes": 919
+      "cells": 3,
+      "nodes": 335
     },
     "shld rax, rbx, cl": {
       "assigns": 6,
@@ -2513,32 +2513,32 @@
     "shr rax, 0x7f": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 488
+      "nodes": 417
     },
     "shr rax, 15": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 488
+      "nodes": 417
     },
     "shr rax, 3": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 488
+      "nodes": 417
     },
     "shr rax, 31": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 488
+      "nodes": 417
     },
     "shr rax, 63": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 488
+      "nodes": 417
     },
     "shr rax, 7": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 488
+      "nodes": 417
     },
     "shr rax, cl": {
       "assigns": 6,
@@ -2563,12 +2563,12 @@
     "shrd rax, rbx, 0x7f": {
       "assigns": 6,
       "cells": 5,
-      "nodes": 1135
+      "nodes": 551
     },
     "shrd rax, rbx, 7": {
       "assigns": 6,
       "cells": 5,
-      "nodes": 1135
+      "nodes": 551
     },
     "shrd rax, rbx, cl": {
       "assigns": 6,
@@ -3174,68 +3174,68 @@
     },
     "bfi x0, x1, #0, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 9
     },
     "bfi x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 19
     },
     "bfi x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 19
     },
     "bfi x0, x1, #8, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 19
     },
     "bfi x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 19
     },
     "bfm x0, x1, #0, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 9
     },
     "bfm x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 9
     },
     "bfm x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 9
     },
     "bfm x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 9
     },
     "bfxil x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 9
     },
     "bfxil x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 9
     },
     "bfxil x0, x1, #4, #20": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 9
     },
     "bfxil x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 9
     },
     "bic w0, w1, w2": {
       "assigns": 1,
@@ -3889,23 +3889,23 @@
     },
     "extr x0, x1, x2, #1": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 7
     },
     "extr x0, x1, x2, #13": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 7
     },
     "extr x0, x1, x2, #63": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 7
     },
     "lsl w0, w1, #3": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 5
     },
     "lsl w0, w1, w2": {
       "assigns": 1,
@@ -3914,28 +3914,28 @@
     },
     "lsl x0, x1, #0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "lsl x0, x1, #1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "lsl x0, x1, #5": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "lsl x0, x1, #63": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "lsl x0, x1, #7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "lslv x0, x1, x2": {
       "assigns": 1,
@@ -3944,8 +3944,8 @@
     },
     "lsr w0, w1, #3": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 5
     },
     "lsr w0, w1, w2": {
       "assigns": 1,
@@ -3954,23 +3954,23 @@
     },
     "lsr x0, x1, #1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "lsr x0, x1, #5": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "lsr x0, x1, #63": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "lsr x0, x1, #7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "lsrv x0, x1, x2": {
       "assigns": 1,
@@ -4224,33 +4224,33 @@
     },
     "orr x0, x1, x2, lsl #1": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 5
     },
     "orr x0, x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 5
     },
     "orr x0, x1, x2, lsl #7": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 5
     },
     "orr x0, x1, x2, lsr #32": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 5
     },
     "orr x0, x1, x2, lsr #4": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 5
     },
     "orr x0, x1, x2, lsr #9": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 5
     },
     "rbit w0, w1": {
       "assigns": 1,
@@ -4284,18 +4284,18 @@
     },
     "rev16 w0, w1": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 15
     },
     "rev16 x0, x1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 11
     },
     "rev16 x1, x2": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 11
     },
     "rev32 x0, x1": {
       "assigns": 1,
@@ -4309,8 +4309,8 @@
     },
     "ror w0, w1, #3": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ror w0, w1, w2": {
       "assigns": 1,
@@ -4324,23 +4324,23 @@
     },
     "ror x0, x1, #1": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 7
     },
     "ror x0, x1, #5": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 7
     },
     "ror x0, x1, #63": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 7
     },
     "ror x0, x1, #7": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 7
     },
     "rorv x0, x1, x2": {
       "assigns": 1,
@@ -4699,23 +4699,23 @@
     },
     "ubfiz x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfiz x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfiz x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfiz x0, x1, #9, #12": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfm x0, x1, #0, #16": {
       "assigns": 1,
@@ -4724,18 +4724,18 @@
     },
     "ubfm x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfm x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfm x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfx x0, x1, #0, #1": {
       "assigns": 1,
@@ -4749,23 +4749,23 @@
     },
     "ubfx x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfx x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfx x0, x1, #5, #17": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "ubfx x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 11
     },
     "udiv w0, w1, w2": {
       "assigns": 1,
@@ -5181,33 +5181,33 @@
     },
     "dsll $2, $4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "dsll32 $2, $4, 0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsll32 $2, $4, 1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsll32 $2, $4, 15": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsll32 $2, $4, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsll32 $2, $4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsra $2, $4, 7": {
       "assigns": 1,
@@ -5241,33 +5241,33 @@
     },
     "dsrl $2, $4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 3
     },
     "dsrl32 $2, $4, 0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsrl32 $2, $4, 1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsrl32 $2, $4, 15": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsrl32 $2, $4, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsrl32 $2, $4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 3
     },
     "dsub $2, $4": {
       "assigns": 1,
@@ -6878,48 +6878,48 @@
     },
     "rlwimi 3, 4, 1, 0, 31": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 28
+      "cells": 0,
+      "nodes": 13
     },
     "rlwimi 3, 4, 4, 28, 31": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 28
+      "cells": 0,
+      "nodes": 19
     },
     "rlwimi 3, 4, 5, 0, 15": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 28
+      "cells": 0,
+      "nodes": 19
     },
     "rlwimi 3, 4, 5, 0, 31": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 28
+      "cells": 0,
+      "nodes": 13
     },
     "rlwimi 3, 4, 5, 16, 31": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 28
+      "cells": 0,
+      "nodes": 19
     },
     "rlwimi 3, 4, 5, 6": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 28
+      "cells": 0,
+      "nodes": 19
     },
     "rlwimi 3, 4, 5, 8, 20": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 28
+      "cells": 0,
+      "nodes": 19
     },
     "rlwimi 3, 4, 5, 8, 23": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 28
+      "cells": 0,
+      "nodes": 19
     },
     "rlwimi 3, 4, 7, 0, 31": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 28
+      "cells": 0,
+      "nodes": 13
     },
     "rlwinm 3, 4, 0, 16, 31": {
       "assigns": 1,
@@ -6928,63 +6928,63 @@
     },
     "rlwinm 3, 4, 1, 0, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 13
     },
     "rlwinm 3, 4, 12, 0, 19": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 15
     },
     "rlwinm 3, 4, 31, 0, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 13
     },
     "rlwinm 3, 4, 4, 28, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 15
     },
     "rlwinm 3, 4, 5, 0, 15": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 15
     },
     "rlwinm 3, 4, 5, 0, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 13
     },
     "rlwinm 3, 4, 5, 16, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 15
     },
     "rlwinm 3, 4, 5, 6": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 15
     },
     "rlwinm 3, 4, 5, 8, 20": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 15
     },
     "rlwinm 3, 4, 5, 8, 23": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 15
     },
     "rlwinm 3, 4, 7, 0, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 13
     },
     "rlwinm. 3, 4, 5, 8, 20": {
       "assigns": 2,
       "cells": 2,
-      "nodes": 124
+      "nodes": 111
     },
     "rlwnm 3, 4, 1, 0, 31": {
       "assigns": 1,
@@ -7033,8 +7033,8 @@
     },
     "rotlwi 3, 4, 9": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 13
     },
     "slw 0, 3, 4": {
       "assigns": 1,
@@ -7068,8 +7068,8 @@
     },
     "slwi 3, 4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 15
     },
     "sraw 0, 3, 4": {
       "assigns": 1,
@@ -7178,8 +7178,8 @@
     },
     "srwi 3, 4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 17
+      "cells": 0,
+      "nodes": 15
     },
     "stb 4, -16(1); lbz 3, -16(1)": {
       "assigns": 2,
@@ -7580,13 +7580,13 @@
     },
     "slli": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 18
+      "cells": 0,
+      "nodes": 3
     },
     "slli_31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 18
+      "cells": 0,
+      "nodes": 3
     },
     "slliw": {
       "assigns": 1,
@@ -7650,8 +7650,8 @@
     },
     "srli": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 18
+      "cells": 0,
+      "nodes": 3
     },
     "srliw": {
       "assigns": 1,
@@ -7686,7 +7686,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-05T15:47:26.417454+00:00",
+    "generated": "2026-09-05T16:40:17.701823+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",
