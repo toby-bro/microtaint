@@ -103,37 +103,39 @@ def _mask(expr: Expr, width: int) -> Expr:
     return BinaryExpr(Op.AND, expr, Constant((1 << width) - 1, 8))
 
 
-def _defining(ops: Sequence[_Op], vn: _Vn) -> tuple[_Op | None, bool]:
-    """(exact-match defining op, any-overlap) for `vn` within the slice.
+def _last_write(ops: Sequence[_Op], vn: _Vn, limit: int) -> tuple[_Op | None, int, bool]:
+    """(op, index, is_exact) for the LAST write overlapping `vn` at an index
+    below `limit`, or (None, -1, False) if none.
 
-    A register read whose byte range overlaps an op's output IS that computed
-    value, not the input register -- so `ror`/`sar` write their result back into
-    the source register and the flag then reads the rotated/shifted value.  We
-    must resolve through the exact producer (or decline on partial overlap),
-    never treat such a register as an input leaf."""
-    exact = None
-    overlap = False
-    for op in ops:
+    p-code is not SSA: a register is written in place, so a use resolves to the
+    most recent write BEFORE it (hence `limit`).  `shl`'s result INT_LEFT reads
+    and writes the same varnode, and `ror`/`sar` write the rotated value back
+    into the source register -- program order is what disambiguates them."""
+    last: _Op | None = None
+    last_idx = -1
+    last_exact = False
+    for i, op in enumerate(ops):
+        if i >= limit:
+            break
         o = op.output
         if o is None or o.space.name != vn.space.name:
             continue
         if o.offset < vn.offset + vn.size and vn.offset < o.offset + o.size:
-            overlap = True
-            if _key(o) == _key(vn):
-                exact = op  # last exact definition (forward-ordered slice)
-    return exact, overlap
+            last, last_idx, last_exact = op, i, _key(o) == _key(vn)
+    return last, last_idx, last_exact
 
 
-def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, depth: int = 0) -> _ChainExprs | None:  # noqa: C901
-    """Resolve `vn` to (value, taint) exprs over a single register operand
-    transformed by constant shifts/masks, or None if the shape is not handled."""
+def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: int = 0) -> _ChainExprs | None:  # noqa: C901
+    """Resolve `vn` (as read at program point `limit`) to (value, taint) exprs
+    over a single register operand transformed by constant shifts/masks, or None
+    if the shape is not handled."""
     if depth > 24:
         return None
-    d, overlap = _defining(ops, vn)
+    d, idx, exact = _last_write(ops, vn, limit)
     if d is None:
-        # Not produced in the slice: a true input leaf (only registers qualify).
-        if overlap or vn.space.name != 'register':
-            return None  # partial overwrite, or an undefined unique: unsafe
+        # No write before `limit`: a true input leaf (registers only).
+        if vn.space.name != 'register':
+            return None
         m = mapper.map_to_state(vn.offset, vn.size)
         if m is None or getattr(m, 'name', None) is None or hasattr(m, 'addr_reg'):
             return None  # unmapped or a memory mapping
@@ -147,8 +149,18 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, depth: int = 0) -> 
         return None
     name = d.opcode.name
     obits = d.output.size * 8
+    if not exact:
+        # A wider COPY/ZEXT preserves the low bytes it wrote from, so reading a
+        # low-aligned sub-range is the sub-range of that op's input.  Anything
+        # else (partial/other overlap) is unsafe: decline.
+        src = d.inputs[0] if d.inputs else None
+        if (name in ('COPY', 'INT_ZEXT') and src is not None
+                and d.output.offset == vn.offset and src.offset == vn.offset
+                and src.size >= vn.size):
+            return _chain(ops, vn, mapper, idx, depth + 1)
+        return None
     if name in ('COPY', 'INT_ZEXT'):
-        inner = _chain(ops, d.inputs[0], mapper, depth + 1)
+        inner = _chain(ops, d.inputs[0], mapper, idx, depth + 1)
         if inner is None:
             return None
         # zext widens with zero taint in the new high bits; value/taint carry.
@@ -157,7 +169,7 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, depth: int = 0) -> 
         k = _const_of(d.inputs[1])
         if k is None or k >= obits:
             return None  # shift >= width: bits leave the operand, decline to ICE
-        inner = _chain(ops, d.inputs[0], mapper, depth + 1)
+        inner = _chain(ops, d.inputs[0], mapper, idx, depth + 1)
         if inner is None:
             return None
         op = Op.LEFT if name == 'INT_LEFT' else Op.RIGHT
@@ -168,7 +180,7 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, depth: int = 0) -> 
         for i, j in ((0, 1), (1, 0)):
             c = _const_of(d.inputs[i])
             if c is not None:
-                inner = _chain(ops, d.inputs[j], mapper, depth + 1)
+                inner = _chain(ops, d.inputs[j], mapper, idx, depth + 1)
                 if inner is None:
                     return None
                 # masking removes the taint of masked-out bits exactly
@@ -247,21 +259,24 @@ def closed_form_taint(  # noqa: C901
             return None
         seen.add(k)
         cur = by_out.get(k)
-    if cur is None:
+    if cur is None or cur.output is None:
         return None
     name = cur.opcode.name
+    # `cur`'s operands are read at its program point; resolve chains before it.
+    idx_by_out = {_key(o.output): i for i, o in enumerate(simp) if o.output is not None}
+    limit = idx_by_out.get(_key(cur.output), len(simp))
 
     # ZF-shape: (x == 0) with x a handled chain.
     if name == 'INT_EQUAL' and len(cur.inputs) == 2:
         for i, j in ((0, 1), (1, 0)):
             if _const_of(cur.inputs[i]) == 0:
-                ch = _chain(simp, cur.inputs[j], mapper)
+                ch = _chain(simp, cur.inputs[j], mapper, limit)
                 if ch is not None:
                     return EqualityTaintExpr(ch.value, ch.taint, Constant(0, 8), Constant(0, 8), ch.width)
         return None
     # CF/SF-shape: MSB via signed-less-than-zero, x a handled chain.
     if name == 'INT_SLESS' and len(cur.inputs) == 2 and _const_of(cur.inputs[1]) == 0:
-        ch = _chain(simp, cur.inputs[0], mapper)
+        ch = _chain(simp, cur.inputs[0], mapper, limit)
         if ch is not None:
             return _sign_bit_taint(ch)
     return None
