@@ -1539,7 +1539,6 @@ static PyObject *do_evaluate(CompiledCircuit *self,
      * and flags share one execution across the per-assignment eval_program calls
      * below. Only when the C kernel is in use (a CellHandle capsule proves it);
      * reset_frame_cache honors MICROTAINT_RECYCLE_FRAMES (on by default). */
-    int recycle_armed = 0;
     if (g_cell_capi && g_cell_capi->reset_frame_cache
             && pcode_eval && pcode_eval != Py_None
             && self->cell_handles && PyList_Check(self->cell_handles)) {
@@ -1548,7 +1547,6 @@ static PyObject *do_evaluate(CompiledCircuit *self,
             PyObject *hc = PyList_GET_ITEM(self->cell_handles, hi);
             if (hc && hc != Py_None && PyCapsule_CheckExact(hc)) {
                 g_cell_capi->reset_frame_cache((EvalC_API *)pcode_eval, 1);
-                recycle_armed = 1;
                 break;
             }
         }
@@ -1840,16 +1838,35 @@ static PyObject *do_evaluate(CompiledCircuit *self,
     Py_DECREF(values_norm);
     return output_taint;
 }
+/* Interned EvalContext / simulator attribute names.  PyObject_GetAttrString
+ * rebuilds and rehashes a temporary PyUnicode on every call; interning once and
+ * using PyObject_GetAttr skips that per-evaluate string churn on the hot path. */
+static PyObject *g_ctx_attr[7];  /* taint,values,policy,shadow,reader,sim,_pcode */
+static int intern_ctx_attrs(void) {
+    static const char *names[7] = {
+        "input_taint", "input_values", "implicit_policy",
+        "shadow_memory", "mem_reader", "simulator", "_pcode",
+    };
+    for (int i = 0; i < 7; i++) {
+        if (!g_ctx_attr[i]) {
+            g_ctx_attr[i] = PyUnicode_InternFromString(names[i]);
+            if (!g_ctx_attr[i]) return -1;
+        }
+    }
+    return 0;
+}
+
 static PyObject *CompiledCircuit_evaluate(CompiledCircuit *self, PyObject *args) {
     PyObject *context;
     if (!PyArg_ParseTuple(args, "O", &context)) return NULL;
+    if (intern_ctx_attrs() < 0) return NULL;
 
-    PyObject *input_taint = PyObject_GetAttrString(context, "input_taint");
-    PyObject *input_values = PyObject_GetAttrString(context, "input_values");
-    PyObject *implicit_policy = PyObject_GetAttrString(context, "implicit_policy");
-    PyObject *shadow_memory = PyObject_GetAttrString(context, "shadow_memory");
-    PyObject *mem_reader = PyObject_GetAttrString(context, "mem_reader");
-    PyObject *simulator = PyObject_GetAttrString(context, "simulator");
+    PyObject *input_taint = PyObject_GetAttr(context, g_ctx_attr[0]);
+    PyObject *input_values = PyObject_GetAttr(context, g_ctx_attr[1]);
+    PyObject *implicit_policy = PyObject_GetAttr(context, g_ctx_attr[2]);
+    PyObject *shadow_memory = PyObject_GetAttr(context, g_ctx_attr[3]);
+    PyObject *mem_reader = PyObject_GetAttr(context, g_ctx_attr[4]);
+    PyObject *simulator = PyObject_GetAttr(context, g_ctx_attr[5]);
     if (!input_taint || !input_values || !implicit_policy || !simulator) {
         Py_XDECREF(input_taint); Py_XDECREF(input_values);
         Py_XDECREF(implicit_policy); Py_XDECREF(shadow_memory);
@@ -1861,7 +1878,7 @@ static PyObject *CompiledCircuit_evaluate(CompiledCircuit *self, PyObject *args)
      * which only matters if the circuit has cells that need evaluation. */
     PyObject *pcode = NULL;
     if (simulator != Py_None) {
-        pcode = PyObject_GetAttrString(simulator, "_pcode");
+        pcode = PyObject_GetAttr(simulator, g_ctx_attr[6]);
         if (!pcode) {
             /* Some simulators may not have _pcode; clear the error and
              * proceed with pcode=None.  do_evaluate handles NULL pcode
