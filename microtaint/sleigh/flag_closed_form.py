@@ -21,8 +21,10 @@ cell-execution cost).
 
 Handled leaf grammar (everything else declines):
   register leaf; COPY; INT_ZEXT; INT_AND(x, const); INT_LEFT(x, const);
-  INT_RIGHT(x, const).  INT_SEXT / INT_SRIGHT (sign-taint replication) are NOT
-  handled yet and decline.
+  INT_RIGHT(x, const); INT_SRIGHT(x, const) (arithmetic right shift: every output
+  bit is exactly one input bit -- bit i+k, or the sign bit replicated into the top
+  k -- so value and taint transform by the same sign-replicating shift, exact).
+  INT_SEXT is NOT handled yet and declines.
 """
 
 from __future__ import annotations
@@ -136,6 +138,23 @@ def _mask(expr: Expr, width: int) -> Expr:
     return BinaryExpr(Op.AND, expr, Constant((1 << width) - 1, 8))
 
 
+def _arith_right(expr: Expr, k: int, width: int) -> Expr:
+    """Arithmetic (sign-replicating) right shift of a `width`-bit `expr` by the
+    constant `k` (0 < k < width), built from the logical ops the engine already
+    has.  Output bit i is input bit i+k for i < width-k, and the sign bit
+    (input bit width-1) for the top k bits, so applied to a taint MASK it is an
+    exact bit routing (no mixing) and applied to a VALUE it reproduces the signed
+    shift: ``SUB(0, signbit)`` is all-ones when the sign bit is set and zero
+    otherwise (two's complement, identical on the uint64 fast path and Python),
+    and masking it to the top k bits gives the sign fill.  `expr` must already be
+    masked to `width`."""
+    lo = BinaryExpr(Op.RIGHT, expr, Constant(k, 8))
+    signbit = BinaryExpr(Op.AND, BinaryExpr(Op.RIGHT, expr, Constant(width - 1, 8)), Constant(1, 8))
+    topmask = ((1 << width) - 1) & ~((1 << (width - k)) - 1)
+    fill = BinaryExpr(Op.AND, BinaryExpr(Op.SUB, Constant(0, 8), signbit), Constant(topmask, 8))
+    return BinaryExpr(Op.OR, lo, fill)
+
+
 def _last_write(ops: Sequence[_Op], vn: _Vn, limit: int) -> tuple[_Op | None, int, bool]:
     """(op, index, is_exact) for the LAST write overlapping `vn` at an index
     below `limit`, or (None, -1, False) if none.
@@ -208,6 +227,19 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
         op = Op.LEFT if name == 'INT_LEFT' else Op.RIGHT
         val = _mask(BinaryExpr(op, inner.value, Constant(k, 8)), obits)
         tnt = _mask(BinaryExpr(op, inner.taint, Constant(k, 8)), obits)
+        return _ChainExprs(val, tnt, obits, shifted=True)
+    if name == 'INT_SRIGHT' and len(d.inputs) == 2:
+        k = _const_of(d.inputs[1])
+        if k is None or k <= 0 or k >= obits:
+            return None  # k==0 is a no-op elsewhere; k>=width sign-fills the whole word, decline
+        inner = _chain(ops, d.inputs[0], mapper, idx, depth + 1)
+        if inner is None:
+            return None
+        # Arithmetic shift replicates the sign bit; value and taint transform the
+        # same way (exact bit routing). Mask the source to width so the sign bit is
+        # the real bit width-1.
+        val = _arith_right(_mask(inner.value, obits), k, obits)
+        tnt = _arith_right(_mask(inner.taint, obits), k, obits)
         return _ChainExprs(val, tnt, obits, shifted=True)
     if name == 'INT_AND' and len(d.inputs) == 2:
         for i, j in ((0, 1), (1, 0)):
@@ -337,8 +369,10 @@ def closed_form_taint(  # noqa: C901
     idx_by_out = {_key(o.output): i for i, o in enumerate(simp) if o.output is not None}
     limit = idx_by_out.get(_key(cur.output), len(simp))
 
-    # ZF-shape: (x == 0) with x a handled chain.
-    if name == 'INT_EQUAL' and len(cur.inputs) == 2:
+    # ZF-shape: (x == 0), and the CF of a right shift: (bit != 0). Both are
+    # "is this value zero" up to a boolean negation, which does not change taint,
+    # so both route to EqualityTaintExpr(x, 0).
+    if name in ('INT_EQUAL', 'INT_NOTEQUAL') and len(cur.inputs) == 2:
         for i, j in ((0, 1), (1, 0)):
             if _const_of(cur.inputs[i]) == 0:
                 ch = _chain(simp, cur.inputs[j], mapper, limit)

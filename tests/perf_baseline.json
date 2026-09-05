@@ -158,7 +158,7 @@
     "ROL r64,imm8": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 190
+      "nodes": 111
     },
     "ROR r64,imm8": {
       "assigns": 3,
@@ -167,8 +167,8 @@
     },
     "SAR r64,imm8": {
       "assigns": 6,
-      "cells": 2,
-      "nodes": 850
+      "cells": 1,
+      "nodes": 229
     },
     "SHL r32,imm8": {
       "assigns": 7,
@@ -183,12 +183,12 @@
     "SHR r32,imm8": {
       "assigns": 7,
       "cells": 2,
-      "nodes": 426
+      "nodes": 247
     },
     "SHR r64,imm8": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 417
+      "nodes": 238
     },
     "TEST r32,r32": {
       "assigns": 5,
@@ -1958,7 +1958,7 @@
     "rol ax, 0x7f": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 196
+      "nodes": 117
     },
     "rol eax": {
       "assigns": 4,
@@ -1973,7 +1973,7 @@
     "rol rax, 0x7f": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 190
+      "nodes": 111
     },
     "rol rax, 1": {
       "assigns": 3,
@@ -1983,27 +1983,27 @@
     "rol rax, 15": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 190
+      "nodes": 111
     },
     "rol rax, 3": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 190
+      "nodes": 111
     },
     "rol rax, 31": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 190
+      "nodes": 111
     },
     "rol rax, 63": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 190
+      "nodes": 111
     },
     "rol rax, 7": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 190
+      "nodes": 111
     },
     "rol rax, cl": {
       "assigns": 3,
@@ -2098,7 +2098,7 @@
     "sar al": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 99
+      "nodes": 103
     },
     "sar ax, 0x7f": {
       "assigns": 6,
@@ -2108,52 +2108,52 @@
     "sar eax": {
       "assigns": 7,
       "cells": 2,
-      "nodes": 124
+      "nodes": 128
     },
     "sar eax, 5": {
       "assigns": 7,
-      "cells": 2,
-      "nodes": 924
+      "cells": 1,
+      "nodes": 254
     },
     "sar eax, 7": {
       "assigns": 7,
-      "cells": 2,
-      "nodes": 924
+      "cells": 1,
+      "nodes": 254
     },
     "sar rax, 0x7f": {
       "assigns": 6,
-      "cells": 2,
-      "nodes": 850
+      "cells": 1,
+      "nodes": 229
     },
     "sar rax, 1": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 107
     },
     "sar rax, 15": {
       "assigns": 6,
-      "cells": 2,
-      "nodes": 850
+      "cells": 1,
+      "nodes": 229
     },
     "sar rax, 3": {
       "assigns": 6,
-      "cells": 2,
-      "nodes": 850
+      "cells": 1,
+      "nodes": 229
     },
     "sar rax, 31": {
       "assigns": 6,
-      "cells": 2,
-      "nodes": 850
+      "cells": 1,
+      "nodes": 229
     },
     "sar rax, 63": {
       "assigns": 6,
-      "cells": 2,
-      "nodes": 850
+      "cells": 1,
+      "nodes": 229
     },
     "sar rax, 7": {
       "assigns": 6,
-      "cells": 2,
-      "nodes": 850
+      "cells": 1,
+      "nodes": 229
     },
     "sar rax, cl": {
       "assigns": 6,
@@ -2163,7 +2163,7 @@
     "sar rbx": {
       "assigns": 6,
       "cells": 4,
-      "nodes": 109
+      "nodes": 107
     },
     "sarx eax, ebx, ecx": {
       "assigns": 2,
@@ -2513,32 +2513,32 @@
     "shr rax, 0x7f": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 417
+      "nodes": 238
     },
     "shr rax, 15": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 417
+      "nodes": 238
     },
     "shr rax, 3": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 417
+      "nodes": 238
     },
     "shr rax, 31": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 417
+      "nodes": 238
     },
     "shr rax, 63": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 417
+      "nodes": 238
     },
     "shr rax, 7": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 417
+      "nodes": 238
     },
     "shr rax, cl": {
       "assigns": 6,
@@ -2562,13 +2562,13 @@
     },
     "shrd rax, rbx, 0x7f": {
       "assigns": 6,
-      "cells": 5,
-      "nodes": 551
+      "cells": 3,
+      "nodes": 329
     },
     "shrd rax, rbx, 7": {
       "assigns": 6,
-      "cells": 5,
-      "nodes": 551
+      "cells": 3,
+      "nodes": 329
     },
     "shrd rax, rbx, cl": {
       "assigns": 6,
@@ -3124,13 +3124,13 @@
     },
     "asr w0, w1, #3": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 17
     },
     "asr w0, w1, #5": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 17
     },
     "asr x0, x1, #0": {
       "assigns": 1,
@@ -3139,23 +3139,23 @@
     },
     "asr x0, x1, #1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 13
     },
     "asr x0, x1, #5": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 13
     },
     "asr x0, x1, #63": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 13
     },
     "asr x0, x1, #7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 13
     },
     "asrv w0, w1, w2": {
       "assigns": 1,
@@ -4209,18 +4209,18 @@
     },
     "orr x0, x1, x2, asr #1": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 15
     },
     "orr x0, x1, x2, asr #3": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 15
     },
     "orr x0, x1, x2, asr #5": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 25
+      "cells": 0,
+      "nodes": 15
     },
     "orr x0, x1, x2, lsl #1": {
       "assigns": 1,
@@ -4389,8 +4389,8 @@
     },
     "sbfm x0, x1, #0, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 17
     },
     "sbfm x0, x1, #16, #16": {
       "assigns": 1,
@@ -4399,8 +4399,8 @@
     },
     "sbfm x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 17
     },
     "sbfm x0, x1, #8, #8": {
       "assigns": 1,
@@ -4409,23 +4409,23 @@
     },
     "sbfx x0, x1, #16, #16": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 17
     },
     "sbfx x0, x1, #4, #10": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 17
     },
     "sbfx x0, x1, #5, #17": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 17
     },
     "sbfx x0, x1, #8, #8": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 17
     },
     "sdiv w0, w1, w2": {
       "assigns": 1,
@@ -5211,33 +5211,33 @@
     },
     "dsra $2, $4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 13
     },
     "dsra32 $2, $4, 0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 13
     },
     "dsra32 $2, $4, 1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 13
     },
     "dsra32 $2, $4, 15": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 13
     },
     "dsra32 $2, $4, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 13
     },
     "dsra32 $2, $4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 13
     },
     "dsrl $2, $4, 7": {
       "assigns": 1,
@@ -7103,8 +7103,8 @@
     },
     "srawi 0, 3, 4": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 19
     },
     "srawi 3, 4, 0": {
       "assigns": 1,
@@ -7113,38 +7113,38 @@
     },
     "srawi 3, 4, 1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 19
     },
     "srawi 3, 4, 15": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 19
     },
     "srawi 3, 4, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 19
     },
     "srawi 3, 4, 5": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 19
     },
     "srawi 3, 4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 19
     },
     "srawi 5, 6, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 19
     },
     "srawi. 3, 4, 7": {
       "assigns": 2,
       "cells": 2,
-      "nodes": 118
+      "nodes": 112
     },
     "srw 0, 3, 4": {
       "assigns": 1,
@@ -7625,13 +7625,13 @@
     },
     "srai": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 18
+      "cells": 0,
+      "nodes": 13
     },
     "srai_63": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 18
+      "cells": 0,
+      "nodes": 13
     },
     "sraiw": {
       "assigns": 1,
@@ -7686,7 +7686,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-05T16:40:17.701823+00:00",
+    "generated": "2026-09-05T19:43:27.074763+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",
