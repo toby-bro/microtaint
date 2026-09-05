@@ -270,6 +270,23 @@ static int expr_tree_reads_memory(PyObject *expr, int depth) {
     return 0;
 }
 
+/* Convert a Python int to a 64-bit value with two's-complement semantics.
+ * Accepts any value representable in 64 bits SIGNED or UNSIGNED
+ * ([INT64_MIN, UINT64_MAX]); a negative int becomes its 2's-complement uint64
+ * (e.g. -8 -> 0xFFFFFFFFFFFFFFF8), which is exactly how a negative address
+ * offset or immediate must land on the uint64 bytecode stack.  Returns 1 on
+ * success (*out set), 0 if the magnitude needs more than 64 bits (the caller
+ * then falls back to the Python evaluator, which is arbitrary-precision). */
+static int pylong_to_u64(PyObject *v, uint64_t *out) {
+    unsigned long long uv = PyLong_AsUnsignedLongLong(v);
+    if (!PyErr_Occurred()) { *out = (uint64_t)uv; return 1; }
+    PyErr_Clear();
+    long long sv = PyLong_AsLongLong(v);
+    if (!PyErr_Occurred()) { *out = (uint64_t)sv; return 1; }
+    PyErr_Clear();
+    return 0;
+}
+
 /* Compile one Expr subtree into bytecode (post-order walk: emit operands first). */
 static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
     if (e->fallback || e->overflow) return;
@@ -335,10 +352,13 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         Py_DECREF(cls_name);
         PyObject *value = PyObject_GetAttrString(expr, "value");
         if (!value) { e->fallback = 1; return; }
-        /* Only compile if it fits in uint64 */
+        /* Compile if the value fits in 64 bits (signed or unsigned two's
+         * complement).  Negative address offsets and immediates lower to
+         * negative Constants; pylong_to_u64 accepts them and only bails on a
+         * genuinely >64-bit magnitude. */
         if (!PyLong_Check(value)) { Py_DECREF(value); e->fallback = 1; return; }
-        unsigned long long uv = PyLong_AsUnsignedLongLong(value);
-        if (PyErr_Occurred()) { PyErr_Clear(); Py_DECREF(value); e->fallback = 1; return; }
+        uint64_t uv;
+        if (!pylong_to_u64(value, &uv)) { Py_DECREF(value); e->fallback = 1; return; }
         int ci = (int)PyList_GET_SIZE(cc->constants);
         PyList_Append(cc->constants, value);
         Py_DECREF(value);
@@ -1027,7 +1047,10 @@ static PyObject *eval_program(CompiledCircuit *cc,
         case OP_PUSH_CONST: {
             int ci = (int)bc[pc++];
             PyObject *cv = PyList_GET_ITEM(cc->constants, ci);
-            uint64_t v = (uint64_t)PyLong_AsUnsignedLongLong(cv);
+            /* Mask variant: two's-complement low-64 bits, so a negative constant
+             * (e.g. -8 -> 0xFFFFFFFFFFFFFFF8) loads correctly and never raises.
+             * Validated to fit 64 bits at compile time (pylong_to_u64). */
+            uint64_t v = (uint64_t)PyLong_AsUnsignedLongLongMask(cv);
             if (PyErr_Occurred()) PyErr_Clear();
             stack[sp++] = v;
             break;
