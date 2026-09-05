@@ -590,6 +590,14 @@ static int EvalC_init(EvalC *self, PyObject *args, PyObject *kw) {
             self->frame_a.arch_pc_sz  = self->pc_sz;
             self->frame_b.arch_pc_off = off;
             self->frame_b.arch_pc_sz  = self->pc_sz;
+            /* The frame-recycle pool frames execute branch instructions too,
+             * so they need the same PC seed; without it a relative-branch
+             * target computes from PC=0 and the recycled frame reports a wrong
+             * (zero) PC, collapsing the control-flow taint differential. */
+            for (int _i = 0; _i < RECYCLE_POOL; _i++) {
+                self->frame_pool[_i].arch_pc_off = off;
+                self->frame_pool[_i].arch_pc_sz  = self->pc_sz;
+            }
             break;
         }
     }
