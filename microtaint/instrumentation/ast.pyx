@@ -1417,10 +1417,13 @@ def _run_concrete_step(sub, dict values, sim):
     if be_native:
         new_values = dict(values)
         try:
-            for reg_obj in sub.state_format:
-                new_values[reg_obj.name] = sim._read_reg_concrete(
-                    sub.instruction, regs, reg_obj.name, reg_obj.bits,
-                )
+            # Execute ONCE and read every state register off that single frame,
+            # instead of re-executing the instruction per register (which made a
+            # single MIPS/PPC imm-logic op cost O(#regs) executions -> ~530us,
+            # the bank's p99/p100).  Bit-identical: one deterministic execution,
+            # pure per-register reads.
+            out_specs = [(reg_obj.name, reg_obj.bits) for reg_obj in sub.state_format]
+            new_values.update(sim._native_be().evaluate_concrete_all(sub.instruction, regs, out_specs))
             return new_values
         except Exception:
             pass  # native kernel cannot decode it -> fall back to Unicorn below

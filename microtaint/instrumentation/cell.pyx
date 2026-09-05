@@ -2092,6 +2092,33 @@ cdef class PCodeCellEvaluator:
                                           cell.out_bit_end - cell.out_bit_start + 1)
         return self._read_output(frame, cell.out_reg, cell.out_bit_start, cell.out_bit_end)
 
+    def evaluate_concrete_all(self, str instruction, dict flat_inputs, list out_specs):
+        """Execute `instruction` ONCE with flat_inputs, then read every requested
+        output register off that single frame.  `out_specs` is a list of
+        (name, bits).  Returns {name: post_value}.
+
+        Bit-identical to calling evaluate_concrete once per (name, bits): the
+        frame execution is deterministic and _read_output is a pure read, so N
+        reads off one execution equal N separate executions.  Used to thread
+        big-endian concrete state without O(#regs) re-executions.
+        """
+        cdef _PCodeFrame frame = self._frame_a
+        decoded = _get_decoded(self.arch, bytes.fromhex(instruction))
+        if decoded.has_fallback:
+            raise PCodeFallbackNeeded('instruction requires Unicorn')
+        self._load(frame, flat_inputs)
+        _execute_decoded(frame, decoded)
+        self.native_calls += 1
+        cdef dict out = {}
+        cdef str name
+        cdef int bits
+        for name, bits in out_specs:
+            if bits > 64:
+                out[name] = self._read_output_wide(frame, name, 0, bits)
+            else:
+                out[name] = self._read_output(frame, name, 0, bits - 1)
+        return out
+
     cdef object _read_output_wide(self, _PCodeFrame frame, str out_reg,
                                   int bit_start, int width):
         """Read a WIDE (>64-bit) register output slice as one Python int -- the
