@@ -4,10 +4,11 @@ import os
 from enum import Enum
 from microtaint.instrumentation.cell_c.circuit_c import compile_circuit
 
-# perop frame-sharing opt-in (Increment 1: Cython walker path). When set, the
-# Cython LogicCircuit.evaluate arms a per-evaluate cell frame cache so an
-# instruction's result + flags share one execution. Bit-exact; off by default.
-_PEROP_SHARE = os.environ.get('MICROTAINT_PEROP_SHARE') == '1'
+# Frame recycling (Cython walker path). The Cython LogicCircuit.evaluate arms a
+# per-evaluate cell frame cache so an instruction's result + flags share one
+# execution instead of re-running the whole p-code program per output.
+# Bit-exact; ON by default, set MICROTAINT_RECYCLE_FRAMES=0 to disable.
+_RECYCLE_FRAMES = os.environ.get('MICROTAINT_RECYCLE_FRAMES') != '0'
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture, Register
 
@@ -258,7 +259,7 @@ cdef class EvalContext:
     cdef public object shadow_memory
     cdef public object mem_reader
     cdef public str arch_str  # cached once, avoids str(simulator.arch) per TaintOperand miss
-    cdef public bint share_frames  # perop: route cell exec through the per-evaluate frame cache
+    cdef public bint share_frames  # frame-recycle: route cell exec through the per-evaluate frame cache
 
     def __init__(
         self,
@@ -1291,11 +1292,11 @@ cdef class LogicCircuit:
             return self._compiled.evaluate(context)
 
         # Cython AST fallback (the original implementation):
-        # perop: arm the per-evaluate cell frame cache so this instruction's
+        # frame-recycle: arm the per-evaluate cell frame cache so this instruction's
         # result + flags share one execution instead of re-running the program
-        # per output. Bit-exact; off unless MICROTAINT_PEROP_SHARE=1.
+        # per output. Bit-exact; off unless MICROTAINT_RECYCLE_FRAMES=1.
         cdef object _pc
-        if _PEROP_SHARE and context.simulator is not None:
+        if _RECYCLE_FRAMES and context.simulator is not None:
             _pc = getattr(context.simulator, '_pcode', None)
             if _pc is not None and hasattr(_pc, 'reset_frame_cache'):
                 _pc.reset_frame_cache(True)
@@ -1586,7 +1587,7 @@ cdef class InstructionCellExpr(Expr):
                     # Fall through to the standard MachineState path below.
 
         m_state = _build_machine_state(evaluated_inputs, context)
-        # perop frame-sharing: route through the per-evaluate frame cache so this
+        # frame-recycle frame-sharing: route through the per-evaluate frame cache so this
         # instruction's other output slices read an already-executed frame.
         if context.share_frames:
             pcode = sim._pcode

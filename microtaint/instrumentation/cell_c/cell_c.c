@@ -15,6 +15,7 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "cell_core.h"
 
@@ -62,12 +63,43 @@ static int upper_into(char *dst, int dst_sz, const char *src) {
     return src[i] == 0;
 }
 
+/* ──────────── frame-recycle frame sharing ──────────── */
+/* Per-evaluate cache of already-executed frames, keyed by (bundle, loaded
+ * register inputs). A flag-setting instruction's result + flags load the
+ * identical frame, so the 2nd..Nth output read their slice off the first
+ * execution instead of re-running the whole p-code program. Frames come from a
+ * fixed pool (a cache hit costs no allocation). Bit-exact: identical inputs =>
+ * identical frame. Armed per top-level evaluate by reset_frame_cache.
+ * ON by default; set MICROTAINT_RECYCLE_FRAMES=0 to disable. */
+#define RECYCLE_POOL 32          /* max distinct frames per evaluate (else uncached) */
+#define RECYCLE_MAX_INPUTS 16    /* == CellHandle input cap */
+/* Key = the fully-loaded frame identity: same bundle AND, for every input,
+ * same (offset, size, value). Two output handles of one instruction that load
+ * the identical frame (e.g. add's RAX and CF, both {RAX,RBX} same polarity)
+ * match and share the execution; anything that would load a different frame
+ * (different offset/size/value/order) misses and executes separately. */
+typedef struct {
+    const void *bundle;                 /* DecodedBundle* identity */
+    int         n;                      /* n_inputs */
+    int         off[RECYCLE_MAX_INPUTS];  /* h->inp_off[i] */
+    int         sz[RECYCLE_MAX_INPUTS];   /* h->inp_sz[i]  */
+    uint64_t    vals[RECYCLE_MAX_INPUTS]; /* input_values[i] */
+    int         frame_idx;              /* index into frame_pool */
+} RecycleEntry;
+
 /* ──────────── Object type ──────────── */
 
 typedef struct {
     PyObject_HEAD
     Frame    frame_a;
     Frame    frame_b;
+    /* frame-recycle frame sharing (see above) */
+    Frame      frame_pool[RECYCLE_POOL];
+    RecycleEntry recycle_cache[RECYCLE_POOL];
+    int        recycle_count;    /* live cache entries this evaluate */
+    int        pool_idx;       /* next free pool frame */
+    int        recycle_active;   /* armed for this evaluate */
+    int        recycle_enabled;  /* on unless env MICROTAINT_RECYCLE_FRAMES == "0" */
     PyObject *arch;
     PyObject *get_decoded_fn;
     PyObject *fallback_exc;
@@ -453,6 +485,16 @@ static PyObject *EvalC_new(PyTypeObject *type, PyObject *args, PyObject *kw) {
     memset(&self->frame_b, 0, sizeof(Frame));
     mem_clear(&self->frame_a.mem);
     mem_clear(&self->frame_b.mem);
+    memset(self->frame_pool, 0, sizeof(self->frame_pool));
+    for (int i = 0; i < RECYCLE_POOL; i++) mem_clear(&self->frame_pool[i].mem);
+    self->recycle_count = 0;
+    self->pool_idx = 0;
+    self->recycle_active = 0;
+    /* Frame recycling is ON by default (bit-exact; shares an instruction's
+     * result+flags cell executions).  Set MICROTAINT_RECYCLE_FRAMES=0 to
+     * disable it (A/B debugging / measuring the unshared cost). */
+    { const char *e = getenv("MICROTAINT_RECYCLE_FRAMES");
+      self->recycle_enabled = (e && e[0] == '0' && e[1] == '\0') ? 0 : 1; }
     self->arch = NULL;
     self->get_decoded_fn = NULL;
     self->fallback_exc = NULL;
@@ -491,6 +533,7 @@ static int EvalC_init(EvalC *self, PyObject *args, PyObject *kw) {
         }
         self->frame_a.is_big_endian = be;
         self->frame_b.is_big_endian = be;
+        for (int _i = 0; _i < RECYCLE_POOL; _i++) self->frame_pool[_i].is_big_endian = be;
     }
 
     PyObject *cell_mod = PyImport_ImportModule("microtaint.instrumentation.cell");
@@ -770,6 +813,29 @@ static int cell_handle_init(EvalC *self, PyObject *cell_obj,
     return 0;
 }
 
+/* Load a cell's inputs into frame f: registers first, then memory operands
+ * (a register-relative address resolves against a base register loaded in the
+ * first pass), mirroring load_flat's two-pass order.  Each pushed value is the
+ * already-computed corner (register or memory).  Used by both the frame-recycle
+ * miss path and the unshared path so memory inputs are never dropped. */
+static inline void load_cell_frame(Frame *f, CellHandle *h, const uint64_t *input_values) {
+    for (int i = 0; i < h->n_inputs; i++) {
+        if (h->inp_is_mem[i] || h->inp_off[i] < 0) continue;
+        frame_write_reg(f, h->inp_off[i], h->inp_sz[i], mask64(input_values[i], h->inp_sz[i]));
+    }
+    for (int i = 0; i < h->n_inputs; i++) {
+        if (!h->inp_is_mem[i]) continue;
+        uint64_t addr;
+        if (h->inp_mem_base_off[i] < 0) {
+            addr = h->inp_mem_addr[i];
+        } else {
+            uint64_t base = frame_read_reg(f, h->inp_mem_base_off[i], h->inp_mem_base_sz[i]);
+            addr = base + (uint64_t)h->inp_mem_off[i];
+        }
+        mem_write(&f->mem, addr, input_values[i], h->inp_sz[i], f->is_big_endian);
+    }
+}
+
 /* Fast-path cell call — used by circuit_c via PyCapsule.
  *
  * Inputs: pre-built CellHandle, packed uint64 values (one per input).
@@ -789,37 +855,66 @@ static int cell_eval_fast(EvalC *self, CellHandle *h,
         return 1;  /* fallback */
     }
 
-    Frame *f = &self->frame_a;
-    frame_clear(f);
+    Frame *f;
+    int n = h->n_inputs;
+    uint64_t v;  /* declared before read_slice: label (C: no decl right after label) */
 
-    /* Pass 1: register inputs (by pre-resolved offset; no dict iter, no parsing). */
-    for (int i = 0; i < h->n_inputs; i++) {
-        if (h->inp_is_mem[i] || h->inp_off[i] < 0) continue;
-        frame_write_reg(f, h->inp_off[i], h->inp_sz[i], mask64(input_values[i], h->inp_sz[i]));
-    }
-
-    /* Pass 2: memory inputs.  A register-relative address resolves against the
-     * base register loaded in Pass 1, so this must run after it (same two-pass
-     * order as load_flat). The pushed value is the already-computed corner. */
-    for (int i = 0; i < h->n_inputs; i++) {
-        if (!h->inp_is_mem[i]) continue;
-        uint64_t addr;
-        if (h->inp_mem_base_off[i] < 0) {
-            addr = h->inp_mem_addr[i];
-        } else {
-            uint64_t base = frame_read_reg(f, h->inp_mem_base_off[i], h->inp_mem_base_sz[i]);
-            addr = base + (uint64_t)h->inp_mem_off[i];
+    /* frame-recycle frame sharing: reuse an already-executed frame with the identical
+     * loaded state (same bundle + same (off,sz,val) for every input) so this
+     * instruction's other output slices skip re-execution. Bit-exact. */
+    if (self->recycle_active && n <= RECYCLE_MAX_INPUTS) {
+        for (int e = 0; e < self->recycle_count; e++) {
+            RecycleEntry *pe = &self->recycle_cache[e];
+            if (pe->bundle != (const void *)bundle || pe->n != n) continue;
+            int match = 1;
+            for (int i = 0; i < n; i++) {
+                if (pe->off[i] != h->inp_off[i] || pe->sz[i] != h->inp_sz[i]
+                        || pe->vals[i] != input_values[i]) { match = 0; break; }
+            }
+            if (match) {
+                f = &self->frame_pool[pe->frame_idx];  /* HIT: no execute */
+                goto read_slice;
+            }
         }
-        mem_write(&f->mem, addr, input_values[i], h->inp_sz[i], f->is_big_endian);
+        if (self->pool_idx < RECYCLE_POOL) {
+            int fidx = self->pool_idx;
+            f = &self->frame_pool[fidx];
+            frame_clear(f);
+            load_cell_frame(f, h, input_values);
+            if (execute_decoded(f, bundle) == EXEC_FALLBACK) {
+                self->fallback_calls++;
+                return 1;  /* pool frame left unused; pool_idx not advanced */
+            }
+            self->native_calls++;
+            self->pool_idx = fidx + 1;
+            RecycleEntry *pe = &self->recycle_cache[self->recycle_count++];
+            pe->bundle = (const void *)bundle;
+            pe->n = n;
+            pe->frame_idx = fidx;
+            for (int i = 0; i < n; i++) {
+                pe->off[i] = h->inp_off[i];
+                pe->sz[i] = h->inp_sz[i];
+                pe->vals[i] = input_values[i];
+            }
+            goto read_slice;
+        }
+        /* pool/cache exhausted: fall through to the unshared frame_a path */
     }
+
+    f = &self->frame_a;
+    frame_clear(f);
+    load_cell_frame(f, h, input_values);
 
     if (execute_decoded(f, bundle) == EXEC_FALLBACK) {
         self->fallback_calls++;
         return 1;
     }
+    self->native_calls++;
 
-    /* Read output: fast path uses pre-resolved (off, sz) + direct masking. */
-    uint64_t v;
+read_slice:
+    /* Read output: fast path uses pre-resolved (off, sz) + direct masking.
+     * native_calls is incremented at the execute sites above (once per real
+     * execution), so a shared-frame HIT reads with no execute and no count. */
     if (h->use_slow_read || h->out_off < 0) {
         v = read_output_full(self, f, h->out_reg, h->bit_start, h->bit_end);
     } else {
@@ -829,7 +924,6 @@ static int cell_eval_fast(EvalC *self, CellHandle *h,
         v = (raw >> h->bit_start) & m;
     }
     *out_value = v;
-    self->native_calls++;
     return 0;
 }
 
@@ -877,15 +971,26 @@ typedef struct {
     int (*cell_eval_fast)(EvalC *self, CellHandle *h,
                           const uint64_t *input_values, uint64_t *out_value);
     PyObject *(*get_fallback_exc)(EvalC *self);
+    /* frame-recycle: arm/clear the per-evaluate frame cache. Called once per top-level
+     * evaluate by circuit_c. On by default; disabled by MICROTAINT_RECYCLE_FRAMES=0. */
+    void (*reset_frame_cache)(EvalC *self, int enable);
 } CellCAPI;
 
 static PyObject *get_fallback_exc_impl(EvalC *self) {
     return self->fallback_exc;
 }
 
+static void reset_frame_cache_impl(EvalC *self, int enable) {
+    if (!self->recycle_enabled) { self->recycle_active = 0; return; }
+    self->recycle_active = enable ? 1 : 0;
+    self->recycle_count  = 0;
+    self->pool_idx     = 0;
+}
+
 static CellCAPI _cell_capi = {
     .cell_eval_fast    = cell_eval_fast,
     .get_fallback_exc  = get_fallback_exc_impl,
+    .reset_frame_cache = reset_frame_cache_impl,
 };
 
 static PyObject *EvalC_evaluate_concrete(EvalC *self, PyObject *args) {

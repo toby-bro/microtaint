@@ -27,6 +27,9 @@ typedef struct {
                           const uint64_t *input_values, uint64_t *out_value);
     /* Returns the PCodeFallbackNeeded class (borrowed ref). */
     PyObject *(*get_fallback_exc)(EvalC_API *self);
+    /* frame-recycle: arm/clear the per-evaluate cell frame cache. Called once per
+     * top-level evaluate. On by default; disabled by MICROTAINT_RECYCLE_FRAMES=0. */
+    void (*reset_frame_cache)(EvalC_API *self, int enable);
 } CellCAPI;
 
 #endif

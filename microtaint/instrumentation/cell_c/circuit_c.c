@@ -1535,6 +1535,25 @@ static PyObject *do_evaluate(CompiledCircuit *self,
         return NULL;
     }
 
+    /* frame-recycle: arm the cell's per-evaluate frame cache so an instruction's result
+     * and flags share one execution across the per-assignment eval_program calls
+     * below. Only when the C kernel is in use (a CellHandle capsule proves it);
+     * reset_frame_cache honors MICROTAINT_RECYCLE_FRAMES (on by default). */
+    int recycle_armed = 0;
+    if (g_cell_capi && g_cell_capi->reset_frame_cache
+            && pcode_eval && pcode_eval != Py_None
+            && self->cell_handles && PyList_Check(self->cell_handles)) {
+        Py_ssize_t nh = PyList_GET_SIZE(self->cell_handles);
+        for (Py_ssize_t hi = 0; hi < nh; hi++) {
+            PyObject *hc = PyList_GET_ITEM(self->cell_handles, hi);
+            if (hc && hc != Py_None && PyCapsule_CheckExact(hc)) {
+                g_cell_capi->reset_frame_cache((EvalC_API *)pcode_eval, 1);
+                recycle_armed = 1;
+                break;
+            }
+        }
+    }
+
     /* For each assignment: compile if compiled, else fall back to Python. */
     for (int i = 0; i < self->n_progs; i++) {
         AssignmentProg *prog = &self->progs[i];
@@ -1923,9 +1942,10 @@ static PyTypeObject CompiledCircuitType = {
 /* Module */
 /* Introspection: the Expr class names compile_expr() can emit to bytecode
  * WITHOUT falling back to the Python evaluator. MUST be kept in exact sync with
- * the strcmp dispatch in compile_expr. The expr-coverage guard test compares
- * this against every Expr subclass so a newly added Expr the C compiler cannot
- * handle fails CI (and would silently recross the Python boundary). */
+ * the strcmp dispatch in compile_expr (and emit_call_cell / MemoryOperand). The
+ * expr-coverage guard test compares this against every Expr subclass so a newly
+ * added Expr that the C compiler does not handle fails CI (and would silently
+ * recross the Python boundary). */
 static const char *SUPPORTED_EXPR_TYPES[] = {
     "TaintOperand", "Constant", "BinaryExpr", "UnaryExpr",
     "AvalancheExpr", "InstructionCellExpr", "MemoryOperand",

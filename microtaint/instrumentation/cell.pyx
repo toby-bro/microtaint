@@ -239,7 +239,7 @@ cdef int _sp_id(object vn):
 # Covers all normal x86-64 Sleigh register offsets (0 … 1103).
 # Exotic registers (segment descriptors, BND, …) fall back to the dict.
 DEF REGS_ARR_SIZE = 1104
-# Pre-allocated frames for per-evaluate frame-sharing (perop). One instruction
+# Pre-allocated frames for per-evaluate frame-sharing (frame-recycle). One instruction
 # needs <=8 distinct frames; chains a few more. 32 covers all bank instructions;
 # on exhaustion the shared path executes uncached (still correct).
 DEF _FRAME_POOL_SIZE = 32
@@ -1766,7 +1766,7 @@ cdef class PCodeCellEvaluator:
     cdef public dict _sizes
     cdef public int  native_calls
     cdef public int  fallback_calls
-    # perop frame-sharing (opt-in): a per-evaluate cache of already-executed
+    # frame-recycle frame-sharing (opt-in): a per-evaluate cache of already-executed
     # frames keyed by (instruction, loaded register inputs).  A flag-setting
     # instruction's result + flags load the identical frame, so the second..Nth
     # output read their slice off the first execution instead of re-running the
