@@ -1024,6 +1024,24 @@ static inline uint64_t vsh_smear(int kind, uint64_t y, uint64_t ts, int s0,
     return r;
 }
 
+/* Per-evaluate memo of resolved input operand values, indexed by string_pool
+ * index.  OP_PUSH_TAINT / OP_PUSH_VALUE look up input_taint / input_values (a
+ * Python dict) and convert to uint64 per operand OCCURRENCE; a large flag
+ * differential references the same register many times.  This caches the RAW
+ * per-name value on first use so repeats read an array slot (the per-op bit
+ * slice/mask is still applied).  Lazy: an unused name costs nothing; the first
+ * use costs exactly the old lookup, so this is never slower than the dict path.
+ * A >64-bit taint value is never memoed (it still bails to the Python evaluator,
+ * unchanged).  memo->n == 0 disables it (pool too large / not set up). */
+#define PUSH_MEMO_CAP 512
+typedef struct {
+    uint64_t *tv;   /* raw input_taint[name]  when rt[i] */
+    uint64_t *vv;   /* raw input_values[name] when rv[i] */
+    uint8_t  *rt;   /* taint slot resolved */
+    uint8_t  *rv;   /* value slot resolved */
+    int       n;    /* string_pool length covered (0 => disabled) */
+} PushMemo;
+
 /* Evaluate a single bytecode program for one assignment.
  * Returns the result as Python int (PyLong) or NULL on error. */
 static PyObject *eval_program(CompiledCircuit *cc,
@@ -1031,7 +1049,7 @@ static PyObject *eval_program(CompiledCircuit *cc,
                               PyObject *context,
                               PyObject *input_taint, PyObject *input_values,
                               PyObject *shadow_memory, PyObject *mem_reader,
-                              PyObject *pcode_eval) {
+                              PyObject *pcode_eval, PushMemo *memo) {
     uint64_t stack[CIRCUIT_STACK_MAX];
     int sp = 0;
     int pc = 0;
@@ -1043,17 +1061,23 @@ static PyObject *eval_program(CompiledCircuit *cc,
             int name_idx  = (int)bc[pc++];
             int bit_start = (int)bc[pc++];
             int bit_end   = (int)bc[pc++];
-            PyObject *name = PyList_GET_ITEM(cc->string_pool, name_idx);
-            PyObject *val = PyDict_GetItem(input_taint, name);
-            uint64_t v = 0;
-            if (val) {
-                v = (uint64_t)PyLong_AsUnsignedLongLong(val);
-                if (PyErr_Occurred()) {
-                    PyErr_Clear();
-                    /* Value too big for u64; fall back to Python int math */
-                    /* Punt: bail out by raising — caller uses Python fallback */
-                    return Py_BuildValue("");  /* sentinel; handled below */
+            uint64_t v;
+            if (memo && name_idx < memo->n && memo->rt[name_idx]) {
+                v = memo->tv[name_idx];   /* memo hit: raw value, no dict lookup */
+            } else {
+                PyObject *name = PyList_GET_ITEM(cc->string_pool, name_idx);
+                PyObject *val = PyDict_GetItem(input_taint, name);
+                v = 0;
+                if (val) {
+                    v = (uint64_t)PyLong_AsUnsignedLongLong(val);
+                    if (PyErr_Occurred()) {
+                        PyErr_Clear();
+                        /* Value too big for u64; bail to the Python evaluator.
+                         * Not memoed, so behaviour is unchanged. */
+                        return Py_BuildValue("");  /* sentinel; handled below */
+                    }
                 }
+                if (memo && name_idx < memo->n) { memo->tv[name_idx] = v; memo->rt[name_idx] = 1; }
             }
             int width = bit_end - bit_start + 1;
             uint64_t m = mask_range(width);
@@ -1064,12 +1088,18 @@ static PyObject *eval_program(CompiledCircuit *cc,
             int name_idx  = (int)bc[pc++];
             int bit_start = (int)bc[pc++];
             int bit_end   = (int)bc[pc++];
-            PyObject *name = PyList_GET_ITEM(cc->string_pool, name_idx);
-            PyObject *val = PyDict_GetItem(input_values, name);
-            uint64_t v = 0;
-            if (val) {
-                v = (uint64_t)PyLong_AsUnsignedLongLong(val);
-                if (PyErr_Occurred()) PyErr_Clear();
+            uint64_t v;
+            if (memo && name_idx < memo->n && memo->rv[name_idx]) {
+                v = memo->vv[name_idx];
+            } else {
+                PyObject *name = PyList_GET_ITEM(cc->string_pool, name_idx);
+                PyObject *val = PyDict_GetItem(input_values, name);
+                v = 0;
+                if (val) {
+                    v = (uint64_t)PyLong_AsUnsignedLongLong(val);
+                    if (PyErr_Occurred()) PyErr_Clear();
+                }
+                if (memo && name_idx < memo->n) { memo->vv[name_idx] = v; memo->rv[name_idx] = 1; }
             }
             int width = bit_end - bit_start + 1;
             uint64_t m = mask_range(width);
@@ -1552,6 +1582,22 @@ static PyObject *do_evaluate(CompiledCircuit *self,
         }
     }
 
+    /* Per-evaluate operand-value memo (see PushMemo), shared across all the
+     * per-assignment eval_program calls (input dicts are constant per evaluate).
+     * Stack-allocated; disabled for an unusually large string pool. */
+    PushMemo memo;
+    uint64_t memo_tv[PUSH_MEMO_CAP], memo_vv[PUSH_MEMO_CAP];
+    uint8_t  memo_rt[PUSH_MEMO_CAP], memo_rv[PUSH_MEMO_CAP];
+    int pool_n = self->string_pool ? (int)PyList_GET_SIZE(self->string_pool) : 0;
+    if (pool_n > 0 && pool_n <= PUSH_MEMO_CAP) {
+        memo.tv = memo_tv; memo.vv = memo_vv; memo.rt = memo_rt; memo.rv = memo_rv;
+        memo.n = pool_n;
+        memset(memo_rt, 0, (size_t)pool_n);
+        memset(memo_rv, 0, (size_t)pool_n);
+    } else {
+        memo.tv = NULL; memo.vv = NULL; memo.rt = NULL; memo.rv = NULL; memo.n = 0;
+    }
+
     /* For each assignment: compile if compiled, else fall back to Python. */
     for (int i = 0; i < self->n_progs; i++) {
         AssignmentProg *prog = &self->progs[i];
@@ -1685,7 +1731,7 @@ static PyObject *do_evaluate(CompiledCircuit *self,
         /* Compiled fast path */
         PyObject *result = eval_program(self, prog->bc, prog->bc_len, context,
                                         taint_norm, values_norm,
-                                        shadow_memory, mem_reader, pcode_eval);
+                                        shadow_memory, mem_reader, pcode_eval, &memo);
         if (!result) {
             if (PyErr_Occurred()) PyErr_Clear();
             PyObject *assignments = PyObject_GetAttrString(self->python_circuit, "assignments");
@@ -1716,7 +1762,7 @@ static PyObject *do_evaluate(CompiledCircuit *self,
         } else {
             PyObject *addr_obj = eval_program(self, prog->addr_bc, prog->addr_bc_len,
                                               context, taint_norm, values_norm,
-                                              shadow_memory, mem_reader, pcode_eval);
+                                              shadow_memory, mem_reader, pcode_eval, &memo);
             if (!addr_obj || !PyLong_Check(addr_obj)) {
                 /* Address did not resolve in C; recompute via Python when a real
                  * context is available (mirrors the value-fallback above). */
