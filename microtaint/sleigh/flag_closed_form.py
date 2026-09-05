@@ -87,14 +87,17 @@ def _const_of(vn: _Vn) -> int | None:
 
 
 class _ChainExprs:
-    """(value, taint) exprs for a varnode plus its bit width."""
+    """(value, taint) exprs for a varnode plus its bit width. `shifted` records
+    whether a constant shift was traversed -- the gate for the register-result
+    path, so it fires on a shift result but not on a plain mov / and / call."""
 
-    __slots__ = ('taint', 'value', 'width')
+    __slots__ = ('shifted', 'taint', 'value', 'width')
 
-    def __init__(self, value: Expr, taint: Expr, width: int) -> None:
+    def __init__(self, value: Expr, taint: Expr, width: int, shifted: bool = False) -> None:
         self.value = value
         self.taint = taint
         self.width = width
+        self.shifted = shifted
 
 
 def _mask(expr: Expr, width: int) -> Expr:
@@ -164,7 +167,7 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
         if inner is None:
             return None
         # zext widens with zero taint in the new high bits; value/taint carry.
-        return _ChainExprs(inner.value, inner.taint, obits)
+        return _ChainExprs(inner.value, inner.taint, obits, inner.shifted)
     if name in ('INT_LEFT', 'INT_RIGHT') and len(d.inputs) == 2:
         k = _const_of(d.inputs[1])
         if k is None or k >= obits:
@@ -175,7 +178,7 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
         op = Op.LEFT if name == 'INT_LEFT' else Op.RIGHT
         val = _mask(BinaryExpr(op, inner.value, Constant(k, 8)), obits)
         tnt = _mask(BinaryExpr(op, inner.taint, Constant(k, 8)), obits)
-        return _ChainExprs(val, tnt, obits)
+        return _ChainExprs(val, tnt, obits, shifted=True)
     if name == 'INT_AND' and len(d.inputs) == 2:
         for i, j in ((0, 1), (1, 0)):
             c = _const_of(d.inputs[i])
@@ -186,7 +189,7 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
                 # masking removes the taint of masked-out bits exactly
                 val = BinaryExpr(Op.AND, inner.value, Constant(c, 8))
                 tnt = BinaryExpr(Op.AND, inner.taint, Constant(c, 8))
-                return _ChainExprs(val, tnt, obits)
+                return _ChainExprs(val, tnt, obits, inner.shifted)
     return None
 
 
@@ -224,18 +227,33 @@ def closed_form_taint(  # noqa: C901
     mapper: StateMapper,
     out_is_flag: bool,
 ) -> Expr | None:
-    """Return the exact closed-form taint Expr for the slice's flag output, or None.
+    """Return the exact closed-form taint Expr for the slice's output, or None.
 
-    Fires only when `out_is_flag` is True (a 1-bit flag) and a constant-count
-    select collapsed; register results currently always return None.
+    For a 1-bit flag: fires when a constant-count select collapsed (the
+    shift-by-immediate signature). For a register RESULT: fires when the value is
+    a constant shift of one register (taint = the shifted source taint), which
+    removes the shift result's ICE cell too.
     """
-    # Only flag outputs, and only when a constant-count select actually
-    # collapsed (the shift/rotate-by-immediate signature). This excludes plain
-    # AND/OR/test and register results, where the differential is already exact.
-    if not out_is_flag or not slice_ops:
+    if not slice_ops:
         return None
     simp = simplify_slice(slice_ops)
-    if not simp or not _select_collapsed(slice_ops, simp):
+    if not simp:
+        return None
+
+    if not out_is_flag:
+        # Register result of a constant shift: taint is the shifted source taint.
+        # Gated on `shifted` so it fires on shl/shr but not on mov/and/call/push.
+        out = slice_ops[-1].output
+        if out is None:
+            return None
+        idx_by_out = {_key(o.output): i for i, o in enumerate(simp) if o.output is not None}
+        limit = idx_by_out.get(_key(out), len(simp)) + 1
+        ch = _chain(simp, out, mapper, limit)
+        if ch is not None and ch.shifted:
+            return _mask(ch.taint, ch.width)
+        return None
+
+    if not _select_collapsed(slice_ops, simp):
         return None
     # The output producer is the last op writing the flag varnode; follow COPY
     # chains (the collapsed select becomes COPY(new_flag)) to the real producer.
