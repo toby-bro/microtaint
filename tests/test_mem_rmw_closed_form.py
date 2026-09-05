@@ -7,10 +7,12 @@ engine deliberately does NOT treat the address as attacker-controlled, so no
 pointer-avalanche floor is needed and reading the shadow memory directly matches
 the engine's own stack model.  This closes:
 
-  * shl / sar [rsp],imm : CF (reads the ORIGINAL pre-store operand).  SF/ZF re-read
-    the stored result via a post-STORE re-LOAD, so the memory leaf declines there
-    (reading shadow memory would give the pre-instruction bytes) -- they stay ICE.
   * add / sub / cmp [rsp],reg : CF (the unsigned carry/borrow, a ComparisonTaintExpr)
+
+shl / sar [rsp] flags are NOT closed: an RMW re-LOADs [rsp] after the STORE to read
+back the shifted result, and a memory-leaf closed form would read the PRE-store
+bytes (under-taint), so the memory resolver is disabled for any store-containing
+instruction.  Their soundness is covered by test_mem_flag_soundness.
 
 Correctness is checked against BRUTE-FORCED TRUE taint over the full cube of a
 small register+memory taint mask (soundness for every output; exactness for the
@@ -35,8 +37,6 @@ RSP = 0x7000
 
 # label -> (bytes, size_bytes, {output: cells}, {outputs exact vs true taint})
 CASES = {
-    'shl qword [rsp],7':  ('48c1242407', 8, {'CF': 0}, {'CF'}),
-    'sar qword [rsp],5':  ('48c12c2405', 8, {'CF': 0}, {'CF'}),
     'add qword [rsp],rbx': ('48011c24', 8, {'CF': 0}, {'CF'}),
     'sub qword [rsp],rbx': ('48291c24', 8, {'CF': 0}, {'CF'}),
     'cmp qword [rsp],rbx': ('48391c24', 8, {'CF': 0}, {'CF'}),

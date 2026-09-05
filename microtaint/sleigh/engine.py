@@ -1508,6 +1508,56 @@ def _stack_mem_operand(
     return (MemoryOperand(addr, size, is_taint=False), MemoryOperand(addr, size, is_taint=True))
 
 
+def _mem_cell_key(m: MemMapping) -> str:
+    """The cell-input KEY for a memory operand, matching process_dependencies /
+    _build_machine_state: Format-A ``MEM_0x<addr>_<size>`` for a compile-time
+    constant address, Format-B ``MEM_<reg>_<off>_<size>`` for a register-relative
+    one.  The bare ``MEM_<reg>`` form some floors used does NOT round-trip the
+    masked value into the cell's memory (wrong size / no offset), so the masked
+    replica read stale bytes and the flag under-tainted."""
+    if m.addr_reg.name == _CONST_ADDR_MARKER:
+        return f'MEM_{hex(m.addr_const_offset & 0xFFFFFFFFFFFFFFFF)}_{m.size_bytes}'
+    return f'MEM_{m.addr_reg.name}_{m.addr_const_offset}_{m.size_bytes}'
+
+
+def _dep_floor_taint(dep_map: RegMapping | MemMapping, split_sign: bool = False) -> list[tuple[Expr, int]]:
+    """(taint expr, bit width) TERMS for a value-dependency, for the non-monotone
+    flag soundness floor.  Handles BOTH register and MEMORY operands -- the memory
+    case was previously skipped, so a memory-operand non-monotone flag (OF/SF/ZF of
+    ``cmp/sub [mem],reg``) had no floor and under-tainted when the differential
+    missed it.
+
+    A REGISTER operand feeding a signed compare is already split into magnitude +
+    sign sub-mappings upstream (apply_sless_msb_split), so the floor's pairwise
+    regime (Av(mag) AND Av(sign)) fires when its taint spans the sign boundary --
+    the exact non-monotone-risk condition.  A MemMapping cannot carry a bit range,
+    so when `split_sign` is set (a signed/symmetric compare is present) this splits
+    the memory taint into magnitude and sign TERMS here, reproducing that behaviour.
+    Returns [] only for shapes with no usable taint operand."""
+    if isinstance(dep_map, RegMapping):
+        return [(
+            _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True),
+            dep_map.bit_end - dep_map.bit_start + 1,
+        )]
+    if isinstance(dep_map, MemMapping):
+        addr_base = _get_taint_operand(
+            dep_map.addr_reg.name, dep_map.addr_reg.bit_start, dep_map.addr_reg.bit_end, False,
+        )
+        addr_e: Expr = (
+            BinaryExpr(Op.ADD, addr_base, Constant(dep_map.addr_const_offset, 8))
+            if dep_map.addr_const_offset != 0
+            else addr_base
+        )
+        mem_taint = MemoryOperand(addr_e, dep_map.size_bytes, is_taint=True)
+        w = dep_map.size_bytes * 8
+        if split_sign and w >= 2:
+            low = BinaryExpr(Op.AND, mem_taint, Constant((1 << (w - 1)) - 1, 8))
+            sign = BinaryExpr(Op.AND, mem_taint, Constant(1 << (w - 1), 8))
+            return [(low, w - 1), (sign, 1)]
+        return [(mem_taint, w)]
+    return []
+
+
 def _build_carry_flag_taint(  # noqa: C901
     slice_ops: list[PcodeOp],
     mapper: StateMapper,
@@ -2526,6 +2576,7 @@ def generate_taint_assignments(  # noqa: C901
     # -----------------------------------------------------------------------
     dependencies, dependency_names, cell_inputs_rep1, cell_inputs_rep2 = process_dependencies(
         dep_set.value_deps,
+        slice_ops,
     )
 
     # CMOV / forward-CBRANCH old-destination injection.
@@ -2581,9 +2632,22 @@ def generate_taint_assignments(  # noqa: C901
     # returns None on any shape it is not certain of, falling through to the
     # differential below. Disable with MICROTAINT_CLOSED_FORM=0.
     if _CLOSED_FORM_FLAGS and not isinstance(mapping, MemMapping):
+        # A memory-leaf closed form reads shadow memory at rule-eval time, i.e. the
+        # PRE-instruction bytes.  That is correct only for a pure memory READ; in an
+        # RMW (the instruction also STOREs) a flag can re-LOAD the address AFTER the
+        # store to read back the modified value (shl/sar [mem] SF/ZF), and its slice
+        # does not even contain the STORE -- so reading pre-store memory silently
+        # under-taints.  Disable the memory resolver whenever the instruction stores,
+        # so RMW flags fall to the (sound) differential + memory floor.  The
+        # add/sub/cmp [mem] CF closed form uses a separate path (_build_carry_flag_taint,
+        # reading the genuine pre-store operand) and is unaffected.
+        _has_store = any(op.opcode.name == 'STORE' for op in (all_ops or slice_ops))
+        _mem_res = None if _has_store else (
+            lambda addr_vn, size: _stack_mem_operand(addr_vn, size, slice_ops, mapper)
+        )
         _cf = closed_form_taint(
             slice_ops, mapper, out_is_flag=(out_bit_end - out_bit_start + 1) == 1,
-            mem_resolver=lambda addr_vn, size: _stack_mem_operand(addr_vn, size, slice_ops, mapper),
+            mem_resolver=_mem_res,
         )
         if _cf is not None:
             assignments.append(
@@ -3062,7 +3126,7 @@ def generate_taint_assignments(  # noqa: C901
                 V_masked = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
                 imm_masked = BinaryExpr(Op.AND, imm_expr, T_mem)
                 corrected = BinaryExpr(Op.OR, V_masked, imm_masked)
-                dep_name = f'MEM_{dep_map.addr_reg.name}'
+                dep_name = _mem_cell_key(dep_map)
                 C_eval = InstructionCellExpr(
                     arch,
                     bytestring.hex(),
@@ -3092,7 +3156,7 @@ def generate_taint_assignments(  # noqa: C901
                         else addr_base
                     )
                     V_in: Expr = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
-                    dep_name = f'MEM_{dep_map.addr_reg.name}'
+                    dep_name = _mem_cell_key(dep_map)
                 else:
                     V_in = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, False)
                     dep_name = dep_map.name
@@ -3413,9 +3477,7 @@ def generate_taint_assignments(  # noqa: C901
                     aval_terms: list[Expr] = []
                     fma_terms: list[Expr] = []
                     for dep_map in dep_set.value_deps.keys():
-                        if isinstance(dep_map, RegMapping):
-                            dep_bits = dep_map.bit_end - dep_map.bit_start + 1
-                            dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
+                        for dep_expr, dep_bits in _dep_floor_taint(dep_map, split_sign=True):
                             aval_terms.append(AvalancheExpr(dep_expr, 1))
                             fma_terms.append(FullMaskAvalancheExpr(dep_expr, dep_bits))
 
@@ -3445,9 +3507,7 @@ def generate_taint_assignments(  # noqa: C901
                 else:
                     floor_terms: list[Expr] = []
                     for dep_map in dep_set.value_deps.keys():
-                        if isinstance(dep_map, RegMapping):
-                            dep_bits = dep_map.bit_end - dep_map.bit_start + 1
-                            dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
+                        for dep_expr, dep_bits in _dep_floor_taint(dep_map):
                             floor_terms.append(FullMaskAvalancheExpr(dep_expr, dep_bits))
                     if floor_terms:
                         floor_expr_2: Expr = floor_terms[0]
@@ -3663,9 +3723,10 @@ def generate_taint_assignments(  # noqa: C901
         and not _slice_has_constant_dominator(slice_ops)
     ):
         for dep_map in dep_set.value_deps.keys():
-            if isinstance(dep_map, RegMapping):
-                dep_bits = dep_map.bit_end - dep_map.bit_start + 1
-                dep_expr = _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True)
+            # Include MEMORY operands (previously skipped, so ZF of `cmp [mem],reg`
+            # had no memory floor and under-tainted); split the sign for signed
+            # compares so the pairwise regime below fires on sign-spanning taint.
+            for dep_expr, dep_bits in _dep_floor_taint(dep_map, split_sign=True):
                 _out_width = out_bit_end - out_bit_start + 1
                 _floor: Expr = FullMaskAvalancheExpr(dep_expr, dep_bits)
                 if _out_width > 1 and _ct_all_deps_one_bit:
@@ -3722,6 +3783,45 @@ def generate_taint_assignments(  # noqa: C901
             ptr_combined = BinaryExpr(Op.OR, ptr_combined, t)
         avalanche_ptr = AvalancheExpr(ptr_combined, out_bit_end - out_bit_start + 1)
         expr = BinaryExpr(Op.OR, expr, avalanche_ptr)
+
+    # MEMORY-OPERAND non-monotone flag soundness floor (catch-all).
+    #
+    # A flag/byte derived from a MEMORY value operand through a non-monotone op
+    # (signed compare, overflow, equality, or a shift's sign/zero flag) can escape
+    # the 2-corner differential, and a MemMapping -- unlike a register -- is not
+    # split into magnitude+sign sub-deps (apply_sless_msb_split skips it), so the
+    # per-operand pairwise floor does not normalise the memory sign bit to the
+    # flag's bit 0.  OR in a sound avalanche over the memory DATA taint (collapsed
+    # to the output width): the flag is tainted whenever the memory operand it
+    # reads is.  Fires only for a small flag/byte output (<=8 bits, not a memory
+    # target, not constant-dominated) whose slice both reads a memory value-dep and
+    # contains such an op.  The exact CF/closed-form terms return earlier and never
+    # reach here, so their precision is preserved.
+    _MEM_FLAG_NONMONO_OPS = frozenset({
+        'INT_SLESS', 'INT_SLESSEQUAL',
+        'INT_SBORROW', 'INT_SCARRY', 'INT_LESS', 'INT_LESSEQUAL',
+    })
+    _slice_op_names = {op.opcode.name for op in slice_ops}
+    # A wide-value equality (ZF = a+b == 0) is non-monotone and needs the floor;
+    # a bit-test's `bit != 0` (bt [mem],imm -> CF) is a MONOTONE single-bit extract
+    # and is exact via the differential, so trigger equality only when the slice is
+    # arithmetic (a genuine sum/difference feeds the equality).
+    _mem_flag_nonmono = bool(_slice_op_names & _MEM_FLAG_NONMONO_OPS) or (
+        bool(_slice_op_names & {'INT_EQUAL', 'INT_NOTEQUAL'})
+        and bool(_slice_op_names & {'INT_ADD', 'INT_SUB', 'INT_2COMP'})
+    )
+    if (
+        (out_bit_end - out_bit_start) <= 7
+        and not isinstance(mapping, MemMapping)
+        and not _slice_has_constant_dominator(slice_ops)
+        and any(isinstance(dm, MemMapping) for dm in dep_set.value_deps)
+        and _mem_flag_nonmono
+    ):
+        _ow = out_bit_end - out_bit_start + 1
+        for dm in dep_set.value_deps:
+            if isinstance(dm, MemMapping):
+                for _mem_taint, _ in _dep_floor_taint(dm):
+                    expr = BinaryExpr(Op.OR, expr, AvalancheExpr(_mem_taint, _ow))
 
     # Conditional-execution gated passthrough (covers CMOV in all categories).
     #
@@ -4166,9 +4266,21 @@ def _synth_simulator(arch: Architecture) -> CellSimulator:
 
 def process_dependencies(
     deps: dict[RegMapping | MemMapping, int],
+    slice_ops: list[PcodeOp] | None = None,
 ) -> tuple[list[Expr], list[str], dict[str, Expr], dict[str, Expr]]:
     dependencies: list[Expr] = []
     dependency_names: list[str] = []
+    # Sizes (in bytes) of signed-compare inputs in this slice. A memory operand of
+    # a matching size feeds a signed comparison, so its SIGN bit must carry the
+    # OPPOSITE polarity to its magnitude bits -- exactly the split
+    # apply_sless_msb_split applies to REGISTER operands (which it skips for memory,
+    # since a MemMapping has no bit range).  Without it the memory differential is a
+    # lossy D^{++} that under-taints OF/SF/ZF of `cmp/sub [mem],reg` and friends.
+    _sless_sizes: set[int] = {
+        op.inputs[0].size
+        for op in (slice_ops or [])
+        if op.opcode.name in ('INT_SLESS', 'INT_SLESSEQUAL') and op.inputs
+    }
 
     reg_groups: dict[str, list[tuple[int, int, int]]] = {}
     mem_deps: list[tuple[MemMapping, int]] = []
@@ -4225,15 +4337,32 @@ def process_dependencies(
 
         T_mem = MemoryOperand(addr_expr, m.size_bytes, is_taint=True)
         V_mem = MemoryOperand(addr_expr, m.size_bytes, is_taint=False)
-        # Polarity mirrors build_polarized_reg: positive dep -> rep1 = V|T,
-        # rep2 = V&~T; negative (subtracted) dep -> swapped, so the differential
-        # captures the sound D^{+-} borrow chain rather than a lossy D^{++}.
-        if p <= 0:
-            cell_inputs_rep1[key] = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
-            cell_inputs_rep2[key] = BinaryExpr(Op.OR, V_mem, T_mem)
+        _max = BinaryExpr(Op.OR, V_mem, T_mem)                       # V|T (polarity +)
+        _min = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))   # V&~T (polarity -)
+        w = m.size_bytes * 8
+        if w >= 2 and m.size_bytes in _sless_sizes:
+            # Sign-split (D^{+-}): magnitude bits at polarity `p`, sign bit at `-p`.
+            # rep1 takes V|T for a positive polarity and V&~T for a negative one
+            # (rep2 swapped), per bit region -- identical to build_polarized_reg's
+            # per-slice handling for registers.
+            mag_pos = p > 0
+            lowmask = Constant((1 << (w - 1)) - 1, 8)
+            signmask = Constant(1 << (w - 1), 8)
+            mag1, sign1 = (_max, _min) if mag_pos else (_min, _max)  # rep1: mag=p, sign=-p
+            mag2, sign2 = (_min, _max) if mag_pos else (_max, _min)  # rep2: swapped
+            cell_inputs_rep1[key] = BinaryExpr(
+                Op.OR, BinaryExpr(Op.AND, mag1, lowmask), BinaryExpr(Op.AND, sign1, signmask))
+            cell_inputs_rep2[key] = BinaryExpr(
+                Op.OR, BinaryExpr(Op.AND, mag2, lowmask), BinaryExpr(Op.AND, sign2, signmask))
+        elif p <= 0:
+            # Uniform polarity (no signed compare): positive dep -> rep1 = V|T,
+            # rep2 = V&~T; negative (subtracted) dep -> swapped, so the differential
+            # captures the sound D^{+-} borrow chain rather than a lossy D^{++}.
+            cell_inputs_rep1[key] = _min
+            cell_inputs_rep2[key] = _max
         else:
-            cell_inputs_rep1[key] = BinaryExpr(Op.OR, V_mem, T_mem)
-            cell_inputs_rep2[key] = BinaryExpr(Op.AND, V_mem, UnaryExpr(Op.NOT, T_mem))
+            cell_inputs_rep1[key] = _max
+            cell_inputs_rep2[key] = _min
         dependencies.append(T_mem)
         dependency_names.append(key)
 
