@@ -1790,6 +1790,39 @@ static PyObject *do_evaluate(CompiledCircuit *self,
 
         int width = bit_end - bit_start + 1;
 
+        /* Fast path: the whole slice + existing value fit u64 (always true for a
+         * compiled assignment: width<=64 and bit_start+width<=64), so the merge
+         * (current & ~mask) | ((result << bit_start) & mask) is one uint64
+         * expression and one PyLong allocation, versus ~6 arbitrary-precision
+         * PyNumber_* temporaries.  Falls through to the PyLong path only if
+         * `result` or the existing entry is a >64-bit (wide SIMD) value. */
+        if (bit_start + width <= 64) {
+            int ok = 1;
+            unsigned long long rw = PyLong_AsUnsignedLongLong(result);
+            if (PyErr_Occurred()) { PyErr_Clear(); ok = 0; }
+            uint64_t cur = 0;
+            if (ok) {
+                PyObject *cur_obj = PyDict_GetItem(output_taint, target_name);  /* borrowed */
+                if (cur_obj) {
+                    cur = (uint64_t)PyLong_AsUnsignedLongLong(cur_obj);
+                    if (PyErr_Occurred()) { PyErr_Clear(); ok = 0; }
+                }
+            }
+            if (ok) {
+                uint64_t mask = ((width >= 64) ? ~(uint64_t)0
+                                               : (((uint64_t)1 << width) - 1)) << bit_start;
+                uint64_t nv = (cur & ~mask) | (((uint64_t)rw << bit_start) & mask);
+                PyObject *new_val = PyLong_FromUnsignedLongLong(nv);
+                Py_DECREF(result);
+                if (!new_val) { Py_DECREF(output_taint); Py_DECREF(target_name); return NULL; }
+                PyDict_SetItem(output_taint, target_name, new_val);
+                Py_DECREF(new_val);
+                Py_DECREF(target_name);
+                continue;
+            }
+            /* fall through: `result` still owned */
+        }
+
         PyObject *one   = PyLong_FromLong(1);
         PyObject *width_obj = PyLong_FromLong(width);
         PyObject *bs_obj    = PyLong_FromLong(bit_start);
