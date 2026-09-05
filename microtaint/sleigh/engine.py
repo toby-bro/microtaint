@@ -557,40 +557,46 @@ def resolve_ptr_with_offset(  # noqa: C901
 
             visited_reg.add(reg_off)
 
+            # Use the LAST definition before `limit` (SSA last-def-before-use), for
+            # the same reason as the unique path: a base register redefined earlier
+            # in the same instruction must resolve to its live definition, not the
+            # first one.  STORE/CALL/branch ops never define the value, so skip them.
+            def_idx = -1
             for i, op in enumerate(all_ops):
                 if i >= limit:
                     break
                 if op.opcode.name in ('STORE', 'CALL', 'CALLIND', 'BRANCH', 'BRANCHIND', 'CBRANCH', 'RETURN'):
                     continue
-
                 if (
                     op.output is not None
                     and op.output.space.name == 'register'
                     and op.output.offset == reg_off
                     and op.output.size == current_vn.size
                 ):
-                    # When we recurse into the inputs of op[i], they must be
-                    # resolved as they were AT op[i], so the inner limit is i.
-                    if op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
-                        res = _resolve(op.inputs[0], i)
-                        visited_reg.discard(reg_off)
-                        return res
-                    if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                        lreg, loff = _resolve(op.inputs[0], i)
-                        rreg, roff = _resolve(op.inputs[1], i)
-                        visited_reg.discard(reg_off)
-                        if lreg is not None:
-                            return lreg, loff + roff
-                        if rreg is not None:
-                            return rreg, roff + loff
-                    elif op.opcode.name == 'INT_SUB':
-                        lreg, loff = _resolve(op.inputs[0], i)
-                        _, roff = _resolve(op.inputs[1], i)
-                        visited_reg.discard(reg_off)
-                        if lreg is not None:
-                            return lreg, loff - roff
-                    # Any other defining op: value is computed, use direct mapping.
-                    break
+                    def_idx = i
+            if def_idx >= 0:
+                i = def_idx
+                op = all_ops[i]
+                # Inputs are read AT op[i], so recurse with limit = i.
+                if op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
+                    res = _resolve(op.inputs[0], i)
+                    visited_reg.discard(reg_off)
+                    return res
+                if op.opcode.name in ('INT_ADD', 'PTRADD'):
+                    lreg, loff = _resolve(op.inputs[0], i)
+                    rreg, roff = _resolve(op.inputs[1], i)
+                    visited_reg.discard(reg_off)
+                    if lreg is not None:
+                        return lreg, loff + roff
+                    if rreg is not None:
+                        return rreg, roff + loff
+                elif op.opcode.name == 'INT_SUB':
+                    lreg, loff = _resolve(op.inputs[0], i)
+                    _, roff = _resolve(op.inputs[1], i)
+                    visited_reg.discard(reg_off)
+                    if lreg is not None:
+                        return lreg, loff - roff
+                # Any other defining op: value is computed, use direct mapping below.
 
             visited_reg.discard(reg_off)
             return mapper.map_to_state(current_vn.offset, current_vn.size), 0
@@ -601,32 +607,41 @@ def resolve_ptr_with_offset(  # noqa: C901
                 return None, 0
             visited_unique.add(key)
 
+            # Use the LAST definition before `limit` (SSA last-def-before-use).
+            # A unique can be written more than once in one instruction's p-code:
+            # e.g. MIPS `lw $2,0($4)` writes the address temp twice, COPY(const 0)
+            # then COPY(base+offset), and the LOAD reads the second.  Resolving the
+            # first def mis-read the pointer as constant 0 -> no memory dependency
+            # -> the loaded taint was dropped.
+            def_idx = -1
             for i, op in enumerate(all_ops):
                 if i >= limit:
                     break
                 if op.output is not None and op.output.space.name == 'unique' and op.output.offset == key:
-                    # Same temporal-resolution rule: inputs are read AT op[i],
-                    # so recurse with limit = i.
-                    if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                        lreg, loff = _resolve(op.inputs[0], i)
-                        rreg, roff = _resolve(op.inputs[1], i)
-                        if lreg is not None:
-                            return lreg, loff + roff
-                        if rreg is not None:
-                            return rreg, roff + loff
-                    elif op.opcode.name == 'INT_SUB':
-                        lreg, loff = _resolve(op.inputs[0], i)
-                        _, roff = _resolve(op.inputs[1], i)
-                        if lreg is not None:
-                            return lreg, loff - roff
-                    elif op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
-                        return _resolve(op.inputs[0], i)
-                    else:
-                        for inp in op.inputs:
-                            r, o = _resolve(inp, i)
-                            if r is not None:
-                                return r, o
-                    break
+                    def_idx = i
+            if def_idx >= 0:
+                i = def_idx
+                op = all_ops[i]
+                # Inputs are read AT op[i], so recurse with limit = i.
+                if op.opcode.name in ('INT_ADD', 'PTRADD'):
+                    lreg, loff = _resolve(op.inputs[0], i)
+                    rreg, roff = _resolve(op.inputs[1], i)
+                    if lreg is not None:
+                        return lreg, loff + roff
+                    if rreg is not None:
+                        return rreg, roff + loff
+                elif op.opcode.name == 'INT_SUB':
+                    lreg, loff = _resolve(op.inputs[0], i)
+                    _, roff = _resolve(op.inputs[1], i)
+                    if lreg is not None:
+                        return lreg, loff - roff
+                elif op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
+                    return _resolve(op.inputs[0], i)
+                else:
+                    for inp in op.inputs:
+                        r, o = _resolve(inp, i)
+                        if r is not None:
+                            return r, o
 
             return None, 0
         return None, 0
