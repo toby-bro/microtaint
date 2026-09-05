@@ -190,6 +190,18 @@ def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int, depth: 
                 val = BinaryExpr(Op.AND, inner.value, Constant(c, 8))
                 tnt = BinaryExpr(Op.AND, inner.taint, Constant(c, 8))
                 return _ChainExprs(val, tnt, obits, inner.shifted)
+    if name == 'INT_OR' and len(d.inputs) == 2:
+        # Double shift (shld/shrd) and rotate: OR of two shifts into DISJOINT bit
+        # positions, so the taint is the union -- exact for disjoint operands
+        # (sound in general). Only used when both sides resolve, which for these
+        # is two constant shifts of registers.
+        left = _chain(ops, d.inputs[0], mapper, idx, depth + 1)
+        right = _chain(ops, d.inputs[1], mapper, idx, depth + 1)
+        if left is None or right is None or not (left.shifted or right.shifted):
+            return None
+        val = BinaryExpr(Op.OR, left.value, right.value)
+        tnt = BinaryExpr(Op.OR, left.taint, right.taint)
+        return _ChainExprs(val, tnt, obits, shifted=True)
     return None
 
 
