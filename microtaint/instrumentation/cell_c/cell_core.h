@@ -67,10 +67,12 @@ typedef struct {
 typedef struct {
     uint64_t keys[MEM_CAP];
     uint64_t vals[MEM_CAP];
+    int      dirty;   /* 1 if any byte was written since the last clear */
 } MemMap;
 
 static inline void mem_clear(MemMap *m) {
     memset(m->keys, 0xFF, sizeof(m->keys));
+    m->dirty = 0;
 }
 static inline void mem_write_byte(MemMap *m, uint64_t addr, uint8_t b) {
     uint32_t s = (uint32_t)(addr * 2654435761UL) & MEM_MASK;
@@ -78,6 +80,7 @@ static inline void mem_write_byte(MemMap *m, uint64_t addr, uint8_t b) {
         s = (s + 1) & MEM_MASK;
     m->keys[s] = addr;
     m->vals[s] = b;
+    m->dirty = 1;
 }
 static inline uint8_t mem_read_byte(const MemMap *m, uint64_t addr) {
     uint32_t s = (uint32_t)(addr * 2654435761UL) & MEM_MASK;
@@ -127,7 +130,10 @@ static inline void frame_clear(Frame *f) {
     for (int i = 0; i < f->dirty_count; i++) f->regs_set[f->dirty[i]] = 0;
     f->dirty_count = 0;
     for (int i = 0; i < MAX_UNIQ; i++) f->uniq_set[i] = 0;
-    mem_clear(&f->mem);
+    /* The mem hash is 2KB; only pay the memset when a store actually dirtied it
+     * (most instructions touch no memory). Bit-exact: an untouched map is still
+     * all-empty from the previous clear. */
+    if (f->mem.dirty) mem_clear(&f->mem);
 }
 
 static inline uint64_t mask64(uint64_t val, int sz) {
