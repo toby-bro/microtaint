@@ -3,7 +3,7 @@
     "ADD r16,r16": {
       "assigns": 6,
       "cells": 6,
-      "nodes": 216
+      "nodes": 182
     },
     "AND r16,r16": {
       "assigns": 6,
@@ -38,12 +38,12 @@
     "CMP r64,imm8": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 81
+      "nodes": 66
     },
     "CMP r8,imm8": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 87
+      "nodes": 72
     },
     "IMUL r32,r32,imm8": {
       "assigns": 4,
@@ -298,62 +298,62 @@
     "add al, bl": {
       "assigns": 6,
       "cells": 6,
-      "nodes": 216
+      "nodes": 182
     },
     "add ax, 0x7f": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 101
+      "nodes": 86
     },
     "add ax, bx": {
       "assigns": 6,
       "cells": 6,
-      "nodes": 216
+      "nodes": 182
     },
     "add eax, 0xffff": {
       "assigns": 7,
       "cells": 1,
-      "nodes": 117
+      "nodes": 102
     },
     "add eax, ebx": {
       "assigns": 7,
       "cells": 6,
-      "nodes": 245
+      "nodes": 211
     },
     "add rax, 0x7f": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 101
+      "nodes": 86
     },
     "add rax, 0x7fffffff": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 101
+      "nodes": 86
     },
     "add rax, 1": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 101
+      "nodes": 86
     },
     "add rax, 1365": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 101
+      "nodes": 86
     },
     "add rax, 15": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 101
+      "nodes": 86
     },
     "add rax, 3": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 101
+      "nodes": 86
     },
     "add rax, rbx": {
       "assigns": 6,
       "cells": 6,
-      "nodes": 216
+      "nodes": 182
     },
     "adox eax, ebx": {
       "assigns": 3,
@@ -728,12 +728,12 @@
     "bzhi eax, ebx, ecx": {
       "assigns": 6,
       "cells": 3,
-      "nodes": 111
+      "nodes": 77
     },
     "bzhi rax, rbx, rcx": {
       "assigns": 5,
       "cells": 3,
-      "nodes": 107
+      "nodes": 73
     },
     "cbw": {
       "assigns": 1,
@@ -1243,62 +1243,62 @@
     "cmp al, bl": {
       "assigns": 5,
       "cells": 5,
-      "nodes": 183
+      "nodes": 149
     },
     "cmp ax, 0x7f": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 87
+      "nodes": 72
     },
     "cmp ax, bx": {
       "assigns": 5,
       "cells": 5,
-      "nodes": 183
+      "nodes": 149
     },
     "cmp eax, 0xffff": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 87
+      "nodes": 72
     },
     "cmp eax, ebx": {
       "assigns": 5,
       "cells": 5,
-      "nodes": 183
+      "nodes": 149
     },
     "cmp rax, 0x7f": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 87
+      "nodes": 72
     },
     "cmp rax, 0x7fffffff": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 87
+      "nodes": 72
     },
     "cmp rax, 1": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 87
+      "nodes": 72
     },
     "cmp rax, 1365": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 87
+      "nodes": 72
     },
     "cmp rax, 15": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 87
+      "nodes": 72
     },
     "cmp rax, 3": {
       "assigns": 5,
       "cells": 1,
-      "nodes": 87
+      "nodes": 72
     },
     "cmp rax, rbx": {
       "assigns": 5,
       "cells": 5,
-      "nodes": 183
+      "nodes": 149
     },
     "cqo": {
       "assigns": 1,
@@ -2593,62 +2593,62 @@
     "sub al, bl": {
       "assigns": 6,
       "cells": 6,
-      "nodes": 216
+      "nodes": 182
     },
     "sub ax, 0x7f": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 107
+      "nodes": 92
     },
     "sub ax, bx": {
       "assigns": 6,
       "cells": 6,
-      "nodes": 216
+      "nodes": 182
     },
     "sub eax, 0xffff": {
       "assigns": 7,
       "cells": 1,
-      "nodes": 123
+      "nodes": 108
     },
     "sub eax, ebx": {
       "assigns": 7,
       "cells": 6,
-      "nodes": 245
+      "nodes": 211
     },
     "sub rax, 0x7f": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 107
+      "nodes": 92
     },
     "sub rax, 0x7fffffff": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 107
+      "nodes": 92
     },
     "sub rax, 1": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 107
+      "nodes": 92
     },
     "sub rax, 1365": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 107
+      "nodes": 92
     },
     "sub rax, 15": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 107
+      "nodes": 92
     },
     "sub rax, 3": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 107
+      "nodes": 92
     },
     "sub rax, rbx": {
       "assigns": 6,
       "cells": 6,
-      "nodes": 216
+      "nodes": 182
     },
     "test al, bl": {
       "assigns": 5,
@@ -2723,22 +2723,22 @@
     "xadd al, bl": {
       "assigns": 7,
       "cells": 6,
-      "nodes": 241
+      "nodes": 207
     },
     "xadd ax, bx": {
       "assigns": 7,
       "cells": 6,
-      "nodes": 241
+      "nodes": 207
     },
     "xadd eax, ebx": {
       "assigns": 9,
       "cells": 6,
-      "nodes": 295
+      "nodes": 261
     },
     "xadd rax, rbx": {
       "assigns": 7,
       "cells": 6,
-      "nodes": 241
+      "nodes": 207
     },
     "xchg al, bl": {
       "assigns": 2,
@@ -7686,7 +7686,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-05T19:43:27.074763+00:00",
+    "generated": "2026-09-05T19:56:03.959588+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

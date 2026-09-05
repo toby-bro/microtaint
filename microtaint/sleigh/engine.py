@@ -1472,6 +1472,89 @@ def _build_signed_overflow_taint(  # noqa: C901
     )
 
 
+def _build_carry_flag_taint(  # noqa: C901
+    slice_ops: list[PcodeOp],
+    mapper: StateMapper,
+) -> Expr | None:
+    """EXACT closed-form taint for an unsigned CARRY / BORROW flag, or None.
+
+    x86 CF of a plain add/sub/cmp is a MONOTONE predicate, so its 2-corner
+    differential is already exact -- but it costs two InstructionCellExpr
+    re-executions.  Route the plain two-operand shape to the Z3-proved
+    ComparisonTaintExpr instead (zero cells)::
+
+        sub / cmp:  CF = INT_LESS(a, b)    = [a <u b]            -> CMP_u(a, b)
+        add:        CF = INT_CARRY(a, b)   = [~b <u a]           -> CMP_u(~b, a)
+
+    (``a + b`` overflows w bits iff ``a > 2^w-1-b == ~b`` iff ``~b <u a``.  ``~b``
+    relocates no bits, so its taint mask is ``b``'s.)  Each operand may be a
+    register (add/sub/cmp reg,reg) or an immediate (add/sub/cmp reg,imm -- an
+    untainted constant).  ComparisonTaintExpr is exact when its two operands are
+    INDEPENDENT: a constant is independent of anything, and two registers are
+    independent when they are distinct or occupy disjoint bit-ranges of one
+    register.  This builder gates on that and returns None otherwise (e.g.
+    ``add eax,eax`` / ``add al,al``), so the differential+floor stands.  adc/sbb
+    carry-in chains (two ORed carries) are left to the differential, exact for them.
+    """
+    if not slice_ops:
+        return None
+    term = slice_ops[-1]
+    name = term.opcode.name
+    if name not in ('INT_LESS', 'INT_CARRY') or term.output is None or len(term.inputs) != 2:
+        return None
+    if term.output.size != 1:
+        return None
+
+    def _operand(vn: Varnode) -> tuple[Expr, Expr, tuple[str, int, int] | None] | None:
+        """(value expr, taint expr, independence key).  The key is a register's
+        (name, bit_start, bit_end) or None for a constant (independent of all)."""
+        if vn.space.name == 'const':
+            bits = vn.size * 8
+            return (Constant(vn.offset & ((1 << bits) - 1), bits), Constant(0, bits), None)
+        if vn.space.name == 'register':
+            m = mapper.map_to_state(vn.offset, vn.size)
+            if not isinstance(m, RegMapping):
+                return None
+            return (
+                _get_taint_operand(m.name, m.bit_start, m.bit_end, False),
+                _get_taint_operand(m.name, m.bit_start, m.bit_end, True),
+                (m.name, m.bit_start, m.bit_end),
+            )
+        if vn.space.name == 'unique':
+            d = next(
+                (
+                    o
+                    for o in slice_ops
+                    if o.output is not None
+                    and o.output.space.name == 'unique'
+                    and o.output.offset == vn.offset
+                    and o.output.size == vn.size
+                ),
+                None,
+            )
+            if d is not None and d.opcode.name == 'COPY' and len(d.inputs) == 1 and d.inputs[0].size == vn.size:
+                return _operand(d.inputs[0])
+        return None
+
+    ra = _operand(term.inputs[0])
+    rb = _operand(term.inputs[1])
+    if ra is None or rb is None:
+        return None
+    width = term.inputs[0].size * 8
+    if width < 2 or term.inputs[1].size * 8 != width:
+        return None
+    a_val, a_tnt, a_key = ra
+    b_val, b_tnt, b_key = rb
+    # Independence: two registers must be distinct or occupy disjoint bit-ranges.
+    if (a_key is not None and b_key is not None and a_key[0] == b_key[0]
+            and not (a_key[2] < b_key[1] or b_key[2] < a_key[1])):
+        return None
+    if name == 'INT_LESS':
+        return ComparisonTaintExpr(a_val, a_tnt, b_val, b_tnt, width, False, False)
+    # INT_CARRY(a, b) == [~b <u a]: complement b's value, keep b's taint.
+    return ComparisonTaintExpr(UnaryExpr(Op.NOT, b_val), b_tnt, a_val, a_tnt, width, False, False)
+
+
 _SHIFT_KIND = {'INT_LEFT': 0, 'INT_RIGHT': 1, 'INT_SRIGHT': 2}
 _SHIFT_PASSTHROUGH = frozenset({'COPY', 'INT_SEXT', 'INT_ZEXT'})
 _MUL_PASSTHROUGH = frozenset({'COPY', 'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'INT_MULT'})
@@ -3144,6 +3227,22 @@ def generate_taint_assignments(  # noqa: C901
                     target=out_target,
                     dependencies=dependencies,
                     expression=_signed_ovf_expr,
+                ),
+            )
+            return
+
+        # Unsigned carry / borrow flag (x86 CF of add/sub/cmp): MONOTONE, so the
+        # differential is already exact, but it costs two cell re-executions.  Route
+        # the plain two-operand shape to the Z3-proved ComparisonTaintExpr (zero
+        # cells).  None for anything else (adc/sbb chains, dependent operands), so the
+        # differential+floor below stands.
+        _carry_expr = _build_carry_flag_taint(slice_ops, mapper)
+        if _carry_expr is not None and not _slice_has_constant_dominator(slice_ops):
+            assignments.append(
+                TaintAssignment(
+                    target=out_target,
+                    dependencies=dependencies,
+                    expression=_carry_expr,
                 ),
             )
             return
