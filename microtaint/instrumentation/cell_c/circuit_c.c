@@ -1988,6 +1988,9 @@ static PyMethodDef CompiledCircuit_methods[] = {
 static PyMemberDef CompiledCircuit_members[] = {
     {"has_mem_ops", T_INT, offsetof(CompiledCircuit, has_mem_ops), READONLY,
      "True if this circuit reads or writes memory (disables wrapper-level Tier 3 cache)."},
+    {"n_assignments", T_INT, offsetof(CompiledCircuit, n_progs), READONLY,
+     "Number of assignments compiled.  A fast member so the wrapper can detect a "
+     "mutated assignment list per evaluate without allocating a stats() dict."},
     {NULL}
 };
 

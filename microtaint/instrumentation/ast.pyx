@@ -1260,7 +1260,9 @@ cdef class LogicCircuit:
         cdef int n_live = len(self.assignments)
         if self._compiled is not None and self._compiled is not False:
             try:
-                if self._compiled.stats()['n_assignments'] != n_live:
+                # Fast member read (no stats() dict alloc on the per-evaluate hot
+                # path); detects a mutated assignment list (tests only).
+                if self._compiled.n_assignments != n_live:
                     self._compiled = None
             except Exception:
                 self._compiled = None

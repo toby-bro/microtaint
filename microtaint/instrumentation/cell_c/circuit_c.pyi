@@ -28,13 +28,20 @@ class CompiledCircuit:
         fields are already in hand.
     """
 
-    # Read-only struct member exposed via tp_members.
+    # Read-only struct members exposed via tp_members.
     has_mem_ops: int
     """
     1 if any assignment in this circuit reads or writes guest memory.
     The wrapper consults this to decide whether the per-instruction
     Tier-3 taint cache can safely store the output (memory-touching
     circuits would need shadow-memory state in the cache key).
+    """
+
+    n_assignments: int
+    """
+    Number of compiled assignments.  A fast attribute so LogicCircuit.evaluate
+    can detect a mutated assignment list per evaluate without allocating a
+    stats() dict on the hot path.
     """
 
     def evaluate(self, context: EvalContext) -> dict[str, int]:
