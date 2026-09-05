@@ -764,37 +764,71 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
         if (!target || !is_mem) { Py_XDECREF(target); Py_XDECREF(is_mem); goto fb; }
         int is_mem_target = PyObject_IsTrue(is_mem);
         Py_DECREF(is_mem);
-        if (is_mem_target) {
-            /* Memory target — keep the original Python TaintAssignment for now.
-             * Compiling memory targets requires evaluating the address expr at
-             * runtime (which the evaluator could do), but it's the rare case;
-             * skip for now. */
-            Py_DECREF(target);
-            p->python_assignment = a; Py_INCREF(a);
-            cc->has_python_fallback = 1;
-            cc->has_mem_ops = 1;   /* memory write — disables Tier 3 cache */
-            continue;
-        }
-        /* Register target.
-         * Initialize to NULL so the `fb:` cleanup is safe regardless of
-         * which path we take (each Py_DECREF is paired with a clear).
-         * This also silences -Wmaybe-uninitialized warnings. */
+        /* t_name/t_bs/t_be kept at outer scope (NULL-init) so the `fb:` cleanup
+         * is valid on either target branch; the memory branch leaves them NULL. */
         PyObject *t_name = NULL, *t_bs = NULL, *t_be = NULL;
-        t_name = PyObject_GetAttrString(target, "name");
-        t_bs   = PyObject_GetAttrString(target, "bit_start");
-        t_be   = PyObject_GetAttrString(target, "bit_end");
-        Py_DECREF(target);
-        if (!t_name || !t_bs || !t_be) { Py_XDECREF(t_name); t_name = NULL; Py_XDECREF(t_bs); t_bs = NULL; Py_XDECREF(t_be); t_be = NULL; goto fb; }
-        const char *tn = PyUnicode_AsUTF8(t_name);
-        if (!tn) { Py_DECREF(t_name); t_name = NULL; Py_DECREF(t_bs); t_bs = NULL; Py_DECREF(t_be); t_be = NULL; goto fb; }
-        p->target_kind = TGT_REG;
-        p->target_name_idx = strpool_intern(cc, tn);
-        p->target_bit_start = (int)PyLong_AsLong(t_bs);
-        p->target_bit_end   = (int)PyLong_AsLong(t_be);
-        p->target_size_bytes = 0;
-        Py_DECREF(t_name); t_name = NULL;
-        Py_DECREF(t_bs);   t_bs   = NULL;
-        Py_DECREF(t_be);   t_be   = NULL;
+        if (is_mem_target) {
+            /* Memory target: compile the VALUE expr (shared block below) plus a
+             * separate tiny bytecode for the ADDRESS expr, evaluated at run time
+             * to form the MEM_0x<addr>_<size> output key.  Symmetric to the
+             * memory INPUT handling in cell_c's cell_eval_fast. */
+            PyObject *addr_e = PyObject_GetAttrString(target, "address_expr");
+            PyObject *szo    = PyObject_GetAttrString(target, "size");
+            Py_DECREF(target);
+            if (!addr_e || !szo) { Py_XDECREF(addr_e); Py_XDECREF(szo); goto fb; }
+            int sz_int = (int)PyLong_AsLong(szo);
+            Py_DECREF(szo);
+            /* >8-byte store cannot fit a uint64 taint mask.  The engine already
+             * splits wide stores into <=8-byte chunks, so this is a defensive
+             * guard; keep such a target on the Python path. */
+            if (sz_int <= 0 || sz_int > 8) {
+                Py_DECREF(addr_e);
+                p->python_assignment = a; Py_INCREF(a);
+                cc->has_python_fallback = 1; cc->has_mem_ops = 1;
+                continue;
+            }
+            BCEmit addr_emit = {{0}, 0, 0, 0};
+            compile_expr(cc, &addr_emit, addr_e);
+            Py_DECREF(addr_e);
+            if (addr_emit.fallback || addr_emit.overflow) {
+                p->python_assignment = a; Py_INCREF(a);
+                cc->has_python_fallback = 1; cc->has_mem_ops = 1;
+                continue;
+            }
+            emit(&addr_emit, OP_END);
+            p->addr_bc = (uint32_t *)malloc(sizeof(uint32_t) * addr_emit.len);
+            if (!p->addr_bc) {
+                p->python_assignment = a; Py_INCREF(a);
+                cc->has_python_fallback = 1; cc->has_mem_ops = 1;
+                continue;
+            }
+            memcpy(p->addr_bc, addr_emit.buf, sizeof(uint32_t) * addr_emit.len);
+            p->addr_bc_len = addr_emit.len;
+            p->target_kind = TGT_MEM_DYNAMIC;
+            p->target_size_bytes = sz_int;
+            p->target_bit_start = 0;
+            p->target_bit_end = sz_int * 8 - 1;
+            p->target_name_idx = -1;  /* built at run time from the address */
+            cc->has_mem_ops = 1;
+            /* fall through to the shared value-expr compile */
+        } else {
+            /* Register target. */
+            t_name = PyObject_GetAttrString(target, "name");
+            t_bs   = PyObject_GetAttrString(target, "bit_start");
+            t_be   = PyObject_GetAttrString(target, "bit_end");
+            Py_DECREF(target);
+            if (!t_name || !t_bs || !t_be) { Py_XDECREF(t_name); t_name = NULL; Py_XDECREF(t_bs); t_bs = NULL; Py_XDECREF(t_be); t_be = NULL; goto fb; }
+            const char *tn = PyUnicode_AsUTF8(t_name);
+            if (!tn) { Py_DECREF(t_name); t_name = NULL; Py_DECREF(t_bs); t_bs = NULL; Py_DECREF(t_be); t_be = NULL; goto fb; }
+            p->target_kind = TGT_REG;
+            p->target_name_idx = strpool_intern(cc, tn);
+            p->target_bit_start = (int)PyLong_AsLong(t_bs);
+            p->target_bit_end   = (int)PyLong_AsLong(t_be);
+            p->target_size_bytes = 0;
+            Py_DECREF(t_name); t_name = NULL;
+            Py_DECREF(t_bs);   t_bs   = NULL;
+            Py_DECREF(t_be);   t_be   = NULL;
+        }
 
         /* Sanity gate: a wide (>64-bit) output cannot fit the uint64 bytecode
          * stack / result mask.  Route the whole assignment to the Python
@@ -993,7 +1027,7 @@ static inline uint64_t vsh_smear(int kind, uint64_t y, uint64_t ts, int s0,
 /* Evaluate a single bytecode program for one assignment.
  * Returns the result as Python int (PyLong) or NULL on error. */
 static PyObject *eval_program(CompiledCircuit *cc,
-                              AssignmentProg *prog,
+                              uint32_t *bc, int bc_len,
                               PyObject *context,
                               PyObject *input_taint, PyObject *input_values,
                               PyObject *shadow_memory, PyObject *mem_reader,
@@ -1001,8 +1035,6 @@ static PyObject *eval_program(CompiledCircuit *cc,
     uint64_t stack[CIRCUIT_STACK_MAX];
     int sp = 0;
     int pc = 0;
-    uint32_t *bc = prog->bc;
-    int bc_len = prog->bc_len;
 
     while (pc < bc_len) {
         uint32_t op = bc[pc++];
@@ -1634,7 +1666,7 @@ static PyObject *do_evaluate(CompiledCircuit *self,
         }
 
         /* Compiled fast path */
-        PyObject *result = eval_program(self, prog, context,
+        PyObject *result = eval_program(self, prog->bc, prog->bc_len, context,
                                         taint_norm, values_norm,
                                         shadow_memory, mem_reader, pcode_eval);
         if (!result) {
@@ -1656,6 +1688,43 @@ static PyObject *do_evaluate(CompiledCircuit *self,
 
         int bit_start = prog->target_bit_start;
         int bit_end   = prog->target_bit_end;
+
+        /* Resolve the output key.  Register target: the interned name.  Memory
+         * target: evaluate the address bytecode and build MEM_0x<addr>_<size>
+         * exactly as the Cython path does (f'MEM_{hex(address)}_{size}'). */
+        PyObject *target_name = NULL;
+        if (prog->target_kind == TGT_REG) {
+            target_name = PyList_GET_ITEM(self->string_pool, prog->target_name_idx);
+            Py_INCREF(target_name);
+        } else {
+            PyObject *addr_obj = eval_program(self, prog->addr_bc, prog->addr_bc_len,
+                                              context, taint_norm, values_norm,
+                                              shadow_memory, mem_reader, pcode_eval);
+            if (!addr_obj || !PyLong_Check(addr_obj)) {
+                /* Address did not resolve in C; recompute via Python when a real
+                 * context is available (mirrors the value-fallback above). */
+                Py_XDECREF(addr_obj); addr_obj = NULL;
+                if (context) {
+                    PyObject *asgs = PyObject_GetAttrString(self->python_circuit, "assignments");
+                    if (asgs) {
+                        PyObject *a2 = PyList_GetItem(asgs, i);
+                        PyObject *tgt2 = a2 ? PyObject_GetAttrString(a2, "target") : NULL;
+                        PyObject *ae2  = tgt2 ? PyObject_GetAttrString(tgt2, "address_expr") : NULL;
+                        if (ae2) addr_obj = PyObject_CallMethod(ae2, "evaluate", "O", context);
+                        Py_XDECREF(ae2); Py_XDECREF(tgt2); Py_DECREF(asgs);
+                    }
+                }
+                if (!addr_obj) { PyErr_Clear(); Py_DECREF(result); Py_DECREF(output_taint); return NULL; }
+            }
+            PyObject *hexfn = PyDict_GetItemString(PyEval_GetBuiltins(), "hex");
+            PyObject *hexb = hexfn ? PyObject_CallFunctionObjArgs(hexfn, addr_obj, NULL) : NULL;
+            Py_DECREF(addr_obj);
+            if (!hexb) { Py_DECREF(result); Py_DECREF(output_taint); return NULL; }
+            target_name = PyUnicode_FromFormat("MEM_%U_%d", hexb, prog->target_size_bytes);
+            Py_DECREF(hexb);
+            if (!target_name) { Py_DECREF(result); Py_DECREF(output_taint); return NULL; }
+        }
+
         int width = bit_end - bit_start + 1;
 
         PyObject *one   = PyLong_FromLong(1);
@@ -1674,9 +1743,6 @@ static PyObject *do_evaluate(CompiledCircuit *self,
         Py_DECREF(result);
         PyObject *val_masked  = PyNumber_And(val_shifted, mask);
         Py_DECREF(val_shifted);
-
-        PyObject *target_name = PyList_GET_ITEM(self->string_pool, prog->target_name_idx);
-        Py_INCREF(target_name);
 
         PyObject *current = PyDict_GetItem(output_taint, target_name);
         if (!current) current = PyLong_FromLong(0);
