@@ -104,10 +104,17 @@ typedef enum {
     OP_HALT_FALLBACK = 255,
 } CircuitOp;
 
-/* Stack depth — max observed in measured circuits is < 8.  Bound at 32. */
-#define CIRCUIT_STACK_MAX  32
+/* Eval stack depth.  Simple register/flag circuits use < 8, but the taint of a
+ * carry/borrow flag (adc/sbb ZF, bextr) is a wide EqualityTaintExpr tree that
+ * needs more; bound generously.  eval_program guards every push against this
+ * bound and falls back to Python if an expression would exceed it, so this is a
+ * safety ceiling, not a correctness assumption. */
+#define CIRCUIT_STACK_MAX  256
 
-/* Bytecode capacity per assignment — max observed ~30 ops.  Bound 256. */
-#define CIRCUIT_BC_MAX     1024
+/* Bytecode capacity per assignment.  A flag differential over a multi-term
+ * carry chain (e.g. adc ZF ~596 expr nodes) compiles to a few thousand words;
+ * bound well above the largest observed.  compile-time emit() sets `overflow`
+ * (-> Python fallback) if this is exceeded, so it is also a safe ceiling. */
+#define CIRCUIT_BC_MAX     16384
 
 #endif /* CIRCUIT_BYTECODE_H */
