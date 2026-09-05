@@ -29,14 +29,20 @@ MAPPED_CASES = {
     'mov eax,ebx': '89d8',
     'movzx eax,bl': '0fb6c3',
     'movsx eax,bl': '0fbec3',      # sign-extension fill
-    'shl eax,4': 'c1e004',
-    'shr eax,4': 'c1e804',
-    'sar eax,4': 'c1f804',
-    'bswap eax': '0fc8',
+    'sar eax,4': 'c1f804',         # arithmetic shift: still single-call (no closed form yet)
     'mov rax,rbx': '4889d8',
     'movsxd rax,ebx': '4863c3',
     'and eax,0x0f0f0f0f': '250f0f0f0f',    # affine, f0 == 0
     'or eax,0xf0f0f0f0': '0df0f0f0f0',     # affine with nonzero constant part f0 == c
+}
+
+# Constant logical shifts now get an exact CLOSED-FORM result taint (src_taint
+# shifted), which is even better than the single-call: zero InstructionCellExprs.
+# Their taint must still equal the differential (checked below).
+CLOSED_FORM_CASES = {
+    'shl eax,4': 'c1e004',
+    'shr eax,4': 'c1e804',
+    'bswap eax': '0fc8',           # byte permutation: OR of disjoint shifted bytes
 }
 
 # Non-affine / non-mapped controls -- must NOT fire the single-call form.
@@ -88,7 +94,14 @@ def test_mapped_emits_single_call(label: str, hexs: str) -> None:
     assert _cell_count(repr(expr)) == 1, f'{label}: expected single-call (1 cell), got {repr(expr)[:120]}'
 
 
-@pytest.mark.parametrize(('label', 'hexs'), MAPPED_CASES.items(), ids=MAPPED_CASES.keys())
+@pytest.mark.parametrize(('label', 'hexs'), CLOSED_FORM_CASES.items(), ids=CLOSED_FORM_CASES.keys())
+def test_closed_form_emits_no_call(label: str, hexs: str) -> None:
+    _circ, expr = _rax_expr(hexs)
+    assert _cell_count(repr(expr)) == 0, f'{label}: expected closed-form (0 cells), got {repr(expr)[:120]}'
+
+
+@pytest.mark.parametrize(('label', 'hexs'), {**MAPPED_CASES, **CLOSED_FORM_CASES}.items(),
+                         ids=list(MAPPED_CASES) + list(CLOSED_FORM_CASES))
 def test_single_call_equals_differential(label: str, hexs: str, sim: CellSimulator) -> None:
     circ, _ = _rax_expr(hexs)
     rng = random.Random(hash(hexs) & 0xFFFF)

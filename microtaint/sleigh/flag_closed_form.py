@@ -288,10 +288,12 @@ def closed_form_taint(  # noqa: C901
             break
         if src.space.name == 'const':
             return Constant(0, 8)  # constant flag: no taint
-        if src.space.name == 'register':  # preserved flag (e.g. OF, count != 1)
-            m = mapper.map_to_state(src.offset, src.size)
-            if m is not None and getattr(m, 'name', None) is not None and not hasattr(m, 'addr_reg'):
-                return TaintOperand(m.name, m.bit_start, m.bit_end, is_taint=True)
+        if src.space.name == 'register':
+            # A flag that just forwards an OLD flag register is the UNDEFINED-flag
+            # case (e.g. OF for a shift count != 1: silicon recomputes it
+            # unpredictably). The engine conservatively taints undefined flags via
+            # the differential+floor, so decline here and let that stand rather
+            # than passing through the (possibly untainted) old value.
             return None
         k = _key(src)
         if k in seen:
