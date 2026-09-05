@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Iterable
 
@@ -29,6 +30,7 @@ from microtaint.instrumentation.ast import (
     VariableShiftTaintExpr,
 )
 from microtaint.sleigh.constfold import const_value, fold_constants, is_constant_op
+from microtaint.sleigh.flag_closed_form import closed_form_taint
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import (
     CONTROL_FLOW_OPCODES,
@@ -107,6 +109,16 @@ def _overlaps_vn(a: Varnode, b: Varnode) -> bool:
 
 
 _CONST_CACHE: dict[int, Constant] = {}
+
+
+# Closed-form taint for constant-parametrised flags (a shift/rotate by an
+# immediate, whose CF/OF/SF/ZF are count-selects that fold to exact terms over
+# the source operand): no InstructionCellExpr, so no concrete cell re-execution.
+# It only fires when a constant-count select actually collapsed, and its output
+# is validated exact against the brute-forced true taint (it is at worst equal to
+# the ICE differential, and tighter where ICE floors). ON by default;
+# MICROTAINT_CLOSED_FORM=0 disables (to A/B against the differential).
+_CLOSED_FORM_FLAGS = os.environ.get('MICROTAINT_CLOSED_FORM') != '0'
 
 
 def _get_zero_constant(size: int) -> Constant:
@@ -2435,6 +2447,22 @@ def generate_taint_assignments(  # noqa: C901
             expr = AvalancheExpr(expr, out_bit_end - out_bit_start + 1)
         assignments.append(TaintAssignment(target=out_target, dependencies=[], expression=expr))
         return
+
+    # Closed-form taint for constant-parametrised results / flags: after folding
+    # the constant selects (slice_simplify), a shift-by-immediate's result and
+    # its CF/OF/SF/ZF reduce to exact terms over the source operand, so they need
+    # no InstructionCellExpr (no concrete cell re-execution). Conservative: it
+    # returns None on any shape it is not certain of, falling through to the
+    # differential below. Disable with MICROTAINT_CLOSED_FORM=0.
+    if _CLOSED_FORM_FLAGS and not isinstance(mapping, MemMapping):
+        _cf = closed_form_taint(
+            slice_ops, mapper, out_is_flag=(out_bit_end - out_bit_start + 1) == 1,
+        )
+        if _cf is not None:
+            assignments.append(
+                TaintAssignment(target=out_target, dependencies=dependencies, expression=_cf),
+            )
+            return
 
     cat = determine_category(
         slice_ops, out_width_bits=(out_bit_end - out_bit_start + 1), flag_offsets=mapper.flag_offsets,

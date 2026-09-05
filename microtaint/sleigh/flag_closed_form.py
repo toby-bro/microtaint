@@ -1,0 +1,270 @@
+"""Closed-form taint for constant-parametrised flags.
+
+After ``slice_simplify`` collapses the constant-count selects of an instruction
+like ``shl eax,7``, each flag reduces to a small expression over a single
+register operand transformed by constant shifts and masks:
+
+    ZF     = (src << k == 0)             -> EqualityTaintExpr(src << k, 0)
+    CF/SF  = MSB(src << k)               -> the taint of that one source bit
+    OF     = preserved old flag          -> that flag's taint (a dep passthrough)
+
+This module recognises those shapes on the SIMPLIFIED slice and returns the
+EXACT closed-form taint ``Expr`` -- no InstructionCellExpr, so no concrete cell
+re-execution.  It is deliberately conservative: it fires ONLY on flag outputs
+whose constant-count select actually collapsed, and any shape it is not certain
+of returns ``None`` so the caller falls back to the (exact but slow) ICE
+differential.  A gap here only costs speed, never soundness; every closed form it
+emits is validated against the brute-forced TRUE taint (it equals the true taint,
+so it is at worst equal to the ICE differential and tighter where ICE floors).
+Register RESULTS are left to the differential for now (the flags dominate the
+cell-execution cost).
+
+Handled leaf grammar (everything else declines):
+  register leaf; COPY; INT_ZEXT; INT_AND(x, const); INT_LEFT(x, const);
+  INT_RIGHT(x, const).  INT_SEXT / INT_SRIGHT (sign-taint replication) are NOT
+  handled yet and decline.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Protocol
+
+from pypcode.pypcode_native import PcodeOp
+
+from microtaint.instrumentation.ast import (
+    BinaryExpr,
+    Constant,
+    EqualityTaintExpr,
+    Expr,
+    Op,
+    TaintOperand,
+)
+from microtaint.sleigh.slice_simplify import simplify_slice
+
+if TYPE_CHECKING:
+    from microtaint.sleigh.engine import StateMapper
+
+
+# Structural types shared by pypcode's PcodeOp/Varnode and slice_simplify's
+# duck-typed _Op/_Vn, so this module needs no `Any`. Members are read-only
+# properties so both pypcode's (read-only) and the shim's (settable) attributes
+# satisfy them.
+class _Space(Protocol):
+    @property
+    def name(self) -> str: ...
+
+
+class _Vn(Protocol):
+    @property
+    def space(self) -> _Space: ...
+    @property
+    def offset(self) -> int: ...
+    @property
+    def size(self) -> int: ...
+
+
+class _Opcode(Protocol):
+    @property
+    def name(self) -> str: ...
+
+
+class _Op(Protocol):
+    @property
+    def opcode(self) -> _Opcode: ...
+    @property
+    def output(self) -> _Vn | None: ...
+    @property
+    def inputs(self) -> Sequence[_Vn]: ...
+
+
+def _key(vn: _Vn) -> tuple[str, int, int]:
+    return (vn.space.name, vn.offset, vn.size)
+
+
+def _const_of(vn: _Vn) -> int | None:
+    return vn.offset if vn.space.name == 'const' else None
+
+
+class _ChainExprs:
+    """(value, taint) exprs for a varnode plus its bit width."""
+
+    __slots__ = ('taint', 'value', 'width')
+
+    def __init__(self, value: Expr, taint: Expr, width: int) -> None:
+        self.value = value
+        self.taint = taint
+        self.width = width
+
+
+def _mask(expr: Expr, width: int) -> Expr:
+    if width >= 64:
+        return expr
+    return BinaryExpr(Op.AND, expr, Constant((1 << width) - 1, 8))
+
+
+def _defining(ops: Sequence[_Op], vn: _Vn) -> tuple[_Op | None, bool]:
+    """(exact-match defining op, any-overlap) for `vn` within the slice.
+
+    A register read whose byte range overlaps an op's output IS that computed
+    value, not the input register -- so `ror`/`sar` write their result back into
+    the source register and the flag then reads the rotated/shifted value.  We
+    must resolve through the exact producer (or decline on partial overlap),
+    never treat such a register as an input leaf."""
+    exact = None
+    overlap = False
+    for op in ops:
+        o = op.output
+        if o is None or o.space.name != vn.space.name:
+            continue
+        if o.offset < vn.offset + vn.size and vn.offset < o.offset + o.size:
+            overlap = True
+            if _key(o) == _key(vn):
+                exact = op  # last exact definition (forward-ordered slice)
+    return exact, overlap
+
+
+def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, depth: int = 0) -> _ChainExprs | None:  # noqa: C901
+    """Resolve `vn` to (value, taint) exprs over a single register operand
+    transformed by constant shifts/masks, or None if the shape is not handled."""
+    if depth > 24:
+        return None
+    d, overlap = _defining(ops, vn)
+    if d is None:
+        # Not produced in the slice: a true input leaf (only registers qualify).
+        if overlap or vn.space.name != 'register':
+            return None  # partial overwrite, or an undefined unique: unsafe
+        m = mapper.map_to_state(vn.offset, vn.size)
+        if m is None or getattr(m, 'name', None) is None or hasattr(m, 'addr_reg'):
+            return None  # unmapped or a memory mapping
+        w = m.bit_end - m.bit_start + 1
+        return _ChainExprs(
+            TaintOperand(m.name, m.bit_start, m.bit_end, is_taint=False),
+            TaintOperand(m.name, m.bit_start, m.bit_end, is_taint=True),
+            w,
+        )
+    if d.output is None:
+        return None
+    name = d.opcode.name
+    obits = d.output.size * 8
+    if name in ('COPY', 'INT_ZEXT'):
+        inner = _chain(ops, d.inputs[0], mapper, depth + 1)
+        if inner is None:
+            return None
+        # zext widens with zero taint in the new high bits; value/taint carry.
+        return _ChainExprs(inner.value, inner.taint, obits)
+    if name in ('INT_LEFT', 'INT_RIGHT') and len(d.inputs) == 2:
+        k = _const_of(d.inputs[1])
+        if k is None or k >= obits:
+            return None  # shift >= width: bits leave the operand, decline to ICE
+        inner = _chain(ops, d.inputs[0], mapper, depth + 1)
+        if inner is None:
+            return None
+        op = Op.LEFT if name == 'INT_LEFT' else Op.RIGHT
+        val = _mask(BinaryExpr(op, inner.value, Constant(k, 8)), obits)
+        tnt = _mask(BinaryExpr(op, inner.taint, Constant(k, 8)), obits)
+        return _ChainExprs(val, tnt, obits)
+    if name == 'INT_AND' and len(d.inputs) == 2:
+        for i, j in ((0, 1), (1, 0)):
+            c = _const_of(d.inputs[i])
+            if c is not None:
+                inner = _chain(ops, d.inputs[j], mapper, depth + 1)
+                if inner is None:
+                    return None
+                # masking removes the taint of masked-out bits exactly
+                val = BinaryExpr(Op.AND, inner.value, Constant(c, 8))
+                tnt = BinaryExpr(Op.AND, inner.taint, Constant(c, 8))
+                return _ChainExprs(val, tnt, obits)
+    return None
+
+
+def _select_collapsed(orig: Sequence[_Op], simp: Sequence[_Op]) -> bool:
+    """True iff the original slice had a boolean select `INT_OR(INT_AND(c,a),
+    INT_AND(!c,b))` whose condition folded to a constant, so ``simplify_slice``
+    turned that OR into a COPY.  This is the signature of a constant-parametrised
+    conditional (a shift/rotate by an immediate), and it EXCLUDES plain
+    AND/OR/test/results, where no select collapses -- exactly the cases the naive
+    recogniser wrongly fired on."""
+    and_outs = {_key(o.output) for o in orig if o.opcode.name == 'INT_AND' and o.output is not None}
+    sel_keys = {
+        _key(o.output)
+        for o in orig
+        if o.opcode.name == 'INT_OR' and len(o.inputs) == 2 and o.output is not None
+        and _key(o.inputs[0]) in and_outs and _key(o.inputs[1]) in and_outs
+    }
+    if not sel_keys:
+        return False
+    simp_by_out = {_key(o.output): o for o in simp if o.output is not None}
+    return any(k in simp_by_out and simp_by_out[k].opcode.name == 'COPY' for k in sel_keys)
+
+
+def _sign_bit_taint(chain: _ChainExprs) -> Expr:
+    """Taint of the MSB (bit width-1) of a value: (taint >> (width-1)) & 1."""
+    return BinaryExpr(
+        Op.AND,
+        BinaryExpr(Op.RIGHT, chain.taint, Constant(chain.width - 1, 8)),
+        Constant(1, 8),
+    )
+
+
+def closed_form_taint(  # noqa: C901
+    slice_ops: list[PcodeOp],
+    mapper: StateMapper,
+    out_is_flag: bool,
+) -> Expr | None:
+    """Return the exact closed-form taint Expr for the slice's flag output, or None.
+
+    Fires only when `out_is_flag` is True (a 1-bit flag) and a constant-count
+    select collapsed; register results currently always return None.
+    """
+    # Only flag outputs, and only when a constant-count select actually
+    # collapsed (the shift/rotate-by-immediate signature). This excludes plain
+    # AND/OR/test and register results, where the differential is already exact.
+    if not out_is_flag or not slice_ops:
+        return None
+    simp = simplify_slice(slice_ops)
+    if not simp or not _select_collapsed(slice_ops, simp):
+        return None
+    # The output producer is the last op writing the flag varnode; follow COPY
+    # chains (the collapsed select becomes COPY(new_flag)) to the real producer.
+    if slice_ops[-1].output is None:
+        return None
+    flag_key = _key(slice_ops[-1].output)
+    by_out = {_key(o.output): o for o in simp if o.output is not None}
+    cur = by_out.get(flag_key)
+    seen: set[tuple[str, int, int]] = set()
+    while cur is not None and cur.opcode.name == 'COPY':
+        src = cur.inputs[0]
+        if src.space.name == 'const':
+            return Constant(0, 8)  # constant flag: no taint
+        if src.space.name == 'register':  # preserved flag (e.g. OF, count != 1)
+            m = mapper.map_to_state(src.offset, src.size)
+            if m is not None and getattr(m, 'name', None) is not None and not hasattr(m, 'addr_reg'):
+                return TaintOperand(m.name, m.bit_start, m.bit_end, is_taint=True)
+            return None
+        k = _key(src)
+        if k in seen:
+            return None
+        seen.add(k)
+        cur = by_out.get(k)
+    if cur is None:
+        return None
+    name = cur.opcode.name
+
+    # ZF-shape: (x == 0) with x a handled chain.
+    if name == 'INT_EQUAL' and len(cur.inputs) == 2:
+        for i, j in ((0, 1), (1, 0)):
+            if _const_of(cur.inputs[i]) == 0:
+                ch = _chain(simp, cur.inputs[j], mapper)
+                if ch is not None:
+                    return EqualityTaintExpr(ch.value, ch.taint, Constant(0, 8), Constant(0, 8), ch.width)
+        return None
+    # CF/SF-shape: MSB via signed-less-than-zero, x a handled chain.
+    if name == 'INT_SLESS' and len(cur.inputs) == 2 and _const_of(cur.inputs[1]) == 0:
+        ch = _chain(simp, cur.inputs[0], mapper)
+        if ch is not None:
+            return _sign_bit_taint(ch)
+    return None
+
+
+__all__ = ['closed_form_taint']
