@@ -170,29 +170,21 @@ static void emit_call_cell(CompiledCircuit *cc, BCEmit *e, PyObject *cell_obj) {
         return;
     }
 
-    /* Memory-keyed cell inputs (MEM_<...>) are not yet handled by the fast
-     * cell-call path: cell_eval_fast pre-resolves each input name to a
-     * register (offset, size) and SILENTLY SKIPS any name that is not a
-     * register (CellHandle.inp_off < 0), which would drop the memory
-     * operand's value/taint and under-taint the result.  Fall back to the
-     * Python InstructionCellExpr evaluator (evaluate_concrete_flat), which
-     * loads MEM_<hex>_<size> and MEM_<reg>_<off>_<size> keys correctly.  Mark
-     * has_mem_ops so the wrapper's per-instruction cache stays sound (this is
-     * needed here because expr_tree_reads_memory does not descend into an
-     * InstructionCellExpr's inputs dict).  (TODO: teach the CellHandle /
-     * cell_eval_fast path to load MEM_ inputs so memory stays in compiled C.) */
+    /* Memory-keyed cell inputs (MEM_<...>) ARE handled by the fast cell-call
+     * path: CellHandle parses the key (static MEM_0x<addr>_<size> or
+     * register-relative MEM_<reg>_<off>_<size>) and cell_eval_fast writes the
+     * pushed value to the frame's memory (two-pass load, mirroring load_flat).
+     * We only need has_mem_ops set so the wrapper's per-instruction cache stays
+     * sound; the input value-expr's MemoryOperand leaves normally set it, but
+     * mark it here too since expr_tree_reads_memory does not descend into an
+     * InstructionCellExpr's inputs dict. */
     {
         PyObject *k, *v;
         Py_ssize_t sp = 0;
         while (PyDict_Next(inputs, &sp, &k, &v)) {
             const char *kn = PyUnicode_AsUTF8(k);
             if (!kn) { PyErr_Clear(); continue; }
-            if (strncmp(kn, "MEM_", 4) == 0) {
-                cc->has_mem_ops = 1;
-                e->fallback = 1;
-                Py_DECREF(inputs);
-                return;
-            }
+            if (strncmp(kn, "MEM_", 4) == 0) { cc->has_mem_ops = 1; break; }
         }
     }
 

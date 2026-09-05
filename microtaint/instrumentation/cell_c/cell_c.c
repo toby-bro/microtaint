@@ -632,6 +632,19 @@ typedef struct {
     int       n_inputs;
     int       inp_off[16];
     int       inp_sz[16];
+    /* Memory inputs.  A cell input keyed MEM_<...> carries an already-computed
+     * value (the caller pushes it) that must be written to the frame's memory,
+     * not a register.  inp_is_mem[i]=1 marks it, and inp_off[i] is left -1 so the
+     * register-load pass skips it.  Address form:
+     *   Format-A (static):  inp_mem_base_off[i] < 0, inp_mem_addr[i] = abs addr.
+     *   Format-B (reg-rel): inp_mem_base_off/sz[i] locate the base register in the
+     *                        frame and inp_mem_off[i] is the signed byte offset.
+     * inp_sz[i] is the access size in bytes for a memory input. */
+    int       inp_is_mem[16];
+    uint64_t  inp_mem_addr[16];
+    int       inp_mem_base_off[16];
+    int       inp_mem_base_sz[16];
+    int64_t   inp_mem_off[16];
     /* Whether out_reg requires the slow read_output_full path (MEM_ / EFLAGS) */
     int       use_slow_read;
 } CellHandle;
@@ -693,18 +706,65 @@ static int cell_handle_init(EvalC *self, PyObject *cell_obj,
     h->out_reg[orlen] = 0;
     Py_DECREF(r);
 
-    /* Pre-resolve input names to (offset, size) */
+    /* Pre-resolve input names.  Register inputs -> (offset, size); memory inputs
+     * (MEM_<...>) -> parsed address form (mirrors load_flat's Pass 2 so the fast
+     * path resolves the identical address the flat/Unicorn paths would). */
     h->n_inputs = (n_inputs > 16) ? 16 : n_inputs;
     for (int i = 0; i < h->n_inputs; i++) {
-        char up_in[16];
-        upper_into(up_in, sizeof(up_in), input_names[i]);
+        const char *nm = input_names[i];
+        h->inp_is_mem[i]      = 0;
+        h->inp_off[i]         = -1;
+        h->inp_sz[i]          = 8;
+        h->inp_mem_base_off[i] = -1;
+
+        if (strncmp(nm, "MEM_", 4) == 0 || strncmp(nm, "mem_", 4) == 0) {
+            const char *body = nm + 4;
+            const char *last_us = strrchr(body, '_');
+            if (!last_us) continue;                 /* malformed: skip (loads nothing) */
+            int msize = atoi(last_us + 1);
+            char head[128];
+            Py_ssize_t hlen = last_us - body;
+            if (hlen <= 0 || hlen >= (Py_ssize_t)sizeof(head)) continue;
+            memcpy(head, body, hlen); head[hlen] = 0;
+
+            if (head[0] == '0' && head[1] == 'x') {
+                h->inp_mem_addr[i]     = (uint64_t)strtoull(head, NULL, 16);
+                h->inp_mem_base_off[i] = -1;         /* static */
+                h->inp_is_mem[i]       = 1;
+                h->inp_sz[i]           = msize;
+            } else if (head[0] == '-' && head[1] == '0' && head[2] == 'x') {
+                h->inp_mem_addr[i]     = (uint64_t)(int64_t)strtoll(head, NULL, 16);
+                h->inp_mem_base_off[i] = -1;
+                h->inp_is_mem[i]       = 1;
+                h->inp_sz[i]           = msize;
+            } else {
+                const char *inner = strrchr(head, '_');
+                if (!inner) continue;
+                char regname[64];
+                Py_ssize_t rlen = inner - head;
+                if (rlen <= 0 || rlen >= (Py_ssize_t)sizeof(regname)) continue;
+                for (int j = 0; j < rlen; j++) {
+                    char c = head[j];
+                    regname[j] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+                }
+                regname[rlen] = 0;
+                int roff, rsz;
+                if (!reg_off_size(self, regname, &roff, &rsz)) continue;
+                h->inp_mem_base_off[i] = roff;
+                h->inp_mem_base_sz[i]  = rsz;
+                h->inp_mem_off[i]      = (int64_t)atoll(inner + 1);
+                h->inp_is_mem[i]       = 1;
+                h->inp_sz[i]           = msize;
+            }
+            continue;
+        }
+
+        char up_in[32];
+        upper_into(up_in, sizeof(up_in), nm);
         int off, sz;
         if (reg_off_size(self, up_in, &off, &sz)) {
             h->inp_off[i] = off;
             h->inp_sz[i]  = sz;
-        } else {
-            h->inp_off[i] = -1;
-            h->inp_sz[i]  = 8;
         }
     }
     return 0;
@@ -732,11 +792,25 @@ static int cell_eval_fast(EvalC *self, CellHandle *h,
     Frame *f = &self->frame_a;
     frame_clear(f);
 
-    /* Load inputs by pre-resolved offset (no dict iter, no name parsing) */
+    /* Pass 1: register inputs (by pre-resolved offset; no dict iter, no parsing). */
     for (int i = 0; i < h->n_inputs; i++) {
-        if (h->inp_off[i] < 0) continue;
-        uint64_t v = input_values[i];
-        frame_write_reg(f, h->inp_off[i], h->inp_sz[i], mask64(v, h->inp_sz[i]));
+        if (h->inp_is_mem[i] || h->inp_off[i] < 0) continue;
+        frame_write_reg(f, h->inp_off[i], h->inp_sz[i], mask64(input_values[i], h->inp_sz[i]));
+    }
+
+    /* Pass 2: memory inputs.  A register-relative address resolves against the
+     * base register loaded in Pass 1, so this must run after it (same two-pass
+     * order as load_flat). The pushed value is the already-computed corner. */
+    for (int i = 0; i < h->n_inputs; i++) {
+        if (!h->inp_is_mem[i]) continue;
+        uint64_t addr;
+        if (h->inp_mem_base_off[i] < 0) {
+            addr = h->inp_mem_addr[i];
+        } else {
+            uint64_t base = frame_read_reg(f, h->inp_mem_base_off[i], h->inp_mem_base_sz[i]);
+            addr = base + (uint64_t)h->inp_mem_off[i];
+        }
+        mem_write(&f->mem, addr, input_values[i], h->inp_sz[i], f->is_big_endian);
     }
 
     if (execute_decoded(f, bundle) == EXEC_FALLBACK) {
