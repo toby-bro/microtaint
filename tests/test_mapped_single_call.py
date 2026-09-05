@@ -30,6 +30,7 @@ MAPPED_CASES = {
     'movzx eax,bl': '0fb6c3',
     'movsx eax,bl': '0fbec3',      # sign-extension fill
     'sar eax,4': 'c1f804',         # arithmetic shift: still single-call (no closed form yet)
+    'bswap eax': '0fc8',           # byte permutation: closed form too big (node cap), stays single-call
     'mov rax,rbx': '4889d8',
     'movsxd rax,ebx': '4863c3',
     'and eax,0x0f0f0f0f': '250f0f0f0f',    # affine, f0 == 0
@@ -42,7 +43,6 @@ MAPPED_CASES = {
 CLOSED_FORM_CASES = {
     'shl eax,4': 'c1e004',
     'shr eax,4': 'c1e804',
-    'bswap eax': '0fc8',           # byte permutation: OR of disjoint shifted bytes
 }
 
 # Non-affine / non-mapped controls -- must NOT fire the single-call form.
