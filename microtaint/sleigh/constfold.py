@@ -63,8 +63,12 @@ def _eval(name: str, ins: list[int], in_bits: list[int], out_bits: int) -> int |
         return (a | b) & mask
     if name == 'INT_XOR':
         return (a ^ b) & mask
-    if name in ('INT_NEGATE', 'BOOL_NEGATE'):
+    if name == 'INT_NEGATE':
         return (~a) & mask
+    if name == 'BOOL_NEGATE':
+        # Logical negation of a boolean 0/1, NOT bitwise ~ (which would give
+        # 0xFE for !1 and defeat select-branch folding).
+        return int(not a)
     if name == 'INT_2COMP':
         return (-a) & mask
     if name == 'INT_LEFT':
