@@ -408,6 +408,35 @@ cdef class InstructionHook:
 
 
 # ---------------------------------------------------------------------------
+# Pure-C UC_HOOK_CODE trampoline.  Registered with uc_hook_add as a raw C
+# function pointer so Unicorn calls it with NO per-instruction Python frame.
+# Measured per-instruction callback cost: ctypes CFUNCTYPE(python) ~523ns (the
+# path wrapper.py uses today) vs a pure-C fn ptr ~34ns; this trampoline adds
+# only the GIL acquire (~140ns) and then reuses the existing _evaluate, so the
+# taint logic and results are byte-identical -- it just removes the ctypes
+# marshaling + Python-method dispatch from every instruction.
+#
+# user_data carries the InstructionHook instance (its id()); the wrapper keeps
+# it alive.  `with gil` acquires the GIL (Unicorn releases it during emulation)
+# so touching Python objects is safe.  noexcept prints-and-clears any unhandled
+# exception, matching the ctypes-callback behaviour.
+# ---------------------------------------------------------------------------
+cdef void _c_instruction_hook(void *uc, unsigned long long address,
+                              unsigned int size, void *user_data) noexcept with gil:
+    cdef InstructionHook hook = <InstructionHook>user_data
+    hook._evaluate(address, <int>size)
+
+
+def c_instruction_hook_ptr():
+    """Address (int) of the pure-C UC_HOOK_CODE trampoline, for uc_hook_add.
+
+    Register it with the InstructionHook instance passed as user_data (via
+    id(hook)); the caller MUST keep that instance alive for the hook's lifetime.
+    """
+    return <unsigned long long>&_c_instruction_hook
+
+
+# ---------------------------------------------------------------------------
 # Memory hooks — Cython port of _mem_write_clear_hook, _mem_access_hook,
 # and _uaf_unmapped_write_hook.  Same design as InstructionHook: capture
 # typed references to wrapper state once, dispatch into shadow_mem via

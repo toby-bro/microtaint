@@ -225,3 +225,11 @@ class LiveMemReader:
     ) -> None: ...
     def __call__(self, address: int, size: int) -> int:
         """Read `size` bytes at `address`. Returns 0 on error."""
+
+def c_instruction_hook_ptr() -> int:
+    """Address of the pure-C UC_HOOK_CODE trampoline, for uc_hook_add.
+
+    Register with the InstructionHook instance as user_data (id(hook)); the
+    caller must keep that instance alive for the hook's lifetime.
+    """
+    ...

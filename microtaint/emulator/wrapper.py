@@ -18,6 +18,7 @@ from microtaint.emulator.hook_core import (
     MemAccessHook,
     MemWriteClearHook,
     UafUnmappedWriteHook,
+    c_instruction_hook_ptr,
 )
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
@@ -524,6 +525,13 @@ class MicrotaintWrapper:
         # V5: Cython hot-path hook. Set MICROTAINT_DISABLE_CYTHON_HOOK=1 to
         # fall back to the Python method (for debugging).
         self._disable_cython_hook: bool = os.environ.get('MICROTAINT_DISABLE_CYTHON_HOOK') == '1'
+        # V7: register the instruction hook as a PURE-C function pointer (a Cython
+        # `with gil` trampoline) instead of a ctypes CFUNCTYPE(python) wrapper, so
+        # Unicorn calls it without a per-instruction Python frame (~523ns -> ~140ns
+        # per callback; the taint logic in _evaluate is unchanged).  Set
+        # MICROTAINT_C_HOOK=0 to fall back to the ctypes CFUNCTYPE path.
+        self._use_c_hook: bool = os.environ.get('MICROTAINT_C_HOOK', '1') != '0'
+        self._instr_hook_ud: Any = None  # user_data (id of the InstructionHook), kept alive
         self._instr_hook_obj: object = None
         # Cython mem-hook trampolines (CFUNCTYPE instances + the Cython
         # callables they wrap).  These must be kept alive for the lifetime
@@ -674,14 +682,30 @@ class MicrotaintWrapper:
                 # We must keep the CFUNCTYPE instance alive ourselves
                 # (Unicorn won't track it because we're calling uc_hook_add
                 # outside of unicorn-py3).  Stash on self._instr_cfunc.
-                self._instr_cfunc = _HOOK_CODE_CFUNC(instr_hook)
+                # Choose the callback: a pure-C trampoline (no per-instruction
+                # Python frame) when enabled and the Cython hook is in use, else
+                # the ctypes CFUNCTYPE(python) wrapper.  Both call the SAME
+                # InstructionHook._evaluate, so taint results are identical.
+                cb_ptr: ctypes.c_void_p
+                cb_ud: ctypes.c_void_p | None
+                if self._use_c_hook and isinstance(instr_hook, InstructionHook):
+                    self._instr_cfunc = None  # no CFUNCTYPE needed on the C path
+                    # user_data = the InstructionHook instance (kept alive via
+                    # self._instr_hook_obj); the trampoline casts it back.
+                    self._instr_hook_ud = ctypes.c_void_p(id(instr_hook))
+                    cb_ptr = ctypes.c_void_p(c_instruction_hook_ptr())
+                    cb_ud = self._instr_hook_ud
+                else:
+                    self._instr_cfunc = _HOOK_CODE_CFUNC(instr_hook)
+                    cb_ptr = ctypes.cast(self._instr_cfunc, ctypes.c_void_p)
+                    cb_ud = None
                 hook_handle = ctypes.c_size_t()
                 rc = _uc_hook_add(
                     self._uc_handle,
                     ctypes.byref(hook_handle),
                     UC_HOOK_CODE,
-                    ctypes.cast(self._instr_cfunc, ctypes.c_void_p),
-                    None,  # user_data (unused)
+                    cb_ptr,
+                    cb_ud,  # user_data (the hook instance on the C path)
                     ctypes.c_uint64(self._main_base),
                     ctypes.c_uint64(self._main_end),
                 )
