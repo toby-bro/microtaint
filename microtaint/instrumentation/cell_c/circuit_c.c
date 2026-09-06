@@ -89,6 +89,14 @@ typedef struct {
      * safely cache (input_taint → output_state) without including
      * shadow-memory state in the cache key. */
     int             has_mem_ops;
+
+    /* Precomputed for the GIL-free do_evaluate_c path.  const_u64 mirrors
+     * `constants` as uint64 (two's-complement); c_evaluable is set when the whole
+     * circuit can run with NO PyObject access: no python fallback, no memory ops,
+     * and every constant fits 64 bits. */
+    uint64_t       *const_u64;
+    int             n_const_u64;
+    int             c_evaluable;
 } CompiledCircuit;
 
 /* ──────────── string_pool helpers ──────────── */
@@ -718,6 +726,7 @@ static void CompiledCircuit_dealloc(CompiledCircuit *self) {
         }
         free(self->progs);
     }
+    free(self->const_u64);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -953,6 +962,27 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
     }
 
     Py_DECREF(assignments);
+
+    /* Precompute the GIL-free do_evaluate_c data: a uint64 mirror of `constants`
+     * and the c_evaluable gate.  A constant wider than 64 bits (or any python
+     * fallback / memory op) disqualifies the whole circuit from the C path. */
+    {
+        int const_ok = 1;
+        Py_ssize_t nc = PyList_GET_SIZE(cc->constants);
+        if (nc > 0) {
+            cc->const_u64 = (uint64_t *)calloc((size_t)nc, sizeof(uint64_t));
+            if (!cc->const_u64) { const_ok = 0; }
+            else {
+                cc->n_const_u64 = (int)nc;
+                for (Py_ssize_t ci = 0; ci < nc; ci++) {
+                    uint64_t uv;
+                    if (!pylong_to_u64(PyList_GET_ITEM(cc->constants, ci), &uv)) { const_ok = 0; break; }
+                    cc->const_u64[ci] = uv;
+                }
+            }
+        }
+        cc->c_evaluable = const_ok && !cc->has_python_fallback && !cc->has_mem_ops;
+    }
     return (PyObject *)cc;
 }
 
@@ -1044,12 +1074,20 @@ typedef struct {
 
 /* Evaluate a single bytecode program for one assignment.
  * Returns the result as Python int (PyLong) or NULL on error. */
+/* When c_out != NULL, eval_program runs in GIL-FREE C mode: OP_PUSH_TAINT/VALUE
+ * read the caller's uint64 arrays (indexed by string_pool idx) instead of the
+ * Python input dicts, OP_PUSH_CONST reads cc->const_u64, OP_END writes *c_out
+ * and returns a non-NULL sentinel, and any op needing Python (OP_PUSH_MEM_*, an
+ * OP_CALL_CELL that cannot take the C fast path) returns NULL to bail.  With
+ * c_out == NULL the function is byte-identical to before (the Python path). */
 static PyObject *eval_program(CompiledCircuit *cc,
                               uint32_t *bc, int bc_len,
                               PyObject *context,
                               PyObject *input_taint, PyObject *input_values,
                               PyObject *shadow_memory, PyObject *mem_reader,
-                              PyObject *pcode_eval, PushMemo *memo) {
+                              PyObject *pcode_eval, PushMemo *memo,
+                              const uint64_t *c_in_taint, const uint64_t *c_in_values,
+                              uint64_t *c_out) {
     uint64_t stack[CIRCUIT_STACK_MAX];
     int sp = 0;
     int pc = 0;
@@ -1062,7 +1100,9 @@ static PyObject *eval_program(CompiledCircuit *cc,
             int bit_start = (int)bc[pc++];
             int bit_end   = (int)bc[pc++];
             uint64_t v;
-            if (memo && name_idx < memo->n && memo->rt[name_idx]) {
+            if (c_out) {
+                v = c_in_taint[name_idx];   /* C mode: array read, no PyObject */
+            } else if (memo && name_idx < memo->n && memo->rt[name_idx]) {
                 v = memo->tv[name_idx];   /* memo hit: raw value, no dict lookup */
             } else {
                 PyObject *name = PyList_GET_ITEM(cc->string_pool, name_idx);
@@ -1089,7 +1129,9 @@ static PyObject *eval_program(CompiledCircuit *cc,
             int bit_start = (int)bc[pc++];
             int bit_end   = (int)bc[pc++];
             uint64_t v;
-            if (memo && name_idx < memo->n && memo->rv[name_idx]) {
+            if (c_out) {
+                v = c_in_values[name_idx];   /* C mode: array read, no PyObject */
+            } else if (memo && name_idx < memo->n && memo->rv[name_idx]) {
                 v = memo->vv[name_idx];
             } else {
                 PyObject *name = PyList_GET_ITEM(cc->string_pool, name_idx);
@@ -1108,6 +1150,10 @@ static PyObject *eval_program(CompiledCircuit *cc,
         }
         case OP_PUSH_CONST: {
             int ci = (int)bc[pc++];
+            if (c_out) {
+                stack[sp++] = (ci >= 0 && ci < cc->n_const_u64) ? cc->const_u64[ci] : 0;
+                break;
+            }
             PyObject *cv = PyList_GET_ITEM(cc->constants, ci);
             /* Mask variant: two's-complement low-64 bits, so a negative constant
              * (e.g. -8 -> 0xFFFFFFFFFFFFFFF8) loads correctly and never raises.
@@ -1311,6 +1357,7 @@ static PyObject *eval_program(CompiledCircuit *cc,
             break;
         }
         case OP_PUSH_MEM_TAINT: {
+            if (c_out) goto err;   /* C mode: no shadow-memory access; bail to SLEIGH */
             int size = (int)bc[pc++];
             if (sp < 1) goto err;
             uint64_t addr = stack[--sp];
@@ -1340,6 +1387,7 @@ static PyObject *eval_program(CompiledCircuit *cc,
             break;
         }
         case OP_PUSH_MEM_VALUE: {
+            if (c_out) goto err;   /* C mode: no shadow-memory access; bail to SLEIGH */
             int size = (int)bc[pc++];
             if (sp < 1) goto err;
             uint64_t addr = stack[--sp];
@@ -1411,6 +1459,7 @@ static PyObject *eval_program(CompiledCircuit *cc,
                 break;
             }
 
+            if (c_out) goto err;   /* C mode: the Python slow cell path needs the GIL; bail */
             /* Slow path: build a Python dict and call evaluate_concrete.
              * Used for non-C-kernel pcode (Cython fallback) or when a
              * handle wasn't pre-resolved. */
@@ -1442,6 +1491,7 @@ static PyObject *eval_program(CompiledCircuit *cc,
         }
         case OP_END: {
             if (sp != 1) goto err;
+            if (c_out) { *c_out = stack[0]; return (PyObject *)cc; /* non-NULL C-mode sentinel */ }
             return PyLong_FromUnsignedLongLong(stack[0]);
         }
         default:
@@ -1731,7 +1781,7 @@ static PyObject *do_evaluate(CompiledCircuit *self,
         /* Compiled fast path */
         PyObject *result = eval_program(self, prog->bc, prog->bc_len, context,
                                         taint_norm, values_norm,
-                                        shadow_memory, mem_reader, pcode_eval, &memo);
+                                        shadow_memory, mem_reader, pcode_eval, &memo, NULL, NULL, NULL);
         if (!result) {
             if (PyErr_Occurred()) PyErr_Clear();
             PyObject *assignments = PyObject_GetAttrString(self->python_circuit, "assignments");
@@ -1762,7 +1812,7 @@ static PyObject *do_evaluate(CompiledCircuit *self,
         } else {
             PyObject *addr_obj = eval_program(self, prog->addr_bc, prog->addr_bc_len,
                                               context, taint_norm, values_norm,
-                                              shadow_memory, mem_reader, pcode_eval, &memo);
+                                              shadow_memory, mem_reader, pcode_eval, &memo, NULL, NULL, NULL);
             if (!addr_obj || !PyLong_Check(addr_obj)) {
                 /* Address did not resolve in C; recompute via Python when a real
                  * context is available (mirrors the value-fallback above). */
@@ -2011,9 +2061,76 @@ static PyObject *CompiledCircuit_stats(CompiledCircuit *self, PyObject *_unused)
         "python_fallback", fallback);
 }
 
+/* evaluate_c(input_taint, input_values) -> output_taint dict, computed on the
+ * GIL-FREE C path (register-only circuits only).  Returns None if the circuit is
+ * not c_evaluable (has mem ops / python fallback / >64-bit constants) or if any
+ * assignment bails, so the caller falls back to the normal evaluate().  This is
+ * the pure-C taint evaluator (given the compiled circuit) -- the input/output
+ * marshalling here still touches Python for the test/standalone entry, but the
+ * evaluation loop itself uses no PyObject; a future in-engine caller can shuttle
+ * the uint64 arrays directly with the GIL released. */
+static PyObject *CompiledCircuit_evaluate_c(CompiledCircuit *self, PyObject *args) {
+    PyObject *input_taint, *input_values, *pcode;
+    if (!PyArg_ParseTuple(args, "OOO", &input_taint, &input_values, &pcode)) return NULL;
+    if (!self->c_evaluable) { Py_RETURN_NONE; }
+    /* Match do_evaluate: normalize child registers to their canonical parents. */
+    PyObject *taint_norm  = normalize_register_dict(self->arch_str, input_taint);
+    PyObject *values_norm = normalize_register_dict(self->arch_str, input_values);
+    if (!taint_norm || !values_norm) { Py_XDECREF(taint_norm); Py_XDECREF(values_norm); Py_RETURN_NONE; }
+
+    int npool = (int)PyList_GET_SIZE(self->string_pool);
+    uint64_t *in_t = (uint64_t *)calloc((size_t)npool, sizeof(uint64_t));
+    uint64_t *in_v = (uint64_t *)calloc((size_t)npool, sizeof(uint64_t));
+    uint64_t *out_t = (uint64_t *)calloc((size_t)npool, sizeof(uint64_t));
+    if (!in_t || !in_v || !out_t) {
+        free(in_t); free(in_v); free(out_t);
+        Py_DECREF(taint_norm); Py_DECREF(values_norm); return PyErr_NoMemory();
+    }
+    for (int i = 0; i < npool; i++) {
+        PyObject *name = PyList_GET_ITEM(self->string_pool, i);
+        PyObject *tv = PyDict_GetItem(taint_norm, name);
+        if (tv) { in_t[i] = (uint64_t)PyLong_AsUnsignedLongLong(tv); if (PyErr_Occurred()) PyErr_Clear(); }
+        PyObject *vv = PyDict_GetItem(values_norm, name);
+        if (vv) { in_v[i] = (uint64_t)PyLong_AsUnsignedLongLong(vv); if (PyErr_Occurred()) PyErr_Clear(); }
+        out_t[i] = in_t[i];   /* output starts as the input taint (pass-through), like taint_norm.copy() */
+    }
+    int ok = 1;
+    for (int p = 0; p < self->n_progs && ok; p++) {
+        AssignmentProg *pr = &self->progs[p];
+        if (pr->target_kind != TGT_REG || pr->python_assignment) { ok = 0; break; }
+        uint64_t result = 0;
+        PyObject *rc = eval_program(self, pr->bc, pr->bc_len, NULL, NULL, NULL,
+                                    NULL, NULL, pcode, NULL, in_t, in_v, &result);
+        if (!rc) { ok = 0; break; }   /* bailed (mem / non-fast cell / error) */
+        int bs = pr->target_bit_start, be = pr->target_bit_end;
+        int width = be - bs + 1;
+        uint64_t mask = ((width >= 64) ? ~(uint64_t)0 : (((uint64_t)1 << width) - 1)) << bs;
+        int idx = pr->target_name_idx;
+        out_t[idx] = (out_t[idx] & ~mask) | ((result << bs) & mask);
+    }
+    PyObject *outd = NULL;
+    if (ok) {
+        outd = PyDict_Copy(taint_norm);   /* pass-through all input taint, then overlay targets */
+        if (outd) {
+            for (int p = 0; p < self->n_progs; p++) {
+                int idx = self->progs[p].target_name_idx;
+                PyObject *name = PyList_GET_ITEM(self->string_pool, idx);
+                PyObject *val = PyLong_FromUnsignedLongLong(out_t[idx]);
+                if (val) { PyDict_SetItem(outd, name, val); Py_DECREF(val); }
+            }
+        }
+    }
+    free(in_t); free(in_v); free(out_t);
+    Py_DECREF(taint_norm); Py_DECREF(values_norm);
+    if (!ok) { Py_RETURN_NONE; }
+    return outd;
+}
+
 static PyMethodDef CompiledCircuit_methods[] = {
     {"evaluate",      (PyCFunction)CompiledCircuit_evaluate,      METH_VARARGS, NULL},
     {"evaluate_fast", (PyCFunction)CompiledCircuit_evaluate_fast, METH_VARARGS, NULL},
+    {"evaluate_c",    (PyCFunction)CompiledCircuit_evaluate_c,    METH_VARARGS,
+     "GIL-free C-path taint eval (register-only circuits); None if not c_evaluable."},
     {"stats",         (PyCFunction)CompiledCircuit_stats,         METH_NOARGS,  NULL},
     {NULL}
 };
