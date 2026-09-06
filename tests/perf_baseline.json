@@ -2891,6 +2891,56 @@
       "assigns": 2,
       "cells": 0,
       "nodes": 6
+    },
+    "vmovdqa xmm0, xmm1": {
+      "assigns": 10,
+      "cells": 2,
+      "nodes": 66
+    },
+    "vpaddb xmm0, xmm1, xmm2": {
+      "assigns": 8,
+      "cells": 0,
+      "nodes": 64
+    },
+    "vpaddd xmm0, xmm1, xmm2": {
+      "assigns": 8,
+      "cells": 0,
+      "nodes": 64
+    },
+    "vpand xmm0, xmm1, xmm2": {
+      "assigns": 8,
+      "cells": 0,
+      "nodes": 64
+    },
+    "vpcmpeqd xmm0, xmm1, xmm2": {
+      "assigns": 8,
+      "cells": 0,
+      "nodes": 64
+    },
+    "vpor xmm0, xmm1, xmm2": {
+      "assigns": 8,
+      "cells": 0,
+      "nodes": 64
+    },
+    "vpslld xmm0, xmm1, 7": {
+      "assigns": 2,
+      "cells": 0,
+      "nodes": 8
+    },
+    "vpsubd xmm0, xmm1, xmm2": {
+      "assigns": 8,
+      "cells": 0,
+      "nodes": 64
+    },
+    "vpunpcklbw xmm0, xmm1, xmm2": {
+      "assigns": 8,
+      "cells": 0,
+      "nodes": 64
+    },
+    "vpxor xmm0, xmm1, xmm2": {
+      "assigns": 8,
+      "cells": 0,
+      "nodes": 12
     }
   },
   "ARM64": {
@@ -7810,7 +7860,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-06T05:58:02.883224+00:00",
+    "generated": "2026-09-06T06:27:07.323980+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

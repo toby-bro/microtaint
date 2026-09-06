@@ -156,11 +156,24 @@ def _cell_corpus_entries():
 
 _SIMD_CORPUS: dict[str, tuple[str, list[str]]] = {
     'AMD64_SIMD': ('x86_64', [
+        # Legacy SSE (128-bit xmm). The integer arith forms (paddb/paddd/...)
+        # are BIT-PRECISE per element via per-lane cell differentials, which is
+        # exactly why they are the slow tail (paddb blows up to ~7600 nodes).
         'pxor xmm0, xmm1', 'pand xmm0, xmm1', 'por xmm0, xmm1',
         'paddd xmm0, xmm1', 'paddb xmm0, xmm1', 'psubd xmm0, xmm1',
         'punpcklbw xmm0, xmm1', 'pshufd xmm0, xmm1, 0x1b',
         'movaps xmm0, xmm1', 'movdqa xmm0, xmm1', 'psllq xmm0, 7',
         'pcmpeqd xmm0, xmm1', 'pmullw xmm0, xmm1', 'packuswb xmm0, xmm1',
+        # VEX / AVX (128-bit xmm, 3-operand). These lift to an avalanche taint
+        # (whole-lane OR, cells=0) rather than the per-element precise path, so
+        # they are fast but coarser than their legacy SSE twins -- vpaddb is
+        # ~64 nodes next to paddb's ~7600. Tracking both keeps that precision vs
+        # speed contrast visible to the ratchet.
+        'vpxor xmm0, xmm1, xmm2', 'vpand xmm0, xmm1, xmm2',
+        'vpor xmm0, xmm1, xmm2', 'vpaddd xmm0, xmm1, xmm2',
+        'vpaddb xmm0, xmm1, xmm2', 'vpsubd xmm0, xmm1, xmm2',
+        'vpcmpeqd xmm0, xmm1, xmm2', 'vmovdqa xmm0, xmm1',
+        'vpunpcklbw xmm0, xmm1, xmm2', 'vpslld xmm0, xmm1, 7',
     ]),
     'ARM64_SIMD': ('arm64', [
         'and v0.16b, v1.16b, v2.16b', 'orr v0.16b, v1.16b, v2.16b',

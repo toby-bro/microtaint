@@ -576,6 +576,16 @@
 {"arch": "AMD64", "asm": "psubd xmm0, xmm1", "bytes": "660ffac1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "psubd xmm0, xmm1", "source": "simd", "srcs": []}
 {"arch": "AMD64", "asm": "punpcklbw xmm0, xmm1", "bytes": "660f60c1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "punpcklbw xmm0, xmm1", "source": "simd", "srcs": []}
 {"arch": "AMD64", "asm": "pxor xmm0, xmm1", "bytes": "660fefc1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "pxor xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vmovdqa xmm0, xmm1", "bytes": "c5f96fc1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vmovdqa xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vpaddb xmm0, xmm1, xmm2", "bytes": "c5f1fcc2", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vpaddb xmm0, xmm1, xmm2", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vpaddd xmm0, xmm1, xmm2", "bytes": "c5f1fec2", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vpaddd xmm0, xmm1, xmm2", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vpand xmm0, xmm1, xmm2", "bytes": "c5f1dbc2", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vpand xmm0, xmm1, xmm2", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vpcmpeqd xmm0, xmm1, xmm2", "bytes": "c5f176c2", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vpcmpeqd xmm0, xmm1, xmm2", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vpor xmm0, xmm1, xmm2", "bytes": "c5f1ebc2", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vpor xmm0, xmm1, xmm2", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vpslld xmm0, xmm1, 7", "bytes": "c5f972f107", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vpslld xmm0, xmm1, 7", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vpsubd xmm0, xmm1, xmm2", "bytes": "c5f1fac2", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vpsubd xmm0, xmm1, xmm2", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vpunpcklbw xmm0, xmm1, xmm2", "bytes": "c5f160c2", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vpunpcklbw xmm0, xmm1, xmm2", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "vpxor xmm0, xmm1, xmm2", "bytes": "c5f1efc2", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "vpxor xmm0, xmm1, xmm2", "source": "simd", "srcs": []}
 {"asm": "adc w0, w1, w2", "bytes": "2000021a", "categories": ["flag"], "constraints": {}, "isa": "ARM64", "label": "adc w0, w1, w2", "source": "corpora", "srcs": ["CY", "x1", "x2"]}
 {"asm": "adc x0, x1, x2", "bytes": "2000029a", "categories": ["flag"], "constraints": {}, "isa": "ARM64", "label": "adc x0, x1, x2", "source": "corpora", "srcs": ["x1", "x2", "CY"]}
 {"asm": "adcs w0, w1, w2", "bytes": "2000023a", "categories": ["flag"], "constraints": {}, "isa": "ARM64", "label": "adcs w0, w1, w2", "source": "corpora", "srcs": ["CY", "x1", "x2"]}
