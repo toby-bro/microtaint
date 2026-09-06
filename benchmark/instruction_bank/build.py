@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -50,7 +51,10 @@ from microtaint.types import Architecture  # noqa: E402
 # Loader constants: canonical per-ISA formats + keystone params live next door.
 from __init__ import ISA_FORMATS, isa_registers, keystone_for  # type: ignore  # noqa: E402
 
-DEFAULT_CORPORA = Path('/home/jns/Documents/Telecom/PRIM/benchmark/corpora.py')
+# corpora.py lives in the sibling benchmark scratchpad repo, not in this one, so
+# resolve it relative to the engine checkout instead of hardcoding an absolute
+# path. Override with --corpora or $MICROTAINT_CORPORA.
+DEFAULT_CORPORA = Path(os.environ.get('MICROTAINT_CORPORA') or _ENGINE.parent / 'benchmark' / 'corpora.py')
 OUT = _HERE / 'instructions.jsonl'
 
 # corpora.py key -> engine Architecture name
