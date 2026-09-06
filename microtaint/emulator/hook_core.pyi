@@ -54,6 +54,13 @@ class InstructionHook:
     Hot-path lookup uses a 64-bit version compare instead of a frozenset construction.
     """
 
+    decode_cache: dict[int, tuple[int, bytes, Any]]
+    """
+    Address-keyed decode cache: address -> (size, instruction_bytes, circuit).
+    On a repeat visit the hook reuses this instead of uc_mem_read + the ctypes
+    buffer slice + the cached_gen_rule tuplehash (~3.0 us of the cache-hit floor).
+    """
+
     shadow_mem: Any
     """BitPreciseShadowMemory instance (a cdef class from microtaint.emulator.shadow)."""
 
@@ -83,9 +90,20 @@ class InstructionHook:
     Cache entries are keyed on this version; equal version <=> identical state.
     """
 
+    code_lo: int
+    code_hi: int
+    """
+    Bounds [code_lo, code_hi) of every address in decode_cache.  The mem-write
+    hook invalidates the caches when a write intersects this range (self-
+    modifying / JIT'd code).  code_lo > code_hi means "no cached code yet".
+    """
+
     # ----- counters -----
     instr_cache_hits: int
     instr_cache_misses: int
+
+    def invalidate_smc(self) -> None:
+        """Drop the decode + Tier-3/Tier-4 caches after a write hit cached code."""
 
     def __init__(
         self,
@@ -127,9 +145,11 @@ class MemWriteClearHook:
     Unicorn UC_HOOK_MEM_WRITE callback.
 
     On every guest memory write:
-      1. UAF detection — if the target address is poisoned (was munmap'd),
+      1. Self-modifying code — if the write intersects the instruction hook's
+         cached-code range, invalidate its decode + output caches.
+      2. UAF detection — if the target address is poisoned (was munmap'd),
          report and stop.
-      2. Taint clearing — addresses outside the wrapper's
+      3. Taint clearing — addresses outside the wrapper's
          `_last_tainted_writes` set get their shadow taint cleared
          (the program wrote a fresh, untainted value).
     """
@@ -140,6 +160,7 @@ class MemWriteClearHook:
     reporter: Any
     ql: Any
     check_uaf: bool
+    instr_hook: Any  # InstructionHook | None — caches to invalidate on SMC
 
     def __init__(self, wrapper: Any) -> None: ...
     def __call__(

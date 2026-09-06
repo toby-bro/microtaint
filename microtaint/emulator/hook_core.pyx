@@ -46,6 +46,15 @@ cdef object EMPTY_FROZENSET = frozenset()
 import os as _os
 cdef bint _USE_DEVAL_C = _os.environ.get('MICROTAINT_DISABLE_DO_EVALUATE_C') != '1'
 
+# Address-keyed decode cache: on a repeat visit to an address, skip the
+# uc_mem_read + ctypes buffer slice + cached_gen_rule tuplehash (~3.0 us of the
+# ~4.5 us cache-hit floor) by reusing the (bytes, circuit) decoded last time.
+# The Tier-3/Tier-4 output caches already assume address->instruction stability
+# (they replay output_state by address without re-checking bytes), so this adds
+# no new correctness assumption.  Set MICROTAINT_DISABLE_DECODE_CACHE=1 to force
+# a fresh read+decode on every instruction.
+cdef bint _USE_DECODE_CACHE = _os.environ.get('MICROTAINT_DISABLE_DECODE_CACHE') != '1'
+
 
 cdef class InstructionHook:
     """
@@ -62,6 +71,13 @@ cdef class InstructionHook:
     cdef public set    last_tainted_writes
     cdef public dict   instr_cache        # address -> (frozenset, dict)  legacy entries
     cdef public dict   instr_cache_v      # address -> (taint_version, dict, taint_snapshot)
+    cdef public dict   decode_cache       # address -> (size, instruction_bytes, circuit)
+    # Bounds of every address currently in decode_cache, [code_lo, code_hi).  The
+    # mem-write hook uses this to detect self-modifying / JIT'd code: a guest
+    # write intersecting this range invalidates the decode + output caches so the
+    # rewritten instruction is re-read and re-decoded on its next execution.
+    cdef public unsigned long long code_lo
+    cdef public unsigned long long code_hi
     cdef public BitPreciseShadowMemory shadow_mem  # cdef class — direct C-level method dispatch
     cdef public object sim                # CellSimulator
     cdef public object policy             # ImplicitTaintPolicy
@@ -109,6 +125,11 @@ cdef class InstructionHook:
         # Version-keyed companion cache.  address -> (taint_version, output_state).
         # On hit, no dict-equality check needed: same version means same state.
         self.instr_cache_v = {}
+        # Address-keyed decode cache (see _USE_DECODE_CACHE note at module top).
+        self.decode_cache = {}
+        # Empty range: code_lo > code_hi means "no cached code yet".
+        self.code_lo = 0xFFFFFFFFFFFFFFFF
+        self.code_hi = 0
         self.shadow_mem = wrapper.shadow_mem
         self.sim = wrapper.sim
         self.policy = wrapper._policy
@@ -152,15 +173,45 @@ cdef class InstructionHook:
         # AND no shadow taint exists, the wrapper would not have armed
         # this hook. Once armed, we always run.
 
-        # Read instruction bytes.
-        cdef int err = self.uc_mem_read(self.uc_handle, address, self.mem_buf, size)
+        # Read + decode the instruction.  On a repeat visit the address-keyed
+        # decode cache returns the bytes and circuit decoded last time, skipping
+        # uc_mem_read + the ctypes buffer slice + the cached_gen_rule tuplehash
+        # (~3.0 us of the ~4.5 us cache-hit floor).  Keyed by (address, size); a
+        # size change forces a fresh read+decode.
+        cdef int err
         cdef bytes instruction_bytes
-        if err == 0:
-            instruction_bytes = bytes(self.mem_buf[:size])
+        cdef object circuit
+        cdef object dentry
+        if _USE_DECODE_CACHE:
+            dentry = self.decode_cache.get(address)
+            if dentry is not None and (<int>(<object>dentry[0])) == size:
+                instruction_bytes = <bytes>dentry[1]
+                circuit = <object>dentry[2]
+            else:
+                err = self.uc_mem_read(self.uc_handle, address, self.mem_buf, size)
+                if err == 0:
+                    instruction_bytes = bytes(self.mem_buf[:size])
+                else:
+                    instruction_bytes = bytes(self.ql.mem.read(address, size))
+                circuit = self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key)
+                self.decode_cache[address] = (size, instruction_bytes, circuit)
+                # Extend the cached-code bounds so the mem-write hook can spot a
+                # write that lands on any cached instruction (self-modifying code).
+                if address < self.code_lo:
+                    self.code_lo = address
+                if address + <unsigned long long>size > self.code_hi:
+                    self.code_hi = address + <unsigned long long>size
         else:
-            instruction_bytes = bytes(self.ql.mem.read(address, size))
+            err = self.uc_mem_read(self.uc_handle, address, self.mem_buf, size)
+            if err == 0:
+                instruction_bytes = bytes(self.mem_buf[:size])
+            else:
+                instruction_bytes = bytes(self.ql.mem.read(address, size))
+            circuit = self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key)
 
-        cdef object circuit = self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key)
+        # circuit._compiled is read fresh each call: it is lazily populated on the
+        # first circuit.evaluate and can be invalidated inside evaluate, so the
+        # decode cache stores the circuit object, not its compiled snapshot.
         cdef object compiled_circuit = circuit._compiled
 
         # Tier 3 fast path: per-address memoization.
@@ -380,6 +431,26 @@ cdef class InstructionHook:
         if check_aiw and PyDict_Size(register_taint) and len(mem_writes) > 0:
             self._aiw_check(mem_writes, pre_regs, pre_taint, instruction_bytes, address)
 
+    cpdef void invalidate_smc(self):
+        """Drop every address-keyed cache after a write hit cached code.
+
+        Called by the mem-write hook when a guest write intersects
+        [code_lo, code_hi).  The decode cache would otherwise replay the
+        pre-write bytes/circuit, and the Tier-3/Tier-4 output caches would
+        replay taint computed for the old instruction, so all three must go;
+        the rewritten instruction is re-read and re-decoded on its next
+        execution.  Rare (only self-modifying / JIT'd code writes into the
+        code range), so a full clear + lazy rebuild is fine.
+        """
+        if self.decode_cache:
+            self.decode_cache.clear()
+        if self.instr_cache_v:
+            self.instr_cache_v.clear()
+        if self.instr_cache:
+            self.instr_cache.clear()
+        self.code_lo = 0xFFFFFFFFFFFFFFFF
+        self.code_hi = 0
+
     cdef _aiw_check(self, list mem_writes, dict pre_regs, dict pre_taint,
                     bytes instruction_bytes, unsigned long long address):
         # Pure Python fallback for the rare AIW path.
@@ -478,6 +549,11 @@ cdef class MemWriteClearHook:
     cdef public object reporter
     cdef public object ql
     cdef public bint check_uaf
+    # The instruction hook whose decode/output caches this write hook must
+    # invalidate on self-modifying code.  None when the Cython hook is not in
+    # use (the Python fallback re-reads bytes every instruction, so it needs no
+    # invalidation).  Wired by the wrapper once both hooks exist.
+    cdef public InstructionHook instr_hook
 
     def __init__(self, wrapper):
         self.wrapper = wrapper
@@ -486,6 +562,7 @@ cdef class MemWriteClearHook:
         self.reporter = wrapper.reporter
         self.ql = wrapper.ql
         self.check_uaf = wrapper.check_uaf
+        self.instr_hook = None
 
     def __call__(self, object _uc, int _access, unsigned long long address,
                  int size, long long _value, object _user_data=None):
@@ -494,6 +571,16 @@ cdef class MemWriteClearHook:
         cdef set lw = self.last_tainted_writes
         cdef int i
         cdef unsigned long long a
+
+        # Self-modifying / JIT'd code: if this write lands on any cached
+        # instruction, drop the address-keyed caches so the rewritten bytes are
+        # re-decoded on next execution.  Two C-level integer compares reject the
+        # overwhelmingly common data write (stack/heap, outside the code range).
+        cdef InstructionHook ih = self.instr_hook
+        if (ih is not None and ih.code_hi > ih.code_lo
+                and address < ih.code_hi
+                and address + <unsigned long long>size > ih.code_lo):
+            ih.invalidate_smc()
 
         if self.check_uaf and sm.is_poisoned(address, size):
             self.reporter.uaf(address, size)

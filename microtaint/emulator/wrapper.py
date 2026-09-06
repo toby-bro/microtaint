@@ -739,6 +739,14 @@ class MicrotaintWrapper:
                 _UC_HOOK_MEM_WRITE_CONST,
             )
             self._mem_write_hook_registered = True
+        # Wire the mem-write hook to the instruction hook so a write onto cached
+        # code (self-modifying / JIT) invalidates its decode + output caches.
+        # Only the Cython InstructionHook has those caches; the Python fallback
+        # re-reads bytes every instruction, so it needs no invalidation.
+        if isinstance(self._mem_write_hook, MemWriteClearHook):
+            self._mem_write_hook.instr_hook = (
+                instr_hook if isinstance(instr_hook, InstructionHook) else None
+            )
 
     def _register_cython_mem_hook(
         self,
