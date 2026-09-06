@@ -282,15 +282,6 @@ cdef class InstructionHook:
         self.wrapper._pre_regs = pre_regs
         self.wrapper._pre_taint = pre_taint
 
-        ctx = self.eval_context_cls(
-            input_taint=pre_taint,
-            input_values=pre_regs,
-            simulator=self.sim,
-            implicit_policy=self.policy,
-            shadow_memory=self.shadow_mem,
-            mem_reader=self.read_live_memory,
-        )
-
         # Evaluate the circuit. Catch ImplicitTaintError for SC/BOF reporting.
         try:
             output_state = None
@@ -299,6 +290,17 @@ cdef class InstructionHook:
                 # to evaluate; returns None to fall back for mem / PC / non-eligible).
                 output_state = compiled_circuit.evaluate_c(pre_taint, pre_regs, self.sim._pcode)
             if output_state is None:
+                # Only the fallback path needs an EvalContext; evaluate_c reads
+                # pre_taint / pre_regs directly, so for the common register-only
+                # case we skip building (and discarding) a per-instruction object.
+                ctx = self.eval_context_cls(
+                    input_taint=pre_taint,
+                    input_values=pre_regs,
+                    simulator=self.sim,
+                    implicit_policy=self.policy,
+                    shadow_memory=self.shadow_mem,
+                    mem_reader=self.read_live_memory,
+                )
                 output_state = circuit.evaluate(ctx)
         except BaseException as e:
             if isinstance(e, ImplicitTaintError):
