@@ -108,6 +108,34 @@ def _is_const(vn) -> bool:
     return vn.space.name == 'const'
 
 
+# Human/bank register name -> pypcode SLEIGH register name, where they differ.
+# pypcode is the ISA-general contract, but its register *spelling* is
+# Ghidra's (lowercase GP on AArch64, NZCV split as NG/ZR/CY/OV), so the study
+# resolves bank names through this alias table + a case-insensitive fallback.
+_REG_ALIASES = {
+    # AArch64 condition flags (bank N/Z/C/V -> Ghidra NG/ZR/CY/OV)
+    'N': 'NG', 'Z': 'ZR', 'C': 'CY', 'V': 'OV',
+}
+
+
+def _resolve_vn(reg_vn, name):
+    """Map a bank/human register name to its pypcode varnode, tolerating
+    case and the AArch64 flag spelling.  Returns None if unmappable."""
+    vn = reg_vn.get(name)
+    if vn is not None:
+        return vn
+    alias = _REG_ALIASES.get(name)
+    if alias is not None and alias in reg_vn:
+        return reg_vn[alias]
+    lo = name.lower()
+    if lo in reg_vn:
+        return reg_vn[lo]
+    up = name.upper()
+    if up in reg_vn:
+        return reg_vn[up]
+    return None
+
+
 class PerOpFloors:
     """Per-op taint with sound floors.  Byte-granular value+taint stores so
     overlapping registers (AL/AX/EAX/RAX) alias correctly."""
@@ -309,7 +337,7 @@ def perop_floors_taint(arch, code, regs, in_taint, in_values):
     interp = PerOpFloors(ctx, _ARCH_LE[key])
     mapped = []
     for r in regs:
-        vn = reg_vn.get(r.name)
+        vn = _resolve_vn(reg_vn, r.name)
         if vn is None:
             continue
         mapped.append((r.name, vn))

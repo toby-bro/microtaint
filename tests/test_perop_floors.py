@@ -117,6 +117,17 @@ def test_perop_no_new_undertaint_vs_engine_amd64():
     assert n_new_under == 0, f'NEW under-taints (soundness bugs): {examples}'
 
 
+def test_perop_no_new_undertaint_vs_engine_arm64():
+    """ISA-generality: the same per-op model (p-code is the contract) is sound on
+    AArch64 too -- no under-taint beyond what the engine's differential has vs
+    Unicorn ground truth.  Exercises the register-name resolver (bank X0/N-Z-C-V
+    -> pypcode x0/NG-ZR-CY-OV)."""
+    pytest.importorskip('unicorn')
+    n_cases, n_exact, n_new_under, examples = soundness_report('ARM64', n_per=3)
+    assert n_cases > 400, f'too few cases exercised: {n_cases}'
+    assert n_new_under == 0, f'NEW under-taints (soundness bugs): {examples}'
+
+
 def test_perop_control_flow_routes_to_monolithic():
     """cmov lifts to an intra-instruction CBRANCH; the per-op model must defer to
     the monolithic window (NeedsMonolithic) rather than execute the move

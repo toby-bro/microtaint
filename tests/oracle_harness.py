@@ -172,7 +172,23 @@ def _uc_desc_amd64() -> UcDesc:
     )
 
 
-UC_DESCS = {'AMD64': _uc_desc_amd64}
+def _uc_desc_arm64() -> UcDesc:
+    import unicorn
+    import unicorn.arm64_const as ua
+    # AArch64 PSTATE condition flags live in NZCV: N=31, Z=30, C=29, V=28.
+    # Bank names them N/Z/C/V (pypcode/Ghidra: NG/ZR/CY/OV); the study's
+    # register resolver bridges the spelling, so GT keys use the bank names.
+    return UcDesc(
+        uc_arch=unicorn.UC_ARCH_ARM64, uc_mode=unicorn.UC_MODE_ARM, code_addr=0x1000,
+        gp={'X0': ua.UC_ARM64_REG_X0, 'X1': ua.UC_ARM64_REG_X1,
+            'X2': ua.UC_ARM64_REG_X2, 'X3': ua.UC_ARM64_REG_X3,
+            'X4': ua.UC_ARM64_REG_X4, 'X5': ua.UC_ARM64_REG_X5},
+        flags={'N': 31, 'Z': 30, 'C': 29, 'V': 28},
+        eflags_reg=ua.UC_ARM64_REG_NZCV,
+    )
+
+
+UC_DESCS = {'AMD64': _uc_desc_amd64, 'ARM64': _uc_desc_arm64}
 
 
 def _uc_run(desc: UcDesc, code: bytes, vals: dict) -> dict:
