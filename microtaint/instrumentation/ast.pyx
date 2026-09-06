@@ -1224,12 +1224,18 @@ cdef class LogicCircuit:
     cdef public bint has_unicorn_cells  # True if any assignment uses InstructionCellExpr
     cdef public object input_reg_names  # set of register names needed as value inputs
     cdef public object _compiled       # cached CompiledCircuit (or None if compile failed/disabled)
+    # True iff the taint output is a pure function of the input taints (all p-code
+    # ops are value-independent: COPY/XOR/NOT/ZEXT/SEXT/const-shift).  Set by the
+    # circuit builder; the compiled circuit copies it and the instruction cache
+    # then keys on the taint signature alone.  Default False (value-dependent).
+    cdef public bint value_independent
 
     def __init__(self, list assignments, object architecture, str instruction, list state_format):
         self.assignments = assignments
         self.architecture = architecture
         self.instruction = instruction
         self.state_format = state_format
+        self.value_independent = False
         # Pre-compute which PC register (if any) is a target — checked every evaluate()
         self._pc_target = None
         self.has_unicorn_cells = False

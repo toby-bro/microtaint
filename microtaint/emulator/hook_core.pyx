@@ -231,39 +231,17 @@ cdef class InstructionHook:
             and not compiled_circuit.has_mem_ops
         )
 
-        # Read live input-register values up-front.  The taint transfer is
-        # VALUE-dependent (e.g. `and rax, rbx` with rbx == 0 clears rax's taint
-        # regardless of rax's taint), so the caches must key on operand VALUES
-        # too, not just the taint signature: otherwise a revisit at the same
-        # address with the same taint but different values replays a stale,
-        # possibly under-tainted result.  Read once here and reused by the slow
-        # path on a miss.
-        cdef object pre_regs
-        cdef object decoded = None
-        cdef object uc_arrs, ids, vals, ptrs, names, ef, n_calls, fname, fbit
-        cdef Py_ssize_t n_slots, i_slot
-        cdef bint need_ef
-        try:
-            decoded = self.get_decoded(self.arch, instruction_bytes)
-            uc_arrs = decoded._uc_arrays
-            if uc_arrs is None:
-                uc_arrs = self.build_offsets_arrs(decoded.input_reg_offsets)
-                decoded._uc_arrays = uc_arrs
-            ids, vals, ptrs, n_slots, names, need_ef, n_calls = uc_arrs
-            if ids is None:
-                pre_regs = {}
-            else:
-                self.uc_reg_read_batch(self.uc_handle, ids, ptrs, n_calls)
-                pre_regs = {names[i_slot]: int(vals[i_slot]) for i_slot in range(n_slots)}
-                if need_ef:
-                    ef = pre_regs.get('EFLAGS', 0)
-                    for fname, fbit in self.eflags_bits.items():
-                        pre_regs[fname] = (ef >> fbit) & 1
-        except Exception:
-            pre_regs = self.get_live_registers(self.uc_handle)
-        # Feed the REAL program counter so PC-relative memory operands (modelled
-        # by the circuit as pc-register-relative) resolve against the runtime PC.
-        pre_regs['RIP'] = address
+        # Value-independence fast path.  When the circuit's taint output is a
+        # pure function of the input taints (mov/xor/lea/... -- it reads no
+        # operand value), the cache can key on the taint signature alone and we
+        # skip reading operand values entirely on a hit.  Only VALUE-dependent
+        # circuits (and/or/add/... whose taint depends on operand values) need
+        # the values read up-front for the value-aware key.  Non-cacheable
+        # circuits fall through to the slow path, which reads pre_regs there.
+        cdef bint value_indep = can_cache and (<object>compiled_circuit).value_independent
+        cdef object pre_regs = None
+        if can_cache and not value_indep:
+            pre_regs = self._read_pre_regs(instruction_bytes, address)
 
         if can_cache:
             # Tier 4: version-cache fast path.
@@ -285,7 +263,8 @@ cdef class InstructionHook:
                 # The taint transfer is value-dependent, so a value change must
                 # miss and recompute (soundness); two dict-equality calls.
                 if (PyObject_RichCompareBool(<object>v_entry[3], register_taint, Py_EQ) == 1
-                        and PyObject_RichCompareBool(<object>v_entry[4], pre_regs, Py_EQ) == 1):
+                        and (value_indep
+                             or PyObject_RichCompareBool(<object>v_entry[4], pre_regs, Py_EQ) == 1)):
                     output_state = <object>v_entry[2]
                     self.instr_cache_hits += 1
                     if self.last_tainted_writes:
@@ -308,8 +287,10 @@ cdef class InstructionHook:
                 cache_key = frozenset(register_taint.items())
             cached = self.instr_cache.get(address)
             if (cached is not None and cached[0] == cache_key
-                    and PyObject_RichCompareBool(<object>cached[2], pre_regs, Py_EQ) == 1):
-                # Cache hit: taint signature AND input values match, so replay.
+                    and (value_indep
+                         or PyObject_RichCompareBool(<object>cached[2], pre_regs, Py_EQ) == 1)):
+                # Cache hit: taint signature matches (and, for value-dependent
+                # circuits, the operand values too), so replay.
                 output_state = cached[1]
                 self.instr_cache_hits += 1
                 if self.last_tainted_writes:
@@ -326,7 +307,8 @@ cdef class InstructionHook:
                 # output_state's content.  Use frozenset hash (one-shot
                 # cost; only happens on cold version-cache misses).
                 out_version = (<Py_ssize_t>hash(frozenset(output_state.items())))
-                self.instr_cache_v[address] = (live_version, out_version, output_state, input_snapshot, dict(pre_regs))
+                self.instr_cache_v[address] = (live_version, out_version, output_state, input_snapshot,
+                                               None if value_indep else dict(pre_regs))
                 # No-mem-ops circuits never produce MEM_ keys; just refill.
                 for key, val in output_state.items():
                     if val:
@@ -335,8 +317,12 @@ cdef class InstructionHook:
                 return
             self.instr_cache_misses += 1
 
-        # Slow path: pre_regs was already read above (for the value-aware cache
-        # key) and is reused here.  Snapshot register_taint for the EvalContext.
+        # Slow path.  For value-dependent (and non-cacheable) circuits pre_regs
+        # was read above; for a value-INDEPENDENT circuit we skipped it on the
+        # (fast) hit path, so read it now that we must actually evaluate.
+        if pre_regs is None:
+            pre_regs = self._read_pre_regs(instruction_bytes, address)
+        # Snapshot register_taint for the EvalContext.
         cdef dict pre_taint = PyDict_Copy(register_taint)
         # Tell wrapper for AIW check + slow path consistency.
         self.wrapper._pre_regs = pre_regs
@@ -372,22 +358,25 @@ cdef class InstructionHook:
         # We need a stable output_version derived from output_state content,
         # so that future cache hits can adopt this version atomically.
         cdef unsigned long long out_version_slow = 0
+        cdef object value_snap
         if cache_key is not None:
-            # Entries carry an input-VALUES snapshot (dict(pre_regs)) so future
-            # hits verify operand values match, not just the taint signature
-            # (the taint transfer is value-dependent).
-            self.instr_cache[address] = (cache_key, dict(output_state), dict(pre_regs))
+            # Value-dependent circuits carry an input-VALUES snapshot so future
+            # hits verify operand values match, not just the taint signature.
+            # Value-INDEPENDENT circuits store None (their taint cannot change
+            # with values, so the hit path skips the value check).
+            value_snap = None if value_indep else dict(pre_regs)
+            self.instr_cache[address] = (cache_key, dict(output_state), value_snap)
             # Compute output_version once (one frozenset hash; happens
             # ~167k times across the bench, not 1.19M).
             out_version_slow = (<Py_ssize_t>hash(frozenset(output_state.items())))
-            # Tier-4 entry snapshots register_taint (pre_taint) AND the input
-            # values (pre_regs) at instruction entry.  On future visits the hit
-            # path verifies BOTH match the live state before adopting the cached
-            # output_state, guarding against taint_version collisions AND
-            # value-dependent taint changes.  See test_step3_tier4_cache.py.
+            # Tier-4 entry snapshots register_taint (pre_taint) AND (for
+            # value-dependent circuits) the input values at instruction entry.
+            # On future visits the hit path verifies both match the live state
+            # before adopting the cached output_state, guarding against
+            # taint_version collisions AND value-dependent taint changes.
             self.instr_cache_v[address] = (
                 self.taint_version, out_version_slow,
-                dict(output_state), dict(pre_taint), dict(pre_regs),
+                dict(output_state), dict(pre_taint), value_snap,
             )
 
         # Post-processing: clear writes set, clear register_taint, walk output.
@@ -462,6 +451,35 @@ cdef class InstructionHook:
             self.instr_cache.clear()
         self.code_lo = 0xFFFFFFFFFFFFFFFF
         self.code_hi = 0
+
+    cdef object _read_pre_regs(self, bytes instruction_bytes, unsigned long long address):
+        """Read this instruction's live input-register values into a dict (with
+        RIP set to the runtime PC).  Used for the value-aware cache key of
+        value-dependent circuits and by the slow-path evaluation.  Skipped for
+        value-independent circuits on a cache hit."""
+        cdef object pre_regs, decoded, uc_arrs, ids, vals, ptrs, names, ef, n_calls, fname, fbit
+        cdef Py_ssize_t n_slots, i_slot
+        cdef bint need_ef
+        try:
+            decoded = self.get_decoded(self.arch, instruction_bytes)
+            uc_arrs = decoded._uc_arrays
+            if uc_arrs is None:
+                uc_arrs = self.build_offsets_arrs(decoded.input_reg_offsets)
+                decoded._uc_arrays = uc_arrs
+            ids, vals, ptrs, n_slots, names, need_ef, n_calls = uc_arrs
+            if ids is None:
+                pre_regs = {}
+            else:
+                self.uc_reg_read_batch(self.uc_handle, ids, ptrs, n_calls)
+                pre_regs = {names[i_slot]: int(vals[i_slot]) for i_slot in range(n_slots)}
+                if need_ef:
+                    ef = pre_regs.get('EFLAGS', 0)
+                    for fname, fbit in self.eflags_bits.items():
+                        pre_regs[fname] = (ef >> fbit) & 1
+        except Exception:
+            pre_regs = self.get_live_registers(self.uc_handle)
+        pre_regs['RIP'] = address
+        return pre_regs
 
     cdef _aiw_check(self, list mem_writes, dict pre_regs, dict pre_taint,
                     bytes instruction_bytes, unsigned long long address):

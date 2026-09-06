@@ -718,6 +718,42 @@ def apply_sless_msb_split(
     return new_deps
 
 
+# P-code ops whose taint transfer is value-INDEPENDENT: the output taint is a
+# pure function of the input taints, independent of the concrete operand values.
+# COPY/SUBPIECE/PIECE/ZEXT/SEXT route taint bits; XOR/NEGATE combine taints with
+# OR/copy semantics.  Everything else (AND/OR/ADD/SUB/MULT, comparisons that set
+# flags, variable shifts, LOAD/STORE, branches) is value-DEPENDENT.  Shifts by a
+# CONSTANT amount are value-independent (a fixed bit permutation).
+_VALUE_INDEP_OPS = frozenset({
+    'IMARK',  # instruction-boundary marker, no data flow
+    'COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT',
+    'INT_XOR', 'INT_NEGATE', 'BOOL_NEGATE',
+})
+_VALUE_INDEP_SHIFTS = frozenset({'INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT'})
+
+
+def _ops_value_independent(ops: object) -> bool:
+    """True iff EVERY p-code op computes taint value-independently, so the whole
+    instruction's taint transfer is a pure function of the input taints.  Sound
+    by conservatism: any op not proven value-independent makes the result False
+    (value-dependent), which only costs a coarser cache key, never soundness."""
+    try:
+        for op in ops:
+            name = op.opcode.name
+            if name in _VALUE_INDEP_OPS:
+                continue
+            if name in _VALUE_INDEP_SHIFTS:
+                # value-independent only when the shift AMOUNT is a constant
+                ins = op.inputs
+                if len(ins) >= 2 and ins[1].space.name == 'const':
+                    continue
+                return False
+            return False
+    except Exception:  # unknown op shape -> treat as value-dependent (sound)
+        return False
+    return True
+
+
 @functools.lru_cache(maxsize=16384)
 def _cached_generate_static_rule(  # noqa: C901
     arch: Architecture,
@@ -977,12 +1013,17 @@ def _cached_generate_static_rule(  # noqa: C901
             cbranch_op=cbranch_op,
         )
 
-    return LogicCircuit(
+    circuit = LogicCircuit(
         assignments=assignments,
         architecture=arch,
         instruction=bytestring.hex(),
         state_format=state_format,
     )
+    # Value-independence of the taint transfer (pure function of input taints).
+    # Enables the instruction cache to key on the taint signature alone for
+    # mov/movzx/not/... instead of also snapshotting operand values.
+    circuit.value_independent = _ops_value_independent(translation.ops)
+    return circuit
 
 
 def _branch_forces_monolithic(

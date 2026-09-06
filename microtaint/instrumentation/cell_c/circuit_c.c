@@ -90,6 +90,16 @@ typedef struct {
      * shadow-memory state in the cache key. */
     int             has_mem_ops;
 
+    /* Whether the taint output is value-INDEPENDENT: the program reads no
+     * operand VALUE (no OP_PUSH_VALUE / OP_PUSH_MEM_VALUE), so its taint is a
+     * pure function of the input taints (e.g. mov/xor/not/zext).  When true the
+     * instruction cache can key on the taint signature alone; when false the
+     * taint is value-dependent (and/or/add/...) and the cache must also key on
+     * operand values.  Default 1 (value-independent), cleared on the first
+     * value push.  Sound-by-construction: a missed clear cannot happen because
+     * every value input goes through those two opcodes. */
+    int             value_independent;
+
     /* Precomputed for the GIL-free do_evaluate_c path.  const_u64 mirrors
      * `constants` as uint64 (two's-complement); c_evaluable is set when the whole
      * circuit can run with NO PyObject access: no python fallback, no memory ops,
@@ -707,6 +717,7 @@ static PyObject *CompiledCircuit_new(PyTypeObject *t, PyObject *a, PyObject *k) 
     self->n_progs = 0;
     self->pc_target_idx = -1;
     self->has_python_fallback = 0;
+    self->value_independent = 0;  /* set from the LogicCircuit in compile_circuit */
     return (PyObject *)self;
 }
 
@@ -740,6 +751,18 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
     CompiledCircuit *cc = (CompiledCircuit *)CompiledCircuit_new(&CompiledCircuitType, NULL, NULL);
     if (!cc) return NULL;
     cc->python_circuit = circuit; Py_INCREF(circuit);
+
+    /* Value-independence of the taint transfer is a property of the original
+     * p-code ops, computed by the circuit builder and stored on the LogicCircuit
+     * (absent -> 0/value-dependent, the safe default).  It is ANDed with the
+     * C-evaluability gate below (a Python fallback could read values outside the
+     * bytecode). */
+    {
+        PyObject *vi = PyObject_GetAttrString(circuit, "value_independent");
+        cc->value_independent = (vi && PyObject_IsTrue(vi)) ? 1 : 0;
+        Py_XDECREF(vi);
+        PyErr_Clear();
+    }
 
     /* Extract arch_str = str(circuit.architecture) for parent-register resolution */
     PyObject *arch_obj = PyObject_GetAttrString(circuit, "architecture");
@@ -983,6 +1006,11 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
         }
         cc->c_evaluable = const_ok && !cc->has_python_fallback && !cc->has_mem_ops;
     }
+    /* Airtight value-independence: only trust it when the whole circuit is
+     * C-evaluated (no Python fallback that could read operand values outside
+     * the OP_PUSH_VALUE opcodes) and reads no memory. */
+    cc->value_independent = cc->value_independent
+                            && !cc->has_python_fallback && !cc->has_mem_ops;
     return (PyObject *)cc;
 }
 
@@ -2150,6 +2178,9 @@ static PyMethodDef CompiledCircuit_methods[] = {
 static PyMemberDef CompiledCircuit_members[] = {
     {"has_mem_ops", T_INT, offsetof(CompiledCircuit, has_mem_ops), READONLY,
      "True if this circuit reads or writes memory (disables wrapper-level Tier 3 cache)."},
+    {"value_independent", T_INT, offsetof(CompiledCircuit, value_independent), READONLY,
+     "True if the taint output is a pure function of the input taints (reads no "
+     "operand value); the instruction cache may then key on the taint signature alone."},
     {"n_assignments", T_INT, offsetof(CompiledCircuit, n_progs), READONLY,
      "Number of assignments compiled.  A fast member so the wrapper can detect a "
      "mutated assignment list per evaluate without allocating a stats() dict."},
