@@ -2338,6 +2338,71 @@ static PyObject *CompiledCircuit_evaluate_c_arr(CompiledCircuit *self, PyObject 
     return outd;
 }
 
+/* evaluate_c_arr_ptr(taint_addr, val_addr, n_slots, pcode, name_to_slot) -> int
+ *   number of register targets written, or None to fall back.
+ *
+ * The live-usable form of evaluate_c_arr: register taint/values live in raw
+ * uint64 C arrays owned by the hook (addresses passed as ints), indexed by
+ * global slot.  Inputs are gathered into scratch (via the cached pool_to_slot),
+ * the differential runs, and -- ATOMICALLY -- the target slots of the taint
+ * array are overwritten ONLY if every assignment succeeded (a bail leaves the
+ * array untouched, so state never half-updates).  No dict is built on input or
+ * output: this is the whole point of the C-native interface.  Pass-through
+ * (untouched slots) is the identity on the live array. */
+static PyObject *CompiledCircuit_evaluate_c_arr_ptr(CompiledCircuit *self, PyObject *args) {
+    unsigned long long taint_addr = 0, val_addr = 0;
+    int n_slots = 0;
+    PyObject *pcode, *name_to_slot;
+    if (!PyArg_ParseTuple(args, "KKiOO", &taint_addr, &val_addr, &n_slots, &pcode, &name_to_slot))
+        return NULL;
+    if (!self->c_evaluable) { Py_RETURN_NONE; }
+    if (self->pc_target_idx >= 0) { Py_RETURN_NONE; }
+
+    int npool = (int)PyList_GET_SIZE(self->string_pool);
+    if (!self->pool_to_slot || self->pool_to_slot_n != npool) {
+        free(self->pool_to_slot);
+        self->pool_to_slot = (int *)malloc((size_t)(npool > 0 ? npool : 1) * sizeof(int));
+        if (!self->pool_to_slot) return PyErr_NoMemory();
+        for (int i = 0; i < npool; i++) {
+            PyObject *nm = PyList_GET_ITEM(self->string_pool, i);
+            PyObject *s = PyDict_GetItem(name_to_slot, nm);  /* borrowed */
+            self->pool_to_slot[i] = (s && PyLong_Check(s)) ? (int)PyLong_AsLong(s) : -1;
+        }
+        self->pool_to_slot_n = npool;
+    }
+    if (ensure_scratch(self, npool) != 0) return PyErr_NoMemory();
+    uint64_t *g_t = (uint64_t *)(uintptr_t)taint_addr;
+    uint64_t *g_v = (uint64_t *)(uintptr_t)val_addr;
+    uint64_t *in_t = self->scratch_t, *in_v = self->scratch_v, *out_t = self->scratch_o;
+    for (int i = 0; i < npool; i++) {
+        int slot = self->pool_to_slot[i];
+        uint64_t tv = (slot >= 0 && slot < n_slots) ? g_t[slot] : 0;
+        uint64_t vv = (slot >= 0 && slot < n_slots) ? g_v[slot] : 0;
+        in_t[i] = tv; in_v[i] = vv; out_t[i] = tv;
+    }
+    int ok = 1;
+    for (int p = 0; p < self->n_progs && ok; p++) {
+        AssignmentProg *pr = &self->progs[p];
+        if (pr->target_kind != TGT_REG || pr->python_assignment) { ok = 0; break; }
+        uint64_t result = 0;
+        PyObject *rc = eval_program(self, pr->bc, pr->bc_len, NULL, NULL, NULL,
+                                    NULL, NULL, pcode, NULL, in_t, in_v, &result);
+        if (!rc) { ok = 0; break; }
+        int bs = pr->target_bit_start, be = pr->target_bit_end, width = be - bs + 1;
+        uint64_t mask = ((width >= 64) ? ~(uint64_t)0 : (((uint64_t)1 << width) - 1)) << bs;
+        int idx = pr->target_name_idx;
+        out_t[idx] = (out_t[idx] & ~mask) | ((result << bs) & mask);
+    }
+    if (!ok) { Py_RETURN_NONE; }   /* g_t untouched: atomic */
+    int n_written = 0;
+    for (int p = 0; p < self->n_progs; p++) {
+        int idx = self->progs[p].target_name_idx;
+        int slot = self->pool_to_slot[idx];
+        if (slot >= 0 && slot < n_slots) { g_t[slot] = out_t[idx]; n_written++; }
+    }
+    return PyLong_FromLong(n_written);
+}
+
 /* evaluate_c_mem(input_taint, input_values, pcode, shadow_memory, mem_reader)
  *   -> output_taint dict, or None to fall back to the full evaluate().
  *
@@ -2475,6 +2540,8 @@ static PyMethodDef CompiledCircuit_methods[] = {
      "GIL-free C-path taint eval (register-only circuits); None if not c_evaluable."},
     {"evaluate_c_arr", (PyCFunction)CompiledCircuit_evaluate_c_arr, METH_VARARGS,
      "Array-gather register taint eval (slot-indexed lists); None if not c_evaluable."},
+    {"evaluate_c_arr_ptr", (PyCFunction)CompiledCircuit_evaluate_c_arr_ptr, METH_VARARGS,
+     "Array-gather register eval over raw uint64 C arrays (addresses); atomic direct write."},
     {"evaluate_c_mem", (PyCFunction)CompiledCircuit_evaluate_c_mem, METH_VARARGS,
      "C-array taint eval for memory circuits (loads/stores/mem-ALU); None to fall back."},
     {"stats",         (PyCFunction)CompiledCircuit_stats,         METH_NOARGS,  NULL},

@@ -116,6 +116,33 @@ def engine_evaluate_c_arr(arch, code, regs, in_taint, in_values, *, circuit=None
     return reference_taint(arch, code, regs, in_taint, in_values, circuit=circuit)
 
 
+def engine_evaluate_c_arr_ptr(arch, code, regs, in_taint, in_values, *, circuit=None):
+    """The live-usable pointer form (evaluate_c_arr_ptr): register taint/values
+    live in raw uint64 C arrays (here ctypes arrays), indexed by slot; the eval
+    writes target slots of the taint array in place (atomic).  Reads the array
+    back to form the output.  Falls back where the path declines."""
+    import ctypes
+    if circuit is None:
+        circuit = build_circuit(arch, code, regs)
+    sim = CellSimulator(arch)
+    comp = getattr(circuit, '_compiled', None)
+    if comp is None:
+        reference_taint(arch, code, regs, in_taint, in_values, circuit=circuit)
+        comp = getattr(circuit, '_compiled', None)
+    if comp is not None and comp is not False:
+        names = [r.name for r in regs]
+        slot_map = {n: i for i, n in enumerate(names)}
+        K = len(names)
+        TArr = ctypes.c_uint64 * K
+        t_arr = TArr(*[int(in_taint.get(n, 0)) & MASK64 for n in names])
+        v_arr = TArr(*[int(in_values.get(n, 0)) & MASK64 for n in names])
+        rc = comp.evaluate_c_arr_ptr(ctypes.addressof(t_arr), ctypes.addressof(v_arr),
+                                     K, sim._pcode, slot_map)
+        if rc is not None:
+            return {names[i]: int(t_arr[i]) for i in range(K)}  # array is the state
+    return reference_taint(arch, code, regs, in_taint, in_values, circuit=circuit)
+
+
 # ---------------------------------------------------------------------------
 # Oracle 2: per-bit Unicorn sensitivity (true ground truth), per ISA.
 # ---------------------------------------------------------------------------
