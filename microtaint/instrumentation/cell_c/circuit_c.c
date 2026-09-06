@@ -2073,6 +2073,12 @@ static PyObject *CompiledCircuit_evaluate_c(CompiledCircuit *self, PyObject *arg
     PyObject *input_taint, *input_values, *pcode;
     if (!PyArg_ParseTuple(args, "OOO", &input_taint, &input_values, &pcode)) return NULL;
     if (!self->c_evaluable) { Py_RETURN_NONE; }
+    /* A circuit that writes PC needs do_evaluate's implicit-taint (SC/BOF) policy
+     * check (do_evaluate guards it on pc_target_idx >= 0); evaluate_c does not do
+     * that check, so it must refuse such circuits and let the caller use the full
+     * evaluate().  For pc_target_idx < 0 no implicit-taint check fires, so the C
+     * path is complete. */
+    if (self->pc_target_idx >= 0) { Py_RETURN_NONE; }
     /* Match do_evaluate: normalize child registers to their canonical parents. */
     PyObject *taint_norm  = normalize_register_dict(self->arch_str, input_taint);
     PyObject *values_norm = normalize_register_dict(self->arch_str, input_values);

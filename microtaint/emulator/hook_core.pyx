@@ -39,6 +39,13 @@ from microtaint.types import ImplicitTaintError as _ImplicitTaintError
 cdef object ImplicitTaintError = _ImplicitTaintError
 cdef object EMPTY_FROZENSET = frozenset()
 
+# Use the GIL-free C taint evaluator (CompiledCircuit.evaluate_c) for eligible
+# circuits (register-only, no PC target -> no implicit-taint check needed).  It is
+# bit-identical to circuit.evaluate and skips the PyObject-heavy eval loop.  Set
+# MICROTAINT_DISABLE_DO_EVALUATE_C=1 to force the classic path.
+import os as _os
+cdef bint _USE_DEVAL_C = _os.environ.get('MICROTAINT_DISABLE_DO_EVALUATE_C') != '1'
+
 
 cdef class InstructionHook:
     """
@@ -284,7 +291,13 @@ cdef class InstructionHook:
 
         # Evaluate the circuit. Catch ImplicitTaintError for SC/BOF reporting.
         try:
-            output_state = circuit.evaluate(ctx)
+            output_state = None
+            if _USE_DEVAL_C and compiled_circuit is not None and compiled_circuit is not False:
+                # GIL-free C path for register-only, non-PC circuits (bit-identical
+                # to evaluate; returns None to fall back for mem / PC / non-eligible).
+                output_state = compiled_circuit.evaluate_c(pre_taint, pre_regs, self.sim._pcode)
+            if output_state is None:
+                output_state = circuit.evaluate(ctx)
         except BaseException as e:
             if isinstance(e, ImplicitTaintError):
                 self._handle_implicit_taint(instruction_bytes, address, e)
