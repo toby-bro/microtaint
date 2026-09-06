@@ -159,6 +159,15 @@ typedef struct {
     uint64_t       *scratch_v;   /* input values (npool) */
     uint64_t       *scratch_o;   /* output taint (npool, evaluate_c only) */
     int             scratch_cap; /* current capacity (in uint64 elements) */
+
+    /* string_pool index -> global register SLOT, for the array-gather eval path
+     * (evaluate_c_arr).  Built lazily from a name->slot map on first call and
+     * cached (string_pool is fixed per circuit).  -1 = name not in the slot map
+     * (treated as untainted / zero-value).  string_pool holds canonical PARENT
+     * register names and OP_PUSH_* slices by bit_start/bit_end, so a slot holds
+     * the full parent taint and no normalization is needed. */
+    int            *pool_to_slot;
+    int             pool_to_slot_n;   /* npool at build time (0 = not built) */
 } CompiledCircuit;
 
 /* ──────────── string_pool helpers ──────────── */
@@ -775,6 +784,8 @@ static PyObject *CompiledCircuit_new(PyTypeObject *t, PyObject *a, PyObject *k) 
     self->scratch_v = NULL;
     self->scratch_o = NULL;
     self->scratch_cap = 0;
+    self->pool_to_slot = NULL;
+    self->pool_to_slot_n = 0;
     return (PyObject *)self;
 }
 
@@ -798,6 +809,7 @@ static void CompiledCircuit_dealloc(CompiledCircuit *self) {
     free(self->scratch_t);
     free(self->scratch_v);
     free(self->scratch_o);
+    free(self->pool_to_slot);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -2255,6 +2267,77 @@ static PyObject *CompiledCircuit_evaluate_c(CompiledCircuit *self, PyObject *arg
     return outd;
 }
 
+/* evaluate_c_arr(taint_by_slot, values_by_slot, pcode, name_to_slot) -> dict of
+ * TARGET register taints, or None to fall back.
+ *
+ * The array-gather sibling of evaluate_c (Phase 1): register taint/values arrive
+ * as slot-indexed Python lists instead of dicts, so the per-op input fill is an
+ * array gather (PyList_GET_ITEM at pool_to_slot[i]) rather than a PyDict_GetItem
+ * hash lookup.  string_pool holds canonical PARENT register names and OP_PUSH_*
+ * slices by bit range, so no normalization is needed.  Returns ONLY the computed
+ * target taints (pass-through of untouched registers is the identity on the
+ * input arrays); the caller reconstructs the full state.  This validates the
+ * gather bit-exactly vs evaluate_c BEFORE it is wired into the hook's C-array
+ * state (the live path is unchanged until then). */
+static PyObject *CompiledCircuit_evaluate_c_arr(CompiledCircuit *self, PyObject *args) {
+    PyObject *taint_list, *val_list, *pcode, *name_to_slot;
+    if (!PyArg_ParseTuple(args, "OOOO", &taint_list, &val_list, &pcode, &name_to_slot))
+        return NULL;
+    if (!self->c_evaluable) { Py_RETURN_NONE; }
+    if (self->pc_target_idx >= 0) { Py_RETURN_NONE; }
+
+    int npool = (int)PyList_GET_SIZE(self->string_pool);
+    /* Lazily build + cache pool_to_slot (string_pool idx -> global slot). */
+    if (!self->pool_to_slot || self->pool_to_slot_n != npool) {
+        free(self->pool_to_slot);
+        self->pool_to_slot = (int *)malloc((size_t)(npool > 0 ? npool : 1) * sizeof(int));
+        if (!self->pool_to_slot) return PyErr_NoMemory();
+        for (int i = 0; i < npool; i++) {
+            PyObject *nm = PyList_GET_ITEM(self->string_pool, i);
+            PyObject *s = PyDict_GetItem(name_to_slot, nm);  /* borrowed */
+            self->pool_to_slot[i] = (s && PyLong_Check(s)) ? (int)PyLong_AsLong(s) : -1;
+        }
+        self->pool_to_slot_n = npool;
+    }
+    if (ensure_scratch(self, npool) != 0) return PyErr_NoMemory();
+    uint64_t *in_t = self->scratch_t, *in_v = self->scratch_v, *out_t = self->scratch_o;
+    Py_ssize_t nlist = PyList_GET_SIZE(taint_list);
+    for (int i = 0; i < npool; i++) {
+        int slot = self->pool_to_slot[i];
+        uint64_t tv = 0, vv = 0;
+        if (slot >= 0 && slot < nlist) {
+            tv = (uint64_t)PyLong_AsUnsignedLongLong(PyList_GET_ITEM(taint_list, slot));
+            if (PyErr_Occurred()) PyErr_Clear();
+            vv = (uint64_t)PyLong_AsUnsignedLongLong(PyList_GET_ITEM(val_list, slot));
+            if (PyErr_Occurred()) PyErr_Clear();
+        }
+        in_t[i] = tv; in_v[i] = vv; out_t[i] = tv;
+    }
+    int ok = 1;
+    for (int p = 0; p < self->n_progs && ok; p++) {
+        AssignmentProg *pr = &self->progs[p];
+        if (pr->target_kind != TGT_REG || pr->python_assignment) { ok = 0; break; }
+        uint64_t result = 0;
+        PyObject *rc = eval_program(self, pr->bc, pr->bc_len, NULL, NULL, NULL,
+                                    NULL, NULL, pcode, NULL, in_t, in_v, &result);
+        if (!rc) { ok = 0; break; }
+        int bs = pr->target_bit_start, be = pr->target_bit_end, width = be - bs + 1;
+        uint64_t mask = ((width >= 64) ? ~(uint64_t)0 : (((uint64_t)1 << width) - 1)) << bs;
+        int idx = pr->target_name_idx;
+        out_t[idx] = (out_t[idx] & ~mask) | ((result << bs) & mask);
+    }
+    if (!ok) { Py_RETURN_NONE; }
+    PyObject *outd = PyDict_New();
+    if (!outd) return NULL;
+    for (int p = 0; p < self->n_progs; p++) {
+        int idx = self->progs[p].target_name_idx;
+        PyObject *nm = PyList_GET_ITEM(self->string_pool, idx);
+        PyObject *val = PyLong_FromUnsignedLongLong(out_t[idx]);
+        if (val) { PyDict_SetItem(outd, nm, val); Py_DECREF(val); }
+    }
+    return outd;
+}
+
 /* evaluate_c_mem(input_taint, input_values, pcode, shadow_memory, mem_reader)
  *   -> output_taint dict, or None to fall back to the full evaluate().
  *
@@ -2390,6 +2473,8 @@ static PyMethodDef CompiledCircuit_methods[] = {
     {"evaluate_fast", (PyCFunction)CompiledCircuit_evaluate_fast, METH_VARARGS, NULL},
     {"evaluate_c",    (PyCFunction)CompiledCircuit_evaluate_c,    METH_VARARGS,
      "GIL-free C-path taint eval (register-only circuits); None if not c_evaluable."},
+    {"evaluate_c_arr", (PyCFunction)CompiledCircuit_evaluate_c_arr, METH_VARARGS,
+     "Array-gather register taint eval (slot-indexed lists); None if not c_evaluable."},
     {"evaluate_c_mem", (PyCFunction)CompiledCircuit_evaluate_c_mem, METH_VARARGS,
      "C-array taint eval for memory circuits (loads/stores/mem-ALU); None to fall back."},
     {"stats",         (PyCFunction)CompiledCircuit_stats,         METH_NOARGS,  NULL},

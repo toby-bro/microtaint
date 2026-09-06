@@ -89,6 +89,33 @@ def engine_evaluate_c(arch, code, regs, in_taint, in_values, *, circuit=None):
     return reference_taint(arch, code, regs, in_taint, in_values, circuit=circuit)
 
 
+def engine_evaluate_c_arr(arch, code, regs, in_taint, in_values, *, circuit=None):
+    """The array-gather register path (CompiledCircuit.evaluate_c_arr): register
+    taint/values are passed as slot-indexed lists (slot = position in `regs`), so
+    the per-op input fill is an array gather, not a dict hash lookup.  Returns
+    only the computed targets; pass-through (untouched registers keep their input
+    taint) is reconstructed here.  Falls back to the differential where the path
+    declines (mem / PC / non-c_evaluable)."""
+    if circuit is None:
+        circuit = build_circuit(arch, code, regs)
+    sim = CellSimulator(arch)
+    comp = getattr(circuit, '_compiled', None)
+    if comp is None:
+        reference_taint(arch, code, regs, in_taint, in_values, circuit=circuit)
+        comp = getattr(circuit, '_compiled', None)
+    if comp is not None and comp is not False:
+        names = [r.name for r in regs]
+        slot_map = {n: i for i, n in enumerate(names)}
+        taint_list = [int(in_taint.get(n, 0)) for n in names]
+        val_list = [int(in_values.get(n, 0)) for n in names]
+        targets = comp.evaluate_c_arr(taint_list, val_list, sim._pcode, slot_map)
+        if targets is not None:
+            out = {n: int(in_taint.get(n, 0)) for n in names}  # pass-through
+            out.update(targets)                                # overlay computed targets
+            return out
+    return reference_taint(arch, code, regs, in_taint, in_values, circuit=circuit)
+
+
 # ---------------------------------------------------------------------------
 # Oracle 2: per-bit Unicorn sensitivity (true ground truth), per ISA.
 # ---------------------------------------------------------------------------

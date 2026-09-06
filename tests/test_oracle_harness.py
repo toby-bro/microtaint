@@ -18,6 +18,7 @@ import pytest
 from tests.oracle_harness import (
     UC_DESCS,
     engine_evaluate_c,
+    engine_evaluate_c_arr,
     reference_taint,
     run_bank,
 )
@@ -41,6 +42,16 @@ def test_current_c_path_bit_exact_vs_differential() -> None:
     rep = run_bank(engine_evaluate_c, n_dense=3, n_sparse=3, ref='differential')
     assert rep.n_under == 0, f'C path UNDER-taints vs differential: {rep.mismatches[:5]}'
     assert rep.n_over_only == 0, f'C path OVER-taints vs differential: {rep.mismatches[:5]}'
+    assert rep.n_exact == rep.n_cases, f'{rep.summary()} :: {rep.mismatches[:5]}'
+
+
+def test_array_gather_bit_exact_vs_differential() -> None:
+    """The array-gather register path (evaluate_c_arr) must reproduce the
+    differential oracle exactly over the register bank -- the de-risked core of
+    the Phase-1 C-native interface, validated before it is wired into the hook."""
+    rep = run_bank(engine_evaluate_c_arr, n_dense=4, n_sparse=4, ref='differential')
+    assert rep.n_under == 0, f'array-gather UNDER-taints: {rep.mismatches[:5]}'
+    assert rep.n_over_only == 0, f'array-gather OVER-taints: {rep.mismatches[:5]}'
     assert rep.n_exact == rep.n_cases, f'{rep.summary()} :: {rep.mismatches[:5]}'
 
 
