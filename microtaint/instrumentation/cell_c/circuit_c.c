@@ -148,6 +148,17 @@ typedef struct {
      * PyObject-heavy do_evaluate path.  PC-writing circuits are excluded at call
      * time (they need do_evaluate's implicit-taint policy check). */
     int             c_mem_evaluable;
+
+    /* Persistent per-circuit scratch buffers for the C-array eval paths
+     * (evaluate_c / evaluate_c_mem), sized to the string pool.  Allocated lazily
+     * and reused across calls so the hot path does no per-instruction
+     * calloc/free (the inventory's malloc/free churn).  in_t/in_v/out_t are
+     * fully overwritten every call (the fill loop sets all npool slots), so no
+     * per-call zeroing is needed. */
+    uint64_t       *scratch_t;   /* input taint  (npool) */
+    uint64_t       *scratch_v;   /* input values (npool) */
+    uint64_t       *scratch_o;   /* output taint (npool, evaluate_c only) */
+    int             scratch_cap; /* current capacity (in uint64 elements) */
 } CompiledCircuit;
 
 /* ──────────── string_pool helpers ──────────── */
@@ -760,6 +771,10 @@ static PyObject *CompiledCircuit_new(PyTypeObject *t, PyObject *a, PyObject *k) 
     self->has_python_fallback = 0;
     self->value_independent = 0;  /* set from the LogicCircuit in compile_circuit */
     self->c_mem_evaluable = 0;    /* set in compile_circuit; 0 => fall back to do_evaluate */
+    self->scratch_t = NULL;
+    self->scratch_v = NULL;
+    self->scratch_o = NULL;
+    self->scratch_cap = 0;
     return (PyObject *)self;
 }
 
@@ -780,6 +795,9 @@ static void CompiledCircuit_dealloc(CompiledCircuit *self) {
         free(self->progs);
     }
     free(self->const_u64);
+    free(self->scratch_t);
+    free(self->scratch_v);
+    free(self->scratch_o);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -2158,6 +2176,22 @@ static PyObject *CompiledCircuit_stats(CompiledCircuit *self, PyObject *_unused)
  * marshalling here still touches Python for the test/standalone entry, but the
  * evaluation loop itself uses no PyObject; a future in-engine caller can shuttle
  * the uint64 arrays directly with the GIL released. */
+/* Ensure the persistent scratch buffers hold at least `npool` uint64 each.
+ * Returns 0 on success, -1 on allocation failure (caller falls back). */
+static int ensure_scratch(CompiledCircuit *self, int npool) {
+    if (npool <= self->scratch_cap && self->scratch_t) return 0;
+    int cap = npool > 0 ? npool : 1;
+    uint64_t *t = (uint64_t *)realloc(self->scratch_t, (size_t)cap * sizeof(uint64_t));
+    uint64_t *v = (uint64_t *)realloc(self->scratch_v, (size_t)cap * sizeof(uint64_t));
+    uint64_t *o = (uint64_t *)realloc(self->scratch_o, (size_t)cap * sizeof(uint64_t));
+    if (t) self->scratch_t = t;
+    if (v) self->scratch_v = v;
+    if (o) self->scratch_o = o;
+    if (!t || !v || !o) return -1;
+    self->scratch_cap = cap;
+    return 0;
+}
+
 static PyObject *CompiledCircuit_evaluate_c(CompiledCircuit *self, PyObject *args) {
     PyObject *input_taint, *input_values, *pcode;
     if (!PyArg_ParseTuple(args, "OOO", &input_taint, &input_values, &pcode)) return NULL;
@@ -2174,19 +2208,20 @@ static PyObject *CompiledCircuit_evaluate_c(CompiledCircuit *self, PyObject *arg
     if (!taint_norm || !values_norm) { Py_XDECREF(taint_norm); Py_XDECREF(values_norm); Py_RETURN_NONE; }
 
     int npool = (int)PyList_GET_SIZE(self->string_pool);
-    uint64_t *in_t = (uint64_t *)calloc((size_t)npool, sizeof(uint64_t));
-    uint64_t *in_v = (uint64_t *)calloc((size_t)npool, sizeof(uint64_t));
-    uint64_t *out_t = (uint64_t *)calloc((size_t)npool, sizeof(uint64_t));
-    if (!in_t || !in_v || !out_t) {
-        free(in_t); free(in_v); free(out_t);
+    if (ensure_scratch(self, npool) != 0) {
         Py_DECREF(taint_norm); Py_DECREF(values_norm); return PyErr_NoMemory();
     }
+    uint64_t *in_t = self->scratch_t;
+    uint64_t *in_v = self->scratch_v;
+    uint64_t *out_t = self->scratch_o;
     for (int i = 0; i < npool; i++) {
         PyObject *name = PyList_GET_ITEM(self->string_pool, i);
         PyObject *tv = PyDict_GetItem(taint_norm, name);
-        if (tv) { in_t[i] = (uint64_t)PyLong_AsUnsignedLongLong(tv); if (PyErr_Occurred()) PyErr_Clear(); }
+        in_t[i] = tv ? (uint64_t)PyLong_AsUnsignedLongLong(tv) : 0;
+        if (tv && PyErr_Occurred()) PyErr_Clear();
         PyObject *vv = PyDict_GetItem(values_norm, name);
-        if (vv) { in_v[i] = (uint64_t)PyLong_AsUnsignedLongLong(vv); if (PyErr_Occurred()) PyErr_Clear(); }
+        in_v[i] = vv ? (uint64_t)PyLong_AsUnsignedLongLong(vv) : 0;
+        if (vv && PyErr_Occurred()) PyErr_Clear();
         out_t[i] = in_t[i];   /* output starts as the input taint (pass-through), like taint_norm.copy() */
     }
     int ok = 1;
@@ -2215,7 +2250,6 @@ static PyObject *CompiledCircuit_evaluate_c(CompiledCircuit *self, PyObject *arg
             }
         }
     }
-    free(in_t); free(in_v); free(out_t);
     Py_DECREF(taint_norm); Py_DECREF(values_norm);
     if (!ok) { Py_RETURN_NONE; }
     return outd;
@@ -2249,19 +2283,19 @@ static PyObject *CompiledCircuit_evaluate_c_mem(CompiledCircuit *self, PyObject 
     if (!taint_norm || !values_norm) { Py_XDECREF(taint_norm); Py_XDECREF(values_norm); Py_RETURN_NONE; }
 
     int npool = (int)PyList_GET_SIZE(self->string_pool);
-    int nalloc = npool > 0 ? npool : 1;
-    uint64_t *in_t = (uint64_t *)calloc((size_t)nalloc, sizeof(uint64_t));
-    uint64_t *in_v = (uint64_t *)calloc((size_t)nalloc, sizeof(uint64_t));
-    if (!in_t || !in_v) {
-        free(in_t); free(in_v);
+    if (ensure_scratch(self, npool) != 0) {
         Py_DECREF(taint_norm); Py_DECREF(values_norm); return PyErr_NoMemory();
     }
+    uint64_t *in_t = self->scratch_t;
+    uint64_t *in_v = self->scratch_v;
     for (int i = 0; i < npool; i++) {
         PyObject *name = PyList_GET_ITEM(self->string_pool, i);
         PyObject *tv = PyDict_GetItem(taint_norm, name);
-        if (tv) { in_t[i] = (uint64_t)PyLong_AsUnsignedLongLong(tv); if (PyErr_Occurred()) PyErr_Clear(); }
+        in_t[i] = tv ? (uint64_t)PyLong_AsUnsignedLongLong(tv) : 0;
+        if (tv && PyErr_Occurred()) PyErr_Clear();
         PyObject *vv = PyDict_GetItem(values_norm, name);
-        if (vv) { in_v[i] = (uint64_t)PyLong_AsUnsignedLongLong(vv); if (PyErr_Occurred()) PyErr_Clear(); }
+        in_v[i] = vv ? (uint64_t)PyLong_AsUnsignedLongLong(vv) : 0;
+        if (vv && PyErr_Occurred()) PyErr_Clear();
     }
 
     /* output starts as a copy of the input taint (pass-through), then each
@@ -2346,7 +2380,6 @@ static PyObject *CompiledCircuit_evaluate_c_mem(CompiledCircuit *self, PyObject 
         Py_DECREF(target_name);
     }
 
-    free(in_t); free(in_v);
     Py_DECREF(taint_norm); Py_DECREF(values_norm);
     if (!ok) { Py_XDECREF(output_taint); Py_RETURN_NONE; }
     return output_taint;
