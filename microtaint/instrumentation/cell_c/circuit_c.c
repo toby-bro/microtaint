@@ -29,6 +29,39 @@
 /* Global CAPI pointer — populated at module init via PyCapsule_Import. */
 static CellCAPI *g_cell_capi = NULL;
 
+/* Shadow-memory C API — exported by microtaint.emulator.shadow as the
+ * "_shadow_capi" capsule (a struct of function pointers).  Lets the C taint
+ * eval path (evaluate_c_mem) read/write shadow taint at the C level, skipping
+ * the PyObject_CallMethod(shadow, "read_mask", ...) attribute-resolution churn.
+ * The layout must match _ShadowCAPI in shadow.pyx exactly (field order + sigs).
+ * Imported lazily (shadow is guaranteed loaded by the first memory instruction,
+ * long after both modules' inits), so circuit_c never depends on shadow at its
+ * own module init. */
+typedef struct {
+    uint64_t (*read_mask)(PyObject *shadow, uint64_t address, int size);
+    void     (*write_mask)(PyObject *shadow, uint64_t address, uint64_t mask, int size);
+} ShadowCAPI;
+
+static ShadowCAPI *g_shadow_capi = NULL;
+static int g_shadow_capi_tried = 0;
+
+static ShadowCAPI *ensure_shadow_capi(void) {
+    if (g_shadow_capi || g_shadow_capi_tried) return g_shadow_capi;
+    g_shadow_capi_tried = 1;
+    PyObject *mod = PyImport_ImportModule("microtaint.emulator.shadow");
+    if (mod) {
+        PyObject *cap = PyObject_GetAttrString(mod, "_shadow_capi");
+        if (cap && PyCapsule_CheckExact(cap)) {
+            g_shadow_capi = (ShadowCAPI *)PyCapsule_GetPointer(
+                cap, "microtaint.emulator.shadow._shadow_capi");
+        }
+        Py_XDECREF(cap);
+        Py_DECREF(mod);
+    }
+    if (!g_shadow_capi) PyErr_Clear();  /* not fatal — fall back to PyObject calls */
+    return g_shadow_capi;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Per-assignment compiled program
  * ────────────────────────────────────────────────────────────────── */
@@ -107,6 +140,14 @@ typedef struct {
     uint64_t       *const_u64;
     int             n_const_u64;
     int             c_evaluable;
+
+    /* Like c_evaluable but ALSO admits memory circuits: set when every constant
+     * fits 64 bits and there is no python fallback (memory ops ARE allowed).
+     * evaluate_c_mem runs the C-array interior for these, reading/writing shadow
+     * taint at the C level; loads/stores/mem-ALU that would otherwise take the
+     * PyObject-heavy do_evaluate path.  PC-writing circuits are excluded at call
+     * time (they need do_evaluate's implicit-taint policy check). */
+    int             c_mem_evaluable;
 } CompiledCircuit;
 
 /* ──────────── string_pool helpers ──────────── */
@@ -718,6 +759,7 @@ static PyObject *CompiledCircuit_new(PyTypeObject *t, PyObject *a, PyObject *k) 
     self->pc_target_idx = -1;
     self->has_python_fallback = 0;
     self->value_independent = 0;  /* set from the LogicCircuit in compile_circuit */
+    self->c_mem_evaluable = 0;    /* set in compile_circuit; 0 => fall back to do_evaluate */
     return (PyObject *)self;
 }
 
@@ -1005,6 +1047,7 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
             }
         }
         cc->c_evaluable = const_ok && !cc->has_python_fallback && !cc->has_mem_ops;
+        cc->c_mem_evaluable = const_ok && !cc->has_python_fallback;
     }
     /* Airtight value-independence: only trust it when the whole circuit is
      * C-evaluated (no Python fallback that could read operand values outside
@@ -1385,11 +1428,19 @@ static PyObject *eval_program(CompiledCircuit *cc,
             break;
         }
         case OP_PUSH_MEM_TAINT: {
-            if (c_out) goto err;   /* C mode: no shadow-memory access; bail to SLEIGH */
             int size = (int)bc[pc++];
             if (sp < 1) goto err;
             uint64_t addr = stack[--sp];
             uint64_t v = 0;
+            if (c_out) {
+                /* C-array mode: read shadow taint at the C level via the shadow
+                 * capsule (the caller holds the GIL).  Requires a live shadow +
+                 * the capsule; otherwise bail so the caller drops to the Python
+                 * evaluator.  This is the hot LOAD path — no PyObject churn. */
+                if (shadow_memory == NULL || shadow_memory == Py_None || !g_shadow_capi) goto err;
+                stack[sp++] = g_shadow_capi->read_mask(shadow_memory, addr, size);
+                break;
+            }
             if (shadow_memory != Py_None && shadow_memory != NULL) {
                 PyObject *addr_obj = PyLong_FromUnsignedLongLong(addr);
                 PyObject *sz_obj   = PyLong_FromLong(size);
@@ -1415,11 +1466,15 @@ static PyObject *eval_program(CompiledCircuit *cc,
             break;
         }
         case OP_PUSH_MEM_VALUE: {
-            if (c_out) goto err;   /* C mode: no shadow-memory access; bail to SLEIGH */
             int size = (int)bc[pc++];
             if (sp < 1) goto err;
             uint64_t addr = stack[--sp];
             uint64_t v = 0;
+            /* C-array mode reads the concrete value through mem_reader (a Python
+             * callable, valid because the caller holds the GIL); the dict
+             * fallback needs input_values, which C mode does not supply, so bail
+             * if there is no reader. */
+            if (c_out && (mem_reader == NULL || mem_reader == Py_None)) goto err;
             if (mem_reader != Py_None && mem_reader != NULL) {
                 PyObject *addr_obj = PyLong_FromUnsignedLongLong(addr);
                 PyObject *sz_obj   = PyLong_FromLong(size);
@@ -2166,11 +2221,144 @@ static PyObject *CompiledCircuit_evaluate_c(CompiledCircuit *self, PyObject *arg
     return outd;
 }
 
+/* evaluate_c_mem(input_taint, input_values, pcode, shadow_memory, mem_reader)
+ *   -> output_taint dict, or None to fall back to the full evaluate().
+ *
+ * The memory-capable sibling of evaluate_c: runs the C-array interior for
+ * circuits that read/write memory (loads, stores, mem-ALU), so they skip the
+ * PyObject-heavy do_evaluate path.  Register taints/values come from uint64
+ * arrays (no per-op dict lookups); shadow taint is read at the C level via the
+ * shadow capsule; concrete memory values (mem-ALU cells) go through mem_reader,
+ * valid because the caller holds the GIL.  The output dict is byte-identical to
+ * do_evaluate's (same pass-through copy + MEM_<hex>_<size> keys built the same
+ * way), so the hook's post-processing is unchanged.  Returns None (caller falls
+ * back) when the circuit is not c_mem_evaluable, writes PC (needs the
+ * implicit-taint policy check), the shadow capsule is unavailable, a target is
+ * wider than 64 bits, or any assignment bails in C mode -- so every hard case
+ * still gets do_evaluate's exact answer. */
+static PyObject *CompiledCircuit_evaluate_c_mem(CompiledCircuit *self, PyObject *args) {
+    PyObject *input_taint, *input_values, *pcode, *shadow_memory, *mem_reader;
+    if (!PyArg_ParseTuple(args, "OOOOO", &input_taint, &input_values, &pcode,
+                          &shadow_memory, &mem_reader)) return NULL;
+    if (!self->c_mem_evaluable) { Py_RETURN_NONE; }
+    if (self->pc_target_idx >= 0) { Py_RETURN_NONE; }   /* needs do_evaluate's implicit-taint check */
+    if (!ensure_shadow_capi()) { Py_RETURN_NONE; }      /* no C-level shadow access -> fall back */
+
+    PyObject *taint_norm  = normalize_register_dict(self->arch_str, input_taint);
+    PyObject *values_norm = normalize_register_dict(self->arch_str, input_values);
+    if (!taint_norm || !values_norm) { Py_XDECREF(taint_norm); Py_XDECREF(values_norm); Py_RETURN_NONE; }
+
+    int npool = (int)PyList_GET_SIZE(self->string_pool);
+    int nalloc = npool > 0 ? npool : 1;
+    uint64_t *in_t = (uint64_t *)calloc((size_t)nalloc, sizeof(uint64_t));
+    uint64_t *in_v = (uint64_t *)calloc((size_t)nalloc, sizeof(uint64_t));
+    if (!in_t || !in_v) {
+        free(in_t); free(in_v);
+        Py_DECREF(taint_norm); Py_DECREF(values_norm); return PyErr_NoMemory();
+    }
+    for (int i = 0; i < npool; i++) {
+        PyObject *name = PyList_GET_ITEM(self->string_pool, i);
+        PyObject *tv = PyDict_GetItem(taint_norm, name);
+        if (tv) { in_t[i] = (uint64_t)PyLong_AsUnsignedLongLong(tv); if (PyErr_Occurred()) PyErr_Clear(); }
+        PyObject *vv = PyDict_GetItem(values_norm, name);
+        if (vv) { in_v[i] = (uint64_t)PyLong_AsUnsignedLongLong(vv); if (PyErr_Occurred()) PyErr_Clear(); }
+    }
+
+    /* output starts as a copy of the input taint (pass-through), then each
+     * assignment overlays its target -- exactly like do_evaluate. */
+    PyObject *output_taint = PyDict_Copy(taint_norm);
+    int ok = (output_taint != NULL);
+
+    /* frame-recycle: arm the per-evaluate cell frame cache identically to
+     * do_evaluate, so an instruction's result + flags share one cell execution
+     * and pool_idx/recycle_count reset per instruction (this restores the exact
+     * reset cadence the memory path had when it ran through do_evaluate). */
+    if (ok && g_cell_capi && g_cell_capi->reset_frame_cache
+            && pcode && pcode != Py_None
+            && self->cell_handles && PyList_Check(self->cell_handles)) {
+        Py_ssize_t nh = PyList_GET_SIZE(self->cell_handles);
+        for (Py_ssize_t hi = 0; hi < nh; hi++) {
+            PyObject *hc = PyList_GET_ITEM(self->cell_handles, hi);
+            if (hc && hc != Py_None && PyCapsule_CheckExact(hc)) {
+                g_cell_capi->reset_frame_cache((EvalC_API *)pcode, 1);
+                break;
+            }
+        }
+    }
+
+    for (int i = 0; ok && i < self->n_progs; i++) {
+        AssignmentProg *prog = &self->progs[i];
+        if (prog->python_assignment) { ok = 0; break; }   /* excluded by gate, but be safe */
+
+        uint64_t result = 0;
+        PyObject *rc = eval_program(self, prog->bc, prog->bc_len, NULL, NULL, NULL,
+                                    shadow_memory, mem_reader, pcode, NULL, in_t, in_v, &result);
+        if (rc != (PyObject *)self) {           /* NULL (bail) or the too-wide None sentinel */
+            if (rc && rc != (PyObject *)self) Py_DECREF(rc);
+            if (PyErr_Occurred()) PyErr_Clear();
+            ok = 0; break;
+        }
+
+        int bit_start = prog->target_bit_start;
+        int bit_end   = prog->target_bit_end;
+        int width = bit_end - bit_start + 1;
+        if (bit_start + width > 64) { ok = 0; break; }   /* >64-bit target: use do_evaluate */
+
+        PyObject *target_name = NULL;
+        if (prog->target_kind == TGT_REG) {
+            target_name = PyList_GET_ITEM(self->string_pool, prog->target_name_idx);
+            Py_INCREF(target_name);
+        } else {
+            uint64_t addr = 0;
+            PyObject *arc = eval_program(self, prog->addr_bc, prog->addr_bc_len, NULL, NULL, NULL,
+                                         shadow_memory, mem_reader, pcode, NULL, in_t, in_v, &addr);
+            if (arc != (PyObject *)self) {
+                if (arc && arc != (PyObject *)self) Py_DECREF(arc);
+                if (PyErr_Occurred()) PyErr_Clear();
+                ok = 0; break;
+            }
+            /* MEM_%U_%d with %U = hex(addr) -- byte-identical to do_evaluate. */
+            PyObject *addr_obj = PyLong_FromUnsignedLongLong(addr);
+            PyObject *hexfn = PyDict_GetItemString(PyEval_GetBuiltins(), "hex");
+            PyObject *hexb = (hexfn && addr_obj) ? PyObject_CallFunctionObjArgs(hexfn, addr_obj, NULL) : NULL;
+            Py_XDECREF(addr_obj);
+            if (!hexb) { if (PyErr_Occurred()) PyErr_Clear(); ok = 0; break; }
+            target_name = PyUnicode_FromFormat("MEM_%U_%d", hexb, prog->target_size_bytes);
+            Py_DECREF(hexb);
+            if (!target_name) { if (PyErr_Occurred()) PyErr_Clear(); ok = 0; break; }
+        }
+
+        /* Merge into output_taint[target_name] with do_evaluate's u64 fast path:
+         * (current & ~mask) | ((result << bit_start) & mask).  Bail if the
+         * existing entry is a >64-bit value (SIMD), so do_evaluate handles it. */
+        uint64_t mask = ((width >= 64) ? ~(uint64_t)0 : (((uint64_t)1 << width) - 1)) << bit_start;
+        uint64_t cur = 0;
+        PyObject *cur_obj = PyDict_GetItem(output_taint, target_name);   /* borrowed */
+        if (cur_obj) {
+            cur = (uint64_t)PyLong_AsUnsignedLongLong(cur_obj);
+            if (PyErr_Occurred()) { PyErr_Clear(); Py_DECREF(target_name); ok = 0; break; }
+        }
+        uint64_t nv = (cur & ~mask) | ((result << bit_start) & mask);
+        PyObject *new_val = PyLong_FromUnsignedLongLong(nv);
+        if (!new_val) { Py_DECREF(target_name); ok = 0; break; }
+        PyDict_SetItem(output_taint, target_name, new_val);
+        Py_DECREF(new_val);
+        Py_DECREF(target_name);
+    }
+
+    free(in_t); free(in_v);
+    Py_DECREF(taint_norm); Py_DECREF(values_norm);
+    if (!ok) { Py_XDECREF(output_taint); Py_RETURN_NONE; }
+    return output_taint;
+}
+
 static PyMethodDef CompiledCircuit_methods[] = {
     {"evaluate",      (PyCFunction)CompiledCircuit_evaluate,      METH_VARARGS, NULL},
     {"evaluate_fast", (PyCFunction)CompiledCircuit_evaluate_fast, METH_VARARGS, NULL},
     {"evaluate_c",    (PyCFunction)CompiledCircuit_evaluate_c,    METH_VARARGS,
      "GIL-free C-path taint eval (register-only circuits); None if not c_evaluable."},
+    {"evaluate_c_mem", (PyCFunction)CompiledCircuit_evaluate_c_mem, METH_VARARGS,
+     "C-array taint eval for memory circuits (loads/stores/mem-ALU); None to fall back."},
     {"stats",         (PyCFunction)CompiledCircuit_stats,         METH_NOARGS,  NULL},
     {NULL}
 };

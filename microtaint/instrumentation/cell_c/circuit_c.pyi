@@ -64,6 +64,37 @@ class CompiledCircuit:
         CellCAPI when available.
         """
 
+    def evaluate_c(
+        self,
+        input_taint: dict[str, int],
+        input_values: dict[str, int],
+        pcode: Any,
+    ) -> dict[str, int] | None:
+        """
+        C-array taint eval for register-only, non-PC circuits.  Bit-identical to
+        evaluate(); returns None (caller falls back to evaluate) when the circuit
+        is not c_evaluable (memory ops / python fallback / >64-bit constants) or
+        any assignment bails.
+        """
+
+    def evaluate_c_mem(
+        self,
+        input_taint: dict[str, int],
+        input_values: dict[str, int],
+        pcode: Any,
+        shadow_memory: Any,
+        mem_reader: Any,
+    ) -> dict[str, int] | None:
+        """
+        C-array taint eval for memory circuits (loads/stores/mem-ALU): register
+        taints/values come from uint64 arrays, shadow taint is read/written at the
+        C level (the shadow C-API capsule), and concrete memory values go through
+        `mem_reader` (valid because the caller holds the GIL).  The output dict is
+        byte-identical to evaluate()'s (same pass-through + MEM_<hex>_<size> keys).
+        Returns None to fall back to evaluate() for PC-writing circuits, >64-bit
+        SIMD targets, python fallback, a missing shadow capsule, or any bail.
+        """
+
     def stats(self) -> dict[str, int]:
         """
         Return circuit statistics:

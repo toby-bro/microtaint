@@ -280,3 +280,44 @@ cdef class BitPreciseShadowMemory:
     @property
     def STATE_POISONED(self) -> int:
         return STATE_POISONED
+
+
+# ---------------------------------------------------------------------------
+# C-API capsule: lets a hand-written C consumer (circuit_c) call read_mask /
+# write_mask at the C level, with no PyObject_CallMethod attribute-resolution
+# churn.  Mirrors the cell_c._cell_capi pattern.  The function pointers take the
+# shadow as a void* that is really the BitPreciseShadowMemory PyObject* the C
+# caller already holds a (borrowed) reference to; the cast performs no refcount
+# change, so the caller must keep the object alive for the call's duration (it
+# does — the shadow lives for the whole run).  Only the two hot memory taint
+# ops are exported; everything else stays on the normal cpdef path.
+# ---------------------------------------------------------------------------
+from cpython.pycapsule cimport PyCapsule_New
+
+
+ctypedef uint64_t (*read_mask_fn)(object shadow, uint64_t address, int size) noexcept
+ctypedef void (*write_mask_fn)(object shadow, uint64_t address, uint64_t mask, int size) noexcept
+
+
+cdef struct _ShadowCAPI:
+    read_mask_fn  read_mask
+    write_mask_fn write_mask
+
+
+cdef uint64_t _capi_read_mask(object shadow, uint64_t address, int size) noexcept:
+    # `shadow` is a borrowed ref the C caller already holds; the cast is
+    # unchecked (the caller only ever passes a BitPreciseShadowMemory).
+    return (<BitPreciseShadowMemory>shadow).read_mask(address, size)
+
+
+cdef void _capi_write_mask(object shadow, uint64_t address, uint64_t mask, int size) noexcept:
+    (<BitPreciseShadowMemory>shadow).write_mask(address, mask, size)
+
+
+cdef _ShadowCAPI _shadow_capi_struct
+_shadow_capi_struct.read_mask = _capi_read_mask
+_shadow_capi_struct.write_mask = _capi_write_mask
+
+# Module attribute imported by circuit_c via the shadow module + getattr.
+_shadow_capi = PyCapsule_New(<void *>&_shadow_capi_struct,
+                             b"microtaint.emulator.shadow._shadow_capi", NULL)

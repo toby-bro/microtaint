@@ -46,6 +46,16 @@ cdef object EMPTY_FROZENSET = frozenset()
 import os as _os
 cdef bint _USE_DEVAL_C = _os.environ.get('MICROTAINT_DISABLE_DO_EVALUATE_C') != '1'
 
+# Memory circuits (loads/stores/mem-ALU) run the C-array interior via
+# CompiledCircuit.evaluate_c_mem (shadow read/write at the C level), skipping the
+# PyObject-heavy do_evaluate path.  Bit-identical to circuit.evaluate; returns
+# None to fall back for anything it cannot handle.  MICROTAINT_DISABLE_CMEM=1
+# forces the classic path.  MICROTAINT_DIFF_CMEM=1 additionally runs the full
+# do_evaluate and asserts equality on every memory instruction (soundness gate,
+# for the test suite -- slow, never in production).
+cdef bint _USE_CMEM  = _os.environ.get('MICROTAINT_DISABLE_CMEM') != '1'
+cdef bint _DIFF_CMEM = _os.environ.get('MICROTAINT_DIFF_CMEM') == '1'
+
 # Address-keyed decode cache: on a repeat visit to an address, skip the
 # uc_mem_read + ctypes buffer slice + cached_gen_rule tuplehash (~3.0 us of the
 # ~4.5 us cache-hit floor) by reusing the (bytes, circuit) decoded last time.
@@ -335,6 +345,27 @@ cdef class InstructionHook:
                 # GIL-free C path for register-only, non-PC circuits (bit-identical
                 # to evaluate; returns None to fall back for mem / PC / non-eligible).
                 output_state = compiled_circuit.evaluate_c(pre_taint, pre_regs, self.sim._pcode)
+                if output_state is None and _USE_CMEM:
+                    # Memory circuits (loads/stores/mem-ALU): C-array interior with
+                    # shadow read/write at the C level.  Bit-identical to
+                    # circuit.evaluate; returns None to fall back (PC, wide SIMD,
+                    # python fallback, missing shadow capsule).
+                    output_state = compiled_circuit.evaluate_c_mem(
+                        pre_taint, pre_regs, self.sim._pcode,
+                        self.shadow_mem, self.read_live_memory)
+                    if _DIFF_CMEM and output_state is not None:
+                        # Soundness gate: prove evaluate_c_mem == do_evaluate for
+                        # every memory instruction the suite exercises.
+                        ref_ctx = self.eval_context_cls(
+                            input_taint=pre_taint, input_values=pre_regs,
+                            simulator=self.sim, implicit_policy=self.policy,
+                            shadow_memory=self.shadow_mem, mem_reader=self.read_live_memory,
+                        )
+                        ref = circuit.evaluate(ref_ctx)
+                        if ref != output_state:
+                            raise AssertionError(
+                                f'evaluate_c_mem mismatch @ {address:#x} '
+                                f'({instruction_bytes.hex()}):\n  cmem={output_state}\n  ref ={ref}')
             if output_state is None:
                 # Only the fallback path needs an EvalContext; evaluate_c reads
                 # pre_taint / pre_regs directly, so for the common register-only
