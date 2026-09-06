@@ -20,6 +20,7 @@ pyproject.toml.
 from __future__ import annotations
 
 import os
+import platform
 import shlex
 import subprocess
 import sys
@@ -27,6 +28,16 @@ import sysconfig
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+
+# --------------------------------------------------------------------------
+# Native re-execution (4th concrete-execution path).  The trampoline is
+# x86-64 assembly, so it is compiled INTO cell_c only on x86_64 build hosts;
+# elsewhere cell_c is built without it and falls back to SLEIGH.  When present,
+# MICROTAINT_HAVE_REEXEC is defined so cell_c.c gates every reexec use on it.
+# --------------------------------------------------------------------------
+_REEXEC_DIR = 'microtaint/reexec'
+_REEXEC_SOURCES = ['microtaint/reexec/reexec.c', 'microtaint/reexec/reexec_amd64.S']
+_REEXEC_AVAILABLE = platform.machine() in ('x86_64', 'AMD64')
 
 # --------------------------------------------------------------------------
 # C extension manifest
@@ -105,7 +116,17 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
                 continue
 
             so_path = source.with_name(module_name + ext_suffix)
-            self._compile(cc_cmd, py_include, source, so_path)
+            # cell_c gains the native re-exec path on x86_64 hosts.
+            extra_sources: list[Path] = []
+            extra_flags: list[str] = []
+            if module_name == 'cell_c' and _REEXEC_AVAILABLE:
+                extra_sources = [Path(self.root) / s for s in _REEXEC_SOURCES]
+                extra_flags = ['-DMICROTAINT_HAVE_REEXEC=1', f'-I{Path(self.root) / _REEXEC_DIR}']
+                if all(p.is_file() for p in extra_sources):
+                    self.app.display_info('[microtaint-c-ext] cell_c += native re-exec (x86_64)')
+                else:
+                    extra_sources, extra_flags = [], []
+            self._compile(cc_cmd, py_include, source, so_path, extra_sources, extra_flags)
 
             # Tell hatchling to include this .so in the wheel under the
             # same package path (relative to project root).
@@ -119,6 +140,8 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
         py_include: str,
         source: Path,
         output: Path,
+        extra_sources: list[Path] | None = None,
+        extra_flags: list[str] | None = None,
     ) -> None:
         """Run the compiler and surface a clear error on failure."""
         # Include path: Python headers + the source's own directory (for
@@ -129,7 +152,9 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
             *cc_cmd,
             f'-I{py_include}',
             f'-I{include_dir}',
+            *(extra_flags or []),
             str(source),
+            *[str(s) for s in (extra_sources or [])],
             '-o',
             str(output),
         ]

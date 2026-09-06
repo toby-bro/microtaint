@@ -321,6 +321,10 @@ typedef struct {
      * differential level instead of executing it via Unicorn.  Mirrors
      * cell.pyx DecodedOps.avalanche_ok. */
     int      avalanche_ok;
+    /* 1 if this bundle is a SINGLE register-only instruction with no memory,
+     * control-flow, or opaque ops -- eligible for native re-execution (the C
+     * kernel's 4th path).  Computed once at bundle creation. */
+    int      reexec_ok;
     uint64_t next_instr_addr;
     /* IMARK address → pcode pc.  Linear scan; n_imarks ≤ MAX_PCODE_OPS. */
     int          n_imarks;

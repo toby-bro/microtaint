@@ -26,6 +26,28 @@ returns a real value, SLEIGH floors it — taint-safe, since microtaint already
 avalanche-floors undefined flags. A differential runs the two polarity corners,
 so ~64 ns vs ~7100 ns for the two SLEIGH cells.
 
+## Integration finding (important)
+
+reexec is wired into the C kernel's `cell_eval_fast` (gated by
+`MICROTAINT_REEXEC`, default OFF). It is **proven to fire**: over the AMD64 bank,
+`stats()` reports `reexec_hits=565` of 869 concrete executions with reexec ON and
+`0` with it OFF (the other 304 are excluded memory/branch/multi-instruction
+cells).
+
+But on the compiled **fast path** it gives **no speedup** (AMD64 p50 3.82 -> 4.13
+us, p100 ~60 -> ~60 us). The ~110x above is versus the *slow* SLEIGH cell
+(`evaluate_concrete`); the production `cell_eval_fast` -> `execute_decoded` C
+interpreter is already fast (~hundreds of ns), and reexec's per-call marshaling
+(16 GPRs + 7 flags read from the frame and written back) cancels the gain. Two
+real levers: (1) marshal only the instruction's actual registers (2-4, not 23);
+(2) the slow path / emulator, where the CAPI is not loaded and cells go through
+the ~us `evaluate_concrete` path -- there reexec's 110x applies (the real use
+case).
+
+One taint difference when enabled: `imul r64,r64,imm32` CF/OF -- reexec is *more
+precise* (the real CPU shows no overflow; SLEIGH over-taints imul flags), so it
+is a precision gain, not unsound, but it breaks bit-exactness-with-SLEIGH.
+
 ## Files
 
 - `reexec_amd64.S` — the copyable trampoline template (loads GPRs+RFLAGS, runs

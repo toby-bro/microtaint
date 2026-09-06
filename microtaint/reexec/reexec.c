@@ -15,7 +15,7 @@
 #include <string.h>
 #include <sys/mman.h>
 
-typedef struct { uint64_t gpr[16]; uint64_t rflags; } cpu_state_t;
+#include "reexec.h"
 
 extern char reexec_run[];
 extern char reexec_tmpl_hole[];
@@ -25,8 +25,29 @@ static unsigned char *g_buf = NULL;
 static long g_hole_off = 0, g_tmpl_size = 0;
 static sigjmp_buf g_env;
 static volatile int g_fault_sig = 0;
+/* Set only while a trampoline call is in flight.  A fault OUTSIDE that window
+ * (e.g. a genuine crash elsewhere in the process, or Python/Unicorn's own
+ * handling) must NOT be diverted into our siglongjmp with a stale g_env. */
+static volatile sig_atomic_t g_in_reexec = 0;
+static struct sigaction g_saved[4];  /* pre-arm dispositions: SEGV,ILL,FPE,BUS */
 
-static void fault_handler(int sig) { g_fault_sig = sig; siglongjmp(g_env, sig); }
+static int _sig_index(int sig) {
+    switch (sig) {
+    case SIGSEGV: return 0;
+    case SIGILL:  return 1;
+    case SIGFPE:  return 2;
+    case SIGBUS:  return 3;
+    default:      return -1;
+    }
+}
+
+static void fault_handler(int sig) {
+    if (g_in_reexec) { g_fault_sig = sig; siglongjmp(g_env, sig); }
+    /* Not our fault: restore the previous disposition and return so the
+     * faulting instruction re-executes under the original handler. */
+    int idx = _sig_index(sig);
+    if (idx >= 0) sigaction(sig, &g_saved[idx], NULL);
+}
 
 static char g_altstack[64 * 1024];
 
@@ -76,8 +97,11 @@ int reexec_run_one(cpu_state_t *state, const unsigned char *instr, int len) {
     g_fault_sig = 0;
     int rc = 0;
     if (sigsetjmp(g_env, 0) == 0) {
+        g_in_reexec = 1;
         ((void (*)(cpu_state_t *))g_buf)(state);
+        g_in_reexec = 0;
     } else {
+        g_in_reexec = 0;
         rc = g_fault_sig;
     }
     restore_handlers(old);
@@ -85,7 +109,6 @@ int reexec_run_one(cpu_state_t *state, const unsigned char *instr, int len) {
 }
 
 /* --- Amortised API: install handlers once, patch once, call many. --- */
-static struct sigaction g_saved[4];
 int reexec_arm(void) { if (!g_buf) return -1; install_handlers(g_saved); return 0; }
 void reexec_disarm(void) { restore_handlers(g_saved); }
 
@@ -102,9 +125,12 @@ int reexec_set_instr(const unsigned char *instr, int len) {
 int reexec_call(cpu_state_t *state) {
     g_fault_sig = 0;
     if (sigsetjmp(g_env, 0) == 0) {
+        g_in_reexec = 1;
         ((void (*)(cpu_state_t *))g_buf)(state);
+        g_in_reexec = 0;
         return 0;
     }
+    g_in_reexec = 0;
     return g_fault_sig;
 }
 
