@@ -2533,6 +2533,131 @@ static PyObject *CompiledCircuit_evaluate_c_mem(CompiledCircuit *self, PyObject 
     return output_taint;
 }
 
+/* evaluate_c_mem_ptr(taint_addr, val_addr, n_slots, pcode, shadow, mem_reader,
+ *                    name_to_slot) -> list[(addr,size,taint)] for mem writes,
+ *                    or None to fall back.
+ *
+ * The memory counterpart of evaluate_c_arr_ptr, so BOTH eval paths share the
+ * hook's g_taint/g_val C arrays (the atomicity finding: register + memory instrs
+ * share the taint state, so they must convert together).  Register target taint
+ * is written to g_taint; memory target taint is written to the shadow via the
+ * capsule.  All writes are DEFERRED to a single commit at the end so a bail
+ * never half-updates state (atomic).  Returns the committed mem writes so the
+ * hook can update last_tainted_writes + run the AIW check exactly as it does
+ * from the MEM_ dict keys today -- no MEM_ string round-trip is built. */
+#define CMEM_MAX_WRITES 32
+static PyObject *CompiledCircuit_evaluate_c_mem_ptr(CompiledCircuit *self, PyObject *args) {
+    unsigned long long taint_addr = 0, val_addr = 0;
+    int n_slots = 0;
+    PyObject *pcode, *shadow_memory, *mem_reader, *name_to_slot;
+    if (!PyArg_ParseTuple(args, "KKiOOOO", &taint_addr, &val_addr, &n_slots,
+                          &pcode, &shadow_memory, &mem_reader, &name_to_slot))
+        return NULL;
+    if (!self->c_mem_evaluable) { Py_RETURN_NONE; }
+    if (self->pc_target_idx >= 0) { Py_RETURN_NONE; }
+    if (!ensure_shadow_capi()) { Py_RETURN_NONE; }
+
+    int npool = (int)PyList_GET_SIZE(self->string_pool);
+    if (!self->pool_to_slot || self->pool_to_slot_n != npool) {
+        free(self->pool_to_slot);
+        self->pool_to_slot = (int *)malloc((size_t)(npool > 0 ? npool : 1) * sizeof(int));
+        if (!self->pool_to_slot) return PyErr_NoMemory();
+        for (int i = 0; i < npool; i++) {
+            PyObject *nm = PyList_GET_ITEM(self->string_pool, i);
+            PyObject *s = PyDict_GetItem(name_to_slot, nm);  /* borrowed */
+            self->pool_to_slot[i] = (s && PyLong_Check(s)) ? (int)PyLong_AsLong(s) : -1;
+        }
+        self->pool_to_slot_n = npool;
+    }
+    if (ensure_scratch(self, npool) != 0) return PyErr_NoMemory();
+    uint64_t *g_t = (uint64_t *)(uintptr_t)taint_addr;
+    uint64_t *g_v = (uint64_t *)(uintptr_t)val_addr;
+    uint64_t *in_t = self->scratch_t, *in_v = self->scratch_v, *out_t = self->scratch_o;
+    for (int i = 0; i < npool; i++) {
+        int slot = self->pool_to_slot[i];
+        uint64_t tv = (slot >= 0 && slot < n_slots) ? g_t[slot] : 0;
+        uint64_t vv = (slot >= 0 && slot < n_slots) ? g_v[slot] : 0;
+        in_t[i] = tv; in_v[i] = vv; out_t[i] = tv;
+    }
+
+    /* arm frame-recycle identically to evaluate_c_mem / do_evaluate */
+    if (g_cell_capi && g_cell_capi->reset_frame_cache && pcode && pcode != Py_None
+            && self->cell_handles && PyList_Check(self->cell_handles)) {
+        Py_ssize_t nh = PyList_GET_SIZE(self->cell_handles);
+        for (Py_ssize_t hi = 0; hi < nh; hi++) {
+            PyObject *hc = PyList_GET_ITEM(self->cell_handles, hi);
+            if (hc && hc != Py_None && PyCapsule_CheckExact(hc)) {
+                g_cell_capi->reset_frame_cache((EvalC_API *)pcode, 1);
+                break;
+            }
+        }
+    }
+
+    /* Deferred mem-write accumulation (addr,size)->taint, so multiple slices to
+     * one address merge and nothing is committed on a bail. */
+    uint64_t mw_addr[CMEM_MAX_WRITES];
+    int      mw_size[CMEM_MAX_WRITES];
+    uint64_t mw_taint[CMEM_MAX_WRITES];
+    int      n_mw = 0;
+    int ok = 1;
+    for (int i = 0; ok && i < self->n_progs; i++) {
+        AssignmentProg *prog = &self->progs[i];
+        if (prog->python_assignment) { ok = 0; break; }
+        uint64_t result = 0;
+        PyObject *rc = eval_program(self, prog->bc, prog->bc_len, NULL, NULL, NULL,
+                                    shadow_memory, mem_reader, pcode, NULL, in_t, in_v, &result);
+        if (rc != (PyObject *)self) {
+            if (rc && rc != (PyObject *)self) Py_DECREF(rc);
+            if (PyErr_Occurred()) PyErr_Clear();
+            ok = 0; break;
+        }
+        int bs = prog->target_bit_start, be = prog->target_bit_end, width = be - bs + 1;
+        if (bs + width > 64) { ok = 0; break; }
+        uint64_t mask = ((width >= 64) ? ~(uint64_t)0 : (((uint64_t)1 << width) - 1)) << bs;
+        if (prog->target_kind == TGT_REG) {
+            int idx = prog->target_name_idx;
+            out_t[idx] = (out_t[idx] & ~mask) | ((result << bs) & mask);
+        } else {
+            uint64_t addr = 0;
+            PyObject *arc = eval_program(self, prog->addr_bc, prog->addr_bc_len, NULL, NULL, NULL,
+                                         shadow_memory, mem_reader, pcode, NULL, in_t, in_v, &addr);
+            if (arc != (PyObject *)self) {
+                if (arc && arc != (PyObject *)self) Py_DECREF(arc);
+                if (PyErr_Occurred()) PyErr_Clear();
+                ok = 0; break;
+            }
+            int sz = prog->target_size_bytes;
+            /* find existing accumulation for (addr,sz) or add one */
+            int slot = -1;
+            for (int k = 0; k < n_mw; k++) {
+                if (mw_addr[k] == addr && mw_size[k] == sz) { slot = k; break; }
+            }
+            if (slot < 0) {
+                if (n_mw >= CMEM_MAX_WRITES) { ok = 0; break; }
+                slot = n_mw++; mw_addr[slot] = addr; mw_size[slot] = sz; mw_taint[slot] = 0;
+            }
+            mw_taint[slot] = (mw_taint[slot] & ~mask) | ((result << bs) & mask);
+        }
+    }
+    if (!ok) { Py_RETURN_NONE; }   /* nothing committed: atomic */
+
+    /* Commit: register targets -> g_taint, memory targets -> shadow. */
+    for (int p = 0; p < self->n_progs; p++) {
+        if (self->progs[p].target_kind != TGT_REG) continue;
+        int idx = self->progs[p].target_name_idx;
+        int slot = self->pool_to_slot[idx];
+        if (slot >= 0 && slot < n_slots) g_t[slot] = out_t[idx];
+    }
+    PyObject *writes = PyList_New(0);
+    if (!writes) return NULL;
+    for (int k = 0; k < n_mw; k++) {
+        g_shadow_capi->write_mask(shadow_memory, mw_addr[k], mw_taint[k], mw_size[k]);
+        PyObject *tup = Py_BuildValue("(KiK)", mw_addr[k], mw_size[k], mw_taint[k]);
+        if (tup) { PyList_Append(writes, tup); Py_DECREF(tup); }
+    }
+    return writes;
+}
+
 static PyMethodDef CompiledCircuit_methods[] = {
     {"evaluate",      (PyCFunction)CompiledCircuit_evaluate,      METH_VARARGS, NULL},
     {"evaluate_fast", (PyCFunction)CompiledCircuit_evaluate_fast, METH_VARARGS, NULL},
@@ -2544,6 +2669,8 @@ static PyMethodDef CompiledCircuit_methods[] = {
      "Array-gather register eval over raw uint64 C arrays (addresses); atomic direct write."},
     {"evaluate_c_mem", (PyCFunction)CompiledCircuit_evaluate_c_mem, METH_VARARGS,
      "C-array taint eval for memory circuits (loads/stores/mem-ALU); None to fall back."},
+    {"evaluate_c_mem_ptr", (PyCFunction)CompiledCircuit_evaluate_c_mem_ptr, METH_VARARGS,
+     "Memory eval over raw uint64 C arrays; atomic; returns mem writes as (addr,size,taint)."},
     {"stats",         (PyCFunction)CompiledCircuit_stats,         METH_NOARGS,  NULL},
     {NULL}
 };

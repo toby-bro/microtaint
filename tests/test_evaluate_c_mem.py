@@ -108,6 +108,92 @@ def test_c_mem_matches_do_evaluate(label: str, hx: str, rax_taint: int, mem_tain
     )
 
 
+def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int, mem_taint_bytes: dict):
+    """Mirror of _run_case for evaluate_c_mem_ptr: register taint/values live in
+    raw uint64 C arrays (ctypes) indexed by slot; the eval writes reg targets to
+    the taint array and mem targets to the shadow, returning the mem writes.
+    Returns (ref, got_reg, got_mem, bailed) where got_reg is the reg-taint dict
+    read back from the array and got_mem maps (addr,size)->taint from the writes."""
+    import ctypes
+    regs = list(isa_registers(arch))
+    names = [r.name for r in regs]
+    sim = CellSimulator(arch)
+    circ = generate_static_rule(arch, bytes.fromhex(hx), regs)
+    values = {r.name: 0 for r in regs}
+    taint = {r.name: 0 for r in regs}
+    for name in ('RBX', 'X1', 'r3', '4'):
+        if name in values:
+            values[name] = BASE
+    for name in ('RAX', 'X0', 'r4', '5'):
+        if name in taint:
+            taint[name] = rax_taint
+            values[name] = 0xDEADBEEFCAFEBABE
+    concrete = {BASE + i: (0x11 * (i + 1)) & 0xFF for i in range(8)}
+    mem_reader = _mem_reader_factory(concrete)
+
+    # Reference on a fresh shadow.
+    shadow_ref = BitPreciseShadowMemory()
+    for off, tb in mem_taint_bytes.items():
+        shadow_ref.write_mask(BASE + off, tb, 1)
+    ctx = EvalContext(input_values=dict(values), input_taint=dict(taint),
+                      simulator=sim, implicit_policy=ImplicitTaintPolicy.KEEP,
+                      shadow_memory=shadow_ref, mem_reader=mem_reader)
+    ref = circ.evaluate(ctx)
+    compiled = circ._compiled
+    assert compiled not in (None, False), f'{hx} did not compile'
+
+    # Engine on an identically-seeded fresh shadow, via the pointer path.
+    shadow = BitPreciseShadowMemory()
+    for off, tb in mem_taint_bytes.items():
+        shadow.write_mask(BASE + off, tb, 1)
+    K = len(names)
+    TArr = ctypes.c_uint64 * K
+    t_arr = TArr(*[taint[n] & FULL for n in names])
+    v_arr = TArr(*[values[n] & FULL for n in names])
+    slot_map = {n: i for i, n in enumerate(names)}
+    writes = compiled.evaluate_c_mem_ptr(ctypes.addressof(t_arr), ctypes.addressof(v_arr),
+                                         K, sim._pcode, shadow, mem_reader, slot_map)
+    if writes is None:
+        return ref, None, None, True
+    got_reg = {names[i]: int(t_arr[i]) for i in range(K)}
+    got_mem = {(int(a), int(s)): int(t) for (a, s, t) in writes}
+    return ref, got_reg, got_mem, False
+
+
+@pytest.mark.parametrize('label,hx', [(c[1], c[2]) for c in CASES])
+@pytest.mark.parametrize('rax_taint', [0x00, 0xFF, FULL, 0xF0F0])
+@pytest.mark.parametrize('mem_taint', [
+    {}, {0: 0xFF},
+    {0: 0xFF, 1: 0xFF, 2: 0xFF, 3: 0xFF, 4: 0xFF, 5: 0xFF, 6: 0xFF, 7: 0xFF},
+    {2: 0x0F, 5: 0xF0},
+])
+def test_c_mem_ptr_matches_do_evaluate(label: str, hx: str, rax_taint: int, mem_taint) -> None:
+    """evaluate_c_mem_ptr's array+shadow output must equal the differential."""
+    ref, got_reg, got_mem, bailed = _run_case_ptr(
+        Architecture.AMD64, hx, rax_taint=rax_taint, mem_taint_bytes=mem_taint)
+    if bailed:
+        pytest.skip(f'{label}: evaluate_c_mem_ptr bailed (falls back)')
+    # Split the reference into register + MEM_ parts.
+    ref_reg, ref_mem = {}, {}
+    for k, v in ref.items():
+        if isinstance(k, str) and k.startswith('MEM_'):
+            body = k[4:]
+            cut = body.rfind('_')
+            ref_mem[(int(body[:cut], 16), int(body[cut + 1:]))] = int(v)
+        else:
+            ref_reg[k] = int(v)
+    # Registers: every reg the reference reports must match the array read-back.
+    for name, rv in ref_reg.items():
+        gv = got_reg.get(name, 0)
+        assert gv == rv, (f'{label} rax_taint={rax_taint:#x} mem_taint={mem_taint} '
+                          f'reg {name}: got {gv:#x} != ref {rv:#x}')
+    # Memory writes: same set of (addr,size) with same taint.
+    assert got_mem == ref_mem, (
+        f'{label} rax_taint={rax_taint:#x} mem_taint={mem_taint}:\n'
+        f'  got_mem={ {k: hex(v) for k, v in got_mem.items()} }\n'
+        f'  ref_mem={ {k: hex(v) for k, v in ref_mem.items()} }')
+
+
 def test_c_mem_arms_per_evaluate_frame_recycle() -> None:
     """Regression: evaluate_c_mem must arm the per-evaluate cell frame-recycle
     cache (reset_frame_cache), exactly like do_evaluate.
