@@ -93,6 +93,75 @@ def sweep(isa, n_per=40, seed=7):
     return len(new_under)
 
 
+def sweep_slicewise(isa, n_per=40, seed=11):
+    """Per-output-slice window sweep (the integration model): report slice
+    coverage (clean vs total), exactness on clean slices vs the oracle, and any
+    new under-taint on clean slices (must be 0)."""
+    from tests.oracle_harness import (UC_DESCS, build_circuit, ground_truth,
+                                      reference_taint)
+    from tests.perop_floors import (NeedsMonolithic, Unsupported,
+                                    perop_floors_slicewise)
+    from tests.test_perop_floors import _gt_vectors
+    from benchmark.instruction_bank import load_bank
+
+    if isa not in UC_DESCS:
+        return 0
+    ud = UC_DESCS[isa]()
+    gp = list(ud.gp)
+    keys = gp + list(ud.flags)
+    specs = load_bank(isas={isa})
+    tot = clean = c_exact = c_over = c_under = 0
+    ctrl_mono = 0
+    new_under = 0
+    for spec in specs.values():
+        regs = spec.regs
+        for ins in spec.instructions:
+            try:
+                circuit = build_circuit(spec.arch, ins.bytes, spec.regs)
+            except Exception:  # noqa: BLE001
+                continue
+            rng = random.Random(f'{seed}:{ins.label}')
+            for t, vals in _gt_vectors(gp, rng, n_per):
+                it = {r.name: t.get(r.name, 0) for r in regs}
+                iv = {r.name: vals.get(r.name, 0) for r in regs}
+                try:
+                    taint, cln = perop_floors_slicewise(spec.arch, ins.bytes, regs, it, iv)
+                except NeedsMonolithic:
+                    ctrl_mono += 1
+                    continue
+                except (Unsupported, Exception):  # noqa: BLE001
+                    continue
+                try:
+                    gtd = ground_truth(ud, ins.bytes, t, vals)
+                    engd = reference_taint(spec.arch, ins.bytes, regs, it, iv, circuit=circuit)
+                except Exception:  # noqa: BLE001
+                    continue
+                for k in keys:
+                    tot += 1
+                    if k not in cln:
+                        continue
+                    clean += 1
+                    g = int(taint.get(k, 0) or 0)
+                    r = int(gtd.get(k, 0) or 0)
+                    e = int(engd.get(k, 0) or 0)
+                    if g == r:
+                        c_exact += 1
+                    elif (r & ~g) == 0:
+                        c_over += 1
+                    else:
+                        c_under += 1
+                        if (r & ~g) & ~(r & ~e):
+                            new_under += 1
+    print(f'=== {isa}: per-output-SLICE window (integration model) ===')
+    print(f'  slice coverage      : {clean}/{tot} ({100*clean/max(1,tot):.1f}% per-op fast path)')
+    print(f'  clean exact vs GT   : {c_exact} ({100*c_exact/max(1,clean):.1f}%)')
+    print(f'  clean over-approx   : {c_over}')
+    print(f'  clean under vs GT   : {c_under} (mostly tighter-than-oracle gains)')
+    print(f'  control-flow mono   : {ctrl_mono} (cmov/rep -> whole-instr oracle)')
+    print(f'  NEW under on clean   : {new_under}  <-- MUST be 0')
+    return new_under
+
+
 def main():
     argv = sys.argv[1:]
     n = 40
@@ -101,9 +170,10 @@ def main():
         n = int(argv[i + 1])
         argv = argv[:i] + argv[i + 2:]
     isas = [a for a in argv if not a.startswith('--')] or ['AMD64']
+    slicewise = '--slicewise' in argv
     bugs = 0
     for isa in isas:
-        bugs += sweep(isa, n_per=n)
+        bugs += (sweep_slicewise(isa, n_per=n) if slicewise else sweep(isa, n_per=n))
         print()
     return 1 if bugs else 0
 

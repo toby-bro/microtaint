@@ -152,6 +152,61 @@ def _vid(vn):
     return (vn.space.name, vn.offset, vn.size)
 
 
+def _reconv_contaminated(ops):
+    """Per-VARNODE reconvergence contamination (the tunable window at its natural
+    integration granularity: per output slice, not per whole instruction).
+
+    A varnode is contaminated if its dependency cone contains an op whose two
+    dynamic inputs share a register source (reconvergence) -- there the per-op
+    differential over-taints, so that OUTPUT alone must widen to the monolithic
+    differential.  A CLEAN output (cone free of reconvergence) keeps the per-op
+    fast path.  Resolved in program order (SSA-style), so add's INT_CARRY reading
+    the original RAX is not confused with INT_ADD's written RAX.
+
+    Returns the set of contaminated varnode ids.  (Control flow is handled
+    separately: an intra-instruction CBRANCH contaminates everything.)"""
+    reg_anc: dict = {}
+    contaminated: set = set()
+    for o in ops:
+        in_ancs = []
+        in_contam = False
+        for i in o.inputs:
+            if i.space.name == 'const':
+                in_ancs.append(frozenset())
+                continue
+            vid = _vid(i)
+            if vid in reg_anc:
+                in_ancs.append(reg_anc[vid])
+                if vid in contaminated:
+                    in_contam = True
+            elif i.space.name == 'register':
+                in_ancs.append(frozenset({vid}))
+            else:
+                in_ancs.append(frozenset())
+        dyn = [k for k, i in enumerate(o.inputs) if i.space.name != 'const']
+        vids = [_vid(o.inputs[k]) for k in dyn]
+        this_reconv = len(vids) != len(set(vids))
+        if not this_reconv:
+            for a in range(len(dyn)):
+                for b in range(a + 1, len(dyn)):
+                    if in_ancs[dyn[a]] & in_ancs[dyn[b]]:
+                        this_reconv = True
+                        break
+                if this_reconv:
+                    break
+        if o.output is not None:
+            ovid = _vid(o.output)
+            union: set = set()
+            for ia in in_ancs:
+                union |= ia
+            reg_anc[ovid] = frozenset(union)
+            if this_reconv or in_contam:
+                contaminated.add(ovid)
+            else:
+                contaminated.discard(ovid)  # a fresh clean definition clears it
+    return contaminated
+
+
 def _is_reconvergent(ops) -> bool:
     """True if some op's two dynamic inputs share a register ancestor (or repeat).
 
@@ -405,17 +460,19 @@ class PerOpFloors:
             return _mask(op.output.size)
         return (hi ^ lo) & _mask(op.output.size)
 
-    def run(self, ops) -> None:
+    def run(self, ops, strict=True) -> None:
         # Intra-instruction control flow (cmov, rep, string ops) predicates
         # later writes; a straight-line per-op pass would execute the taken side
         # unconditionally and drop the not-taken side's taint (under-taint).
-        # Route these to the monolithic window (the sound oracle).
+        # Route these to the monolithic window (the sound oracle).  This bails
+        # even in slice-wise mode: a branch contaminates every later slice.
         for op in ops:
             if op.opcode.name in ('CBRANCH', 'BRANCHIND', 'CALLIND', 'CALLOTHER'):
                 raise NeedsMonolithic(op.opcode.name)
-        # Reconvergence window: a source reaching one op via >=2 paths makes the
-        # per-op differential over-taint; widen to the whole-instruction oracle.
-        if _is_reconvergent(ops):
+        # Whole-instruction window (strict): any reconvergence -> monolithic.
+        # Slice-wise callers pass strict=False and instead trust only the outputs
+        # that _reconv_contaminated reports clean.
+        if strict and _is_reconvergent(ops):
             raise NeedsMonolithic('reconvergence')
         for op in ops:
             name = op.opcode.name
@@ -461,6 +518,39 @@ def perop_floors_taint(arch, code, regs, in_taint, in_values):
     ops = ctx.translate(code, 0x1000).ops
     interp.run(ops)
     return {name: interp.out_taint(vn) for name, vn in mapped}
+
+
+def perop_floors_slicewise(arch, code, regs, in_taint, in_values):
+    """The tunable window at OUTPUT-SLICE granularity: run the per-op pass over
+    the whole instruction, then trust the per-op taint only for outputs whose
+    dependency cone is reconvergence-free; the rest (contaminated slices) would
+    widen to the monolithic differential in the engine.
+
+    Returns (taint_by_reg, clean_regnames): taint_by_reg holds per-op taint for
+    every mapped register; clean_regnames is the subset that is per-op-eligible
+    (cone free of reconvergence).  Raises NeedsMonolithic only for
+    intra-instruction control flow (which contaminates the whole instruction).
+    This measures the REAL fast-path coverage: a reconvergent flag no longer
+    disqualifies a clean result register."""
+    key = _arch_key(arch)
+    if not _ARCH_LE.get(key, False):
+        raise Unsupported(f'BE arch {key}')
+    ctx = get_context(key)
+    reg_vn = ctx.registers
+    interp = PerOpFloors(ctx, _ARCH_LE[key])
+    mapped = []
+    for r in regs:
+        vn = _resolve_vn(reg_vn, r.name)
+        if vn is None:
+            continue
+        mapped.append((r.name, vn))
+        interp.init_reg(vn, in_values.get(r.name, 0), in_taint.get(r.name, 0))
+    ops = ctx.translate(code, 0x1000).ops
+    interp.run(ops, strict=False)          # may raise NeedsMonolithic on control flow
+    contaminated = _reconv_contaminated(ops)
+    taint = {name: interp.out_taint(vn) for name, vn in mapped}
+    clean = {name for name, vn in mapped if _vid(vn) not in contaminated}
+    return taint, clean
 
 
 def engine_perop_floors(arch, code, regs, in_taint, in_values, *, circuit=None):

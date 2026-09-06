@@ -107,6 +107,73 @@ def soundness_report(isa, n_per, seed=7, instr_limit=None):
     return n_cases, n_exact, len(new_under), new_under
 
 
+def slicewise_report(isa, n_per, seed=11):
+    """Per-output-slice window (the integration model): trust per-op only on
+    outputs whose cone is reconvergence-free.  Returns
+    (n_cases, tot_slices, clean_slices, n_new_under_on_clean, examples)."""
+    from tests.oracle_harness import (UC_DESCS, build_circuit, ground_truth,
+                                      reference_taint)
+    from tests.perop_floors import (NeedsMonolithic, Unsupported,
+                                    perop_floors_slicewise)
+    from benchmark.instruction_bank import load_bank
+
+    ud = UC_DESCS[isa]()
+    gp = list(ud.gp)
+    keys = gp + list(ud.flags)
+    specs = load_bank(isas={isa})
+    n_cases = tot_slices = clean_slices = 0
+    new_under = []
+    for spec in specs.values():
+        regs = spec.regs
+        for ins in spec.instructions:
+            try:
+                circuit = build_circuit(spec.arch, ins.bytes, spec.regs)
+            except Exception:  # noqa: BLE001
+                continue
+            rng = random.Random(f'{seed}:{ins.label}')
+            for t, vals in _gt_vectors(gp, rng, n_per):
+                it = {r.name: t.get(r.name, 0) for r in regs}
+                iv = {r.name: vals.get(r.name, 0) for r in regs}
+                try:
+                    taint, clean = perop_floors_slicewise(spec.arch, ins.bytes, regs, it, iv)
+                except (NeedsMonolithic, Unsupported):
+                    continue
+                except Exception:  # noqa: BLE001
+                    continue
+                try:
+                    gtd = ground_truth(ud, ins.bytes, t, vals)
+                    engd = reference_taint(spec.arch, ins.bytes, regs, it, iv, circuit=circuit)
+                except Exception:  # noqa: BLE001
+                    continue
+                n_cases += 1
+                for k in keys:
+                    tot_slices += 1
+                    if k not in clean:
+                        continue
+                    clean_slices += 1
+                    up = int(gtd.get(k, 0) or 0) & ~int(taint.get(k, 0) or 0)
+                    ue = int(gtd.get(k, 0) or 0) & ~int(engd.get(k, 0) or 0)
+                    extra = up & ~ue
+                    if extra and len(new_under) < 20:
+                        new_under.append((ins.label, k, hex(extra)))
+    return n_cases, tot_slices, clean_slices, len(new_under), new_under
+
+
+def test_perop_slicewise_sound_and_covers():
+    """The per-output-slice window is the integration model: a reconvergent flag
+    no longer disqualifies a clean result register.  On the CLEAN slices, per-op
+    must introduce no under-taint beyond the engine's own differential (vs ground
+    truth), and coverage must be high (reconvergence is usually confined to a few
+    flags, so most slices stay on the fast path)."""
+    pytest.importorskip('unicorn')
+    for isa in ('AMD64', 'ARM64'):
+        n_cases, tot, clean, n_new_under, ex = slicewise_report(isa, n_per=2)
+        assert n_cases > 300, f'{isa}: too few cases: {n_cases}'
+        assert n_new_under == 0, f'{isa}: NEW under-taints on clean slices: {ex}'
+        cov = clean / max(1, tot)
+        assert cov > 0.85, f'{isa}: slice coverage too low: {cov:.2f}'
+
+
 def test_perop_no_new_undertaint_vs_engine_amd64():
     """Per-op-with-floors must not UNDER-taint anything the engine's own
     whole-instruction differential catches (vs Unicorn ground truth).  Bounded
