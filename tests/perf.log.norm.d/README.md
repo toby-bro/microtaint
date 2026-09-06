@@ -43,6 +43,27 @@ Three commits (oldest / middle / newest) were re-measured **solo** and compared
 against their 2-worker values: deltas within +-3.4%, mostly under 1.5%, with no
 consistent sign. The parallelism adds noise well below the 80-98% effects.
 
+## Noise floor: how to read small steps
+
+`df218fc` and `e2041ba` are an accidental control pair -- `git diff df218fc
+e2041ba -- microtaint/` is empty, so both runs measure the *same binary*.
+Comparing them gives the measurement noise directly:
+
+| quantity | across the identical pair |
+|---|---|
+| `cells` / `assigns` / `nodes` totals | **identical** (2110 / 3480 / 162265) |
+| ns p50 | -4.7% |
+| ns p99 | +2.8% |
+| ns p100 | **+42.4%** |
+| per-instruction \|delta\| | median 3.3%, p90 34.6%, max 74.5% |
+
+So: the deterministic metrics are exactly reproducible, which is why the plot's
+vertical rules are trustworthy even where the ns curves wobble. But **p100 is a
+single instruction's timing and is very noisy** -- a p100 step under ~40% means
+nothing on its own. p50 is good to roughly +-5%, p99 to a few percent. Read the
+big structural steps, not the small ones, and treat a step with no vertical rule
+and no supporting p50 movement as noise.
+
 ## Plot
 
     ./scripts/sweep/sweep.sh          # or, to only redraw:
