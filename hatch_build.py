@@ -36,8 +36,14 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 # MICROTAINT_HAVE_REEXEC is defined so cell_c.c gates every reexec use on it.
 # --------------------------------------------------------------------------
 _REEXEC_DIR = 'microtaint/reexec'
-_REEXEC_SOURCES = ['microtaint/reexec/reexec.c', 'microtaint/reexec/reexec_amd64.S']
-_REEXEC_AVAILABLE = platform.machine() in ('x86_64', 'AMD64')
+_REEXEC_ASM = {
+    'x86_64': 'microtaint/reexec/reexec_amd64.S',
+    'AMD64': 'microtaint/reexec/reexec_amd64.S',
+    'aarch64': 'microtaint/reexec/reexec_arm64.S',
+    'arm64': 'microtaint/reexec/reexec_arm64.S',
+}.get(platform.machine())
+_REEXEC_AVAILABLE = _REEXEC_ASM is not None
+_REEXEC_SOURCES = ['microtaint/reexec/reexec.c', _REEXEC_ASM] if _REEXEC_AVAILABLE else []
 
 # --------------------------------------------------------------------------
 # C extension manifest

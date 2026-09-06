@@ -41,7 +41,13 @@ FLAG_BITS = {'CF': 0x1, 'PF': 0x4, 'AF': 0x10, 'ZF': 0x40, 'SF': 0x80, 'OF': 0x8
 _PKG_DIR = Path(__file__).resolve().parent
 _M64 = (1 << 64) - 1
 
-AVAILABLE = platform.machine() in ('x86_64', 'AMD64') and shutil.which('cc') is not None
+# Per-host-arch trampoline assembly (the harness reexec.c is arch-general).
+_ARCH_ASM = {
+    'x86_64': 'reexec_amd64.S', 'AMD64': 'reexec_amd64.S',
+    'aarch64': 'reexec_arm64.S', 'arm64': 'reexec_arm64.S',
+}
+_HOST_ASM = _ARCH_ASM.get(platform.machine())
+AVAILABLE = _HOST_ASM is not None and shutil.which('cc') is not None
 
 
 class _CpuState(ctypes.Structure):
@@ -70,7 +76,7 @@ def _build_and_load() -> ctypes.CDLL:
     cc = shutil.which('cc') or 'cc'
     subprocess.run(  # noqa: S603
         [cc, '-O2', '-shared', '-fPIC', '-o', str(out),
-         str(_PKG_DIR / 'reexec.c'), str(_PKG_DIR / 'reexec_amd64.S')],
+         str(_PKG_DIR / 'reexec.c'), str(_PKG_DIR / _HOST_ASM)],
         check=True,
     )
     lib = ctypes.CDLL(str(out))

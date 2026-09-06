@@ -48,15 +48,32 @@ One taint difference when enabled: `imul r64,r64,imm32` CF/OF -- reexec is *more
 precise* (the real CPU shows no overflow; SLEIGH over-taints imul flags), so it
 is a precision gain, not unsound, but it breaks bit-exactness-with-SLEIGH.
 
+## ISA-general (AMD64 + ARM64)
+
+All ISA specifics live HERE, never in the cell kernel. `reexec.c` exposes an
+ISA-general shuttle API -- `reexec_arch_reg_count` / `reexec_arch_reg_name` /
+`reexec_run_regs` -- that maps a flat array of named-register values to/from the
+host `cpu_state` and runs the trampoline. `cell_c` stays ISA-agnostic: it asks
+reexec for the arch's register names, resolves each to its own frame offset, and
+shuttles the values. The host arch is selected at compile time; a target whose
+ISA is not the host's returns count 0 (caller falls back to SLEIGH).
+
+AArch64 is supported and proven under `qemu-aarch64`
+(`tests/test_reexec_arm64_qemu.py`): the same harness drives `reexec_arm64.S`
+(x0-x30 + SP + NZCV via `mrs`/`msr`, 4-byte instruction hole, x18 as the
+persistent state base).
+
 ## Files
 
-- `reexec_amd64.S` — the copyable trampoline template (loads GPRs+RFLAGS, runs
-  ONE instruction patched into a 16-byte hole, saves GPRs+RFLAGS; all scratch in
-  RIP-relative slots inside the blob so it survives `memcpy` to an RWX buffer).
-- `reexec.c` — harness: mmap RWX, copy template, patch, signal-guard, call.
-  Amortised API (`reexec_arm`/`reexec_set_instr`/`reexec_call`) + all-in-one
-  (`reexec_run_one`). `-DREEXEC_SELFTEST` and `-DREEXEC_BENCH` build standalone
-  self-test / benchmark mains.
+- `reexec_amd64.S` / `reexec_arm64.S` — the copyable per-arch trampoline
+  templates (load regs+flags, run ONE instruction patched into the hole, save
+  regs+flags; all scratch in PC/RIP-relative slots inside the blob so it survives
+  `memcpy` to an RWX buffer). The build hook compiles the one matching the host.
+- `reexec.h` — arch-conditional `cpu_state_t` + the API (harness + the
+  ISA-general register-shuttle API).
+- `reexec.c` — arch-general harness (mmap RWX, copy, patch, signal-guard, call)
+  + the `reexec_arch_*` / `reexec_run_regs` shuttle + per-host register tables.
+  `-DREEXEC_SELFTEST` / `-DREEXEC_BENCH` build standalone mains (per arch).
 - `__init__.py` — `NativeReExec` (lazy-builds + loads the lib via ctypes) and
   `AVAILABLE`.
 
@@ -78,13 +95,14 @@ Memory operands, control-flow, non-deterministic / privileged instructions
 
 ## Next steps
 
-- **ISA abstraction**: per-ISA trampoline chosen at compile time. ARM64: x0-x30
-  + NZCV via `mrs`/`msr`, testable under `qemu-aarch64`.
+- **Make it a fast-path win**: marshal only the instruction's actual registers
+  (2-4, not the whole file), or apply reexec on the slow `evaluate_concrete`
+  path / the emulator, where the ~110x actually applies.
 - **ptrace backend**: an isolated-process variant (`PTRACE_SETREGS` /
   `PTRACE_SINGLESTEP` / `PTRACE_GETREGS`) for fault isolation over raw speed.
-- **Build integration**: compile the lib as part of the package build instead of
-  the lazy ctypes build.
-- **Engine integration**: route the concrete-execution primitive to native
-  re-exec when host ISA == target ISA, falling back to SLEIGH for the excluded
-  classes. Complements the closed-form flag work (fewer cells) and the C-hook
-  work (no per-instruction Python frame).
+- **ARM64 engine integration under real aarch64 hardware** (the qemu test covers
+  the trampoline; a native aarch64 CI would cover the cell_c path end to end).
+
+Done: build integration (compiled into cell_c by hatch_build.py, arch-gated),
+engine wiring (`cell_eval_fast`, gated `MICROTAINT_REEXEC`), and the ISA-general
+API with AMD64 + ARM64.

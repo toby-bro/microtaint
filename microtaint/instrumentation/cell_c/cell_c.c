@@ -21,21 +21,14 @@
 
 #ifdef MICROTAINT_HAVE_REEXEC
 /* 4th concrete-execution path: run the real instruction on the host CPU when
- * host ISA == target ISA (AMD64).  Compiled in by hatch_build.py on x86_64
- * only; every use is gated on self->reexec_enabled (env MICROTAINT_REEXEC).
- * See microtaint/reexec/. */
+ * host ISA == target ISA.  Compiled in by hatch_build.py only on hosts reexec
+ * supports; every use is gated on self->reexec_enabled (env MICROTAINT_REEXEC).
+ * ALL ISA specifics (which registers, how they map to the host cpu_state) live
+ * in microtaint/reexec/ behind the reexec_arch_* / reexec_run_regs API; cell_c
+ * stays ISA-agnostic -- it only resolves the arch's register NAMES to frame
+ * offsets and shuttles their values. */
 #include "reexec.h"
-/* x86 GPRs in cpu_state_t.gpr[] index order. */
-static const char *const REEXEC_GPR_NAMES[16] = {
-    "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI",
-    "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15",
-};
-/* SLEIGH x86 status-flag registers and their RFLAGS bit positions. */
-#define N_REEXEC_FLAGS 7
-static const char *const REEXEC_FLAG_NAMES[N_REEXEC_FLAGS] = {
-    "CF", "PF", "AF", "ZF", "SF", "OF", "DF",
-};
-static const int REEXEC_FLAG_BIT[N_REEXEC_FLAGS] = { 0, 2, 4, 6, 7, 11, 10 };
+#define REEXEC_MAX_REGS 40
 #endif
 
 /* ──────────── Per-architecture register table ──────────── */
@@ -132,12 +125,12 @@ typedef struct {
     int      pc_off;
     int      pc_sz;
 #ifdef MICROTAINT_HAVE_REEXEC
-    int          reexec_enabled;       /* env MICROTAINT_REEXEC and arch == AMD64 */
-    int          reexec_gpr_off[16];   /* frame offset of each x86 GPR, or -1 */
-    int          reexec_flag_off[N_REEXEC_FLAGS];
-    int          reexec_flag_sz[N_REEXEC_FLAGS];
-    const void  *reexec_last_bundle;   /* last bundle patched into the trampoline */
-    long         reexec_hits;          /* # concrete execs served by native re-exec */
+    int          reexec_enabled;                 /* env MICROTAINT_REEXEC and host==target */
+    int          reexec_n_regs;                  /* # regs reexec shuttles for this arch */
+    int          reexec_reg_off[REEXEC_MAX_REGS];/* frame offset of reexec reg i, or -1 */
+    int          reexec_reg_sz[REEXEC_MAX_REGS]; /* frame size of reexec reg i */
+    char         reexec_arch[24];                /* arch name string for reexec_run_regs */
+    long         reexec_hits;                    /* # concrete execs served by native re-exec */
 #endif
 } EvalC;
 
@@ -652,39 +645,35 @@ static int EvalC_init(EvalC *self, PyObject *args, PyObject *kw) {
 
 #ifdef MICROTAINT_HAVE_REEXEC
     /* Native re-execution (4th path).  Enabled only when MICROTAINT_REEXEC=1 and
-     * the target is AMD64 (the host trampoline runs in 64-bit mode).  Cache each
-     * GPR/flag's frame offset so cell_eval_fast can shuttle state to/from the
-     * trampoline with no per-call lookups.  Any missing register stays -1. */
+     * reexec supports the target on this host (reexec_arch_reg_count > 0).  The
+     * register list + cpu_state mapping is owned by reexec; here we only resolve
+     * each reexec register NAME to its frame (offset,size).  ISA-agnostic. */
     self->reexec_enabled = 0;
-    self->reexec_last_bundle = NULL;
-    for (int i = 0; i < 16; i++) self->reexec_gpr_off[i] = -1;
-    for (int i = 0; i < N_REEXEC_FLAGS; i++) { self->reexec_flag_off[i] = -1; self->reexec_flag_sz[i] = 1; }
+    self->reexec_n_regs = 0;
+    self->reexec_hits = 0;
+    self->reexec_arch[0] = 0;
     {
         const char *ev = getenv("MICROTAINT_REEXEC");
         int want = (ev && ev[0] == '1' && ev[1] == '\0');
-        int is_amd64 = 0;
         PyObject *as = PyObject_Str(self->arch);
         if (as) {
             const char *s = PyUnicode_AsUTF8(as);
-            if (s && strstr(s, "AMD64")) is_amd64 = 1;
+            if (s) { strncpy(self->reexec_arch, s, sizeof(self->reexec_arch) - 1); }
             Py_DECREF(as);
         }
-        if (want && is_amd64 && reexec_init() == 0 && reexec_arm() == 0) {
-            for (int i = 0; i < 16; i++) {
-                int off, sz;
-                if (reg_off_size(self, REEXEC_GPR_NAMES[i], &off, &sz)) self->reexec_gpr_off[i] = off;
+        int n = want ? reexec_arch_reg_count(self->reexec_arch) : 0;
+        if (n > 0 && n <= REEXEC_MAX_REGS) {
+            for (int i = 0; i < n; i++) {
+                const char *nm = reexec_arch_reg_name(self->reexec_arch, i);
+                int off = -1, sz = 8;
+                if (nm) reg_off_size(self, nm, &off, &sz);
+                self->reexec_reg_off[i] = off;
+                self->reexec_reg_sz[i] = sz;
             }
-            for (int i = 0; i < N_REEXEC_FLAGS; i++) {
-                int off, sz;
-                if (reg_off_size(self, REEXEC_FLAG_NAMES[i], &off, &sz)) {
-                    self->reexec_flag_off[i] = off;
-                    self->reexec_flag_sz[i] = sz;
-                }
-            }
+            self->reexec_n_regs = n;
             self->reexec_enabled = 1;
         }
     }
-    self->reexec_hits = 0;
 #endif
 
     return 0;
@@ -936,33 +925,19 @@ static inline void load_cell_frame(Frame *f, CellHandle *h, const uint64_t *inpu
  * the post-execution register+flag state -- bit-identical to execute_decoded on
  * every defined output -- and 1 is returned.  On any fault or error 0 is
  * returned and the caller falls back to SLEIGH (execute_decoded). */
-static inline int reexec_try(EvalC *self, Frame *f, const DecodedBundle *bundle, CellHandle *h) {
+static inline int reexec_try(EvalC *self, Frame *f, CellHandle *h) {
     char *ib; Py_ssize_t iblen;
     if (PyBytes_AsStringAndSize(h->instr_bytes, &ib, &iblen) != 0) { PyErr_Clear(); return 0; }
-    if (iblen < 1 || iblen > 15) return 0;
-    cpu_state_t st;
-    for (int i = 0; i < 16; i++)
-        st.gpr[i] = (self->reexec_gpr_off[i] >= 0)
-            ? frame_read_reg(f, self->reexec_gpr_off[i], 8) : 0;
-    uint64_t rflags = 0x2;  /* reserved bit 1 = 1 */
-    for (int i = 0; i < N_REEXEC_FLAGS; i++)
-        if (self->reexec_flag_off[i] >= 0) {
-            uint64_t v = frame_read_reg(f, self->reexec_flag_off[i], self->reexec_flag_sz[i]) & 1;
-            rflags |= v << REEXEC_FLAG_BIT[i];
-        }
-    st.rflags = rflags;
-    if (self->reexec_last_bundle != (const void *)bundle) {
-        if (reexec_set_instr((const unsigned char *)ib, (int)iblen) != 0) return 0;
-        self->reexec_last_bundle = (const void *)bundle;
-    }
-    if (reexec_call(&st) != 0) { self->reexec_last_bundle = NULL; return 0; }  /* fault -> SLEIGH */
-    for (int i = 0; i < 16; i++)
-        if (self->reexec_gpr_off[i] >= 0)
-            frame_write_reg(f, self->reexec_gpr_off[i], 8, st.gpr[i]);
-    for (int i = 0; i < N_REEXEC_FLAGS; i++)
-        if (self->reexec_flag_off[i] >= 0)
-            frame_write_reg(f, self->reexec_flag_off[i], self->reexec_flag_sz[i],
-                            (st.rflags >> REEXEC_FLAG_BIT[i]) & 1);
+    int n = self->reexec_n_regs;
+    uint64_t rv[REEXEC_MAX_REGS];
+    for (int i = 0; i < n; i++)
+        rv[i] = (self->reexec_reg_off[i] >= 0)
+            ? frame_read_reg(f, self->reexec_reg_off[i], self->reexec_reg_sz[i]) : 0;
+    if (reexec_run_regs(self->reexec_arch, (const unsigned char *)ib, (int)iblen, rv, n) != 0)
+        return 0;  /* fault / unsupported -> fall back to SLEIGH */
+    for (int i = 0; i < n; i++)
+        if (self->reexec_reg_off[i] >= 0)
+            frame_write_reg(f, self->reexec_reg_off[i], self->reexec_reg_sz[i], rv[i]);
     return 1;
 }
 #endif
@@ -1013,7 +988,7 @@ static int cell_eval_fast(EvalC *self, CellHandle *h,
             frame_clear(f);
             load_cell_frame(f, h, input_values);
 #ifdef MICROTAINT_HAVE_REEXEC
-            if (self->reexec_enabled && bundle->reexec_ok && reexec_try(self, f, bundle, h)) {
+            if (self->reexec_enabled && bundle->reexec_ok && reexec_try(self, f, h)) {
                 self->native_calls++;
                 self->reexec_hits++;
             } else
@@ -1044,7 +1019,7 @@ static int cell_eval_fast(EvalC *self, CellHandle *h,
     load_cell_frame(f, h, input_values);
 
 #ifdef MICROTAINT_HAVE_REEXEC
-    if (self->reexec_enabled && bundle->reexec_ok && reexec_try(self, f, bundle, h)) {
+    if (self->reexec_enabled && bundle->reexec_ok && reexec_try(self, f, h)) {
         self->native_calls++;
         self->reexec_hits++;
     } else
