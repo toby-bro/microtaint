@@ -1140,6 +1140,51 @@ def _chain_intermediate_flags(
     return tuple(extra)
 
 
+def _all_intermediates_constant(ops: Iterable[PcodeOp]) -> bool:  # noqa: C901
+    """True when every intra-sequence intermediate register byte (a register byte
+    WRITTEN by one op and READ by a later op) is produced only as a CONSTANT.
+
+    Such intermediates carry no taint, so the sequence has nothing to thread and the
+    monolithic circuit is both sound and far cheaper than a ChainedCircuit.  Example:
+    the MIPS ``and $r,$s,-1`` macro lifts to ``addiu $t,$0,-1; and $r,$s,$t`` -- the
+    materialised -1 is a pure constant, so the AND is exact bit-routing (its taint is
+    just $s's taint) with no cell re-execution, but chaining computes it as a value-
+    aware differential (4 cells, ~67us vs ~4us monolithic).  Conservative: any non-
+    constant intermediate byte returns False so the existing chain path is kept."""
+    ops = list(ops)
+    written: set[int] = set()
+    intermediate: set[int] = set()
+    for op in ops:
+        for inp in op.inputs:
+            if inp.space.name == 'register':
+                for b in range(inp.offset, inp.offset + inp.size):
+                    if b in written:
+                        intermediate.add(b)
+        out = op.output
+        if out is not None and out.space.name == 'register':
+            written.update(range(out.offset, out.offset + out.size))
+    if not intermediate:
+        return False  # nothing to fold away -- keep the existing chain behaviour
+    folded = fold_constants(ops)
+    const_reg_bytes: set[int] = set()
+    for space, off, sz in folded:
+        if space == 'register':
+            const_reg_bytes.update(range(off, off + sz))
+    if not (intermediate <= const_reg_bytes):
+        return False
+    # Every op that WRITES an intermediate byte must itself produce a constant, so a
+    # non-constant write that is later re-materialised as a constant on the same key
+    # can never be mistaken for taint-free (program-point safety).
+    for op in ops:
+        out = op.output
+        if out is None or out.space.name != 'register':
+            continue
+        if not intermediate.isdisjoint(range(out.offset, out.offset + out.size)):
+            if (out.space.name, out.offset, out.size) not in folded:
+                return False
+    return True
+
+
 def generate_static_rule(
     arch: Architecture,
     bytestring: bytes,
@@ -1189,6 +1234,12 @@ def generate_static_rule(
     _instr_offsets = frozenset(off for off, _ in imarks)
     if _sequence_needs_monolithic(translation.ops, _instr_offsets, _next_instr_addr):
         return circuit  # monolithic circuit preserves cross-instruction deps
+
+    if _all_intermediates_constant(translation.ops):
+        # No intermediate carries taint (all are materialised constants), so there is
+        # nothing to thread: the monolithic circuit is sound and folds the constant
+        # away (e.g. MIPS `and $r,$s,-1` 67us/4-cell chain -> ~4us/1-cell monolithic).
+        return circuit
 
     # Build one sub-circuit per instruction, using a state_format augmented with
     # the sequence's intra-instruction intermediate registers so that a carry/flag
