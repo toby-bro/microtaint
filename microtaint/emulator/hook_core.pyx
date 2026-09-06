@@ -230,6 +230,41 @@ cdef class InstructionHook:
             and compiled_circuit is not False
             and not compiled_circuit.has_mem_ops
         )
+
+        # Read live input-register values up-front.  The taint transfer is
+        # VALUE-dependent (e.g. `and rax, rbx` with rbx == 0 clears rax's taint
+        # regardless of rax's taint), so the caches must key on operand VALUES
+        # too, not just the taint signature: otherwise a revisit at the same
+        # address with the same taint but different values replays a stale,
+        # possibly under-tainted result.  Read once here and reused by the slow
+        # path on a miss.
+        cdef object pre_regs
+        cdef object decoded = None
+        cdef object uc_arrs, ids, vals, ptrs, names, ef, n_calls, fname, fbit
+        cdef Py_ssize_t n_slots, i_slot
+        cdef bint need_ef
+        try:
+            decoded = self.get_decoded(self.arch, instruction_bytes)
+            uc_arrs = decoded._uc_arrays
+            if uc_arrs is None:
+                uc_arrs = self.build_offsets_arrs(decoded.input_reg_offsets)
+                decoded._uc_arrays = uc_arrs
+            ids, vals, ptrs, n_slots, names, need_ef, n_calls = uc_arrs
+            if ids is None:
+                pre_regs = {}
+            else:
+                self.uc_reg_read_batch(self.uc_handle, ids, ptrs, n_calls)
+                pre_regs = {names[i_slot]: int(vals[i_slot]) for i_slot in range(n_slots)}
+                if need_ef:
+                    ef = pre_regs.get('EFLAGS', 0)
+                    for fname, fbit in self.eflags_bits.items():
+                        pre_regs[fname] = (ef >> fbit) & 1
+        except Exception:
+            pre_regs = self.get_live_registers(self.uc_handle)
+        # Feed the REAL program counter so PC-relative memory operands (modelled
+        # by the circuit as pc-register-relative) resolve against the runtime PC.
+        pre_regs['RIP'] = address
+
         if can_cache:
             # Tier 4: version-cache fast path.
             #
@@ -245,12 +280,12 @@ cdef class InstructionHook:
             v_entry = self.instr_cache_v.get(address)
             live_version = self.taint_version
             if v_entry is not None and (<unsigned long long>(<object>v_entry[0])) == live_version:
-                # Content-equality check: only adopt the cached output if
-                # register_taint matches the snapshot the entry was built
-                # against.  PyObject_RichCompareBool is one Python-level
-                # dict-equality call — cheap relative to the frozenset
-                # construction Tier-4 was built to avoid.
-                if PyObject_RichCompareBool(<object>v_entry[3], register_taint, Py_EQ) == 1:
+                # Adopt the cached output only if BOTH the input taint
+                # (v_entry[3]) AND the input register values (v_entry[4]) match.
+                # The taint transfer is value-dependent, so a value change must
+                # miss and recompute (soundness); two dict-equality calls.
+                if (PyObject_RichCompareBool(<object>v_entry[3], register_taint, Py_EQ) == 1
+                        and PyObject_RichCompareBool(<object>v_entry[4], pre_regs, Py_EQ) == 1):
                     output_state = <object>v_entry[2]
                     self.instr_cache_hits += 1
                     if self.last_tainted_writes:
@@ -272,8 +307,9 @@ cdef class InstructionHook:
             else:
                 cache_key = frozenset(register_taint.items())
             cached = self.instr_cache.get(address)
-            if cached is not None and cached[0] == cache_key:
-                # Cache hit: replay output_state directly.
+            if (cached is not None and cached[0] == cache_key
+                    and PyObject_RichCompareBool(<object>cached[2], pre_regs, Py_EQ) == 1):
+                # Cache hit: taint signature AND input values match, so replay.
                 output_state = cached[1]
                 self.instr_cache_hits += 1
                 if self.last_tainted_writes:
@@ -290,7 +326,7 @@ cdef class InstructionHook:
                 # output_state's content.  Use frozenset hash (one-shot
                 # cost; only happens on cold version-cache misses).
                 out_version = (<Py_ssize_t>hash(frozenset(output_state.items())))
-                self.instr_cache_v[address] = (live_version, out_version, output_state, input_snapshot)
+                self.instr_cache_v[address] = (live_version, out_version, output_state, input_snapshot, dict(pre_regs))
                 # No-mem-ops circuits never produce MEM_ keys; just refill.
                 for key, val in output_state.items():
                     if val:
@@ -299,36 +335,9 @@ cdef class InstructionHook:
                 return
             self.instr_cache_misses += 1
 
-        # Slow path: do everything.
-        # Read live register values.
-        cdef object pre_regs
-        try:
-            decoded = self.get_decoded(self.arch, instruction_bytes)
-            uc_arrs = decoded._uc_arrays
-            if uc_arrs is None:
-                uc_arrs = self.build_offsets_arrs(decoded.input_reg_offsets)
-                decoded._uc_arrays = uc_arrs
-            ids, vals, ptrs, n, names, need_ef, n_calls = uc_arrs
-            if ids is None:
-                pre_regs = {}
-            else:
-                # n_calls = number of uc_reg_read calls (one per UC reg id);
-                # n      = number of vals slots = len(names) (XMM contributes 2).
-                self.uc_reg_read_batch(self.uc_handle, ids, ptrs, n_calls)
-                pre_regs = {names[i]: int(vals[i]) for i in range(n)}
-                if need_ef:
-                    ef = pre_regs.get('EFLAGS', 0)
-                    for f, b in self.eflags_bits.items():
-                        pre_regs[f] = (ef >> b) & 1
-        except Exception:
-            pre_regs = self.get_live_registers(self.uc_handle)
-
-        # Snapshot register_taint for EvalContext.
+        # Slow path: pre_regs was already read above (for the value-aware cache
+        # key) and is reused here.  Snapshot register_taint for the EvalContext.
         cdef dict pre_taint = PyDict_Copy(register_taint)
-        # Feed the REAL program counter so PC-relative memory operands (which the
-        # circuit models as pc-register-relative) resolve against the runtime PC,
-        # not the fixed translate base.  `address` is this instruction's own PC.
-        pre_regs['RIP'] = address
         # Tell wrapper for AIW check + slow path consistency.
         self.wrapper._pre_regs = pre_regs
         self.wrapper._pre_taint = pre_taint
@@ -364,18 +373,21 @@ cdef class InstructionHook:
         # so that future cache hits can adopt this version atomically.
         cdef unsigned long long out_version_slow = 0
         if cache_key is not None:
-            self.instr_cache[address] = (cache_key, dict(output_state))
+            # Entries carry an input-VALUES snapshot (dict(pre_regs)) so future
+            # hits verify operand values match, not just the taint signature
+            # (the taint transfer is value-dependent).
+            self.instr_cache[address] = (cache_key, dict(output_state), dict(pre_regs))
             # Compute output_version once (one frozenset hash; happens
             # ~167k times across the bench, not 1.19M).
             out_version_slow = (<Py_ssize_t>hash(frozenset(output_state.items())))
-            # Tier-4 entry includes a snapshot of register_taint as it
-            # was at instruction entry (pre_taint).  On future visits the
-            # hit path verifies this snapshot equals the live register_taint
-            # before adopting the cached output_state — guarding against
-            # taint_version collisions.  See test_step3_tier4_cache.py.
+            # Tier-4 entry snapshots register_taint (pre_taint) AND the input
+            # values (pre_regs) at instruction entry.  On future visits the hit
+            # path verifies BOTH match the live state before adopting the cached
+            # output_state, guarding against taint_version collisions AND
+            # value-dependent taint changes.  See test_step3_tier4_cache.py.
             self.instr_cache_v[address] = (
                 self.taint_version, out_version_slow,
-                dict(output_state), dict(pre_taint),
+                dict(output_state), dict(pre_taint), dict(pre_regs),
             )
 
         # Post-processing: clear writes set, clear register_taint, walk output.
