@@ -144,6 +144,53 @@ def _cell_corpus_entries():
         }
 
 
+# ---------------------------------------------------------------------------
+# SIMD / vector corpus. Representative SSE2 (xmm) + NEON (v) forms so the perf
+# ratchet + benchmark scripts cover the wide-vector path (the scalar corpus has
+# none). Each form is tagged with a distinct PROFILE group key ('AMD64_SIMD' /
+# 'ARM64_SIMD') that carries vector lanes in its state format, WITHOUT touching
+# the scalar corpus or its committed baselines; the real Architecture rides in
+# the 'arch' field. The high per-instruction node/cell counts these show are the
+# lane-splitting cost the future circuit_c wide path is meant to drive down.
+# ---------------------------------------------------------------------------
+
+_SIMD_CORPUS: dict[str, tuple[str, list[str]]] = {
+    'AMD64_SIMD': ('x86_64', [
+        'pxor xmm0, xmm1', 'pand xmm0, xmm1', 'por xmm0, xmm1',
+        'paddd xmm0, xmm1', 'paddb xmm0, xmm1', 'psubd xmm0, xmm1',
+        'punpcklbw xmm0, xmm1', 'pshufd xmm0, xmm1, 0x1b',
+        'movaps xmm0, xmm1', 'movdqa xmm0, xmm1', 'psllq xmm0, 7',
+        'pcmpeqd xmm0, xmm1', 'pmullw xmm0, xmm1', 'packuswb xmm0, xmm1',
+    ]),
+    'ARM64_SIMD': ('arm64', [
+        'and v0.16b, v1.16b, v2.16b', 'orr v0.16b, v1.16b, v2.16b',
+        'eor v0.16b, v1.16b, v2.16b', 'add v0.4s, v1.4s, v2.4s',
+        'add v0.16b, v1.16b, v2.16b', 'sub v0.4s, v1.4s, v2.4s',
+        'mul v0.4s, v1.4s, v2.4s', 'zip1 v0.16b, v1.16b, v2.16b',
+        'mov v0.16b, v1.16b', 'shl v0.4s, v1.4s, #3',
+    ]),
+}
+
+# SIMD profile group key -> real engine Architecture name.
+_SIMD_ARCH = {'AMD64_SIMD': 'AMD64', 'ARM64_SIMD': 'ARM64'}
+
+
+def _simd_entries():
+    """Assemble the SIMD/vector corpus into bank entries (one per form)."""
+    for profile, (ks_key, forms) in _SIMD_CORPUS.items():
+        for asm in forms:
+            try:
+                code = _assemble(ks_key, asm)
+            except Exception as ex:  # noqa: BLE001
+                print(f'  (simd asm skip) {profile:11s} {asm!r}: '
+                      f'{type(ex).__name__} {str(ex)[:50]}')
+                continue
+            yield {'isa': profile, 'arch': _SIMD_ARCH[profile], 'label': asm,
+                   'asm': asm, 'bytes': code.hex(), 'srcs': [],
+                   'constraints': {}, 'categories': [*categorize(asm), 'simd'],
+                   'source': 'simd'}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--corpora', type=Path, default=DEFAULT_CORPORA)
@@ -160,8 +207,10 @@ def main() -> int:
         key = (e['isa'], e['bytes'])
         if key in seen:
             return
-        # validate: the static rule must actually build
-        arch = Architecture(e['isa'])
+        # validate: the static rule must actually build. The group key e['isa']
+        # selects the register format (scalar or a SIMD profile); the real
+        # Architecture is e['arch'] when present (SIMD), else the group key.
+        arch = Architecture(e.get('arch', e['isa']))
         regs = list(isa_registers(e['isa']))
         try:
             generate_static_rule(arch, bytes.fromhex(e['bytes']), regs)
@@ -198,6 +247,9 @@ def main() -> int:
     if args.cell_corpus:
         for e in _cell_corpus_entries():
             emit(e)
+
+    for e in _simd_entries():
+        emit(e)
 
     entries.sort(key=lambda e: (e['isa'], e['label']))
     with OUT.open('w') as f:

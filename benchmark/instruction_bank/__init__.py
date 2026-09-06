@@ -71,6 +71,37 @@ ISA_FORMATS: dict[str, list[tuple[str, int]]] = {
     'PPC32BE': _PPC, 'RISCV64': _RISCV,
 }
 
+# ---------------------------------------------------------------------------
+# Vector/SIMD state profiles. Kept SEPARATE from the scalar ISA_FORMATS above so
+# the scalar corpus (and its committed perf baselines) stay byte-identical:
+# adding vector lanes to a scalar format perturbs the frame-recycle corner
+# sharing and would SHIFT the scalar metrics (verified: shl rax,cl nodes
+# 1047->1053). A SIMD form therefore carries its own group key ('AMD64_SIMD' /
+# 'ARM64_SIMD', a distinct ratchet/baseline group) while its real
+# ``Architecture`` is stored in the jsonl 'arch' field. Each profile is
+# (Architecture, gp_names, vec_names); the vector registers are expanded to the
+# engine's geometry lanes lazily via the geometry-derived RegisterAliases helper
+# -- no hand-coded VL_ lane list, and no reg_aliases import cost unless a SIMD
+# group is actually loaded.
+_SIMD_PROFILES: dict[str, tuple[Architecture, list[str], list[str]]] = {
+    'AMD64_SIMD': (Architecture.AMD64,
+                   ['RAX', 'RBX', 'RCX', 'RDX', 'RSP', 'RIP', 'EFLAGS',
+                    'CF', 'PF', 'AF', 'ZF', 'SF', 'OF'],
+                   [f'XMM{i}' for i in range(8)]),
+    'ARM64_SIMD': (Architecture.ARM64,
+                   ['X0', 'X1', 'X2', 'X3', 'SP', 'N', 'Z', 'C', 'V'],
+                   [f'V{i}' for i in range(8)]),
+}
+
+
+@lru_cache(maxsize=None)
+def _simd_registers(key: str) -> tuple[Register, ...]:
+    """Expand a SIMD profile to geometry lanes. Lazy: the RegisterAliases import
+    + SLEIGH-geometry build (~150ms/arch) is paid only when a SIMD group loads."""
+    from microtaint.debug.reg_aliases import RegisterAliases
+    arch, gp, vec = _SIMD_PROFILES[key]
+    return tuple(RegisterAliases(arch).state_format([*gp, *vec]))
+
 
 @lru_cache(maxsize=None)
 def keystone_for(isa_key: str):
@@ -94,6 +125,8 @@ def keystone_for(isa_key: str):
 
 @lru_cache(maxsize=None)
 def isa_registers(arch_name: str) -> tuple[Register, ...]:
+    if arch_name in _SIMD_PROFILES:
+        return _simd_registers(arch_name)
     return tuple(Register(name=n, bits=b) for n, b in ISA_FORMATS[arch_name])
 
 
@@ -141,8 +174,11 @@ def load_bank(
                 continue
             spec = specs.get(isa)
             if spec is None:
+                # 'isa' is the group key (== a scalar Architecture, or a SIMD
+                # profile like 'AMD64_SIMD'); the real Architecture is 'arch'
+                # (defaults to the group key for the scalar groups).
                 spec = specs[isa] = ISASpec(
-                    name=isa, arch=Architecture(isa),
+                    name=isa, arch=Architecture(d.get('arch', isa)),
                     regs=list(isa_registers(isa)), instructions=[])
             spec.instructions.append(Instruction(
                 isa=isa, label=d['label'], bytes=bytes.fromhex(d['bytes']),

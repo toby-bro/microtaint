@@ -2821,6 +2821,78 @@
       "nodes": 112
     }
   },
+  "AMD64_SIMD": {
+    "movaps xmm0, xmm1": {
+      "assigns": 4,
+      "cells": 1,
+      "nodes": 204
+    },
+    "movdqa xmm0, xmm1": {
+      "assigns": 2,
+      "cells": 2,
+      "nodes": 30
+    },
+    "packuswb xmm0, xmm1": {
+      "assigns": 16,
+      "cells": 0,
+      "nodes": 384
+    },
+    "paddb xmm0, xmm1": {
+      "assigns": 16,
+      "cells": 1,
+      "nodes": 7600
+    },
+    "paddd xmm0, xmm1": {
+      "assigns": 4,
+      "cells": 1,
+      "nodes": 460
+    },
+    "pand xmm0, xmm1": {
+      "assigns": 2,
+      "cells": 2,
+      "nodes": 50
+    },
+    "pcmpeqd xmm0, xmm1": {
+      "assigns": 4,
+      "cells": 0,
+      "nodes": 64
+    },
+    "pmullw xmm0, xmm1": {
+      "assigns": 8,
+      "cells": 0,
+      "nodes": 8
+    },
+    "por xmm0, xmm1": {
+      "assigns": 2,
+      "cells": 2,
+      "nodes": 50
+    },
+    "pshufd xmm0, xmm1, 0x1b": {
+      "assigns": 4,
+      "cells": 2,
+      "nodes": 328
+    },
+    "psllq xmm0, 7": {
+      "assigns": 2,
+      "cells": 0,
+      "nodes": 6
+    },
+    "psubd xmm0, xmm1": {
+      "assigns": 4,
+      "cells": 1,
+      "nodes": 460
+    },
+    "punpcklbw xmm0, xmm1": {
+      "assigns": 15,
+      "cells": 1,
+      "nodes": 2910
+    },
+    "pxor xmm0, xmm1": {
+      "assigns": 2,
+      "cells": 0,
+      "nodes": 6
+    }
+  },
   "ARM64": {
     "adc w0, w1, w2": {
       "assigns": 1,
@@ -4811,6 +4883,58 @@
       "assigns": 1,
       "cells": 1,
       "nodes": 15
+    }
+  },
+  "ARM64_SIMD": {
+    "add v0.16b, v1.16b, v2.16b": {
+      "assigns": 18,
+      "cells": 1,
+      "nodes": 8422
+    },
+    "add v0.4s, v1.4s, v2.4s": {
+      "assigns": 6,
+      "cells": 1,
+      "nodes": 658
+    },
+    "and v0.16b, v1.16b, v2.16b": {
+      "assigns": 18,
+      "cells": 1,
+      "nodes": 7398
+    },
+    "eor v0.16b, v1.16b, v2.16b": {
+      "assigns": 18,
+      "cells": 1,
+      "nodes": 1830
+    },
+    "mov v0.16b, v1.16b": {
+      "assigns": 4,
+      "cells": 3,
+      "nodes": 80
+    },
+    "mul v0.4s, v1.4s, v2.4s": {
+      "assigns": 6,
+      "cells": 1,
+      "nodes": 202
+    },
+    "orr v0.16b, v1.16b, v2.16b": {
+      "assigns": 18,
+      "cells": 1,
+      "nodes": 7398
+    },
+    "shl v0.4s, v1.4s, #3": {
+      "assigns": 6,
+      "cells": 1,
+      "nodes": 130
+    },
+    "sub v0.4s, v1.4s, v2.4s": {
+      "assigns": 6,
+      "cells": 1,
+      "nodes": 658
+    },
+    "zip1 v0.16b, v1.16b, v2.16b": {
+      "assigns": 22,
+      "cells": 3,
+      "nodes": 946
     }
   },
   "MIPS64BE": {
@@ -7686,7 +7810,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-06T02:02:42.091563+00:00",
+    "generated": "2026-09-06T05:58:02.883224+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

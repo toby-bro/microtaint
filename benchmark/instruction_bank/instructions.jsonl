@@ -562,6 +562,20 @@
 {"asm": "xor rax, 15", "bytes": "4883f00f", "categories": ["logic"], "constraints": {}, "isa": "AMD64", "label": "xor rax, 15", "source": "corpora", "srcs": ["RAX"]}
 {"asm": "xor rax, 3", "bytes": "4883f003", "categories": ["logic"], "constraints": {}, "isa": "AMD64", "label": "xor rax, 3", "source": "corpora", "srcs": ["RAX"]}
 {"asm": "xor rax, rbx", "bytes": "4831d8", "categories": ["logic"], "constraints": {}, "isa": "AMD64", "label": "xor rax, rbx", "source": "corpora", "srcs": ["RAX", "RBX"]}
+{"arch": "AMD64", "asm": "movaps xmm0, xmm1", "bytes": "0f28c1", "categories": ["move", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "movaps xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "movdqa xmm0, xmm1", "bytes": "660f6fc1", "categories": ["move", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "movdqa xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "packuswb xmm0, xmm1", "bytes": "660f67c1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "packuswb xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "paddb xmm0, xmm1", "bytes": "660ffcc1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "paddb xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "paddd xmm0, xmm1", "bytes": "660ffec1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "paddd xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "pand xmm0, xmm1", "bytes": "660fdbc1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "pand xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "pcmpeqd xmm0, xmm1", "bytes": "660f76c1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "pcmpeqd xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "pmullw xmm0, xmm1", "bytes": "660fd5c1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "pmullw xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "por xmm0, xmm1", "bytes": "660febc1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "por xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "pshufd xmm0, xmm1, 0x1b", "bytes": "660f70c11b", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "pshufd xmm0, xmm1, 0x1b", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "psllq xmm0, 7", "bytes": "660f73f007", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "psllq xmm0, 7", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "psubd xmm0, xmm1", "bytes": "660ffac1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "psubd xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "punpcklbw xmm0, xmm1", "bytes": "660f60c1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "punpcklbw xmm0, xmm1", "source": "simd", "srcs": []}
+{"arch": "AMD64", "asm": "pxor xmm0, xmm1", "bytes": "660fefc1", "categories": ["other", "simd"], "constraints": {}, "isa": "AMD64_SIMD", "label": "pxor xmm0, xmm1", "source": "simd", "srcs": []}
 {"asm": "adc w0, w1, w2", "bytes": "2000021a", "categories": ["flag"], "constraints": {}, "isa": "ARM64", "label": "adc w0, w1, w2", "source": "corpora", "srcs": ["CY", "x1", "x2"]}
 {"asm": "adc x0, x1, x2", "bytes": "2000029a", "categories": ["flag"], "constraints": {}, "isa": "ARM64", "label": "adc x0, x1, x2", "source": "corpora", "srcs": ["x1", "x2", "CY"]}
 {"asm": "adcs w0, w1, w2", "bytes": "2000023a", "categories": ["flag"], "constraints": {}, "isa": "ARM64", "label": "adcs w0, w1, w2", "source": "corpora", "srcs": ["CY", "x1", "x2"]}
@@ -960,6 +974,16 @@
 {"asm": "umull x0, w1, w2", "bytes": "207ca29b", "categories": ["mul"], "constraints": {}, "isa": "ARM64", "label": "umull x0, w1, w2", "source": "corpora", "srcs": ["x1", "x2"]}
 {"asm": "uxtb x0, w1", "bytes": "201c0053", "categories": ["ext"], "constraints": {}, "isa": "ARM64", "label": "uxtb x0, w1", "source": "corpora", "srcs": ["x1"]}
 {"asm": "uxth x0, w1", "bytes": "203c0053", "categories": ["ext"], "constraints": {}, "isa": "ARM64", "label": "uxth x0, w1", "source": "corpora", "srcs": ["x1"]}
+{"arch": "ARM64", "asm": "add v0.16b, v1.16b, v2.16b", "bytes": "2084224e", "categories": ["arith", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "add v0.16b, v1.16b, v2.16b", "source": "simd", "srcs": []}
+{"arch": "ARM64", "asm": "add v0.4s, v1.4s, v2.4s", "bytes": "2084a24e", "categories": ["arith", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "add v0.4s, v1.4s, v2.4s", "source": "simd", "srcs": []}
+{"arch": "ARM64", "asm": "and v0.16b, v1.16b, v2.16b", "bytes": "201c224e", "categories": ["logic", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "and v0.16b, v1.16b, v2.16b", "source": "simd", "srcs": []}
+{"arch": "ARM64", "asm": "eor v0.16b, v1.16b, v2.16b", "bytes": "201c226e", "categories": ["logic", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "eor v0.16b, v1.16b, v2.16b", "source": "simd", "srcs": []}
+{"arch": "ARM64", "asm": "mov v0.16b, v1.16b", "bytes": "201ca14e", "categories": ["move", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "mov v0.16b, v1.16b", "source": "simd", "srcs": []}
+{"arch": "ARM64", "asm": "mul v0.4s, v1.4s, v2.4s", "bytes": "209ca24e", "categories": ["mul", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "mul v0.4s, v1.4s, v2.4s", "source": "simd", "srcs": []}
+{"arch": "ARM64", "asm": "orr v0.16b, v1.16b, v2.16b", "bytes": "201ca24e", "categories": ["logic", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "orr v0.16b, v1.16b, v2.16b", "source": "simd", "srcs": []}
+{"arch": "ARM64", "asm": "shl v0.4s, v1.4s, #3", "bytes": "2054234f", "categories": ["shift", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "shl v0.4s, v1.4s, #3", "source": "simd", "srcs": []}
+{"arch": "ARM64", "asm": "sub v0.4s, v1.4s, v2.4s", "bytes": "2084a26e", "categories": ["arith", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "sub v0.4s, v1.4s, v2.4s", "source": "simd", "srcs": []}
+{"arch": "ARM64", "asm": "zip1 v0.16b, v1.16b, v2.16b", "bytes": "2038024e", "categories": ["other", "simd"], "constraints": {}, "isa": "ARM64_SIMD", "label": "zip1 v0.16b, v1.16b, v2.16b", "source": "simd", "srcs": []}
 {"asm": "add $2, $4", "bytes": "00441020", "categories": ["arith"], "constraints": {}, "isa": "MIPS64BE", "label": "add $2, $4", "source": "corpora", "srcs": ["V0", "A0"]}
 {"asm": "add $2, $4, $5", "bytes": "00851020", "categories": ["arith"], "constraints": {}, "isa": "MIPS64BE", "label": "add $2, $4, $5", "source": "corpora", "srcs": ["A0", "A1"]}
 {"asm": "add $2, $4, -1", "bytes": "2082ffff", "categories": ["arith"], "constraints": {}, "isa": "MIPS64BE", "label": "add $2, $4, -1", "source": "corpora", "srcs": ["A0"]}
