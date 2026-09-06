@@ -1525,7 +1525,13 @@ static PyObject *normalize_register_dict(PyObject *arch_str, PyObject *input_dic
     PyObject *arch_map = PyDict_GetItem(parent_regs_dict, arch_str);
     if (!arch_map) return PyDict_Copy(input_dict);
 
-    /* Hot-path fast check: if no key is a known child, just copy. */
+    /* Hot-path fast check: if no key is a known child, no promotion is needed,
+     * so return a borrowed ref (INCREF'd -> still an owned ref, per the "always
+     * fresh refs" contract) instead of a full copy.  Both callers (do_evaluate,
+     * evaluate_c) treat the normalized dict as READ-ONLY -- do_evaluate copies it
+     * into output_taint before mutating, evaluate_c only reads it and copies for
+     * output -- so sharing the input dict is safe and saves a per-instruction
+     * dict copy on the common (full-register) path. */
     int needs_norm = 0;
     PyObject *key, *val;
     Py_ssize_t pos = 0;
@@ -1535,7 +1541,7 @@ static PyObject *normalize_register_dict(PyObject *arch_str, PyObject *input_dic
             break;
         }
     }
-    if (!needs_norm) return PyDict_Copy(input_dict);
+    if (!needs_norm) { Py_INCREF(input_dict); return input_dict; }
 
     /* Slow path: build a new dict with parent promotion. */
     PyObject *result = PyDict_New();
