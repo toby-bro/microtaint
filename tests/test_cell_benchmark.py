@@ -40,6 +40,21 @@ from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
+# This module drives the third-party Unicorn engine as a reference backend
+# (test_multi_scenario_backends_agree, test_diagnostic_print_all_diffs, the
+# *_unicorn benchmarks).  Under `pytest -n auto`, Unicorn instances running
+# concurrently across xdist workers segfault a worker -- a Unicorn/resource issue,
+# NOT our C kernel: the pcode backend and the serial run are clean, and pinning to
+# one worker (xdist_group) does not help because other workers still run Unicorn
+# concurrently.  So SKIP the whole module inside xdist workers; it runs in the
+# authoritative SERIAL pass (`pytest` without -n).  Detected via PYTEST_XDIST_WORKER,
+# which xdist sets in every worker process (absent in a serial run).
+_UNDER_XDIST = os.environ.get('PYTEST_XDIST_WORKER') is not None
+pytestmark = pytest.mark.skipif(
+    _UNDER_XDIST,
+    reason='Unicorn reference backend segfaults under xdist; runs in the serial pass',
+)
+
 # ===========================================================================
 # Shared register format (identical to reference test)
 # ===========================================================================
