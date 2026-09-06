@@ -278,7 +278,7 @@ _OFFSETS_CACHE: dict[
 ] = {}
 
 
-def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, object, int, list[str], bool, int]:
+def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, object, int, list[str], bool, object]:
     """Build and cache ctypes arrays. Uses id() fast-path on the hot path.
 
     Layout
@@ -350,8 +350,8 @@ def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, obje
     n_calls = len(uc_ids)  # number of uc_reg_read calls (i.e. ids_arr length)
     if n_calls == 0:
         result: (
-            tuple[object, object, object, int, list[str], bool, int]
-            | tuple[None, None, None, int, list[str], bool, int]
+            tuple[object, object, object, int, list[str], bool, object]
+            | tuple[None, None, None, int, list[str], bool, object]
         ) = (
             None,
             None,
@@ -372,7 +372,12 @@ def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, obje
 
     # n in the cached tuple is len(uc_names) — the number of slots the Cython
     # hot path will iterate over to build pre_regs.  This equals n_slots.
-    result = (ids_arr, vals_arr, ptrs_arr, len(uc_names), uc_names, needs_eflags, n_calls)
+    # n_calls is pre-wrapped as a ctypes c_int so the per-instruction batch call
+    # (uc_reg_read_batch, argtype c_int) skips c_int.from_param (isinstance +
+    # convert) on every call -- a measured ~2.9% of a taint-heavy trace.  Only
+    # ever consumed as the batch-call count argument (when ids_arr is not None).
+    result = (ids_arr, vals_arr, ptrs_arr, len(uc_names), uc_names, needs_eflags,
+              ctypes.c_int(n_calls))
     _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
     return result
 

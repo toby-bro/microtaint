@@ -78,7 +78,7 @@ cdef class InstructionHook:
     cdef public unsigned long long taint_version
 
     # Captured ctypes function pointers and helpers.
-    cdef object       uc_handle           # int (cached uc handle)
+    cdef object       uc_handle           # ctypes c_void_p (unicorn engine handle)
     cdef object       uc_mem_read         # ctypes function
     cdef object       uc_reg_read_batch   # ctypes function
     cdef object       mem_buf             # ctypes buffer
@@ -119,6 +119,8 @@ cdef class InstructionHook:
         self.check_aiw = wrapper.check_aiw
         self.instr_cache_enabled = wrapper._instr_cache_enabled
         self.taint_version = 0
+        # uc_handle is already a ctypes c_void_p (ql.uc._uch), so a c_void_p-typed
+        # ctypes call needs no per-call from_param conversion for it.
         self.uc_handle = uc_handle
         self.uc_mem_read = uc_mem_read
         self.uc_reg_read_batch = uc_reg_read_batch
