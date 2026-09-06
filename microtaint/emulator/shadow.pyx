@@ -81,15 +81,21 @@ cdef class BitPreciseShadowMemory:
         Writing 0x00 bytes explicitly clears taint.
         """
         cdef int i, length
-        cdef uint64_t addr
-        cdef bytearray page
+        cdef uint64_t addr, pb
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef bytearray page = None
         cdef uint8_t tb
 
         length = len(taint)
         for i in range(length):
             addr = address + <uint64_t>i
             tb   = <uint8_t>taint[i]
-            page = self._get_taint_page(self._page_base(addr))
+            pb   = self._page_base(addr)
+            if not have or pb != cur_pb:
+                page   = self._get_taint_page(pb)
+                cur_pb = pb
+                have   = True
             page[self._offset(addr)] = tb
 
     cpdef bytearray read_bytes(self, uint64_t address, int count):
@@ -99,13 +105,18 @@ cdef class BitPreciseShadowMemory:
         cdef bytearray result = bytearray(count)
         cdef int i
         cdef uint64_t addr, pb
-        cdef bytearray page
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef bytearray page = None
 
         for i in range(count):
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
-            if pb in self.taint_pages:
-                page      = <bytearray>self.taint_pages[pb]
+            if not have or pb != cur_pb:
+                page   = <bytearray>self.taint_pages.get(pb)
+                cur_pb = pb
+                have   = True
+            if page is not None:
                 result[i] = page[self._offset(addr)]
         return result
 
@@ -116,14 +127,20 @@ cdef class BitPreciseShadowMemory:
         Calling write_mask(addr, 0, n) explicitly clears n bytes of taint.
         """
         cdef int i
-        cdef uint64_t addr
+        cdef uint64_t addr, pb
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
         cdef uint8_t byte_taint
-        cdef bytearray page
+        cdef bytearray page = None
 
         for i in range(size):
             addr       = address + <uint64_t>i
             byte_taint = <uint8_t>((mask >> (i * 8)) & 0xFF)
-            page       = self._get_taint_page(self._page_base(addr))
+            pb         = self._page_base(addr)
+            if not have or pb != cur_pb:
+                page   = self._get_taint_page(pb)
+                cur_pb = pb
+                have   = True
             page[self._offset(addr)] = byte_taint
 
     cpdef uint64_t read_mask(self, uint64_t address, int size):
@@ -135,15 +152,24 @@ cdef class BitPreciseShadowMemory:
         cdef uint64_t result = 0
         cdef int i
         cdef uint64_t addr, pb
-        cdef bytearray page
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef bytearray page = None
         cdef uint8_t tb
 
+        # Cache the current page across the byte loop: a read almost always
+        # lies within one 4096-byte page, so this turns the old per-byte
+        # `contains`+subscript double dict lookup into ONE `.get()` per page.
+        # Bit-exact: same bytes read, same little-endian packing.
         for i in range(size):
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
-            if pb in self.taint_pages:
-                page = <bytearray>self.taint_pages[pb]
-                tb   = <uint8_t>page[self._offset(addr)]
+            if not have or pb != cur_pb:
+                page   = <bytearray>self.taint_pages.get(pb)
+                cur_pb = pb
+                have   = True
+            if page is not None:
+                tb = <uint8_t>page[self._offset(addr)]
                 if tb:
                     result |= (<uint64_t>tb) << (i * 8)
         return result
@@ -152,28 +178,37 @@ cdef class BitPreciseShadowMemory:
         """True if any byte in [address, address+size) carries any taint."""
         cdef int i
         cdef uint64_t addr, pb
-        cdef bytearray page
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef bytearray page = None
 
         for i in range(size):
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
-            if pb in self.taint_pages:
-                page = <bytearray>self.taint_pages[pb]
-                if page[self._offset(addr)]:
-                    return True
+            if not have or pb != cur_pb:
+                page   = <bytearray>self.taint_pages.get(pb)
+                cur_pb = pb
+                have   = True
+            if page is not None and page[self._offset(addr)]:
+                return True
         return False
 
     cpdef void clear(self, uint64_t address, int size):
         """Explicitly clear taint for size bytes starting at address."""
         cdef int i
-        cdef uint64_t addr
-        cdef bytearray page
+        cdef uint64_t addr, pb
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef bytearray page = None
 
         for i in range(size):
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
-            if pb in self.taint_pages:
-                page = <bytearray>self.taint_pages[pb]
+            if not have or pb != cur_pb:
+                page   = <bytearray>self.taint_pages.get(pb)
+                cur_pb = pb
+                have   = True
+            if page is not None:
                 page[self._offset(addr)] = 0
 
     # ------------------------------------------------------------------
@@ -183,40 +218,55 @@ cdef class BitPreciseShadowMemory:
     cpdef void poison(self, uint64_t address, int size):
         """Mark size bytes as freed/poisoned (for UAF detection)."""
         cdef int i
-        cdef uint64_t addr
-        cdef bytearray page
+        cdef uint64_t addr, pb
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef bytearray page = None
 
         for i in range(size):
             addr = address + <uint64_t>i
-            page = self._get_state_page(self._page_base(addr))
+            pb   = self._page_base(addr)
+            if not have or pb != cur_pb:
+                page   = self._get_state_page(pb)
+                cur_pb = pb
+                have   = True
             page[self._offset(addr)] = STATE_POISONED
 
     cpdef void unpoison(self, uint64_t address, int size):
         """Un-poison size bytes (e.g. when a region is re-allocated)."""
         cdef int i
         cdef uint64_t addr, pb
-        cdef bytearray page
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef bytearray page = None
 
         for i in range(size):
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
-            if pb in self.state_pages:
-                page = <bytearray>self.state_pages[pb]
+            if not have or pb != cur_pb:
+                page   = <bytearray>self.state_pages.get(pb)
+                cur_pb = pb
+                have   = True
+            if page is not None:
                 page[self._offset(addr)] = 0
 
     cpdef bint is_poisoned(self, uint64_t address, int size):
         """True if any byte in [address, address+size) is poisoned."""
         cdef int i
         cdef uint64_t addr, pb
-        cdef bytearray page
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef bytearray page = None
 
         for i in range(size):
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
-            if pb in self.state_pages:
-                page = <bytearray>self.state_pages[pb]
-                if page[self._offset(addr)]:
-                    return True
+            if not have or pb != cur_pb:
+                page   = <bytearray>self.state_pages.get(pb)
+                cur_pb = pb
+                have   = True
+            if page is not None and page[self._offset(addr)]:
+                return True
         return False
 
     # ------------------------------------------------------------------
