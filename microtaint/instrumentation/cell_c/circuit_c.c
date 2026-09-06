@@ -2066,10 +2066,17 @@ static PyObject *py_supported_expr_types(PyObject *self, PyObject *args) {
     return list;
 }
 
+static PyObject *py_cell_capi_loaded(PyObject *self, PyObject *args) {
+    (void)self; (void)args;
+    return PyBool_FromLong(g_cell_capi != NULL);
+}
+
 static PyMethodDef module_methods[] = {
     {"compile_circuit", py_compile_circuit, METH_VARARGS, "Compile a LogicCircuit to bytecode."},
     {"supported_expr_types", py_supported_expr_types, METH_NOARGS,
      "List of Expr class names the bytecode compiler handles without Python fallback."},
+    {"cell_capi_loaded", py_cell_capi_loaded, METH_NOARGS,
+     "True if the cell_c fast-path CAPI is loaded (OP_CALL_CELL uses cell_eval_fast)."},
     {NULL}
 };
 static struct PyModuleDef moduledef = {
@@ -2088,7 +2095,23 @@ PyMODINIT_FUNC PyInit_circuit_c(void) {
      * Python slow path for OP_CALL_CELL. */
     g_cell_capi = (CellCAPI *)PyCapsule_Import("cell_c._cell_capi", 0);
     if (!g_cell_capi) {
-        PyErr_Clear();   /* not fatal — Cython kernel users still work */
+        PyErr_Clear();
+        /* PyCapsule_Import needs cell_c importable as a TOP-LEVEL module, which
+         * only happens when its directory is on sys.path (e.g. tests/conftest.py).
+         * In normal use (the emulator) it is not, so g_cell_capi would stay NULL
+         * and every OP_CALL_CELL would take the ~3x-slower Python evaluate_concrete
+         * path.  Fall back to importing cell_c by its full dotted name and reading
+         * the same capsule attribute -- no sys.path dependency. */
+        PyObject *cmod = PyImport_ImportModule("microtaint.instrumentation.cell_c.cell_c");
+        if (cmod) {
+            PyObject *cap = PyObject_GetAttrString(cmod, "_cell_capi");
+            if (cap && PyCapsule_CheckExact(cap)) {
+                g_cell_capi = (CellCAPI *)PyCapsule_GetPointer(cap, "cell_c._cell_capi");
+            }
+            Py_XDECREF(cap);
+            Py_DECREF(cmod);
+        }
+        if (!g_cell_capi) PyErr_Clear();   /* not fatal — Cython kernel users still work */
     }
 
     return m;
