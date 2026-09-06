@@ -32,6 +32,14 @@ from cpython.exc cimport PyErr_Clear, PyErr_Occurred, PyErr_ExceptionMatches
 from cpython.ref cimport Py_INCREF, Py_DECREF, PyObject
 
 from microtaint.emulator.shadow cimport BitPreciseShadowMemory
+from libc.stdint cimport uint64_t
+
+# uc_reg_read_batch(uc_engine *uc, int *regs, void **vals, int count) -> uc_err.
+# Called through this C function pointer (address extracted from Unicorn's ctypes
+# handle) to skip ctypes' per-call ffi_prep / ConvParam(isinstance) overhead on
+# the register-read boundary, which runs on every slow-path instruction and every
+# value-dependent cache hit.
+ctypedef int (*uc_reg_read_batch_ft)(void *uc, void *regs, void *vals, int count) noexcept nogil
 
 import ctypes
 from microtaint.types import ImplicitTaintError as _ImplicitTaintError
@@ -55,6 +63,11 @@ cdef bint _USE_DEVAL_C = _os.environ.get('MICROTAINT_DISABLE_DO_EVALUATE_C') != 
 # for the test suite -- slow, never in production).
 cdef bint _USE_CMEM  = _os.environ.get('MICROTAINT_DISABLE_CMEM') != '1'
 cdef bint _DIFF_CMEM = _os.environ.get('MICROTAINT_DIFF_CMEM') == '1'
+
+# Read input registers by calling uc_reg_read_batch through a C function pointer
+# (and reading the value array via a uint64*), instead of the Python ctypes call
+# + per-slot ctypes indexing.  MICROTAINT_DISABLE_CREGS=1 forces the ctypes path.
+cdef bint _USE_CREGS = _os.environ.get('MICROTAINT_DISABLE_CREGS') != '1'
 
 # Address-keyed decode cache: on a repeat visit to an address, skip the
 # uc_mem_read + ctypes buffer slice + cached_gen_rule tuplehash (~3.0 us of the
@@ -107,6 +120,11 @@ cdef class InstructionHook:
     cdef object       uc_handle           # ctypes c_void_p (unicorn engine handle)
     cdef object       uc_mem_read         # ctypes function
     cdef object       uc_reg_read_batch   # ctypes function
+    # C-level register-read boundary: uc_reg_read_batch's raw C address + the uc
+    # engine handle as an integer (cached lazily; the handle is fixed once
+    # emulation starts).  Used by _read_pre_regs when _USE_CREGS is on.
+    cdef unsigned long long uc_rrb_addr
+    cdef unsigned long long uc_handle_addr
     cdef object       mem_buf             # ctypes buffer
     cdef object       arch                # Architecture enum
     cdef object       cached_gen_rule     # _cached_generate_static_rule
@@ -127,7 +145,7 @@ cdef class InstructionHook:
                  uc_handle, uc_mem_read, uc_reg_read_batch, mem_buf,
                  arch, cached_gen_rule, x64_format_key,
                  get_decoded, build_offsets_arrs, eflags_bits,
-                 eval_context_cls):
+                 eval_context_cls, uc_reg_read_batch_addr=0):
         self.wrapper = wrapper
         self.register_taint = wrapper.register_taint
         self.last_tainted_writes = wrapper._last_tainted_writes
@@ -155,6 +173,11 @@ cdef class InstructionHook:
         self.uc_handle = uc_handle
         self.uc_mem_read = uc_mem_read
         self.uc_reg_read_batch = uc_reg_read_batch
+        # C-level reg-read boundary.  The fnptr address is stable; the uc handle
+        # integer is resolved lazily on first use (it is fixed once emulation
+        # starts, and may not be set at hook-construction time).
+        self.uc_rrb_addr = <unsigned long long>(uc_reg_read_batch_addr or 0)
+        self.uc_handle_addr = 0
         self.mem_buf = mem_buf
         self.arch = arch
         self.cached_gen_rule = cached_gen_rule
@@ -489,17 +512,40 @@ cdef class InstructionHook:
         value-dependent circuits and by the slow-path evaluation.  Skipped for
         value-independent circuits on a cache hit."""
         cdef object pre_regs, decoded, uc_arrs, ids, vals, ptrs, names, ef, n_calls, fname, fbit
+        cdef object ids_addr, ptrs_addr, vals_addr, n_calls_int
         cdef Py_ssize_t n_slots, i_slot
         cdef bint need_ef
+        cdef uint64_t* vptr
         try:
             decoded = self.get_decoded(self.arch, instruction_bytes)
             uc_arrs = decoded._uc_arrays
             if uc_arrs is None:
                 uc_arrs = self.build_offsets_arrs(decoded.input_reg_offsets)
                 decoded._uc_arrays = uc_arrs
-            ids, vals, ptrs, n_slots, names, need_ef, n_calls = uc_arrs
+            (ids, vals, ptrs, n_slots, names, need_ef, n_calls,
+             ids_addr, ptrs_addr, vals_addr, n_calls_int) = uc_arrs
             if ids is None:
                 pre_regs = {}
+            elif _USE_CREGS and self.uc_rrb_addr != 0:
+                # C-level boundary: call uc_reg_read_batch through the fnptr and
+                # read the value array via a uint64* -- no ctypes ffi/ConvParam,
+                # no per-slot ctypes indexing.  Identical to the ctypes path: same
+                # C function, same arrays, same little-endian uint64 slots.
+                if self.uc_handle_addr == 0:
+                    self.uc_handle_addr = <unsigned long long>self.uc_handle.value
+                (<uc_reg_read_batch_ft>(<void*>self.uc_rrb_addr))(
+                    <void*>self.uc_handle_addr,
+                    <void*>(<unsigned long long>ids_addr),
+                    <void*>(<unsigned long long>ptrs_addr),
+                    <int>n_calls_int)
+                vptr = <uint64_t*>(<void*>(<unsigned long long>vals_addr))
+                pre_regs = {}
+                for i_slot in range(n_slots):
+                    pre_regs[names[i_slot]] = vptr[i_slot]
+                if need_ef:
+                    ef = pre_regs.get('EFLAGS', 0)
+                    for fname, fbit in self.eflags_bits.items():
+                        pre_regs[fname] = (ef >> fbit) & 1
             else:
                 self.uc_reg_read_batch(self.uc_handle, ids, ptrs, n_calls)
                 pre_regs = {names[i_slot]: int(vals[i_slot]) for i_slot in range(n_slots)}

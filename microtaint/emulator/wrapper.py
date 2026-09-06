@@ -278,7 +278,7 @@ _OFFSETS_CACHE: dict[
 ] = {}
 
 
-def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, object, int, list[str], bool, object]:
+def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, object, int, list[str], bool, object, int, int, int, int]:
     """Build and cache ctypes arrays. Uses id() fast-path on the hot path.
 
     Layout
@@ -350,8 +350,8 @@ def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, obje
     n_calls = len(uc_ids)  # number of uc_reg_read calls (i.e. ids_arr length)
     if n_calls == 0:
         result: (
-            tuple[object, object, object, int, list[str], bool, object]
-            | tuple[None, None, None, int, list[str], bool, object]
+            tuple[object, object, object, int, list[str], bool, object, int, int, int, int]
+            | tuple[None, None, None, int, list[str], bool, object, int, int, int, int]
         ) = (
             None,
             None,
@@ -360,6 +360,10 @@ def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, obje
             [],
             False,
             0,
+            0,  # ids_addr
+            0,  # ptrs_addr
+            0,  # vals_addr
+            0,  # n_calls (plain int)
         )
         _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
         return result
@@ -376,8 +380,16 @@ def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, obje
     # (uc_reg_read_batch, argtype c_int) skips c_int.from_param (isinstance +
     # convert) on every call -- a measured ~2.9% of a taint-heavy trace.  Only
     # ever consumed as the batch-call count argument (when ids_arr is not None).
+    #
+    # The trailing four fields are raw integer addresses (+ plain n_calls) so the
+    # Cython hook can call uc_reg_read_batch through a C function pointer and read
+    # vals_arr via a uint64* -- skipping the per-call ctypes ffi/ConvParam cost
+    # and the per-slot ctypes indexing.  The arrays are cached (stable lifetime),
+    # so their addresses are stable too.
     result = (ids_arr, vals_arr, ptrs_arr, len(uc_names), uc_names, needs_eflags,
-              ctypes.c_int(n_calls))
+              ctypes.c_int(n_calls),
+              ctypes.addressof(ids_arr), ctypes.addressof(ptrs_arr),
+              ctypes.addressof(vals_arr), n_calls)
     _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
     return result
 
@@ -642,6 +654,7 @@ class MicrotaintWrapper:
                 uc_handle=self._uc_handle,
                 uc_mem_read=_uc_mem_read,
                 uc_reg_read_batch=_uc_reg_read_batch,
+                uc_reg_read_batch_addr=ctypes.cast(_uc_reg_read_batch, ctypes.c_void_p).value,
                 mem_buf=_MEM_BUF,
                 arch=self.arch,
                 cached_gen_rule=_cached_generate_static_rule,
@@ -1123,8 +1136,10 @@ class MicrotaintWrapper:
             if _uc_arrs is None:
                 _uc_arrs = _build_offsets_arrays(_decoded.input_reg_offsets)
                 _decoded._uc_arrays = _uc_arrs
-            # Inlined _exec_regs_from_arrays — eliminates function call overhead
-            _ids, _vals, _ptrs, _n, _names, _need_ef, _n_calls = _uc_arrs
+            # Inlined _exec_regs_from_arrays — eliminates function call overhead.
+            # (This Python fallback keeps the ctypes call path; the trailing raw
+            # addresses are for the Cython hook's C-level path only.)
+            _ids, _vals, _ptrs, _n, _names, _need_ef, _n_calls = _uc_arrs[:7]
             if _ids is None:
                 self._pre_regs = {}
             else:
