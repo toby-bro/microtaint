@@ -74,6 +74,7 @@ _CTRL = {'BRANCH', 'BRANCHIND', 'CBRANCH', 'CALL', 'CALLIND', 'RETURN'}
 _ROUTE_ALWAYS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'INT_TRUNC', 'SUBPIECE',
                  'PIECE', 'INT_NEGATE', 'EXTRACT', 'INSERT'}
 
+
 # Transportable (carry-coupled) ops: carry-smear floor.
 _TRANSPORTABLE = {'INT_ADD', 'INT_SUB', 'INT_2COMP', 'PTRADD', 'PTRSUB'}
 
@@ -96,16 +97,106 @@ def _lowest_set(m: int) -> int:
 
 def _smear_up(m: int, om: int) -> int:
     """All bits from the lowest set bit of m upward, capped to output mask om.
-    The sound carry-propagation floor: a tainted bit at position p can affect
-    every output bit >= p through carry."""
+    A sound (coarse) carry-propagation floor: a tainted bit at position p can
+    affect every output bit >= p through carry.  Kept only as a fallback."""
     p = _lowest_set(m)
     if p < 0:
         return 0
     return (~((1 << p) - 1)) & om
 
 
+def _add_carry_full(a_v, a_t, b_v, b_t, width, cin_v=0, cin_t=0):
+    """EXACT per-bit taint of a + b + carry_in over `width` bits, value-aware.
+
+    Ripples the carry low-to-high carrying (value, taint) for each carry bit.  A
+    sum bit is tainted iff one of {a_i, b_i, carry_i} is tainted; a carry-out is
+    tainted iff, over the tainted inputs' 0/1 range, the majority can flip.  This
+    is exact (matches per-bit ground truth) and O(width) -- `add x0,x1,#0` yields
+    exactly x1's taint (no carry to smear); `add rax,rbx` recovers the interior
+    carry bits the bare two-corner differential misses.  sub/2comp map on via
+    a + ~b + 1.
+
+    Returns (sum_taint, carry_out_taint, carry_into_msb_taint) so the flag ops
+    read their exact taint off the SAME ripple: INT_CARRY = carry_out_taint,
+    INT_SCARRY (signed overflow = carry_in_msb XOR carry_out_msb) = the OR of the
+    two carry taints."""
+    out_t = 0
+    cv, ct = cin_v & 1, cin_t & 1
+    cin_msb_t = 0
+    for i in range(width):
+        av = (a_v >> i) & 1
+        at = (a_t >> i) & 1
+        bv = (b_v >> i) & 1
+        bt = (b_t >> i) & 1
+        if at | bt | ct:
+            out_t |= 1 << i
+        if i == width - 1:
+            cin_msb_t = ct
+        lo = (0 if at else av) + (0 if bt else bv) + (0 if ct else cv)
+        hi = (1 if at else av) + (1 if bt else bv) + (1 if ct else cv)
+        cout_v = 1 if (av + bv + cv) >= 2 else 0
+        cout_t = 1 if (1 if lo >= 2 else 0) != (1 if hi >= 2 else 0) else 0
+        cv, ct = cout_v, cout_t
+    return out_t, ct, cin_msb_t
+
+
+def _add_carry_taint(a_v, a_t, b_v, b_t, width, cin_v=0, cin_t=0) -> int:
+    return _add_carry_full(a_v, a_t, b_v, b_t, width, cin_v, cin_t)[0]
+
+
 def _is_const(vn) -> bool:
     return vn.space.name == 'const'
+
+
+def _vid(vn):
+    return (vn.space.name, vn.offset, vn.size)
+
+
+def _is_reconvergent(ops) -> bool:
+    """True if some op's two dynamic inputs share a register ancestor (or repeat).
+
+    That is the reconvergence the design flags: a tainted source reaches one op
+    along >=2 paths, so perturbing the intermediate varnodes INDEPENDENTLY (the
+    per-op model) explores impossible states and OVER-taints (r=(a+b)-a; xor
+    rax,rax; lea/address math).  The whole-instruction differential perturbs the
+    ORIGINAL sources once and stays exact, so these route to the monolithic
+    window.  Normal add/sub/cmp read DISTINCT sources -> not reconvergent ->
+    stay on the per-op fast path.  Conservative (a repeated/shared input into an
+    idempotent and/or is safe but still routed to monolithic): never misses an
+    over-taint, at a small fallback cost."""
+    # Resolve register-leaf ancestors in PROGRAM ORDER (SSA-style): a varnode's
+    # ancestors are those of its most recent definition so far; a register with no
+    # earlier definition is its own leaf.  (A naive global producer map is wrong:
+    # an instruction often writes a register mid-stream while earlier ops read its
+    # original value -- e.g. add writes RAX after INT_CARRY/INT_SCARRY read it.)
+    reg_anc: dict = {}   # vid -> frozenset of register-leaf source ancestors
+    for o in ops:
+        in_ancs = []
+        for i in o.inputs:
+            if i.space.name == 'const':
+                in_ancs.append(frozenset())
+                continue
+            vid = _vid(i)
+            if vid in reg_anc:
+                in_ancs.append(reg_anc[vid])
+            elif i.space.name == 'register':
+                in_ancs.append(frozenset({vid}))
+            else:
+                in_ancs.append(frozenset())
+        dyn = [k for k, i in enumerate(o.inputs) if i.space.name != 'const']
+        vids = [_vid(o.inputs[k]) for k in dyn]
+        if len(vids) != len(set(vids)):
+            return True  # an input used twice (xor rax,rax; sub rax,rax)
+        for a in range(len(dyn)):
+            for b in range(a + 1, len(dyn)):
+                if in_ancs[dyn[a]] & in_ancs[dyn[b]]:
+                    return True  # two inputs share a register source
+        if o.output is not None:
+            union: set = set()
+            for ia in in_ancs:
+                union |= ia
+            reg_anc[_vid(o.output)] = frozenset(union)
+    return False
 
 
 # Human/bank register name -> pypcode SLEIGH register name, where they differ.
@@ -263,20 +354,41 @@ class PerOpFloors:
             # general multiply: avalanche.
             return om if (a_t | b_t) else 0
 
-        # ---- transportable: carry-smear floor | local differential ----
-        if name in _TRANSPORTABLE:
-            if name == 'INT_2COMP':
-                m = a_t
-            else:
-                m = a_t | b_t
-            floor = _smear_up(m, om)
-            return (floor | self._local_diff(name, op, in_v, in_t)) & om
+        # ---- transportable: EXACT value-aware carry ripple ----
+        if name == 'INT_ADD':
+            return _add_carry_taint(a_v, a_t, b_v, b_t, 8 * o_sz) & om
+        if name == 'INT_SUB':
+            # a - b = a + ~b + 1 ; ~b has the same per-bit taint as b.
+            return _add_carry_taint(a_v, a_t, (~b_v) & om, b_t, 8 * o_sz, 1, 0) & om
+        if name == 'INT_2COMP':
+            # -a = ~a + 1 = 0 - a
+            return _add_carry_taint(0, 0, (~a_v) & om, a_t, 8 * o_sz, 1, 0) & om
+        if name in _TRANSPORTABLE:  # PTRADD / PTRSUB (rare): sound carry-smear
+            m = a_t | b_t
+            return (_smear_up(m, om) | self._local_diff(name, op, in_v, in_t)) & om
 
         # ---- avalanche ----
+        if name == 'POPCOUNT':
+            # result in [0, input_bits] -> only the low ceil(log2(bits+1)) bits vary.
+            if not any(in_t):
+                return 0
+            nbits = (8 * isz).bit_length()
+            return ((1 << nbits) - 1) & om
         if name in _AVALANCHE:
             return om if any(in_t) else 0
 
-        # ---- 1-bit predicates ----
+        # ---- carry / signed-overflow flags: EXACT via the same ripple ----
+        if name == 'INT_CARRY':          # unsigned carry-out of a + b
+            return _add_carry_full(a_v, a_t, b_v, b_t, 8 * isz)[1]
+        if name == 'INT_SCARRY':         # signed overflow of a + b
+            _o, cout_t, cin_t = _add_carry_full(a_v, a_t, b_v, b_t, 8 * isz)
+            return cout_t | cin_t
+        if name == 'INT_SBORROW':        # signed overflow of a - b (a + ~b + 1)
+            _o, cout_t, cin_t = _add_carry_full(a_v, a_t, (~b_v) & _mask(isz),
+                                                b_t, 8 * isz, 1, 0)
+            return cout_t | cin_t
+
+        # ---- 1-bit predicates (compares): coarse-but-sound floor ----
         if name in _PRED1:
             return 1 if any(in_t) else 0
 
@@ -301,6 +413,10 @@ class PerOpFloors:
         for op in ops:
             if op.opcode.name in ('CBRANCH', 'BRANCHIND', 'CALLIND', 'CALLOTHER'):
                 raise NeedsMonolithic(op.opcode.name)
+        # Reconvergence window: a source reaching one op via >=2 paths makes the
+        # per-op differential over-taint; widen to the whole-instruction oracle.
+        if _is_reconvergent(ops):
+            raise NeedsMonolithic('reconvergence')
         for op in ops:
             name = op.opcode.name
             if name in _SKIP or name in _CTRL:

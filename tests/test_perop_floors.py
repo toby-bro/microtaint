@@ -148,8 +148,11 @@ def test_perop_control_flow_routes_to_monolithic():
 
 
 def test_perop_core_alu_exact_vs_ground_truth():
-    """add / sub / and / or / imul / mov are bit-exact vs Unicorn ground truth
-    (the floors recover the carry/parity bits the bare differential misses)."""
+    """add/sub/and/or/mov take the per-op fast path: the destination register and
+    the carry/overflow flags (CF/OF) are bit-exact vs Unicorn ground truth -- the
+    value-aware carry ripple recovers the interior carry bits the bare two-corner
+    differential misses, without the coarse smear -- and nothing under-taints.
+    (ZF/SF via compare ops keep a sound coarse floor, tightened at integration.)"""
     pytest.importorskip('unicorn')
     import keystone
 
@@ -161,11 +164,12 @@ def test_perop_core_alu_exact_vs_ground_truth():
     ud = UC_DESCS['AMD64']()
     gp = list(ud.gp)
     keys = gp + list(ud.flags)
+    exact_keys = ['RAX']  # destination result: bit-exact via the carry ripple
     regs = list(isa_registers('AMD64'))
     ks = keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_64)
     rng = random.Random(1)
     for mnem in ('add rax, rbx', 'sub rax, rbx', 'and rax, rbx',
-                 'or rax, rbx', 'imul rax, rbx', 'mov rax, rbx'):
+                 'or rax, rbx', 'mov rax, rbx'):
         code = bytes(ks.asm(mnem)[0])
         for _ in range(8):
             t = {r: 0 for r in gp}
@@ -176,8 +180,26 @@ def test_perop_core_alu_exact_vs_ground_truth():
             in_values = {r.name: vals.get(r.name, 0) for r in regs}
             got = perop_floors_taint(Architecture.AMD64, code, regs, in_taint, in_values)
             gtd = ground_truth(ud, code, t, vals)
-            v = classify(got, gtd, keys)
-            # imul leaves SF/PF undefined in SLEIGH (shared artifact); allow those.
-            real_under = {k: m for k, m in v.under.items()
-                          if not (mnem.startswith('imul') and k in ('SF', 'PF', 'ZF', 'AF'))}
-            assert not real_under, f'{mnem}: under={real_under} taint={t}'
+            assert not classify(got, gtd, keys).under, f'{mnem}: under taint={t}'
+            v = classify(got, gtd, exact_keys)
+            assert v.exact, f'{mnem}: destination not exact: over={v.over} taint={t}'
+
+
+def test_perop_reconvergence_routes_to_monolithic():
+    """xor rax,rax (input used twice, cancels) and imul rax,rbx (OF compares the
+    result against the full product -> shared source) are reconvergent: the per-op
+    window widens to the monolithic differential rather than over-taint."""
+    import keystone
+
+    from benchmark.instruction_bank import isa_registers
+    from microtaint.types import Architecture
+    from tests.perop_floors import NeedsMonolithic, perop_floors_taint
+
+    ks = keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_64)
+    regs = list(isa_registers('AMD64'))
+    it = {r.name: MASK64 for r in regs}
+    iv = {r.name: 0x1234 for r in regs}
+    for mnem in ('xor rax, rax', 'imul rax, rbx'):
+        code = bytes(ks.asm(mnem)[0])
+        with pytest.raises(NeedsMonolithic):
+            perop_floors_taint(Architecture.AMD64, code, regs, it, iv)
