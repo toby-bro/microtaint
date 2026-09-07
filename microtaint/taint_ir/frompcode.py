@@ -51,6 +51,21 @@ from microtaint.taint_ir.ir import (
 
 LIFT_BASE = 0x1000
 
+#: State slots each memory access occupies, past the register file:
+#:   +0  the loaded VALUE (in v[]) and its shadow TAINT (in t[])
+#:   +1  the computed ADDRESS            (written to o[])
+#:   +2  the taint OF that address       (written to o[])
+#:   +3  the taint to STORE at it        (written to o[])
+#: Modelling memory as extra slots rather than as a callback keeps the emitted
+#: program straight-line and call-free, so every backend runs it unchanged.
+MEM_SLOTS_PER_ACCESS = 4
+
+
+def access_slot(n_reg_slots: int, k: int, what: str) -> int:
+    """Slot index for one memory access's state."""
+    base = n_reg_slots + MEM_SLOTS_PER_ACCESS * k
+    return base + {'mem': 0, 'addr': 1, 'addrt': 2, 'sttaint': 3}[what]
+
 
 class Unsupported(Exception):
     """This p-code shape is outside the lowering; the caller falls back."""
@@ -252,6 +267,12 @@ class Builder:
         #: Approximate by construction: a hash-consed node is credited to
         #: whichever op created it first.
         self.spans: list = []
+        #: One entry per distinct (address, size) the instruction touches.
+        #: SLEIGH re-emits the same LOAD once per flag that reads it, so
+        #: de-duplicating here turns `add rax, [rbx+16]`'s three identical
+        #: loads into one access.
+        self.accesses: list = []
+        self.access_map: dict = {}
         # Predicate stack: (until_pc, saved_pred_value, saved_pred_taint).
         self.pred_v = p.const(1)
         self.pred_t = p.const(0)
@@ -297,9 +318,14 @@ class Builder:
                 self.pred_v = p.const(0)
                 self.pred_t = self.pred_t
                 continue
-            if name in ('BRANCHIND', 'CALL', 'CALLIND', 'CALLOTHER', 'RETURN',
-                        'LOAD', 'STORE'):
+            if name in ('BRANCHIND', 'CALL', 'CALLIND', 'CALLOTHER', 'RETURN'):
                 raise Unsupported(name)
+            if name == 'LOAD':
+                self._emit_load(op)
+                continue
+            if name == 'STORE':
+                self._emit_store(op)
+                continue
             if name.startswith('FLOAT_') or name in ('TRUNC', 'INT2FLOAT'):
                 raise Unsupported(name)
             if op.output is None:
@@ -323,7 +349,91 @@ class Builder:
                 continue
             p.outputs.append((nm, t.read('register', off, size)))
         p.spans = self.spans
+        p.accesses = self.accesses
+        self._check_address_independence(p)
         return p.finish()
+
+    # -- memory --------------------------------------------------------
+    def _access_for(self, kind, addr_node, size):
+        key = (kind, addr_node, size)
+        k = self.access_map.get(key)
+        if k is None:
+            k = len(self.accesses)
+            self.access_map[key] = k
+            self.accesses.append({'kind': kind, 'size': size, 'addr': addr_node})
+            self.p.outputs.append((('addr', k), addr_node))
+        return k
+
+    def _emit_load(self, op):
+        """A load's value and shadow taint enter as INPUTS at a slot the caller
+        fills once the address has been computed.
+
+        A tainted address is not a decline: which bytes are read is then itself
+        secret-dependent, so the loaded word is fully tainted -- sound, and it
+        keeps the common clean-pointer case exact.
+        """
+        p = self.p
+        size = op.output.size
+        if size > 8:
+            raise Unsupported('wide load')
+        addr_v, addr_t = self._read_in(op.inputs[1])
+        k = self._access_for('load', addr_v, size)
+        p.outputs.append((('addrt', k), addr_t))
+        val = p.input_value(('mem', k), size * 8)
+        mem_t = p.input_taint(('mem', k), size * 8)
+        tnt = p.op(OR, mem_t,
+                   p.op(AND, p.const(_mask_of(size)),
+                        p.splat(p.op(NEZ, addr_t))))
+        self._predicated_write(op.output, val, tnt)
+
+    def _emit_store(self, op):
+        """A store contributes the taint to write and the address to write it
+        at, both as outputs; committing them is the caller's job.
+
+        A store through a TAINTED address writes somewhere secret-dependent,
+        which is a different and much larger obligation than tainting a known
+        location -- the address taint is reported so the caller can hand those
+        instructions to the slow path rather than silently writing one place.
+        """
+        p = self.p
+        size = op.inputs[2].size
+        if size > 8:
+            raise Unsupported('wide store')
+        if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
+            raise Unsupported('predicated store')
+        addr_v, addr_t = self._read_in(op.inputs[1])
+        _val_v, val_t = self._read_in(op.inputs[2])
+        k = self._access_for('store', addr_v, size)
+        p.outputs.append((('addrt', k), addr_t))
+        p.outputs.append((('sttaint', k), p.mask(val_t, size * 8)))
+
+    def _check_address_independence(self, p):
+        """An address may not depend on a value this instruction itself loaded.
+
+        The caller runs the program once to obtain the addresses, fills the
+        memory slots, then runs it again for the taint -- which is only valid
+        while no address is downstream of a memory input.  x86 has no such
+        shape, but declining is the honest answer rather than a wrong address.
+        """
+        mem_nodes = {n for (kind, key), n in p.inputs.items()
+                     if isinstance(key, tuple) and key[0] == 'mem' and kind == 'v'}
+        mem_nodes |= {n for (kind, key), n in p.inputs.items()
+                      if isinstance(key, tuple) and key[0] == 'mem' and kind == 't'}
+        if not mem_nodes:
+            return
+        for acc in self.accesses:
+            seen, stack = set(), [acc['addr']]
+            while stack:
+                n = stack.pop()
+                if n in seen:
+                    continue
+                seen.add(n)
+                if n in mem_nodes:
+                    raise Unsupported('address depends on a loaded value')
+                _o, a, b, c, _imm = p.nodes[n]
+                for x in (a, b, c):
+                    if x >= 0:
+                        stack.append(x)
 
     # -- helpers -------------------------------------------------------
     def _branch_target(self, op, pc, n):

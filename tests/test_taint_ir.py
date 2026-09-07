@@ -114,3 +114,22 @@ def test_ir_never_under_taints_vs_ground_truth(isa):
             for label, _it, _iv, new in rep.new_under_examples[:6])
         pytest.fail(f'{isa}: {rep.n_under_new} case(s) under-taint where the '
                     f'current engine does not:\n{detail}')
+
+
+@pytest.mark.parametrize('isa', ['AMD64', 'ARM64'])
+def test_memory_taint_matches_ground_truth(isa):
+    """Loads and stores, against Unicorn per-bit truth over a real data page.
+
+    Includes secret-dependent addresses: the pointer's low bits are tainted in
+    part of the corpus, so the rule that a load through a tainted address taints
+    the whole loaded word is exercised rather than assumed.
+    """
+    from tests.taint_ir_mem import run_mem_bank
+
+    rep = run_mem_bank(isa, n_vec=3)
+    assert rep.n > 0, f'{isa}: no memory cases evaluated'
+    if rep.under:
+        detail = '\n'.join(
+            f'  {label}: {[(k, hex(v)) for k, v in list(u.items())[:6]]}'
+            for label, u in rep.under_examples[:5])
+        pytest.fail(f'{isa}: {rep.under} memory case(s) under-taint:\n{detail}')

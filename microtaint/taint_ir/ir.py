@@ -161,7 +161,7 @@ class IRProg:
     """
 
     __slots__ = ('nodes', '_hc', 'inputs', 'outputs', 'live', 'kbits',
-                 'spans', 'uses', 'no_bool')
+                 'spans', 'uses', 'no_bool', 'accesses')
 
     def __init__(self):
         self.nodes: list[tuple] = []        # (op, a, b, c, imm)
@@ -183,6 +183,8 @@ class IRProg:
         #: would put BOOLSYM back into a program whose whole purpose is to
         #: contain only machine-shaped opcodes.
         self.no_bool = False
+        #: Memory accesses this instruction makes; see frompcode.
+        self.accesses: list = []
 
     # -- construction --------------------------------------------------
     def _emit(self, op, a=-1, b=-1, c=-1, imm=0) -> int:
@@ -590,6 +592,7 @@ class IRProg:
                               m[b] if b >= 0 else -1,
                               m[c] if c >= 0 else -1)
         out.outputs = [(k, m[n]) for k, n in self.outputs]
+        out.accesses = self.accesses
         return out.finish()
 
     def serialize(self, slot_of):
