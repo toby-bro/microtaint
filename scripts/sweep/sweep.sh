@@ -33,10 +33,12 @@ WORK=${WORK:-${TMPDIR:-/tmp}/microtaint-perf-sweep}
 OUT=${OUT:-$REPO/tests/perf.log.norm.d}
 BUILD_WORKERS=${BUILD_WORKERS:-4}
 read -r -a BENCH_CPUS <<< "${BENCH_CPUS:-2 10}"
-# A measurement is only meaningful if the machine is otherwise idle: the same
-# commit measured under a loaded machine came out +71% slower, which swamps any
-# real change. Wait for the load to drop, and record it either way.
-MAX_LOAD=${MAX_LOAD:-1.5}
+# A measurement is only meaningful if the machine is mostly idle: the same
+# commit measured on a saturated machine came out +71% slower, which swamps any
+# real change. Wait for the 1-minute load average to fall below MAX_LOAD, and
+# record it either way. On a 16-thread box 6 still leaves ample headroom for the
+# two pinned workers; 1-2 is never reached on a machine anyone is using.
+MAX_LOAD=${MAX_LOAD:-6}
 IDLE_TIMEOUT=${IDLE_TIMEOUT:-3600}
 PY=${PY:-$REPO/.venv/bin/python}
 
@@ -118,13 +120,13 @@ bench_missing() {
         apply_pinned "$wt"
         rm -rf "$wt/tests/perf.log.d"
         wait_for_idle
-        l0=$(foreign_load)
+        l0=$(current_load)
         if ! (cd "$wt" && taskset -c "$cpu" .venv/bin/python "$PINNED/drive.py" "$wt/tests") >> "$WORK/bench.log" 2>&1; then
           echo "[r$i] $short BENCH-FAIL"; continue
         fi
-        l1=$(foreign_load)
+        l1=$(current_load)
         printf '%s\t%s\t%s\t%s\n' "$short" "$l0" "$l1" "$(date -u +%FT%TZ)" >> "$OUT/conditions.tsv"
-        awk -v a="$l0" -v b="$l1" -v m="$MAX_LOAD" 'BEGIN{exit !(a>m||b>m)}' \
+        awk -v a="$l0" -v m="$(load_budget)" 'BEGIN{exit !(a>m)}' \
           && echo "[r$i] $short measured UNDER LOAD ($l0 -> $l1) -- suspect" \
           || true
         cp "$wt"/tests/perf.log.d/*-timing.json "$OUT/" 2>/dev/null
@@ -136,22 +138,33 @@ bench_missing() {
   echo "logs: $(ls "$OUT"/*-timing.json 2>/dev/null | wc -l) / $(wc -l < "$LIST")"
 }
 
-# Load attributable to OTHER work: 1-minute average minus our own workers.
-foreign_load() {
-  awk -v w="${#BENCH_CPUS[@]}" '{l=$1-w; print (l>0)?l:0}' /proc/loadavg
+current_load() {
+  cut -d' ' -f1 /proc/loadavg
+}
+
+# MAX_LOAD is the tolerable load from OTHER work. Our own workers each add ~1 to
+# the average, so count the ones actually measuring right now and raise the bar
+# by that much -- otherwise the sweep throttles on its own load and stalls.
+# (Counting live processes is exact; subtracting the worker count from the
+# sample was wrong while waiting, when those workers are idle.)
+load_budget() {
+  local mine
+  # pgrep -c prints 0 and exits 1 when nothing matches, so take its output as-is
+  mine=$(pgrep -cf "$PINNED/drive.py" 2>/dev/null)
+  awk -v m="$MAX_LOAD" -v n="${mine:-0}" 'BEGIN{print m+n}'
 }
 
 wait_for_idle() {
-  local waited=0 l
-  l=$(foreign_load)
-  while awk -v l="$l" -v m="$MAX_LOAD" 'BEGIN{exit !(l>m)}'; do
-    [ "$waited" = 0 ] && echo "  waiting for the machine to go idle (foreign load $l > $MAX_LOAD)"
+  local waited=0 l b
+  l=$(current_load); b=$(load_budget)
+  while awk -v l="$l" -v m="$b" 'BEGIN{exit !(l>m)}'; do
+    [ "$waited" = 0 ] && echo "  waiting for the machine to quiet down (load $l > $b)"
     sleep 30; waited=$((waited + 30))
     if [ "$waited" -ge "$IDLE_TIMEOUT" ]; then
       echo "  WARNING: still loaded after ${waited}s, measuring anyway (results will be marked)"
       return
     fi
-    l=$(foreign_load)
+    l=$(current_load); b=$(load_budget)
   done
   [ "$waited" -gt 0 ] && echo "  machine idle after ${waited}s"
   return 0

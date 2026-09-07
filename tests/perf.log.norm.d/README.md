@@ -57,42 +57,47 @@ touches before reading its step:
 
 ## Measurement conditions dominate everything else
 
-A measurement is only meaningful on an otherwise idle machine. Measured
-directly: `8ffabf3` and `aba6dec` were re-measured while other test suites
-saturated all 16 threads (load average ~22), and came out **+28% and +71%
-slower** than the same snapshots measured earlier. Both converged to ~3718 ns,
-i.e. under saturation the number reports how much CPU the process was granted,
-not what the engine does.
+A measurement is only meaningful on a mostly idle machine. Measured directly:
+`8ffabf3` and `aba6dec` were re-measured from *unchanged snapshots* while other
+test suites saturated all 16 threads (load ~22) and came out **+28% and +71%**
+slower, both converging to ~3718 ns -- under saturation the number reports the
+CPU share the process got, not what the engine does.
 
-So `sweep.sh` now gates on load: before each measurement it waits until the
-*foreign* load (1-minute average minus its own workers) drops below `MAX_LOAD`
-(default 1.5), and records the load before and after each run in
-`conditions.tsv`. A run measured above the threshold is called out as suspect.
+So `sweep.sh` gates on load. Before each measurement it waits until the
+1-minute load average drops below `MAX_LOAD` (default 6) *plus* the number of
+its own workers currently measuring, and records the load before and after each
+run in `conditions.tsv`. `MAX_LOAD` is therefore the tolerable load from **other**
+work; on a 16-thread box 6 leaves ample headroom, while 1-2 is never reached on
+a machine anyone is using.
 
-    MAX_LOAD=1.5 IDLE_TIMEOUT=3600 ./scripts/sweep/sweep.sh
+    MAX_LOAD=6 IDLE_TIMEOUT=7200 ./scripts/sweep/sweep.sh
 
-**Runs recorded before that gate existed have unknown conditions** and are not
-in `conditions.tsv`. Re-measure the series on a quiet machine before drawing
-conclusions from small steps; the snapshots are kept, so it is measurement only.
+Runs listed in `conditions.tsv` are certified; runs recorded before the gate
+existed are not, and should be re-measured before small steps are trusted. The
+snapshots are kept, so that is measurement only, no rebuilding.
 
-## Noise floor, on an idle machine
+## Noise floor, measured on a gated run
 
-`df218fc`, `e2041ba` and `746aac1` are a control triple -- the last two change
-only tooling and docs, so all three runs measure the *same binary*:
+The 22 commits from v0.6.14 onward were re-measured with the gate active (all
+started below load 6). Most of them do not touch the code this sweep times, so
+their steps are essentially pure noise:
 
-| quantity | across the three identical-engine runs |
+| quantity | gated run |
 |---|---|
-| `cells` / `assigns` / `nodes` totals | **identical** (2110 / 3480 / 162265) |
-| ns p50 | 2310 / 2201 / 2124 -> 8.8% spread |
-| per-instruction \|delta\| | median 3.3%, p90 34.6%, max 74.5% |
+| median step between consecutive commits | **1.9%** |
+| largest single step | **8.5%** |
+| spread across all 22 | 12.1% |
+| `cells` / `assigns` / `nodes` | identical to the ungated run |
 
-Those three were taken at different times under load that was not recorded, so
-8.8% is an upper bound that mixes intrinsic noise with contention, not a clean
-noise floor. What it does establish is that the deterministic metrics are
-bit-identical regardless of load -- which is why the plot's vertical rules stay
-trustworthy even when the ns curves cannot be.
+Compare with the same 22 measured on a loaded machine: an apparent **+18.1%
+spike at `8ffabf3` that simply vanished** (-22% on re-measurement), and swings
+up to -22% / +13% elsewhere. That spike was almost investigated as an LTO
+side effect of a `shadow.pxd` change; it was contention.
 
-Treat an isolated sub-10% p50 step, or a sub-40% p100 step, as noise.
+So on a gated run, treat a sub-10% p50 step as noise, and remember p100 is one
+instruction's timing and swings far more. The deterministic metrics are
+unaffected by load in either case, which is why the plot's vertical rules stay
+trustworthy regardless.
 
 ## Plot
 
