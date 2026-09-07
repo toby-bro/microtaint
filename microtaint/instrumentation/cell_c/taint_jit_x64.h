@@ -167,6 +167,14 @@ static void j_movzx8(JitBuf *b, int dst, int src) {
 static void j_cmovcc(JitBuf *b, uint8_t cc, int dst, int src) {
     rex_w(b, dst, src); jb_byte(b, 0x0F); jb_byte(b, cc); modrm_rr(b, dst, src);
 }
+/* mul r/m64: RDX:RAX = RAX * r/m64.  The only instruction here that dictates
+ * its own registers, which is why the high half of a product needs a small
+ * dance around rax and rdx rather than falling out of the allocator. */
+static void j_mul_rm(JitBuf *b, int src) {
+    rex_w(b, 0, src); jb_byte(b, 0xF7);
+    jb_byte(b, (uint8_t)(0xC0 | (4 << 3) | (src & 7)));
+}
+
 static void j_popcnt(JitBuf *b, int dst, int src) {
     jb_byte(b, 0xF3); rex_w(b, dst, src);
     jb_byte(b, 0x0F); jb_byte(b, 0xB8); modrm_rr(b, dst, src);
@@ -369,7 +377,7 @@ static int jit_supported(const IRProgC *p) {
     for (int i = 0; i < p->n_nodes; i++) {
         switch (p->op[i]) {
         case IR_UDIV: case IR_UREM: case IR_SDIV: case IR_SREM:
-        case IR_CLZ: case IR_MULHI:
+        case IR_CLZ:
             return 0;
         default: break;
         }
@@ -474,7 +482,10 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
          * separates emitted code from compiled code on this kind of program. */
         int excl = (op == IR_SEL) ? rc : -1;
         int dst;
-        if (ra >= 0 && ra != excl && c.occupant[ra] < 0) {
+        if (op == IR_MULHI) {
+            /* `mul` writes rdx:rax, so the destination has to be elsewhere. */
+            dst = jit_take_reg_ex(&c, JR_RAX, JR_RDX, -1);
+        } else if (ra >= 0 && ra != excl && c.occupant[ra] < 0) {
             dst = ra;
         } else {
             dst = jit_take_reg_ex(&c, excl, -1, -1);
@@ -539,6 +550,23 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
             }
             break;
         case IR_POPCNT: j_popcnt(&c.b, dst, ra); break;
+        case IR_MULHI: {
+            /* The right operand must survive `mov rax, <left>`, so move it out
+             * of rax/rdx first; then free rax and rdx, in that order, so that a
+             * left operand living in rdx is read before rdx is spilled. */
+            int rb2 = rb;
+            if (rb2 == JR_RAX || rb2 == JR_RDX) {
+                rb2 = jit_take_reg_ex(&c, JR_RAX, JR_RDX, ra);
+                j_mov_rr(&c.b, rb2, rb);
+                c.occupant[rb2] = -1;
+            }
+            if (c.occupant[JR_RAX] >= 0) jit_spill(&c, JR_RAX);
+            j_mov_rr(&c.b, JR_RAX, ra);
+            if (c.occupant[JR_RDX] >= 0) jit_spill(&c, JR_RDX);
+            j_mul_rm(&c.b, rb2);
+            j_mov_rr(&c.b, dst, JR_RDX);
+            break;
+        }
         case IR_SHL: case IR_SHR: case IR_SAR: {
             int kind = (op == IR_SHL) ? J_SHL : (op == IR_SHR) ? J_SHR : J_SAR;
             if (b_imm) {
