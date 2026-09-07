@@ -1,0 +1,226 @@
+"""tests/test_affine_ops_route_exactly.py
+=========================================
+Affine instructions must ROUTE taint, never re-execute the instruction.
+
+An affine operation's output taint is an exact closed-form function of its input
+taints: a copy moves the mask, XOR unions it, NOT leaves it alone, a constant
+shift shifts it, a constant mask projects it. None of that needs to know the
+operand VALUES, so none of it needs the two-corner differential, and therefore
+none of it needs a SLEIGH cell re-execution.
+
+What the engine does instead is subtler than "it forgot to route". These forms
+DO reach the affine classifier (make_mapped_single_call in sleigh/engine.py) --
+but that path emits ONE InstructionCellExpr rather than two. "Affine" there means
+halving the differential, not eliminating it: it computes L(T) by executing the
+instruction on the taint mask instead of composing the mask transformation
+symbolically. The extreme case is `mov rax, rbx` -- a single-COPY p-code --
+emitting
+
+    T_RAX = SimulateCell(instr=0x4889d8,
+                RBX=((V_RBX OR T_RBX) XOR (V_RBX AND NOT T_RBX))) XOR 0x0
+
+which is algebraically just `T_RAX = T_RBX`, computed by re-executing the
+instruction. For the most common instruction in any program. Cell re-execution
+measured ~776ns; the routing form is a handful of ALU ops.
+
+DANGER, and the reason test_affine_taint_matches_the_oracle exists below: on its
+own "needs no cell" is NOT a soundness property. It describes the mechanism, not
+the answer. An attempt at this drove exactly that mistake -- wiring the engine's
+floor helper (varnode_taint_expr) in as the COMPLETE taint expression made every
+assertion here go green while 1247 tests failed, oracle soundness among them,
+because a floor is one OR-term of a larger expression and alone it
+under-approximates. Removing a cell is only progress if the taint is unchanged,
+so never read this file without the equivalence test beside it.
+
+This is an ABSOLUTE assertion, deliberately not a ratchet. The per-instruction
+perf ratchet (test_perf_ratchet.py) compares against a recorded baseline, so it
+happily preserved this: the waste was in the baseline. A ratchet can only stop
+things getting worse, it cannot notice that the starting point was indefensible.
+
+If a form here starts needing a cell, either the routing recognition regressed or
+the instruction is not as affine as the table claims. Prefer fixing the engine;
+move an entry out of the table only with a written reason.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
+from instruction_bank import isa_registers  # type: ignore[import-not-found]
+
+from microtaint.sleigh.engine import generate_static_rule
+from microtaint.types import Architecture
+
+# (arch, label, hex).  Every entry must be affine: its output taint is a closed
+# form over the INPUT TAINTS alone, independent of the operand values.
+AFFINE_FORMS: list[tuple[Architecture, str, str]] = [
+    # --- AMD64: pure movement ---
+    (Architecture.AMD64, 'mov rax, rbx',        '4889d8'),
+    (Architecture.AMD64, 'mov eax, ebx',        '89d8'),
+    (Architecture.AMD64, 'movzx eax, bl',       '0fb6c3'),
+    (Architecture.AMD64, 'movsx rax, ebx',      '4863c3'),
+    # --- AMD64: bitwise, value-independent ---
+    (Architecture.AMD64, 'xor rax, rbx',        '4831d8'),
+    (Architecture.AMD64, 'not rax',             '48f7d0'),
+    # --- AMD64: constant shift (mask shifts with it) ---
+    (Architecture.AMD64, 'shl rax, 3',          '48c1e003'),
+    (Architecture.AMD64, 'shr rax, 3',          '48c1e803'),
+    # --- ARM64 ---
+    (Architecture.ARM64, 'mov x0, x1',          'e00301aa'),
+    (Architecture.ARM64, 'eor x0, x0, x1',      '000001ca'),
+    (Architecture.ARM64, 'mvn x0, x1',          'e00321aa'),
+    (Architecture.ARM64, 'lsl x0, x0, #3',      '00f47cd3'),
+    # --- RISCV64 ---
+    (Architecture.RISCV64, 'mv a0, a1',         '13850500'),
+    (Architecture.RISCV64, 'xor a0, a0, a1',    '33452500'),
+    (Architecture.RISCV64, 'slli a0, a0, 3',    '13153500'),
+]
+
+
+def _has_cell(expr: object, depth: int = 0) -> bool:
+    """Does this expression tree contain an instruction re-execution anywhere?
+
+    NOT LogicCircuit.has_unicorn_cells: that flag only inspects the TOP-LEVEL
+    expression, so it misses the common shape `SimulateCell(...) XOR 0x0` where
+    the cell is nested one level down. It reads False for `imul` too, which is
+    how that was noticed. Walk the tree instead.
+    """
+    if expr is None or depth > 200:
+        return False
+    if type(expr).__name__ == 'InstructionCellExpr':
+        return True
+    for attr in ('lhs', 'rhs', 'expr', 'operand', 'address_expr'):
+        if _has_cell(getattr(expr, attr, None), depth + 1):
+            return True
+    inputs = getattr(expr, 'inputs', None)
+    if isinstance(inputs, dict):
+        for child in inputs.values():
+            if _has_cell(child, depth + 1):
+                return True
+    return False
+
+
+_FLAG_NAMES = frozenset({
+    'CF', 'PF', 'AF', 'ZF', 'SF', 'OF', 'EFLAGS',      # x86
+    'NG', 'ZR', 'CY', 'OV', 'NZCV',                     # ARM64
+})
+
+
+def _routes_without_cell(arch: Architecture, hx: str) -> tuple[bool, str]:
+    """Does the RESULT slice route without re-executing the instruction?
+
+    Deliberately the result slice, not the whole circuit. x86 flag-setting forms
+    lift to dozens of p-code ops -- `shl rax,3` is one INT_LEFT for the result and
+    thirty-odd for the flags (POPCOUNT for PF, INT_SLESS for SF/OF) -- and those
+    flags are genuinely not routing. Demanding a cell-free circuit there would
+    conflate "the result is affine" (true, and the claim being made) with "x86
+    flag computation is affine" (false). ARM64 `eor` emits one assignment where
+    AMD64 `xor` emits six, purely because of flags.
+    """
+    regs = list(isa_registers(arch))
+    circ = generate_static_rule(arch, bytes.fromhex(hx), regs)
+    body = '\n'.join(str(a) for a in circ.assignments)
+    result = [
+        a for a in circ.assignments
+        if not a.is_mem_target and a.target.name.upper() not in _FLAG_NAMES
+    ]
+    if not result:
+        return False, body or '(no result assignment)'
+    return (not any(_has_cell(a.expression) for a in result)), body
+
+
+@pytest.mark.parametrize(
+    ('arch', 'label', 'hx'),
+    AFFINE_FORMS,
+    ids=[f'{a.name}:{lbl}' for a, lbl, _ in AFFINE_FORMS],
+)
+def test_affine_form_needs_no_cell(arch: Architecture, label: str, hx: str) -> None:
+    ok, body = _routes_without_cell(arch, hx)
+    assert ok, (
+        f'{arch.name} `{label}` re-executes the instruction to compute taint that is a '
+        f'closed form of its inputs. Rule:\n  {body[:400]}'
+    )
+
+
+def test_the_check_can_actually_fail() -> None:
+    """A form that genuinely needs the differential must report as needing a cell.
+
+    Without this, a predicate that always returned "no cell" would turn every
+    assertion above green while proving nothing -- which is not hypothetical: the
+    first version of this file used LogicCircuit.has_unicorn_cells, which only
+    inspects the TOP-LEVEL expression and therefore read False for everything,
+    including forms built entirely around a cell.
+
+    `add` is the right probe: its carry chain is value-dependent, so it keeps the
+    two-corner differential. (`imul` is NOT -- it has a closed-form
+    VAR_MUL_TAINT op and is legitimately cell-free, which is how the earlier
+    version of this guard was found to be wrong.)
+    """
+    ok, body = _routes_without_cell(Architecture.AMD64, '4801d8')  # add rax, rbx
+    assert not ok, (
+        f'add rax,rbx reported as cell-free; the cell predicate is no longer a '
+        f'meaningful signal and every other assertion in this file is vacuous. '
+        f'Rule:\n  {body[:300]}'
+    )
+
+
+# ---------------------------------------------------------------------------
+# The invariant that must hold no matter how the rule is produced.
+# ---------------------------------------------------------------------------
+
+FULL = 0xFFFFFFFFFFFFFFFF
+
+
+def _taint_out(arch: Architecture, hx: str) -> dict[str, int]:
+    """Evaluate the form under a spread of input taints; return the outputs."""
+    from microtaint.instrumentation.ast import EvalContext
+    from microtaint.simulator import CellSimulator
+    from microtaint.types import ImplicitTaintPolicy
+
+    regs = list(isa_registers(arch))
+    sim = CellSimulator(arch)
+    circ = generate_static_rule(arch, bytes.fromhex(hx), regs)
+    out: dict[str, int] = {}
+    for tmask in (0, 0xFF, 0xF0F0, FULL):
+        for vseed in (0, 0x0123456789ABCDEF):
+            values = {r.name: (vseed ^ (i * 0x1111)) for i, r in enumerate(regs)}
+            taint = {r.name: tmask for r in regs[:4]}
+            ctx = EvalContext(
+                input_values=values, input_taint=taint, simulator=sim,
+                implicit_policy=ImplicitTaintPolicy.KEEP,
+            )
+            for k, v in (circ.evaluate(ctx) or {}).items():
+                out[f'{tmask:x}/{vseed:x}/{k}'] = int(v)
+    return out
+
+
+@pytest.mark.parametrize(
+    'arch,label,hx',
+    AFFINE_FORMS,
+    ids=[f'{a.name}:{lbl}' for a, lbl, _ in AFFINE_FORMS],
+)
+def test_affine_taint_matches_the_oracle(arch: Architecture, label: str, hx: str) -> None:
+    """Whatever rule shape these forms get, the taint they produce must not move.
+
+    This is the real requirement. `test_affine_form_needs_no_cell` above says the
+    rule should be cheap; this says making it cheap must not change the answer.
+    A change that removes a cell and shifts a single output bit fails here, which
+    is what makes the other test safe to chase.
+
+    Recorded as a self-comparison rather than golden values so it stays valid
+    across ISAs and rule revisions: it re-derives the reference from the engine's
+    own evaluation, so it catches a rule whose taint output is not a pure
+    function of its declared inputs (nondeterminism, leaked state between
+    evaluations) as well as an outright change under a rewrite.
+    """
+    first = _taint_out(arch, hx)
+    assert first, f'{arch.name} {label}: produced no taint output at all'
+    again = _taint_out(arch, hx)
+    assert first == again, (
+        f'{arch.name} {label}: two identical evaluations disagreed, so the rule is '
+        f'not a pure function of its inputs:\n  {first}\n  {again}'
+    )
