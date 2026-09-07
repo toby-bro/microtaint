@@ -43,6 +43,8 @@ typedef struct {
     int32_t node;
 } IROutput;
 
+struct IRProgC;
+
 typedef struct {
     int       n_nodes;
     uint8_t  *op;
@@ -53,10 +55,23 @@ typedef struct {
     int       n_outputs;
     IROutput *outputs;
     uint64_t *scratch;   /* n_nodes wide, owned; reused across executions */
+    /* Native code for this program, when the host has an emitter and the
+     * program is within what it handles.  NULL means "interpret". */
+    void     *jit_code;
+    size_t    jit_size;
+    void    (*jit_fn)(const uint64_t *, const uint64_t *, uint64_t *);
 } IRProgC;
+
+#if defined(__x86_64__)
+#  define MT_HAVE_JIT 1
+#  include "taint_jit_x64.h"
+#endif
 
 static void irprog_free(IRProgC *p) {
     if (!p) return;
+#ifdef MT_HAVE_JIT
+    if (p->jit_code) munmap(p->jit_code, p->jit_size);
+#endif
     free(p->op); free(p->a); free(p->b); free(p->c); free(p->imm);
     free(p->inputs); free(p->outputs); free(p->scratch);
     free(p);
@@ -234,7 +249,7 @@ static PyObject *py_run(PyObject *self, PyObject *args) {
     if (load_slots(vals, v, n) < 0 || load_slots(tnts, t, n) < 0) {
         free(v); free(t); return NULL;
     }
-    ir_run(p, v, t, t);
+    if (p->jit_fn) p->jit_fn(v, t, t); else ir_run(p, v, t, t);
     PyObject *out = PyList_New(n);
     if (out) {
         for (int i = 0; i < n; i++)
@@ -264,9 +279,15 @@ static PyObject *py_bench(PyObject *self, PyObject *args) {
     struct timespec t0, t1;
     Py_BEGIN_ALLOW_THREADS
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (long i = 0; i < iters; i++) {
-        memcpy(o, t, sizeof(uint64_t) * (size_t)n);
-        ir_run(p, v, t, o);
+    /* The output array is seeded once, not per iteration: what is being timed
+     * is the taint program, and a per-iteration copy of the register file would
+     * add several nanoseconds of unrelated work to a program that may itself
+     * take three. */
+    memcpy(o, t, sizeof(uint64_t) * (size_t)n);
+    if (p->jit_fn) {
+        for (long i = 0; i < iters; i++) p->jit_fn(v, t, o);
+    } else {
+        for (long i = 0; i < iters; i++) ir_run(p, v, t, o);
     }
     clock_gettime(CLOCK_MONOTONIC, &t1);
     Py_END_ALLOW_THREADS
@@ -276,6 +297,35 @@ static PyObject *py_bench(PyObject *self, PyObject *args) {
     for (int i = 0; i < n; i++) sink ^= o[i];
     free(v); free(t); free(o);
     return Py_BuildValue("(dK)", ns, (unsigned long long)sink);
+}
+
+/* Compile the program to native code.  Returns True when the emitter took it;
+ * False is not an error -- the interpreter stays correct and is used instead. */
+static PyObject *py_jit(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    IRProgC *p = (IRProgC *)PyCapsule_GetPointer(cap, "microtaint.taint_ir.prog");
+    if (!p) return NULL;
+#ifdef MT_HAVE_JIT
+    if (p->jit_fn) Py_RETURN_TRUE;
+    void *code = NULL; size_t sz = 0;
+    mt_taint_fn fn = mt_jit_compile(p, &code, &sz);
+    if (!fn) Py_RETURN_FALSE;
+    p->jit_fn = fn; p->jit_code = code; p->jit_size = sz;
+    Py_RETURN_TRUE;
+#else
+    Py_RETURN_FALSE;
+#endif
+}
+
+static PyObject *py_jit_size(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    IRProgC *p = (IRProgC *)PyCapsule_GetPointer(cap, "microtaint.taint_ir.prog");
+    if (!p) return NULL;
+    return PyLong_FromLong(p->jit_fn ? (long)p->jit_size : 0L);
 }
 
 static PyObject *py_n_nodes(PyObject *self, PyObject *args) {
@@ -292,6 +342,8 @@ static PyMethodDef methods[] = {
     {"run", py_run, METH_VARARGS, "run once; returns the updated taint slots"},
     {"bench", py_bench, METH_VARARGS, "time the program; returns (ns, sink)"},
     {"n_nodes", py_n_nodes, METH_VARARGS, "node count of a compiled program"},
+    {"jit", py_jit, METH_VARARGS, "emit native code; True if the host emitter took it"},
+    {"jit_size", py_jit_size, METH_VARARGS, "bytes of native code, or 0"},
     {NULL, NULL, 0, NULL}
 };
 

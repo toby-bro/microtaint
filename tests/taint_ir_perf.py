@@ -71,6 +71,8 @@ def _sizes(arch):
 
 
 def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
+    import time
+
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir.cbackend import bind_driver, compile_batch, emit_c, emit_driver
     from microtaint.taint_ir.exec import compile_program
@@ -115,6 +117,7 @@ def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
     O = (ctypes.c_uint64 * len(names))()
 
     rows, mismatches = [], []
+    n_jit, jit_compile_total = [0], [0.0]
     for i, (label, p) in enumerate(zip(labels, progs)):
         try:
             cap, _d = compile_program(p, slot_of)
@@ -130,9 +133,23 @@ def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
             mismatches.append((label, bad))
         ns_c = bench(i, V, T, O, iters)
         ns_i, _sink = taint_ir_c.bench(cap, list(vals), list(tnts), max(2000, iters // 20))
-        rows.append((label, p.cost(), ns_c, ns_i))
+        # The host emitter is checked against the interpreter on the same state
+        # before it is timed: a code-generation bug that only shows on some
+        # inputs is worth catching here rather than in a taint result.
+        t0 = time.perf_counter()
+        took = taint_ir_c.jit(cap)
+        jit_compile = time.perf_counter() - t0
+        ns_j = 0.0
+        if took:
+            if taint_ir_c.run(cap, list(vals), list(tnts)) != got_i:
+                mismatches.append((label, ['jit']))
+            ns_j, _s2 = taint_ir_c.bench(cap, list(vals), list(tnts), iters)
+            n_jit[0] += 1
+            jit_compile_total[0] += jit_compile
+        rows.append((label, p.cost(), ns_c, ns_i, ns_j))
     return {'rows': rows, 'declined': declined, 'compile_s': compile_s,
-            'n_progs': len(progs), 'mismatches': mismatches}
+            'n_progs': len(progs), 'mismatches': mismatches,
+            'n_jit': n_jit[0], 'jit_compile_s': jit_compile_total[0]}
 
 
 def _q(xs, q):
@@ -147,13 +164,16 @@ def summarize(isa, res):
     ops = [r[1] for r in rows]
     cns = [r[2] for r in rows]
     ins = [r[3] for r in rows]
+    jns = [r[4] for r in rows if r[4] > 0]
     n = len(rows)
+    jit = (f'jit mean={sum(jns)/len(jns):6.2f} p50={_q(jns,0.5):6.2f} ns '
+           f'({res["n_jit"]}/{n}) | ' if jns else '')
     return (f'{isa:12s} n={n:4d} declined={res["declined"]:3d} | '
             f'ops mean={sum(ops)/n:5.1f} | '
-            f'compiled mean={sum(cns)/n:6.2f} p50={_q(cns,0.5):6.2f} '
-            f'p95={_q(cns,0.95):6.2f} p100={max(cns):6.2f} ns | '
-            f'interp mean={sum(ins)/n:7.1f} ns | '
-            f'speedup x{(sum(ins)/n)/(sum(cns)/n):4.1f}')
+            f'clang mean={sum(cns)/n:6.2f} p50={_q(cns,0.5):6.2f} '
+            f'p95={_q(cns,0.95):6.2f} ns | '
+            f'{jit}'
+            f'interp mean={sum(ins)/n:7.1f} ns')
 
 
 def main(argv=None):
@@ -171,6 +191,7 @@ def main(argv=None):
 
     specs = load_bank(isas=set(args.isas) if args.isas else None)
     out, total_c, total_i, total_n = {}, 0.0, 0.0, 0
+    total_j, total_jn = 0.0, 0
     print('taint propagation per instruction, whole instruction, flags included')
     for isa, spec in sorted(specs.items()):
         res = measure_isa(isa, spec, iters=args.iters, opt=args.opt)
@@ -188,14 +209,21 @@ def main(argv=None):
             worst = sorted(res['rows'], key=lambda r: -r[2])[:args.top]
             print(f'{"":12s} slowest: ' +
                   ', '.join(f'{lbl}={ns:.1f}ns' for lbl, _o, ns, _i in worst))
-        out[isa] = {lbl: [ops, round(ns_c, 3)] for lbl, ops, ns_c, _ni in res['rows']}
+        print(f'{"":12s} host jit: {1e6*res["jit_compile_s"]/max(1, res["n_jit"]):.0f} us '
+              f'per program (clang: '
+              f'{1000*res["compile_s"]/res["n_progs"]:.1f} ms)')
+        out[isa] = {lbl: [ops, round(ns_c, 3), round(ns_j, 3)]
+                    for lbl, ops, ns_c, _ni, ns_j in res['rows']}
         total_c += sum(r[2] for r in res['rows'])
         total_i += sum(r[3] for r in res['rows'])
+        total_j += sum(r[4] for r in res['rows'] if r[4] > 0)
+        total_jn += sum(1 for r in res['rows'] if r[4] > 0)
         total_n += len(res['rows'])
     if total_n:
-        print(f'{"TOTAL":12s} n={total_n:4d} compiled mean={total_c/total_n:.2f} ns '
-              f'| interpreted mean={total_i/total_n:.1f} ns '
-              f'| x{(total_i/total_n)/(total_c/total_n):.1f}')
+        jm = (total_j / total_jn) if total_jn else 0.0
+        print(f'{"TOTAL":12s} n={total_n:4d} clang mean={total_c/total_n:.2f} ns '
+              f'| host jit mean={jm:.2f} ns ({total_jn} programs) '
+              f'| interpreted mean={total_i/total_n:.1f} ns')
     if args.update:
         BASELINE.write_text(json.dumps(out, indent=1, sort_keys=True) + '\n')
         print(f'baseline written: {BASELINE}')
