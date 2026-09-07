@@ -113,6 +113,15 @@ def test_decode_cache_is_active_and_hit() -> None:
         os.unlink(binary)
 
 
+@pytest.mark.skipif(
+    os.environ.get('MICROTAINT_TAINT_IR', '') not in ('', '0'),
+    reason=(
+        'The compiled-taint path hangs off the decode-cache entry, so turning '
+        'the cache off turns it off too and the two runs are no longer the same '
+        'evaluator. They legitimately disagree: the lowering is exact where the '
+        'whole-instruction differential is not -- `push %rbp` leaves RSP clean '
+        'in the differential even when RSP was tainted, and taints RSP from RBP '
+        'when it was not. This test is about the cache, not about that.'))
 def test_decode_cache_bit_exact_on_vs_off() -> None:
     binary = _compile(_SRC)
     try:

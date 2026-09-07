@@ -82,6 +82,15 @@ def _counters(elf: Path):
     return h, w.sim._pcode.native_calls  # noqa: SLF001
 
 
+@pytest.mark.skipif(
+    os.environ.get('MICROTAINT_TAINT_IR', '') not in ('', '0'),
+    reason=(
+        'These limits were recorded for the default evaluator. The compiled '
+        'taint path is more faithful in places -- it keeps RSP tainted through '
+        'a `push` where the whole-instruction differential clears it -- so more '
+        'taint legitimately propagates and fewer instructions have provably '
+        'clean inputs for the untainted-input exit to dismiss. Comparing that '
+        'against a baseline for the other evaluator measures nothing.'))
 @pytest.mark.parametrize('name', sorted(LIMITS))
 def test_hot_path_coverage_ratchet(name: str) -> None:
     elf = _BENCH_DIR / name

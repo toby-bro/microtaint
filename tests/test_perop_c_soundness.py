@@ -31,7 +31,7 @@ def test_no_new_under_taint_vs_ground_truth(isa):
     assert rep.n_cases > 0, f'{isa}: no cases evaluated'
     if rep.n_under_new:
         detail = '\n'.join(
-            f'  {label}: missing {{k: hex(b) for k, b in new.items()}} '
+            f'  {label}: missing {[(k, hex(b)) for k, b in new.items()]} '
             f'with taint {[(k, hex(x)) for k, x in it.items() if x]}'
             for label, it, _iv, new in rep.new_under_examples[:6])
         pytest.fail(f'{isa}: {rep.n_under_new} case(s) under-taint where the '

@@ -427,8 +427,12 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
                           int out_cap) {
     const int n_slots = *c->n_slots;
     if (n_slots > MT_IR_MEM_BASE || ent->ir_n_acc > out_cap) return MT_EVAL_DECLINED;
+    /* The context stores Py_None rather than NULL for an absent shadow -- the
+     * circuit evaluator treats None as "not provided" -- so a NULL test alone
+     * would hand None to the shadow C-API, which casts without checking. */
     if (!c->ir_val || !c->shadow_read_mask || !c->shadow_write_mask
-            || !c->mem_fn || !c->shadow) return MT_EVAL_DECLINED;
+            || !c->mem_fn || !c->shadow || c->shadow == Py_None)
+        return MT_EVAL_DECLINED;
 
     uint64_t *sv = c->ir_val, *st = c->ir_taint, *so = c->ir_out;
     const size_t nb = (size_t)n_slots * sizeof(uint64_t);
@@ -460,11 +464,18 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
     memcpy(so, st, nb);
     fn(sv, st, so);
 
-    /* A store through a secret-dependent address writes somewhere unknown,
-     * which is a wider obligation than this path can discharge. */
+    /* Any access through a secret-dependent address is handed back.
+     *
+     * For a STORE the reason is soundness: the write lands somewhere unknown,
+     * which is a wider obligation than this path can discharge.  For a LOAD it
+     * is deliberate deference: the lowering's rule -- a load through a tainted
+     * address taints the whole loaded word -- is the sound one, but the engine
+     * resolves such a load against the concrete address instead, and quietly
+     * changing that policy here would cascade (a tainted stack pointer would
+     * make every local read fully tainted).  Which of the two is right is a
+     * question for the engine's implicit-taint policy, not for a fast path. */
     for (int k = 0; k < ent->ir_n_acc; k++) {
-        if (ent->ir_acc_kind[k] == 1 && so[MT_IR_MEM_BASE + 4 * k + 2] != 0)
-            return MT_EVAL_DECLINED;
+        if (so[MT_IR_MEM_BASE + 4 * k + 2] != 0) return MT_EVAL_DECLINED;
     }
 
     memcpy(*c->g_taint, so, nb);
@@ -584,21 +595,36 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
     /* ---- evaluate ------------------------------------------------------- */
     MtMemWrite mw[MT_MAX_MEM_WRITES];
     int rc;
+    /* The compiled program first, where it applies.  A decline here is not a
+     * reason to leave the C path: it commits nothing until it has succeeded, so
+     * the circuit evaluator can still handle the instruction exactly as it
+     * always did. */
+    rc = MT_EVAL_DECLINED;
     if (has_mem && ent->ir_fn && ent->ir_n_acc > 0
             && !(cflags & MT_CF_PC_TARGET)) {
         rc = mt_ir_mem_step(c, ent, mw, MT_MAX_MEM_WRITES);
-        if (rc == MT_EVAL_DECLINED) return MT_FAST_SLOW;
+    }
+    if (rc != MT_EVAL_DECLINED) {
+        /* the compiled program answered */
     } else if (has_mem) {
         if (!c->use_cmem || !c->capi->eval_mem_ptr_ci) return MT_FAST_SLOW;
         rc = c->capi->eval_mem_ptr_ci(compiled, g_taint, g_val, n_slots,
                                       c->pcode, c->shadow, c->mem_reader, c->slot_map,
                                       c->mem_fn, c->mem_ctx, mw, MT_MAX_MEM_WRITES,
                                       c->implicit_policy);
-    } else if (ent->ir_fn && !(cflags & MT_CF_PC_TARGET)) {
+    } else if (ent->ir_fn && ent->ir_n_acc == 0
+                       && !(cflags & MT_CF_PC_TARGET)) {
         /* The whole instruction's taint, flags included, as one call into code
          * compiled from its p-code.  Writing through g_taint in place is safe:
          * the emitted program reads every input before it stores any output,
-         * for exactly this aliasing. */
+         * for exactly this aliasing.
+         *
+         * `ir_n_acc == 0` is not redundant with `!has_mem`.  The two can
+         * disagree: the rule generator resolves some memory operands into named
+         * MEM_ inputs and does not set HAS_MEM_OPS for them, while the lowering
+         * reads the same operand as a LOAD and gives it state slots past the
+         * register file.  Running such a program here would write those slots
+         * into a taint array sized only for registers. */
         ((MtTaintIRFn)ent->ir_fn)(g_val, g_taint, g_taint);
         rc = 0;
     } else {

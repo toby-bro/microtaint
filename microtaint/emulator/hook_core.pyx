@@ -232,6 +232,12 @@ cdef extern from "fastpath.h":
 # header is the source of truth and the values must match it.
 DEF MT_EVAL_DECLINED = -1
 DEF MT_EVAL_ERROR = -2
+# Compiled-program memory state: must match MT_IR_MEM_BASE / MT_IR_MAX_ACC in
+# fastpath.h, and MEM_SLOT_BASE / MAX_ACCESSES in taint_ir/engine_glue.py.
+DEF MT_IR_MEM_BASE = 512
+DEF MT_IR_MAX_ACC = 8
+DEF MT_IR_SLOTS = MT_IR_MEM_BASE + 4 * MT_IR_MAX_ACC
+
 DEF MT_MAX_MEM_WRITES = 32
 DEF MT_FAST_DONE = 0
 DEF MT_FAST_SLOW = 1
@@ -261,6 +267,30 @@ cdef void _load_circuit_capi():
         PyErr_Clear()
 
 _load_circuit_capi()
+
+# Shadow memory at the C level, for the compiled-program memory path.  Mirrors
+# _ShadowCAPI in shadow.pyx; when the capsule is unavailable the pointers stay
+# NULL and that path is simply not taken.
+cdef struct _MtShadowCAPI:
+    uint64_t (*read_mask)(object shadow, uint64_t address, int size) noexcept
+    void     (*write_mask)(object shadow, uint64_t address, uint64_t mask, int size) noexcept
+
+cdef _MtShadowCAPI *_shadow_capi = NULL
+
+cdef void _load_shadow_capi():
+    global _shadow_capi
+    cdef object mod, cap
+    try:
+        from microtaint.emulator import shadow as _sh
+        cap = getattr(_sh, '_shadow_capi', None)
+        if cap is not None:
+            _shadow_capi = <_MtShadowCAPI*>PyCapsule_GetPointer(
+                cap, b"microtaint.emulator.shadow._shadow_capi")
+    except Exception:  # noqa: BLE001 - not fatal; the circuit path still works
+        _shadow_capi = NULL
+        PyErr_Clear()
+
+_load_shadow_capi()
 
 import ctypes
 from microtaint.types import ImplicitTaintError as _ImplicitTaintError
@@ -450,6 +480,7 @@ cdef class InstructionHook:
     cdef public dict arr_cache        # address -> (in_snap, out_snap, val_snap, slots)
     cdef public dict slots_cache      # instruction bytes -> list of input slots
     cdef public dict taint_ir_progs   # instruction bytes -> compiled taint program (keeps its code alive)
+    cdef uint64_t *ir_scratch         # 3 x MT_IR_SLOTS, for the two-pass memory protocol
     cdef AddrMap addr_map             # pure-C per-address cache (array path)
     # Handed to mt_fast_step.  Holds POINTERS to the mutable fields above rather
     # than copies, so slot growth and lazy slot interning are picked up with no
@@ -593,6 +624,18 @@ cdef class InstructionHook:
         self.fctx.mem_reader = <PyObject*>self.read_live_memory \
             if self.read_live_memory is not None else <PyObject*>None
         self.fctx.slot_map = <PyObject*>self.slot_map
+        # The compiled-program memory path: shadow access as plain C, and the
+        # scratch state its two passes need (nothing may touch the live arrays
+        # until both have succeeded).  Allocated once; if either is missing the
+        # path is not taken and the circuit evaluator handles memory as before.
+        if _shadow_capi != NULL:
+            self.fctx.shadow_read_mask = _shadow_capi.read_mask
+            self.fctx.shadow_write_mask = _shadow_capi.write_mask
+        self.ir_scratch = <uint64_t*>calloc(3 * MT_IR_SLOTS, sizeof(uint64_t))
+        if self.ir_scratch != NULL:
+            self.fctx.ir_val = self.ir_scratch
+            self.fctx.ir_taint = self.ir_scratch + MT_IR_SLOTS
+            self.fctx.ir_out = self.ir_scratch + 2 * MT_IR_SLOTS
         self.fctx.mem_fn = _mt_mem_read_c
         self.fctx.mem_ctx = <void*>&self.mem_ctx
         self.fctx.eflags_slot = &self.eflags_slot
@@ -629,6 +672,9 @@ cdef class InstructionHook:
         if self.ef_bits != NULL:
             free(self.ef_bits)
             self.ef_bits = NULL
+        if self.ir_scratch != NULL:
+            free(self.ir_scratch)
+            self.ir_scratch = NULL
 
     # ------------------------------------------------------------------
     # Array-native taint state helpers (Phase 1.3c)
@@ -1034,9 +1080,15 @@ cdef class InstructionHook:
             return
         if got is None:
             return
-        cap, addr_val = got
+        cap, addr_val, accesses = got
+        if len(accesses) > 8:
+            return
         # The capsule owns the emitted code; hold it for the hook's lifetime.
         self.taint_ir_progs[instruction_bytes] = cap
+        ent.ir_n_acc = len(accesses)
+        for i in range(len(accesses)):
+            ent.ir_acc_kind[i] = <signed char>accesses[i][0]
+            ent.ir_acc_size[i] = <signed char>accesses[i][1]
         ent.ir_fn = <void*><size_t>addr_val
 
     cdef int _fill_vals_arr(self, bytes instruction_bytes,
@@ -1267,6 +1319,7 @@ cdef class InstructionHook:
                     aent.have_val = 0
                     aent.ir_fn = NULL
                     aent.ir_tried = 0
+                    aent.ir_n_acc = 0
                 if address < self.code_lo:
                     self.code_lo = address
                 if address + <unsigned long long>size > self.code_hi:

@@ -8,9 +8,8 @@ hot path does when `program_for` hands it one.
 Three conditions have to hold before a program is usable there, and all three
 are checked rather than assumed:
 
-  * REGISTER-ONLY.  A memory access needs the two-pass protocol (evaluate for
-    the addresses, resolve the shadow, evaluate again), which the register fast
-    path does not run.
+  * FEW ENOUGH MEMORY ACCESSES.  Each one occupies four state slots past the
+    register file, and the hot path's scratch is fixed-size.
   * EVERY INPUT PLACED.  The engine interns slots lazily, so a register the
     program reads may not have one yet.  Compiling against a missing slot would
     read whatever sits at index -1; the answer is to decline and retry later,
@@ -27,7 +26,11 @@ from __future__ import annotations
 
 import os
 
-_CACHE: dict = {}          # (arch, code) -> capsule | None   (None = permanent no)
+#: Must match MT_IR_MEM_BASE / MT_IR_MAX_ACC in emulator/fastpath.h.
+MEM_SLOT_BASE = 512
+MAX_ACCESSES = 8
+
+_CACHE: dict = {}          # (arch, code) -> program | None   (None = permanent no)
 _PENDING: set = set()      # (arch, code) awaiting a slot that does not exist yet
 _ENABLED = None
 
@@ -71,12 +74,19 @@ def program_for(arch, code: bytes, name_to_slot: dict):
     except Exception:  # noqa: BLE001
         _CACHE[key] = None
         return None
-    if prog.accesses:
+    if len(prog.accesses) > MAX_ACCESSES:
         _CACHE[key] = None
+        return None
+    if len(name_to_slot) >= MEM_SLOT_BASE:
+        _CACHE[key] = None            # registers would collide with memory state
         return None
 
     from microtaint.taint_ir.regmap import name_offset
-    slot_of = slot_resolver(arch, name_to_slot)
+    # Memory state sits at a FIXED base rather than just past the current slot
+    # count: a program is compiled once while the engine goes on interning
+    # register slots, and a base that moved would leave already-compiled
+    # programs addressing the wrong words.
+    slot_of = slot_resolver(arch, name_to_slot, n_reg_slots=MEM_SLOT_BASE)
     touched = {k[1] for (_kind, k) in prog.inputs if isinstance(k, tuple)}
     touched |= {k[1] for k, _n in prog.outputs if isinstance(k, tuple)}
     # Two caller names at one offset would make the write ambiguous: the IR
@@ -109,7 +119,9 @@ def program_for(arch, code: bytes, name_to_slot: dict):
         _CACHE[key] = None
         return None
     _PENDING.discard(key)
-    _CACHE[key] = (cap, addr)
+    accesses = tuple((0 if a['kind'] == 'load' else 1, a['size'])
+                     for a in prog.accesses)
+    _CACHE[key] = (cap, addr, accesses)
     return _CACHE[key]
 
 
