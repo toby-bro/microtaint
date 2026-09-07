@@ -857,11 +857,27 @@ class MicrotaintWrapper:
         # Build the Cython LiveMemReader once.  Replaces the bound-method
         # _read_live_memory that circuit_c invokes from OP_PUSH_MEM_VALUE
         # — saves ~0.5 us of Python frame setup per call x 256k calls/run.
+        # uc_mem_read is also handed over as a raw C function pointer (plus the
+        # buffer address) so LiveMemReader can do the guest read without any
+        # ctypes marshalling; perf attributed ~14-15% of the taint phase to the
+        # ctypes boxing on this path.  MICROTAINT_DISABLE_CMEMREAD=1 keeps the
+        # ctypes path (the addresses are simply not passed).
+        _mr_addr = 0
+        _buf_addr = 0
+        if os.environ.get('MICROTAINT_DISABLE_CMEMREAD') != '1':
+            try:
+                _mr_addr = ctypes.cast(_uc_mem_read, ctypes.c_void_p).value or 0
+                _buf_addr = ctypes.addressof(_MEM_BUF)
+            except Exception:  # noqa: BLE001 - fall back to the ctypes path
+                _mr_addr = 0
+                _buf_addr = 0
         self._live_mem_reader = LiveMemReader(
             self,
             uc_mem_read=_uc_mem_read,
             mem_buf=_MEM_BUF,
             mem_ptrs=_MEM_PTRS,
+            uc_mem_read_addr=_mr_addr,
+            mem_buf_addr=_buf_addr,
         )
 
         self.ql.os.set_syscall(0, self._sys_read_hook, QL_INTERCEPT.CALL)

@@ -45,6 +45,15 @@ from libc.string cimport memcpy, memcmp, memset
 # value-dependent cache hit.
 ctypedef int (*uc_reg_read_batch_ft)(void *uc, void *regs, void *vals, int count) noexcept nogil
 
+# uc_mem_read(uc_engine *uc, uint64_t address, void *bytes, size_t size) -> uc_err.
+# Called through this C function pointer for the guest-memory reads that
+# OP_PUSH_MEM_VALUE performs.  perf attributes ~14-15% of the taint phase to this
+# path when it goes through ctypes: ConvParam / _stginfo_from_type /
+# PyCSimpleType_from_param / PyCArgObject_new boxing plus ffi_call_int, and the
+# isinstance + PyObject_Malloc/Free traffic they generate.  The fnptr call skips
+# all of it (same trick already used for uc_reg_read_batch).
+ctypedef int (*uc_mem_read_ft)(void *uc, uint64_t addr, void *buf, size_t size) noexcept nogil
+
 import ctypes
 from microtaint.types import ImplicitTaintError as _ImplicitTaintError
 
@@ -1292,13 +1301,20 @@ cdef class LiveMemReader:
     cdef public object mem_ptrs       # dict[int, ctypes.POINTER(uintN_t)]
     cdef public object ql             # Qiling, for the slow-path fallback
     cdef unsigned long long uc_handle # Unicorn engine pointer
+    # C-level read boundary: address of uc_mem_read and of the ctypes buffer, so
+    # the read needs no ctypes marshalling at all.  0 => use the ctypes path.
+    cdef unsigned long long uc_mr_addr
+    cdef unsigned long long mem_buf_addr
 
-    def __init__(self, wrapper, *, uc_mem_read, mem_buf, mem_ptrs):
+    def __init__(self, wrapper, *, uc_mem_read, mem_buf, mem_ptrs,
+                 uc_mem_read_addr=0, mem_buf_addr=0):
         self.wrapper = wrapper
         self.uc_mem_read = uc_mem_read
         self.mem_buf = mem_buf
         self.mem_ptrs = mem_ptrs
         self.ql = wrapper.ql
+        self.uc_mr_addr = <unsigned long long>(uc_mem_read_addr or 0)
+        self.mem_buf_addr = <unsigned long long>(mem_buf_addr or 0)
         # uc_handle is a ctypes c_void_p — extract the integer once for
         # the hot path.  ctypes will accept the int argument directly.
         cdef object handle = wrapper._uc_handle
@@ -1311,6 +1327,28 @@ cdef class LiveMemReader:
         """Read `size` bytes at `address` from the live Unicorn engine."""
         cdef int err
         cdef object ptr
+        cdef unsigned char *p
+        cdef uint64_t v
+        cdef int i
+        # C-level fast path: call uc_mem_read through the fnptr and assemble the
+        # little-endian value straight out of the buffer.  Bit-identical to the
+        # ctypes path (same C function, same buffer, same LE semantics) but with
+        # no ConvParam / PyCArgObject boxing and no ctypes pointer deref.  Widths
+        # above 8 bytes keep the bytes path.
+        if self.uc_mr_addr != 0 and self.mem_buf_addr != 0 and 0 < size <= 8:
+            err = (<uc_mem_read_ft>(<void*>self.uc_mr_addr))(
+                <void*>self.uc_handle, <uint64_t>address,
+                <void*>self.mem_buf_addr, <size_t>size)
+            if err == 0:
+                p = <unsigned char*>self.mem_buf_addr
+                v = 0
+                for i in range(size):
+                    v |= (<uint64_t>p[i]) << (8 * i)
+                return v
+            try:
+                return int.from_bytes(self.ql.mem.read(address, size), 'little')
+            except Exception:  # noqa: BLE001
+                return 0
         try:
             err = self.uc_mem_read(self.uc_handle, address, self.mem_buf, size)
             if err == 0:
