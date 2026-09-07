@@ -19,65 +19,7 @@ from microtaint.taint_ir.frompcode import Unsupported, build_ir
 from tests.perop_c_bank import Declined, _engine_names
 
 _CACHE: dict = {}
-_OFFSETS: dict = {}
-
-
-def _offsets(arch):
-    key = arch.value if hasattr(arch, 'value') else str(arch)
-    o = _OFFSETS.get(key)
-    if o is None:
-        from microtaint.instrumentation.cell import _build_reg_maps
-        o = dict(_build_reg_maps(arch)[0])
-        _OFFSETS[key] = o
-    return o
-
-
-def name_offset(arch, name):
-    """Byte offset of a register the caller named.
-
-    Vector lanes reach the engine's taint state as `VL_0x<offset>` -- a name
-    generated FROM the geometry rather than taken from the register file -- so
-    the cell evaluator's name table does not contain them.  The offset is right
-    there in the name.
-    """
-    off = _offsets(arch).get(name)
-    if off is not None:
-        return off
-    if name.startswith('VL_0x'):
-        try:
-            return int(name[3:], 16)
-        except ValueError:
-            return None
-    return None
-
-
-def slot_resolver(arch, name_to_slot):
-    """A `slot_of` for IR keys, given the caller's register-name slot map.
-
-    The IR names registers by BYTE OFFSET because a register file gives one
-    offset several names; the caller names them however its own state does.
-    Resolving through the offset is what lets the two meet without either side
-    having to know the other's spelling.
-    """
-    offs = _offsets(arch)
-    by_off = {}
-    for name, slot in name_to_slot.items():
-        off = name_offset(arch, name)
-        if off is not None:
-            by_off.setdefault(off, slot)
-    n_slots = (max(name_to_slot.values()) + 1) if name_to_slot else 0
-
-    def slot_of(key):
-        if isinstance(key, tuple):
-            kind = key[0]
-            if kind == 'reg':
-                return by_off.get(key[1])
-            from microtaint.taint_ir.frompcode import access_slot
-            if kind in ('mem', 'addr', 'addrt', 'sttaint'):
-                return access_slot(n_slots, key[1], kind)
-        return name_to_slot.get(key)
-
-    return slot_of
+from microtaint.taint_ir.regmap import name_offset, slot_resolver  # noqa: E402,F401
 
 
 def ir_state(arch, names, values, taints):
