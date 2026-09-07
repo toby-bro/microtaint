@@ -1,0 +1,116 @@
+"""Gates for the lowered taint IR and its backends.
+
+Three claims, each of which has already been wrong at least once:
+
+  * the IR agrees with Unicorn per-bit ground truth, and never under-taints
+    where the current engine does not;
+  * `finalize` -- which expands one-bit cones into cheapest expressions and
+    compacts the program -- preserves meaning exactly;
+  * the two backends compute the same thing as the interpreter.  Three
+    register-clobbering bugs in the emitter were caught only by comparing
+    against it on many random states, so that comparison is a permanent test
+    rather than something run once.
+"""
+# ruff: noqa: PLC0415
+import random
+
+import pytest
+
+MASK64 = 0xFFFFFFFFFFFFFFFF
+
+_CASES = [
+    ('AMD64', 'mov rax, rbx', '4889d8'),
+    ('AMD64', 'add rax, rbx', '4801d8'),
+    ('AMD64', 'sub rax, rbx', '4829d8'),
+    ('AMD64', 'and rax, rbx', '4821d8'),
+    ('AMD64', 'xor rax, rbx', '4831d8'),
+    ('AMD64', 'cmp rax, rbx', '4839d8'),
+    ('AMD64', 'shl rax, 4', '48c1e004'),
+    ('AMD64', 'shl rax, cl', '48d3e0'),
+    ('AMD64', 'shrd rax, rbx, 7', '480facd807'),
+    ('AMD64', 'adc rax, rbx', '4811d8'),
+    ('AMD64', 'cmove rax, rbx', '480f44c3'),
+    ('AMD64', 'mov ah, bh', '88fc'),
+    ('AMD64', 'inc rax', '48ffc0'),
+    ('AMD64', 'neg rax', '48f7d8'),
+    ('ARM64', 'add x0, x1, x2', '2000028b'),
+    ('ARM64', 'subs x0, x1, x2', '200002eb'),
+    ('ARM64', 'csel x0, x1, x2, eq', '2000829a'),
+    ('ARM64', 'eor x0, x1, x2', '200002ca'),
+]
+
+
+def _arch(name):
+    from microtaint.types import Architecture
+    return getattr(Architecture, name)
+
+
+def _prog(isa, hexcode):
+    from microtaint.taint_ir.frompcode import build_ir
+    return build_ir(_arch(isa), bytes.fromhex(hexcode))
+
+
+def _states(prog, n, seed):
+    rng = random.Random(seed)
+    keys = sorted({k for (_kind, k) in prog.inputs})
+    return [({k: rng.getrandbits(64) for k in keys},
+             {k: rng.getrandbits(64) for k in keys}) for _ in range(n)]
+
+
+@pytest.mark.parametrize('isa,label,code', _CASES,
+                         ids=[f'{i}:{l}' for i, l, _c in _CASES])
+def test_finalize_preserves_meaning(isa, label, code):
+    """Expanding the one-bit cones and compacting must not change any answer."""
+    prog = _prog(isa, code)
+    fin = prog.finalize()
+    for vals, tnts in _states(prog, 120, f'fin:{label}'):
+        assert prog.run(vals, tnts) == fin.run(vals, tnts), label
+
+
+@pytest.mark.parametrize('isa,label,code', _CASES,
+                         ids=[f'{i}:{l}' for i, l, _c in _CASES])
+def test_backends_agree(isa, label, code):
+    """The C interpreter, the host emitter and the Python reference agree."""
+    from microtaint.instrumentation.cell_c import taint_ir_c
+    from microtaint.taint_ir.exec import compile_program
+
+    prog = _prog(isa, code)
+    keys = sorted({k for (_kind, k) in prog.inputs} | {k for k, _n in prog.outputs})
+    slot = {k: i for i, k in enumerate(keys)}
+    cap, _d = compile_program(prog, lambda n: slot.get(n))
+
+    rng = random.Random(f'be:{label}')
+    for _ in range(120):
+        vals = [rng.getrandbits(64) for _ in keys]
+        tnts = [rng.getrandbits(64) for _ in keys]
+        ref = prog.run({k: vals[slot[k]] for k in keys},
+                       {k: tnts[slot[k]] for k in keys})
+        interp = taint_ir_c.run(cap, vals, tnts)
+        for k, want in ref.items():
+            assert interp[slot[k]] == want, f'{label}: interpreter differs on {k}'
+    if not taint_ir_c.jit(cap):
+        pytest.skip('host emitter declined this program')
+    for _ in range(200):
+        vals = [rng.getrandbits(64) for _ in keys]
+        tnts = [rng.getrandbits(64) for _ in keys]
+        ref = prog.run({k: vals[slot[k]] for k in keys},
+                       {k: tnts[slot[k]] for k in keys})
+        native = taint_ir_c.run(cap, vals, tnts)
+        for k, want in ref.items():
+            assert native[slot[k]] == want, f'{label}: emitted code differs on {k}'
+
+
+@pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'RISCV64'])
+def test_ir_never_under_taints_vs_ground_truth(isa):
+    from tests.perop_c_bank import run_bank_perop_c
+    from tests.taint_ir_bank import ir_step
+
+    rep = run_bank_perop_c(isas=[isa], n_sparse=2, ref='ground_truth',
+                           step=ir_step)
+    assert rep.n_cases > 0
+    if rep.n_under_new:
+        detail = '\n'.join(
+            f'  {label}: missing {[(k, hex(b)) for k, b in new.items()]}'
+            for label, _it, _iv, new in rep.new_under_examples[:6])
+        pytest.fail(f'{isa}: {rep.n_under_new} case(s) under-taint where the '
+                    f'current engine does not:\n{detail}')
