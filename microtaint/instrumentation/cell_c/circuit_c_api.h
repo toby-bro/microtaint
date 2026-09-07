@@ -50,6 +50,25 @@ typedef struct {
 /* Bits returned by compiled_flags().  These mirror int fields of CompiledCircuit
  * that the hot path consults on every instruction; reading them through one C
  * call replaces two PyObject_GenericGetAttr lookups per instruction. */
+/* One register target's clear mask, for the untainted-input fast exit.  When no
+ * input taint is set the differential is provably zero on every target, so the
+ * whole evaluation collapses to "clear each target's bits".  Targets are bit
+ * slices, so clearing the whole register would be wrong: an instruction writing
+ * AL must leave RAX's upper taint alone. */
+typedef struct {
+    int      slot;         /* global taint slot of the target register */
+    uint64_t clear_mask;   /* bits this assignment writes */
+} MtOutSlot;
+
+/* Everything that fast exit needs, resolved from the compiled circuit.  All
+ * pointers are internal to the circuit and borrowed. */
+typedef struct {
+    const int       *pool_slots;   /* n_pool entries: string_pool idx -> slot, or -1 */
+    int              n_pool;
+    const MtOutSlot *outs;
+    int              n_out;
+} MtPrefilter;
+
 #define MT_CF_C_EVALUABLE     0x01
 #define MT_CF_C_MEM_EVALUABLE 0x02
 #define MT_CF_HAS_MEM_OPS     0x04
@@ -93,6 +112,13 @@ typedef struct {
     /* MT_CF_* bits for a CompiledCircuit, or 0 if `compiled` is not one (which
      * reads as "no capabilities", the safe answer: the caller falls back). */
     int (*compiled_flags)(PyObject *compiled);
+
+    /* Fills `pf` for the untainted-input fast exit.  Returns 0 on success, -1
+     * when the circuit is not eligible (memory or PC target, python fallback,
+     * or a target wider than one 64-bit slot), in which case the caller must
+     * evaluate normally. */
+    int (*compiled_prefilter)(PyObject *compiled, PyObject *name_to_slot,
+                              MtPrefilter *pf);
 } CircuitCAPI;
 
 #endif /* CIRCUIT_C_API_H */

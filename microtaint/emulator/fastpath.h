@@ -238,6 +238,8 @@ typedef struct {
      * measurement rather than an assumption: if a change quietly made the path
      * decline, the timing would barely move but this would collapse. */
     unsigned long *fast_done;
+    /* Instructions dismissed by the untainted-input exit below. */
+    unsigned long *prefilter_hits;
 } MtFastCtx;
 
 /* Scatter the flag bits of the packed flags register into their own value
@@ -287,6 +289,49 @@ static inline void mt_apply_mem_writes(MtFastCtx *c, const MtMemWrite *w, int n)
     }
 }
 
+
+/* Untainted-input fast exit.
+ *
+ * The overwhelming majority of instructions in a real program never touch
+ * tainted data: loop counters, table setup, pointer arithmetic on clean values.
+ * Evaluating the differential for those computes zero the expensive way -- on an
+ * all-clean benchmark that was still ~124k SLEIGH cell re-executions.
+ *
+ * If every taint input of the circuit is zero then f(V|0) XOR f(V&~0) is zero on
+ * every target, and every soundness floor is keyed on a tainted input bit, so
+ * those contribute zero as well.  The correct result is therefore exactly
+ * "clear the bits each assignment writes" -- note CLEAR, not "skip": an
+ * instruction overwriting a previously tainted register must drop that taint,
+ * and skipping would leave it stale (an over-taint that never decays).
+ *
+ * Conservative in one direction on purpose: it tests every pool name, including
+ * write-only targets, so an instruction whose *output* register is still tainted
+ * declines and takes the full path (which clears it correctly).  Cheaper to be
+ * conservative here than to track read-vs-written per name.
+ *
+ * Returns 1 if it handled the instruction.
+ */
+static inline int mt_untainted_exit(MtFastCtx *c, PyObject *compiled) {
+    if (!c->capi->compiled_prefilter) return 0;
+    MtPrefilter pf;
+    if (c->capi->compiled_prefilter(compiled, c->slot_map, &pf) != 0) return 0;
+
+    uint64_t *g_taint = *c->g_taint;
+    const int n_slots = *c->n_slots;
+    for (int i = 0; i < pf.n_pool; i++) {
+        int slot = pf.pool_slots[i];
+        if (slot >= 0 && slot < n_slots && g_taint[slot]) return 0;
+    }
+    for (int k = 0; k < pf.n_out; k++) {
+        int slot = pf.outs[k].slot;
+        if (slot >= 0 && slot < n_slots) g_taint[slot] &= ~pf.outs[k].clear_mask;
+    }
+    *c->ltw_n = 0;
+    (*c->prefilter_hits)++;
+    (*c->fast_done)++;
+    return 1;
+}
+
 /*
  * One instruction, start to finish, with no Python operation anywhere.
  *
@@ -305,6 +350,10 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
     if (!c->capi || !ent) return MT_FAST_SLOW;
 
     const int has_mem = (cflags & MT_CF_HAS_MEM_OPS) != 0;
+    /* Cheapest possible answer first: a handful of loads, before any register
+     * read, cache probe or evaluation. */
+    if (!has_mem && mt_untainted_exit(c, compiled)) return MT_FAST_DONE;
+
     const int can_cache = c->instr_cache_enabled && !has_mem;
     const int value_indep = can_cache && (cflags & MT_CF_VALUE_INDEP) != 0;
     const int n_slots = *c->n_slots;

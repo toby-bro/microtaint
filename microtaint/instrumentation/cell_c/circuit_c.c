@@ -161,6 +161,15 @@ typedef struct {
     CellHandle_API **cell_h;
     int             n_cell_h;
 
+    /* Cached target (slot, mask) pairs for the untainted-input fast exit; see
+     * MtOutSlot.  Built on first use, invalidated with pool_to_slot because the
+     * slots come from the same name_to_slot mapping.  out_ok is 0 when the
+     * circuit is not eligible, so ineligibility is decided once, not per call. */
+    MtOutSlot      *out_slots;
+    int             n_out_slots;
+    int             out_built;
+    int             out_ok;
+
     /* Like c_evaluable but ALSO admits memory circuits: set when every constant
      * fits 64 bits and there is no python fallback (memory ops ARE allowed).
      * evaluate_c_mem runs the C-array interior for these, reading/writing shadow
@@ -806,6 +815,10 @@ static PyObject *CompiledCircuit_new(PyTypeObject *t, PyObject *a, PyObject *k) 
     self->scratch_cap = 0;
     self->pool_to_slot = NULL;
     self->pool_to_slot_n = 0;
+    self->out_slots = NULL;
+    self->n_out_slots = 0;
+    self->out_built = 0;
+    self->out_ok = 0;
     return (PyObject *)self;
 }
 
@@ -827,6 +840,7 @@ static void CompiledCircuit_dealloc(CompiledCircuit *self) {
     }
     free(self->const_u64);
     free(self->cell_h);   /* borrowed pointers; the capsules belong to cell_handles */
+    free(self->out_slots);
     free(self->scratch_t);
     free(self->scratch_v);
     free(self->scratch_o);
@@ -2393,6 +2407,24 @@ static PyObject *CompiledCircuit_evaluate_c_arr(CompiledCircuit *self, PyObject 
  * array untouched, so state never half-updates).  No dict is built on input or
  * output: this is the whole point of the C-native interface.  Pass-through
  * (untouched slots) is the identity on the live array. */
+/* string_pool index -> global taint slot, cached.  Rebuilt when the pool size
+ * changes; an unmapped name stays -1, which every reader treats as "no taint",
+ * matching what the evaluator does for a name the hook has not interned. */
+static int ensure_pool_to_slot(CompiledCircuit *self, PyObject *name_to_slot, int npool) {
+    if (self->pool_to_slot && self->pool_to_slot_n == npool) return 0;
+    free(self->pool_to_slot);
+    self->pool_to_slot = (int *)malloc((size_t)(npool > 0 ? npool : 1) * sizeof(int));
+    if (!self->pool_to_slot) return -1;
+    for (int i = 0; i < npool; i++) {
+        PyObject *nm = PyList_GET_ITEM(self->string_pool, i);
+        PyObject *sv = PyDict_GetItem(name_to_slot, nm);  /* borrowed */
+        self->pool_to_slot[i] = (sv && PyLong_Check(sv)) ? (int)PyLong_AsLong(sv) : -1;
+    }
+    self->pool_to_slot_n = npool;
+    self->out_built = 0;   /* target slots came from this mapping */
+    return 0;
+}
+
 /* Register-only array evaluator.  Returns the number of register targets
  * written, MT_EVAL_DECLINED (caller falls back) or MT_EVAL_ERROR.  The
  * PyObject-returning arr_ptr_core below is a thin wrapper on this, so both the
@@ -2403,17 +2435,7 @@ static int arr_ptr_core_i(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
     if (self->pc_target_idx >= 0) { return MT_EVAL_DECLINED; }
 
     int npool = (int)PyList_GET_SIZE(self->string_pool);
-    if (!self->pool_to_slot || self->pool_to_slot_n != npool) {
-        free(self->pool_to_slot);
-        self->pool_to_slot = (int *)malloc((size_t)(npool > 0 ? npool : 1) * sizeof(int));
-        if (!self->pool_to_slot) { PyErr_NoMemory(); return MT_EVAL_ERROR; }
-        for (int i = 0; i < npool; i++) {
-            PyObject *nm = PyList_GET_ITEM(self->string_pool, i);
-            PyObject *s = PyDict_GetItem(name_to_slot, nm);  /* borrowed */
-            self->pool_to_slot[i] = (s && PyLong_Check(s)) ? (int)PyLong_AsLong(s) : -1;
-        }
-        self->pool_to_slot_n = npool;
-    }
+    if (ensure_pool_to_slot(self, name_to_slot, npool) != 0) { PyErr_NoMemory(); return MT_EVAL_ERROR; }
     if (ensure_scratch(self, npool) != 0) { PyErr_NoMemory(); return MT_EVAL_ERROR; }
     uint64_t *in_t = self->scratch_t, *in_v = self->scratch_v, *out_t = self->scratch_o;
     for (int i = 0; i < npool; i++) {
@@ -2609,17 +2631,7 @@ static int mem_ptr_core_i(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
     if (!ensure_shadow_capi()) { return MT_EVAL_DECLINED; }
 
     int npool = (int)PyList_GET_SIZE(self->string_pool);
-    if (!self->pool_to_slot || self->pool_to_slot_n != npool) {
-        free(self->pool_to_slot);
-        self->pool_to_slot = (int *)malloc((size_t)(npool > 0 ? npool : 1) * sizeof(int));
-        if (!self->pool_to_slot) { PyErr_NoMemory(); return MT_EVAL_ERROR; }
-        for (int i = 0; i < npool; i++) {
-            PyObject *nm = PyList_GET_ITEM(self->string_pool, i);
-            PyObject *s = PyDict_GetItem(name_to_slot, nm);  /* borrowed */
-            self->pool_to_slot[i] = (s && PyLong_Check(s)) ? (int)PyLong_AsLong(s) : -1;
-        }
-        self->pool_to_slot_n = npool;
-    }
+    if (ensure_pool_to_slot(self, name_to_slot, npool) != 0) { PyErr_NoMemory(); return MT_EVAL_ERROR; }
     if (ensure_scratch(self, npool) != 0) { PyErr_NoMemory(); return MT_EVAL_ERROR; }
     uint64_t *in_t = self->scratch_t, *in_v = self->scratch_v, *out_t = self->scratch_o;
     for (int i = 0; i < npool; i++) {
@@ -2814,10 +2826,65 @@ static int capi_compiled_flags(PyObject *compiled) {
          | (cc->value_independent ? MT_CF_VALUE_INDEP   : 0);
 }
 
+
+/* Resolve what the untainted-input fast exit needs.  Eligible circuits are
+ * register-only with no python fallback and no PC target (a PC target needs the
+ * implicit-taint policy check, which is a decision, not a computation).
+ *
+ * Soundness of the exit this feeds: with every input taint zero the differential
+ * is f(V) XOR f(V) = 0 on every target, and every soundness floor is keyed on a
+ * tainted input bit, so all of them contribute zero too.  The result is
+ * therefore exactly "clear each target's written bits", with no evaluation. */
+static int capi_compiled_prefilter(PyObject *compiled, PyObject *name_to_slot,
+                                   MtPrefilter *pf) {
+    if (!compiled || !PyObject_TypeCheck(compiled, &CompiledCircuitType)) return -1;
+    CompiledCircuit *cc = (CompiledCircuit *)compiled;
+    if (!cc->c_evaluable || cc->pc_target_idx >= 0 || cc->has_python_fallback) return -1;
+
+    int npool = (int)PyList_GET_SIZE(cc->string_pool);
+    if (ensure_pool_to_slot(cc, name_to_slot, npool) != 0) { PyErr_Clear(); return -1; }
+
+    if (!cc->out_built) {
+        cc->out_built = 1;
+        cc->out_ok = 0;
+        free(cc->out_slots);
+        cc->out_slots = NULL;
+        cc->n_out_slots = 0;
+        int n = cc->n_progs;
+        if (n > 0) {
+            cc->out_slots = (MtOutSlot *)calloc((size_t)n, sizeof(MtOutSlot));
+            if (!cc->out_slots) return -1;
+            int ok = 1;
+            for (int i = 0; i < n; i++) {
+                AssignmentProg *pr = &cc->progs[i];
+                if (pr->target_kind != TGT_REG || pr->python_assignment) { ok = 0; break; }
+                int bs = pr->target_bit_start, be = pr->target_bit_end;
+                int width = be - bs + 1;
+                if (bs < 0 || width <= 0 || bs + width > 64) { ok = 0; break; }
+                int idx = pr->target_name_idx;
+                if (idx < 0 || idx >= npool) { ok = 0; break; }
+                cc->out_slots[i].slot = cc->pool_to_slot[idx];
+                cc->out_slots[i].clear_mask =
+                    ((width >= 64) ? ~(uint64_t)0 : (((uint64_t)1 << width) - 1)) << bs;
+            }
+            if (!ok) { free(cc->out_slots); cc->out_slots = NULL; return -1; }
+            cc->n_out_slots = n;
+        }
+        cc->out_ok = 1;
+    }
+    if (!cc->out_ok) return -1;
+
+    pf->pool_slots = cc->pool_to_slot;
+    pf->n_pool = npool;
+    pf->outs = cc->out_slots;
+    pf->n_out = cc->n_out_slots;
+    return 0;
+}
+
 static CircuitCAPI g_circuit_capi_struct = { capi_eval_arr_ptr, capi_eval_mem_ptr,
                                              capi_eval_mem_ptr_c,
                                              capi_eval_arr_ptr_i, capi_eval_mem_ptr_ci,
-                                             capi_compiled_flags };
+                                             capi_compiled_flags, capi_compiled_prefilter };
 
 static PyMethodDef CompiledCircuit_methods[] = {
     {"evaluate",      (PyCFunction)CompiledCircuit_evaluate,      METH_VARARGS, NULL},

@@ -121,6 +121,8 @@ ctypedef int (*eval_mem_ptr_ci_ft)(object compiled, uint64_t *taint, uint64_t *v
                                    MtMemWrite *out, int out_cap) except? -2
 
 ctypedef int (*compiled_flags_ft)(object compiled) noexcept
+ctypedef int (*compiled_prefilter_ft)(object compiled, object name_to_slot,
+                                      void *pf) noexcept
 ctypedef int (*uc_reg_read_batch_c_ft)(void *uc, void *ids, void *ptrs, int count) noexcept nogil
 
 # ---------------------------------------------------------------------------
@@ -145,6 +147,7 @@ cdef extern from "fastpath.h":
         eval_arr_ptr_i_ft eval_arr_ptr_i
         eval_mem_ptr_ci_ft eval_mem_ptr_ci
         compiled_flags_ft compiled_flags
+        compiled_prefilter_ft compiled_prefilter
 
     ctypedef struct AddrEntry "MtAddrEntry":
         int size
@@ -200,6 +203,7 @@ cdef extern from "fastpath.h":
         unsigned long *hits
         unsigned long *misses
         unsigned long *fast_done
+        unsigned long *prefilter_hits
 
     uint64_t MT_EMPTY_ADDR
 
@@ -401,6 +405,8 @@ cdef class InstructionHook:
     # and the total it was offered, so coverage is a ratio and not a guess.
     cdef public unsigned long fast_done
     cdef public unsigned long instr_total
+    # Instructions dismissed outright because no input was tainted.
+    cdef public unsigned long prefilter_hits
 
     # --- array-native taint state (Phase 1.3c; see _USE_ARR_HOOK note) ---
     cdef uint64_t *g_taint            # slot-indexed taint, authoritative during a run
@@ -513,6 +519,7 @@ cdef class InstructionHook:
         self.ltw_n = 0
         self.fast_done = 0
         self.instr_total = 0
+        self.prefilter_hits = 0
         self._init_fast_ctx()
         # Pre-intern the arch's state-format registers so the slot space is
         # stable for the common case (SIMD VL_ lanes are interned on demand).
@@ -559,6 +566,7 @@ cdef class InstructionHook:
         self.fctx.hits = &self.instr_cache_hits
         self.fctx.misses = &self.instr_cache_misses
         self.fctx.fast_done = &self.fast_done
+        self.fctx.prefilter_hits = &self.prefilter_hits
 
     def __dealloc__(self):
         mt_am_free(&self.addr_map)
