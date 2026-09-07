@@ -117,6 +117,10 @@ microtaint/instrumentation/ast.c
 microtaint/instrumentation/cell.c
 microtaint/emulator/hook_core.c
 
+*.rej
+*.orig
+*.tar.*
+
 output/
 stubs/
 
@@ -126,3 +130,5 @@ debug_*.py
 *.patch
 paper
 
+*.prof
+*.elf
