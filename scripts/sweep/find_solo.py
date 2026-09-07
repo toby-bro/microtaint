@@ -8,8 +8,14 @@ want every point taken under identical conditions.
 
     find_solo.py <log-dir> <work-dir>
 
-Measured bias is small (a control test put paired-vs-solo within +-3.4% with no
-consistent sign), so this is a diagnostic, not a hard failure.
+Advisory only, for two reasons:
+
+* the measured bias is small -- a control put paired-vs-solo within +-3.4% with
+  no consistent sign, well inside the ~9% run-to-run noise on ns p50;
+* it compares each run against the *current* set of logs, so re-measuring a run
+  gives it fresh timestamps and orphans whatever it used to overlap. Chasing the
+  report to zero does not converge; use it to spot a whole batch measured alone,
+  not to police individual runs.
 """
 
 from __future__ import annotations

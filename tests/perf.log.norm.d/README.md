@@ -43,26 +43,37 @@ Three commits (oldest / middle / newest) were re-measured **solo** and compared
 against their 2-worker values: deltas within +-3.4%, mostly under 1.5%, with no
 consistent sign. The parallelism adds noise well below the 80-98% effects.
 
+## What this does and does not measure
+
+The harness times `circuit.evaluate` -- taint propagation for one instruction --
+and nothing else. It never runs the emulator, so a commit that optimises the
+**hook / emulation path** shows up here as flat, no matter how much it helps
+end to end. `1ed45c7` (v0.6.14, "read input registers via a C fnptr -> e2e -9%")
+touches only `emulator/hook_core.pyx` and `emulator/wrapper.py`: its gain is
+real, and invisible in this plot by construction. Check what a commit actually
+touches before reading its step:
+
+    git diff --stat <prev> <commit> -- microtaint/
+
 ## Noise floor: how to read small steps
 
-`df218fc` and `e2041ba` are an accidental control pair -- `git diff df218fc
-e2041ba -- microtaint/` is empty, so both runs measure the *same binary*.
-Comparing them gives the measurement noise directly:
+`df218fc`, `e2041ba` and `746aac1` are a control triple -- the latter two change
+only tooling and docs, so `git diff df218fc 746aac1 -- microtaint/` is empty and
+all three runs measure the *same binary*. Their spread is pure measurement noise:
 
-| quantity | across the identical pair |
+| quantity | across the three identical-engine runs |
 |---|---|
 | `cells` / `assigns` / `nodes` totals | **identical** (2110 / 3480 / 162265) |
-| ns p50 | -4.7% |
-| ns p99 | +2.8% |
-| ns p100 | **+42.4%** |
+| ns p50 | 2310 / 2201 / 2124 -> **8.8% spread** |
+| ns p100 (pairwise) | up to +42% |
 | per-instruction \|delta\| | median 3.3%, p90 34.6%, max 74.5% |
 
-So: the deterministic metrics are exactly reproducible, which is why the plot's
-vertical rules are trustworthy even where the ns curves wobble. But **p100 is a
-single instruction's timing and is very noisy** -- a p100 step under ~40% means
-nothing on its own. p50 is good to roughly +-5%, p99 to a few percent. Read the
-big structural steps, not the small ones, and treat a step with no vertical rule
-and no supporting p50 movement as noise.
+So the deterministic metrics are exactly reproducible, which is why the plot's
+vertical rules are trustworthy even where the ns curves wobble. Wall clock is
+not: **p50 carries roughly +-9%, and p100 is a single instruction's timing that
+swings +-40%.** Read the big structural steps -- the ones that persist across
+several commits or come with a vertical rule -- and treat an isolated sub-10%
+p50 step or a sub-40% p100 step as noise.
 
 ## Plot
 
