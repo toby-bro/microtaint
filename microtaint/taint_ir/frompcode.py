@@ -342,8 +342,11 @@ class Builder:
                 self.pred_v = p.const(0)
                 self.pred_t = self.pred_t
                 continue
-            if name in ('BRANCHIND', 'CALL', 'CALLIND', 'CALLOTHER', 'RETURN'):
+            if name in ('BRANCHIND', 'CALL', 'CALLIND', 'RETURN'):
                 raise Unsupported(name)
+            if name == 'CALLOTHER':
+                self._emit_callother(ops, pc, op)
+                continue
             if name == 'LOAD':
                 self._emit_load(op)
                 continue
@@ -376,6 +379,42 @@ class Builder:
         p.accesses = self.accesses
         self._check_address_independence(p)
         return p.finish()
+
+    # -- opaque operations ---------------------------------------------
+    def _emit_callother(self, ops, pc, op):
+        """An operation p-code does not model (crc32, aes, a fence).
+
+        Its VALUE is unknowable here, so the only safe thing is to make sure
+        nothing downstream depends on it: if a later op reads the bytes it
+        writes, decline the whole instruction rather than compute with a value
+        that was invented.  When nothing reads it, the result is simply an
+        opaque function of its inputs, and the sound answer for the register it
+        lands in is avalanche -- every output bit tainted if any input bit is.
+
+        A CALLOTHER with no output writes nothing p-code can see, which is what
+        the runtime interpreter already assumes; skipping it here keeps the two
+        in agreement rather than introducing a new divergence.
+        """
+        p = self.p
+        if op.output is None:
+            return
+        osz = op.output.size
+        if osz > 8:
+            raise Unsupported('wide CALLOTHER')
+        lo, hi = op.output.offset, op.output.offset + osz
+        space = op.output.space.name
+        for later in ops[pc + 1:]:
+            for vn in later.inputs:
+                if vn.space.name == space and vn.offset < hi and vn.offset + vn.size > lo:
+                    raise Unsupported('CALLOTHER result is read downstream')
+        any_t = p.const(0)
+        for vn in op.inputs[1:]:
+            if vn.space.name == 'const':
+                continue
+            _v, tt = self._read_in(vn)
+            any_t = p.op(OR, any_t, tt)
+        tnt = p.op(AND, p.const(_mask_of(osz)), p.splat(p.op(NEZ, any_t)))
+        self._predicated_write(op.output, p.const(0), tnt)
 
     # -- memory --------------------------------------------------------
     def _access_for(self, kind, addr_node, size):
