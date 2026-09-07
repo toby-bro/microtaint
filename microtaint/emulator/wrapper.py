@@ -520,7 +520,7 @@ class MicrotaintWrapper:
         self.sim = CellSimulator(self.arch, use_unicorn=False)
         self.shadow_mem = BitPreciseShadowMemory()
 
-        self.register_taint: dict[str, int] = {}
+        self._register_taint: dict[str, int] = {}
         self._main_bounds: list[tuple[int, int]] = []
         self._main_single: bool = False
         self._main_base: int = 0
@@ -641,6 +641,35 @@ class MicrotaintWrapper:
             # any pre-existing taint at that byte, matching write_mask's documented
             # semantics ("write_mask(addr, 0, n) explicitly clears n bytes of taint").
             self.shadow_mem.write_mask(address + i, mask, 1)
+
+    @property
+    def register_taint(self) -> dict[str, int]:
+        """Register taint state — the external contract (seeded before a run,
+        read during or after it).
+
+        With the default dict hot path this is simply the dict.  Under the
+        array-native hook (Phase 1.3c) the authoritative state lives in the hook's
+        slot-indexed C array during a run, so reading this property syncs the
+        array back into the dict AND hands authority back to the dict; the next
+        instruction reloads the array from it, which is what makes an external
+        re-seed between runs take effect.
+        """
+        hook = getattr(self, '_instr_hook_obj', None)
+        if hook is not None:
+            sync = getattr(hook, 'sync_taint_to_dict', None)
+            if sync is not None:
+                sync()
+        return self._register_taint
+
+    @register_taint.setter
+    def register_taint(self, value: dict[str, int]) -> None:
+        self._register_taint = value
+        hook = getattr(self, '_instr_hook_obj', None)
+        if hook is not None:
+            try:
+                hook.register_taint = value
+            except (AttributeError, TypeError):
+                pass
 
     def _make_cython_hook(self) -> InstructionHook | None:
         """Build a Cython-compiled hook callable.  Returns None if hook
