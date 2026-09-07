@@ -228,6 +228,9 @@ typedef struct {
     MtMemWrite *ltw;
     int        *ltw_n;
 
+    /* ImplicitTaintPolicy for this run (MT_POLICY_*). */
+    int implicit_policy;
+
     /* config + counters */
     int instr_cache_enabled;
     int use_cregs;
@@ -435,14 +438,18 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
         if (!c->use_cmem || !c->capi->eval_mem_ptr_ci) return MT_FAST_SLOW;
         rc = c->capi->eval_mem_ptr_ci(compiled, g_taint, g_val, n_slots,
                                       c->pcode, c->shadow, c->mem_reader, c->slot_map,
-                                      c->mem_fn, c->mem_ctx, mw, MT_MAX_MEM_WRITES);
+                                      c->mem_fn, c->mem_ctx, mw, MT_MAX_MEM_WRITES,
+                                      c->implicit_policy);
     } else {
         if (!c->capi->eval_arr_ptr_i) return MT_FAST_SLOW;
         rc = c->capi->eval_arr_ptr_i(compiled, g_taint, g_val, n_slots,
-                                     c->pcode, c->slot_map);
+                                     c->pcode, c->slot_map, c->implicit_policy);
     }
     if (rc == MT_EVAL_ERROR) return MT_FAST_ERROR;
-    if (rc == MT_EVAL_DECLINED) return MT_FAST_SLOW;
+    /* MT_EVAL_PC_REPORT: control flow depends on tainted data and the policy
+     * wants a message or a stop.  Rare, and the reporting lives in Python, so
+     * hand the whole instruction over -- nothing was committed. */
+    if (rc == MT_EVAL_DECLINED || rc == MT_EVAL_PC_REPORT) return MT_FAST_SLOW;
 
     /* ---- apply ---------------------------------------------------------- */
     *c->ltw_n = 0;

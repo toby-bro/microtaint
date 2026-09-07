@@ -46,6 +46,17 @@ typedef struct {
  * a valid count so a decline can never be mistaken for "zero writes". */
 #define MT_EVAL_DECLINED (-1)   /* fall back; no exception set */
 #define MT_EVAL_ERROR    (-2)   /* exception is set */
+/* The circuit writes PC and the computed PC taint is nonzero, under a policy
+ * whose action is to print or to raise.  Nothing was committed; the caller must
+ * re-run the instruction on the Python path, which owns the reporting. */
+#define MT_EVAL_PC_REPORT (-3)
+
+/* ImplicitTaintPolicy, mirrored from microtaint/types.py.  Only WARN and STOP
+ * need Python (they print / raise); IGNORE and KEEP are decided here. */
+#define MT_POLICY_IGNORE 0
+#define MT_POLICY_WARN   1
+#define MT_POLICY_STOP   2
+#define MT_POLICY_KEEP   3
 
 /* Bits returned by compiled_flags().  These mirror int fields of CompiledCircuit
  * that the hot path consults on every instruction; reading them through one C
@@ -73,6 +84,8 @@ typedef struct {
 #define MT_CF_C_MEM_EVALUABLE 0x02
 #define MT_CF_HAS_MEM_OPS     0x04
 #define MT_CF_VALUE_INDEP     0x08
+#define MT_CF_PC_TARGET       0x10   /* writes PC: needs the implicit-taint policy check */
+#define MT_CF_PY_FALLBACK     0x20   /* has an assignment only Python can evaluate */
 
 typedef struct {
     /* `compiled` is a CompiledCircuit (borrowed).  Registers only. */
@@ -97,7 +110,8 @@ typedef struct {
     /* Registers only.  Returns the number of register targets written, or
      * MT_EVAL_DECLINED / MT_EVAL_ERROR. */
     int (*eval_arr_ptr_i)(PyObject *compiled, uint64_t *taint, uint64_t *val,
-                          int n_slots, PyObject *pcode, PyObject *name_to_slot);
+                          int n_slots, PyObject *pcode, PyObject *name_to_slot,
+                          int implicit_policy);
     /* Memory circuits, C reader installed as in eval_mem_ptr_c.  Committed
      * writes are stored in `out` (at most `out_cap`); returns how many, or
      * MT_EVAL_DECLINED / MT_EVAL_ERROR.  A circuit with more memory targets
@@ -107,7 +121,7 @@ typedef struct {
                            int n_slots, PyObject *pcode, PyObject *shadow,
                            PyObject *mem_reader, PyObject *name_to_slot,
                            mt_mem_read_fn mem_fn, void *mem_ctx,
-                           MtMemWrite *out, int out_cap);
+                           MtMemWrite *out, int out_cap, int implicit_policy);
 
     /* MT_CF_* bits for a CompiledCircuit, or 0 if `compiled` is not one (which
      * reads as "no capabilities", the safe answer: the caller falls back). */

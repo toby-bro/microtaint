@@ -2425,14 +2425,34 @@ static int ensure_pool_to_slot(CompiledCircuit *self, PyObject *name_to_slot, in
     return 0;
 }
 
+/* The implicit-taint interceptor, in C.
+ *
+ * Mirrors LogicCircuit.evaluate exactly: when the circuit writes PC and the
+ * computed PC taint is nonzero, WARN prints and clears, STOP raises, and both
+ * IGNORE and (implicitly) WARN clear the PC taint afterwards while KEEP retains
+ * it.  Only the printing and raising need Python, and those are the rare cases,
+ * so they are handed back with MT_EVAL_PC_REPORT and nothing is committed.
+ *
+ * Returns 0 to continue committing, MT_EVAL_PC_REPORT to defer to Python.
+ * `pc_taint_out` is cleared in place for the policies that drop it. */
+static inline int mt_check_implicit(CompiledCircuit *self, uint64_t *out_t, int policy) {
+    if (self->pc_target_idx < 0) return 0;
+    if (out_t[self->pc_target_idx] == 0) return 0;   /* no leak: nothing to decide */
+    if (policy == MT_POLICY_WARN || policy == MT_POLICY_STOP) return MT_EVAL_PC_REPORT;
+    if (policy != MT_POLICY_KEEP) out_t[self->pc_target_idx] = 0;
+    return 0;
+}
+
 /* Register-only array evaluator.  Returns the number of register targets
  * written, MT_EVAL_DECLINED (caller falls back) or MT_EVAL_ERROR.  The
  * PyObject-returning arr_ptr_core below is a thin wrapper on this, so both the
  * Python method and the C API run exactly the same code. */
 static int arr_ptr_core_i(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
-                          int n_slots, PyObject *pcode, PyObject *name_to_slot) {
+                          int n_slots, PyObject *pcode, PyObject *name_to_slot,
+                          int policy) {
     if (!self->c_evaluable) { return MT_EVAL_DECLINED; }
-    if (self->pc_target_idx >= 0) { return MT_EVAL_DECLINED; }
+    /* PC-writing circuits are handled here now: the implicit-taint check is a
+     * test on the computed PC taint, done below once out_t exists. */
 
     int npool = (int)PyList_GET_SIZE(self->string_pool);
     if (ensure_pool_to_slot(self, name_to_slot, npool) != 0) { PyErr_NoMemory(); return MT_EVAL_ERROR; }
@@ -2458,6 +2478,8 @@ static int arr_ptr_core_i(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
         out_t[idx] = (out_t[idx] & ~mask) | ((result << bs) & mask);
     }
     if (!ok) { return MT_EVAL_DECLINED; }   /* g_t untouched: atomic */
+    int pcrc = mt_check_implicit(self, out_t, policy);
+    if (pcrc) return pcrc;                  /* still nothing committed */
     int n_written = 0;
     for (int p = 0; p < self->n_progs; p++) {
         int idx = self->progs[p].target_name_idx;
@@ -2469,8 +2491,11 @@ static int arr_ptr_core_i(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
 
 static PyObject *arr_ptr_core(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
                               int n_slots, PyObject *pcode, PyObject *name_to_slot) {
-    int r = arr_ptr_core_i(self, g_t, g_v, n_slots, pcode, name_to_slot);
-    if (r == MT_EVAL_DECLINED) { Py_RETURN_NONE; }
+    /* The Python-facing method keeps its old contract: PC-writing circuits fall
+     * back so do_evaluate applies the policy, hence MT_POLICY_WARN here (any
+     * policy whose action is not decidable in C would do). */
+    int r = arr_ptr_core_i(self, g_t, g_v, n_slots, pcode, name_to_slot, MT_POLICY_WARN);
+    if (r == MT_EVAL_DECLINED || r == MT_EVAL_PC_REPORT) { Py_RETURN_NONE; }
     if (r == MT_EVAL_ERROR) return NULL;
     return PyLong_FromLong(r);
 }
@@ -2625,9 +2650,8 @@ static PyObject *CompiledCircuit_evaluate_c_mem(CompiledCircuit *self, PyObject 
 static int mem_ptr_core_i(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
                           int n_slots, PyObject *pcode, PyObject *shadow_memory,
                           PyObject *mem_reader, PyObject *name_to_slot,
-                          MtMemWrite *out, int out_cap) {
+                          MtMemWrite *out, int out_cap, int policy) {
     if (!self->c_mem_evaluable) { return MT_EVAL_DECLINED; }
-    if (self->pc_target_idx >= 0) { return MT_EVAL_DECLINED; }
     if (!ensure_shadow_capi()) { return MT_EVAL_DECLINED; }
 
     int npool = (int)PyList_GET_SIZE(self->string_pool);
@@ -2705,6 +2729,8 @@ static int mem_ptr_core_i(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
      * check both need them), so a result that would not fit declines instead of
      * committing a partial answer. */
     if (n_mw > out_cap) { return MT_EVAL_DECLINED; }
+    int pcrc = mt_check_implicit(self, out_t, policy);
+    if (pcrc) return pcrc;                  /* nothing committed */
 
     /* Commit: register targets -> g_taint, memory targets -> shadow. */
     for (int p = 0; p < self->n_progs; p++) {
@@ -2727,8 +2753,9 @@ static PyObject *mem_ptr_core(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_
                               PyObject *mem_reader, PyObject *name_to_slot) {
     MtMemWrite mw[CMEM_MAX_WRITES];
     int n = mem_ptr_core_i(self, g_t, g_v, n_slots, pcode, shadow_memory,
-                           mem_reader, name_to_slot, mw, CMEM_MAX_WRITES);
-    if (n == MT_EVAL_DECLINED) { Py_RETURN_NONE; }
+                           mem_reader, name_to_slot, mw, CMEM_MAX_WRITES,
+                           MT_POLICY_WARN);   /* see arr_ptr_core */
+    if (n == MT_EVAL_DECLINED || n == MT_EVAL_PC_REPORT) { Py_RETURN_NONE; }
     if (n == MT_EVAL_ERROR) return NULL;
     PyObject *writes = PyList_New(0);
     if (!writes) return NULL;
@@ -2797,22 +2824,24 @@ static PyObject *capi_eval_mem_ptr_c(PyObject *compiled, uint64_t *taint, uint64
 }
 
 static int capi_eval_arr_ptr_i(PyObject *compiled, uint64_t *taint, uint64_t *val,
-                               int n_slots, PyObject *pcode, PyObject *name_to_slot) {
+                               int n_slots, PyObject *pcode, PyObject *name_to_slot,
+                               int policy) {
     if (!PyObject_TypeCheck(compiled, &CompiledCircuitType)) return MT_EVAL_DECLINED;
-    return arr_ptr_core_i((CompiledCircuit *)compiled, taint, val, n_slots, pcode, name_to_slot);
+    return arr_ptr_core_i((CompiledCircuit *)compiled, taint, val, n_slots, pcode,
+                          name_to_slot, policy);
 }
 
 static int capi_eval_mem_ptr_ci(PyObject *compiled, uint64_t *taint, uint64_t *val,
                                 int n_slots, PyObject *pcode, PyObject *shadow,
                                 PyObject *mem_reader, PyObject *name_to_slot,
                                 mt_mem_read_fn mem_fn, void *mem_ctx,
-                                MtMemWrite *out, int out_cap) {
+                                MtMemWrite *out, int out_cap, int policy) {
     if (!PyObject_TypeCheck(compiled, &CompiledCircuitType)) return MT_EVAL_DECLINED;
     mt_mem_read_fn prev_fn = g_mem_fn;
     void *prev_ctx = g_mem_ctx;
     g_mem_fn = mem_fn; g_mem_ctx = mem_ctx;
     int r = mem_ptr_core_i((CompiledCircuit *)compiled, taint, val, n_slots, pcode,
-                           shadow, mem_reader, name_to_slot, out, out_cap);
+                           shadow, mem_reader, name_to_slot, out, out_cap, policy);
     g_mem_fn = prev_fn; g_mem_ctx = prev_ctx;
     return r;
 }
@@ -2823,7 +2852,9 @@ static int capi_compiled_flags(PyObject *compiled) {
     return (cc->c_evaluable     ? MT_CF_C_EVALUABLE     : 0)
          | (cc->c_mem_evaluable ? MT_CF_C_MEM_EVALUABLE : 0)
          | (cc->has_mem_ops     ? MT_CF_HAS_MEM_OPS     : 0)
-         | (cc->value_independent ? MT_CF_VALUE_INDEP   : 0);
+         | (cc->value_independent ? MT_CF_VALUE_INDEP   : 0)
+         | (cc->pc_target_idx >= 0 ? MT_CF_PC_TARGET     : 0)
+         | (cc->has_python_fallback ? MT_CF_PY_FALLBACK  : 0);
 }
 
 

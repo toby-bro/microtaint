@@ -112,13 +112,14 @@ cdef int _mt_mem_read_c(void *ctx, uint64_t addr, int size, uint64_t *out) noexc
 # exception and propagates it, so a C-level failure surfaces exactly like the
 # PyObject forms' NULL return did.
 ctypedef int (*eval_arr_ptr_i_ft)(object compiled, uint64_t *taint, uint64_t *val,
-                                  int n_slots, object pcode,
-                                  object name_to_slot) except? -2
+                                  int n_slots, object pcode, object name_to_slot,
+                                  int implicit_policy) except? -2
 ctypedef int (*eval_mem_ptr_ci_ft)(object compiled, uint64_t *taint, uint64_t *val,
                                    int n_slots, object pcode, object shadow,
                                    object mem_reader, object name_to_slot,
                                    mt_mem_read_ft mem_fn, void *mem_ctx,
-                                   MtMemWrite *out, int out_cap) except? -2
+                                   MtMemWrite *out, int out_cap,
+                                   int implicit_policy) except? -2
 
 ctypedef int (*compiled_flags_ft)(object compiled) noexcept
 ctypedef int (*compiled_prefilter_ft)(object compiled, object name_to_slot,
@@ -197,6 +198,7 @@ cdef extern from "fastpath.h":
         int *rip_slot
         MtMemWrite *ltw
         int *ltw_n
+        int implicit_policy
         int instr_cache_enabled
         int use_cregs
         int use_cmem
@@ -230,6 +232,8 @@ DEF MT_CF_C_EVALUABLE = 0x01
 DEF MT_CF_C_MEM_EVALUABLE = 0x02
 DEF MT_CF_HAS_MEM_OPS = 0x04
 DEF MT_CF_VALUE_INDEP = 0x08
+DEF MT_CF_PC_TARGET = 0x10
+DEF MT_CF_PY_FALLBACK = 0x20
 
 cdef CircuitCAPI *_circuit_capi = NULL
 
@@ -407,6 +411,11 @@ cdef class InstructionHook:
     cdef public unsigned long instr_total
     # Instructions dismissed outright because no input was tainted.
     cdef public unsigned long prefilter_hits
+    # Why instructions leave the C path, so the biggest reason is a measurement.
+    cdef public unsigned long fb_pc
+    cdef public unsigned long fb_pyfall
+    cdef public unsigned long fb_mem
+    cdef public unsigned long fb_other
 
     # --- array-native taint state (Phase 1.3c; see _USE_ARR_HOOK note) ---
     cdef uint64_t *g_taint            # slot-indexed taint, authoritative during a run
@@ -520,6 +529,10 @@ cdef class InstructionHook:
         self.fast_done = 0
         self.instr_total = 0
         self.prefilter_hits = 0
+        self.fb_pc = 0
+        self.fb_pyfall = 0
+        self.fb_mem = 0
+        self.fb_other = 0
         self._init_fast_ctx()
         # Pre-intern the arch's state-format registers so the slot space is
         # stable for the common case (SIMD VL_ lanes are interned on demand).
@@ -560,6 +573,11 @@ cdef class InstructionHook:
         self.fctx.rip_slot = &self.rip_slot
         self.fctx.ltw = self.ltw
         self.fctx.ltw_n = &self.ltw_n
+        # int() of the ImplicitTaintPolicy IntEnum; the C side mirrors the values.
+        try:
+            self.fctx.implicit_policy = <int>int(self.policy)
+        except Exception:  # noqa: BLE001 - unknown policy: take the Python path
+            self.fctx.implicit_policy = 1   # MT_POLICY_WARN -> always defers
         self.fctx.instr_cache_enabled = 1 if self.instr_cache_enabled else 0
         self.fctx.use_cregs = 1 if _USE_CREGS else 0
         self.fctx.use_cmem = 1 if _USE_CMEM else 0
@@ -1344,8 +1362,14 @@ cdef class InstructionHook:
                                 self.n_slots, self.pcode_obj, self.shadow_mem,
                                 self.read_live_memory, self.slot_map,
                                 _mt_mem_read_c, <void*>&self.mem_ctx,
-                                mw, MT_MAX_MEM_WRITES)
-                            used_arr = rc != MT_EVAL_DECLINED
+                                mw, MT_MAX_MEM_WRITES, self.fctx.implicit_policy)
+                            # rc >= 0 is a real write count.  Every negative code
+                            # (DECLINED, ERROR, PC_REPORT) means the C path did
+                            # NOT commit and Python must run the instruction --
+                            # testing only for DECLINED let MT_EVAL_PC_REPORT
+                            # read as success and silently dropped the
+                            # implicit-taint report for tainted `ret`.
+                            used_arr = rc >= 0
                             used_capi = used_arr
                             if used_arr:
                                 n_mw = rc
@@ -1360,8 +1384,9 @@ cdef class InstructionHook:
                     if _circuit_capi != NULL:
                         rc = _circuit_capi.eval_arr_ptr_i(
                             compiled_circuit, self.g_taint, self.g_val,
-                            self.n_slots, self.pcode_obj, self.slot_map)
-                        used_arr = rc != MT_EVAL_DECLINED
+                            self.n_slots, self.pcode_obj, self.slot_map,
+                            self.fctx.implicit_policy)
+                        used_arr = rc >= 0
                     else:
                         result = compiled_circuit.evaluate_c_arr_ptr(
                             <unsigned long long>(<size_t>self.g_taint),
@@ -1369,6 +1394,16 @@ cdef class InstructionHook:
                             self.n_slots, self.pcode_obj, self.slot_map)
                         used_arr = result is not None
             if not used_arr:
+                if not compiled_ok:
+                    self.fb_other += 1
+                elif cflags & MT_CF_PC_TARGET:
+                    self.fb_pc += 1
+                elif cflags & MT_CF_PY_FALLBACK:
+                    self.fb_pyfall += 1
+                elif has_mem:
+                    self.fb_mem += 1
+                else:
+                    self.fb_other += 1
                 output_state = self._eval_fallback_dict(
                     circuit, compiled_circuit, compiled_ok, instruction_bytes, address)
         except BaseException as e:
