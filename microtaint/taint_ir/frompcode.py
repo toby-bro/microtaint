@@ -29,6 +29,7 @@ from microtaint.taint_ir.ir import (
     EQ,
     MASK64,
     MUL,
+    MULHI,
     NEG,
     NEZ,
     NOT,
@@ -575,6 +576,73 @@ class Builder:
                     self.t.read(sp, vn.offset + lane, lsz))
         raise Unsupported(f'wide input space {sp}')
 
+    def _emit_wide_special(self, name, op):
+        """Wide shapes that are not bit-parallel but are still exact.
+
+        These are what a widening multiply lifts to.  `imul r64, r64` builds a
+        128-bit product and then asks whether the low half sign-extends back to
+        the whole of it -- that question IS the carry and overflow flags -- so
+        without them the instruction has to fall back to re-executing itself in
+        SLEIGH, which is the cost this whole path exists to remove.
+
+        Returns True when it handled the op.
+        """
+        p = self.p
+        if self.be:
+            raise Unsupported('wide varnode on a big-endian target')
+        osz = op.output.size
+        isz = op.inputs[0].size if op.inputs else osz
+
+        # A lane-aligned slice of a wide value is just that lane.
+        if name == 'SUBPIECE' and isz > 8 and osz <= 8:
+            off = op.inputs[1].offset
+            if off % 8 or off + osz > isz:
+                return False
+            av, at = self._read_lane(op.inputs[0], off, osz)
+            self._predicated_write(op.output, p.mask(av, osz * 8),
+                                   p.mask(at, osz * 8))
+            return True
+
+        # 128-bit product, truncated to 128 bits: the high lane needs the high
+        # half of the low-lane product, which is what MULHI is for.
+        if (name == 'INT_MULT' and osz == 16 and isz == 16
+                and op.inputs[1].size == 16):
+            a0, at0 = self._read_lane(op.inputs[0], 0, 8)
+            a1, at1 = self._read_lane(op.inputs[0], 8, 8)
+            b0, bt0 = self._read_lane(op.inputs[1], 0, 8)
+            b1, bt1 = self._read_lane(op.inputs[1], 8, 8)
+            lo = p.op(MUL, a0, b0)
+            hi = p.op(ADD, p.op(ADD, p.op(MULHI, a0, b0), p.op(MUL, a0, b1)),
+                      p.op(MUL, a1, b0))
+            any_t = p.op(OR, p.op(OR, at0, at1), p.op(OR, bt0, bt1))
+            full = p.splat(p.op(NEZ, any_t))
+            self._write_lane(op.output, 0, 8, lo, full)
+            self._write_lane(op.output, 8, 8, hi, full)
+            return True
+
+        # Equality over a wide value: the same rule, accumulated across lanes.
+        if name in ('INT_EQUAL', 'INT_NOTEQUAL') and isz > 8:
+            eq = p.const(1)
+            bad = p.const(0)
+            anyv = p.const(0)
+            for lane in range(0, isz, 8):
+                lsz = min(8, isz - lane)
+                av, at = self._read_lane(op.inputs[0], lane, lsz)
+                bv, bt = self._read_lane(op.inputs[1], lane, lsz)
+                eq = p.op(AND, eq, p.op(EQ, av, bv))
+                d = p.op(XOR, av, bv)
+                tu = p.op(OR, at, bt)
+                bad = p.op(OR, bad, p.op(AND, d, p.op(NOT, tu)))
+                anyv = p.op(OR, anyv, p.op(OR, d, tu))
+            v = eq if name == 'INT_EQUAL' else p.op(XOR, eq, p.const(1))
+            can_true = p.op(EQ, bad, p.const(0))
+            can_false = p.op(NEZ, anyv)
+            self._predicated_write(op.output, v,
+                                   p.op(AND, can_true, can_false))
+            return True
+
+        return False
+
     def _write_lane(self, vn, lane, lsz, val, tnt):
         p = self.p
         sp = vn.space.name
@@ -645,10 +713,12 @@ class Builder:
         p = self.p
         if any(s > 8 for s in
                [x.size for x in op.inputs] + [op.output.size]):
-            if name not in self._LANE_OPS:
-                raise Unsupported(f'wide varnode ({name})')
-            self._emit_wide(name, op)
-            return
+            if name in self._LANE_OPS:
+                self._emit_wide(name, op)
+                return
+            if self._emit_wide_special(name, op):
+                return
+            raise Unsupported(f'wide varnode ({name})')
         ins = [self._read_in(x) for x in op.inputs]
         av, at = ins[0] if ins else (p.const(0), p.const(0))
         bv, bt = ins[1] if len(ins) > 1 else (p.const(0), p.const(0))

@@ -84,6 +84,9 @@ def emit_c(prog, slot_of, name: str) -> str:
             lines.append(f'{d}(uint64_t)__builtin_popcountll(x{a});')
         elif op == _ir.CLZ:
             lines.append(f'{d}x{a} ? (uint64_t)__builtin_clzll(x{a}) : 64;')
+        elif op == _ir.MULHI:
+            lines.append(f'{d}(uint64_t)(((unsigned __int128)x{a} * '
+                         f'(unsigned __int128)x{b}) >> 64);')
         elif op == _ir.UDIV:
             lines.append(f'{d}x{b} ? x{a} / x{b} : 0;')
         elif op == _ir.UREM:

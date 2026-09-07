@@ -65,6 +65,11 @@ UDIV = 'udiv'
 UREM = 'urem'
 SDIV = 'sdiv'
 SREM = 'srem'
+#: High 64 bits of a 64x64 product.  A widening multiply is the one place the
+#: lowering needs a result wider than its word: `imul r64, r64` computes a
+#: 128-bit product and then asks whether the low half sign-extends back to it,
+#: which is exactly the carry and overflow flags.
+MULHI = 'mulhi'
 #: A one-bit cone, held as its truth table over at most three one-bit leaves
 #: (a, b, c; imm = the table).  Kept symbolic until `finalize`, so the operations
 #: a lifter used to build the cone are never emitted at all -- only a cheapest
@@ -72,12 +77,12 @@ SREM = 'srem'
 BOOLSYM = 'boolsym'
 
 _BINARY = {AND, OR, XOR, ADD, SUB, MUL, SHL, SHR, SAR, ULT, SLT, EQ,
-           UDIV, UREM, SDIV, SREM}
+           UDIV, UREM, SDIV, SREM, MULHI}
 _UNARY = {NOT, NEG, NEZ, POPCNT, CLZ}
 
 #: Ops whose cost is one machine instruction on both x86-64 and AArch64.  SEL is
 #: cmov/csel, NEZ is a compare plus a set, so they are charged 2.
-_COST = {SEL: 2, NEZ: 2, ULT: 2, SLT: 2, EQ: 2,
+_COST = {SEL: 2, NEZ: 2, ULT: 2, SLT: 2, EQ: 2, MULHI: 3,
          UDIV: 20, UREM: 20, SDIV: 20, SREM: 20, POPCNT: 1, CLZ: 1}
 
 
@@ -133,6 +138,8 @@ def eval_op(op: str, a: int, b: int, c: int, imm: int) -> int:
         return bin(a).count('1')
     if op == CLZ:
         return 64 if a == 0 else 64 - a.bit_length()
+    if op == MULHI:
+        return ((a * b) >> 64) & MASK64
     if op == UDIV:
         return 0 if b == 0 else (a // b) & MASK64
     if op == UREM:

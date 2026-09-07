@@ -369,7 +369,7 @@ static int jit_supported(const IRProgC *p) {
     for (int i = 0; i < p->n_nodes; i++) {
         switch (p->op[i]) {
         case IR_UDIV: case IR_UREM: case IR_SDIV: case IR_SREM:
-        case IR_CLZ:
+        case IR_CLZ: case IR_MULHI:
             return 0;
         default: break;
         }

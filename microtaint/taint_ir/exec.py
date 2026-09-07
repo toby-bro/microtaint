@@ -21,6 +21,7 @@ _OP_ID = {
     _ir.ULT: 14, _ir.SLT: 15, _ir.EQ: 16, _ir.NEZ: 17, _ir.SEL: 18,
     _ir.POPCNT: 19, _ir.CLZ: 20,
     _ir.UDIV: 21, _ir.UREM: 22, _ir.SDIV: 23, _ir.SREM: 24,
+    _ir.MULHI: 25,
 }
 
 

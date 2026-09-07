@@ -29,6 +29,7 @@ enum {
     IR_SHL, IR_SHR, IR_SAR, IR_NOT, IR_NEG,
     IR_ULT, IR_SLT, IR_EQ, IR_NEZ, IR_SEL,
     IR_POPCNT, IR_CLZ, IR_UDIV, IR_UREM, IR_SDIV, IR_SREM,
+    IR_MULHI,
     IR_NOPS
 };
 
@@ -126,6 +127,9 @@ static void ir_run(const IRProgC *p, const uint64_t *values,
         case IR_UREM: s[n] = b ? a % b : 0; break;
         case IR_SDIV: s[n] = b ? (uint64_t)((int64_t)a / (int64_t)b) : 0; break;
         case IR_SREM: s[n] = b ? (uint64_t)((int64_t)a % (int64_t)b) : 0; break;
+        case IR_MULHI:
+            s[n] = (uint64_t)(((unsigned __int128)a * (unsigned __int128)b) >> 64);
+            break;
         default: s[n] = 0; break;
         }
     }
