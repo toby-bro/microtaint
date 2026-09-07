@@ -745,29 +745,37 @@ cdef class InstructionHook:
         cdef uint64_t *vptr
         cdef uint64_t ef
         cdef list slist
+        cdef object entry
         try:
-            decoded = self.get_decoded(self.arch, instruction_bytes)
-            uc_arrs = decoded._uc_arrays
-            if uc_arrs is None:
-                uc_arrs = self.build_offsets_arrs(decoded.input_reg_offsets)
-                decoded._uc_arrays = uc_arrs
-            (ids, vals, ptrs, n, names, need_ef, n_calls,
-             ids_addr, ptrs_addr, vals_addr, n_calls_int) = uc_arrs
-            if ids is not None:
-                # Per-instruction name->slot list, computed once.  Held hook-side:
-                # `decoded` is a cdef class, so stashing a new attribute on it
-                # raises AttributeError (which would silently push every
-                # instruction onto the slow get_live_registers fallback).
-                # Keyed by ADDRESS: an int hash, versus hashing the instruction
-                # bytes on every single instruction.  Dropped by invalidate_smc
-                # along with the other address-keyed caches.
-                slots = self.slots_cache.get(address)
-                if slots is None:
-                    slist = []
+            # Per-address cache of (slots, uc_arrays).  Both are derived purely
+            # from the instruction bytes, and invalidate_smc drops this along with
+            # the other address-keyed caches when those bytes change.  Caching
+            # uc_arrays as well avoids calling get_decoded() -- an lru_cache keyed
+            # on (arch, bytes), so a bytes hash plus wrapper -- on EVERY
+            # instruction just to re-read the same _uc_arrays attribute.
+            # (The slot list has to live here rather than on `decoded` because
+            # that is a cdef class and will not take a new attribute.)
+            entry = self.slots_cache.get(address)
+            if entry is not None:
+                slots = <object>entry[0]
+                uc_arrs = <object>entry[1]
+                (ids, vals, ptrs, n, names, need_ef, n_calls,
+                 ids_addr, ptrs_addr, vals_addr, n_calls_int) = uc_arrs
+            else:
+                decoded = self.get_decoded(self.arch, instruction_bytes)
+                uc_arrs = decoded._uc_arrays
+                if uc_arrs is None:
+                    uc_arrs = self.build_offsets_arrs(decoded.input_reg_offsets)
+                    decoded._uc_arrays = uc_arrs
+                (ids, vals, ptrs, n, names, need_ef, n_calls,
+                 ids_addr, ptrs_addr, vals_addr, n_calls_int) = uc_arrs
+                slist = []
+                if ids is not None:
                     for i in range(n):
                         slist.append(self._slot_for(names[i]))
-                    slots = slist
-                    self.slots_cache[address] = slots
+                slots = slist
+                self.slots_cache[address] = (slots, uc_arrs)
+            if ids is not None:
                 if _USE_CREGS and self.uc_rrb_addr != 0:
                     if self.uc_handle_addr == 0:
                         self.uc_handle_addr = <unsigned long long>self.uc_handle.value
@@ -1104,8 +1112,8 @@ cdef class InstructionHook:
         """Slot list for this instruction's input registers (filled by
         _fill_vals_arr, held hook-side because the decoded object is a cdef
         class and will not accept a new attribute)."""
-        cdef object slots = self.slots_cache.get(address)
-        return slots if slots is not None else []
+        cdef object entry = self.slots_cache.get(address)
+        return (<object>entry[0]) if entry is not None else []
 
     cdef void _apply_mem_writes(self, object writes, list mem_writes):
         """Feed last_tainted_writes (+ AIW list) from evaluate_c_mem_ptr's
