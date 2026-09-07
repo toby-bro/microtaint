@@ -15,6 +15,20 @@ cdef class BitPreciseShadowMemory:
     cdef dict taint_pages
     cdef dict state_pages
 
+    # Single-entry taint-page cache.  The pages dict is keyed by a Python int,
+    # so every lookup allocated a PyLong for the key and ran a hashed compare
+    # (perf: PyDict_GetItemWithError + PyLong_FromUnsignedLong + RichCompareBool
+    # were ~6% of the taint phase).  Consecutive shadow accesses almost always
+    # land in the same page, so remember the last one.  _tp_gen is bumped
+    # whenever a page is CREATED, which is the only event that can invalidate a
+    # cached entry (including a cached MISS -- pages are never deleted).
+    cdef uint64_t _tp_last_pb
+    cdef object   _tp_last_page
+    cdef uint64_t _tp_gen
+    cdef uint64_t _tp_last_gen
+    cdef bint     _tp_last_set
+
+    cdef inline object _lookup_taint_page(self, uint64_t page_base)
     cdef inline bytearray _get_taint_page(self, uint64_t page_base)
     cdef inline bytearray _get_state_page(self, uint64_t page_base)
     cdef inline uint64_t _page_base(self, uint64_t address)

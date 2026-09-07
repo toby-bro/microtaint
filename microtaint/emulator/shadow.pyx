@@ -41,10 +41,31 @@ cdef class BitPreciseShadowMemory:
     def __init__(self):
         self.taint_pages = {}
         self.state_pages = {}
+        self._tp_last_pb = 0
+        self._tp_last_page = None
+        self._tp_gen = 1
+        self._tp_last_gen = 0
+        self._tp_last_set = False
 
     # ------------------------------------------------------------------
     # Internal helpers — cdef, never visible to Python
     # ------------------------------------------------------------------
+
+    cdef inline object _lookup_taint_page(self, uint64_t page_base):
+        """taint page for page_base, or None.  Serves the common case (same page
+        as last time) from a C-level compare, with no PyLong key allocation and
+        no dict lookup.  A cached MISS is valid too: only page CREATION can turn
+        a miss into a hit, and that bumps _tp_gen."""
+        cdef object page
+        if self._tp_last_set and self._tp_last_pb == page_base \
+                and self._tp_last_gen == self._tp_gen:
+            return self._tp_last_page
+        page = self.taint_pages.get(page_base)
+        self._tp_last_pb = page_base
+        self._tp_last_page = page
+        self._tp_last_gen = self._tp_gen
+        self._tp_last_set = True
+        return page
 
     cdef inline bytearray _get_taint_page(self, uint64_t page_base):
         cdef bytearray page
@@ -53,6 +74,7 @@ cdef class BitPreciseShadowMemory:
         except KeyError:
             page = bytearray(PAGE_SIZE)
             self.taint_pages[page_base] = page
+            self._tp_gen += 1          # invalidates any cached lookup (incl. misses)
             return page
 
     cdef inline bytearray _get_state_page(self, uint64_t page_base):
@@ -113,7 +135,7 @@ cdef class BitPreciseShadowMemory:
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = <bytearray>self.taint_pages.get(pb)
+                page   = <bytearray>self._lookup_taint_page(pb)
                 cur_pb = pb
                 have   = True
             if page is not None:
@@ -165,7 +187,7 @@ cdef class BitPreciseShadowMemory:
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = <bytearray>self.taint_pages.get(pb)
+                page   = <bytearray>self._lookup_taint_page(pb)
                 cur_pb = pb
                 have   = True
             if page is not None:
@@ -186,7 +208,7 @@ cdef class BitPreciseShadowMemory:
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = <bytearray>self.taint_pages.get(pb)
+                page   = <bytearray>self._lookup_taint_page(pb)
                 cur_pb = pb
                 have   = True
             if page is not None and page[self._offset(addr)]:
@@ -205,7 +227,7 @@ cdef class BitPreciseShadowMemory:
             addr = address + <uint64_t>i
             pb   = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = <bytearray>self.taint_pages.get(pb)
+                page   = <bytearray>self._lookup_taint_page(pb)
                 cur_pb = pb
                 have   = True
             if page is not None:
