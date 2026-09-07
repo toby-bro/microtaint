@@ -7,32 +7,37 @@ get C-level dispatch on its cpdef methods.  Without this .pxd, calls
 into shadow_mem from another Cython module go through the Python
 attribute-lookup + bound-method call path, defeating the purpose of
 the cpdef declaration.
+
+Storage is a pure C open-addressing page table (page_base -> malloc'd page),
+NOT a Python dict.  The dict version allocated a PyLong for the page-base key
+and ran a hashed compare on every shadow access, which perf attributed to
+PyDict_GetItemWithError / PyLong_FromUnsignedLong / RichCompareBool inside the
+taint hot path.  The C table also lets the hot cores be `noexcept nogil`, so the
+capsule used by circuit_c no longer pays a PyErr_Occurred check per access and
+the fast path holds no Python state at all.
 """
-from libc.stdint cimport uint64_t
+from libc.stdint cimport uint64_t, uint8_t
+
+
+# Open-addressing map: page_base -> page.  EMPTY is 0xFFFF...FF, which can never
+# be a real page base (page bases are 4096-aligned, so their low bits are zero).
+cdef struct PageMap:
+    uint64_t       *keys
+    unsigned char **vals
+    Py_ssize_t      cap
+    Py_ssize_t      n
 
 
 cdef class BitPreciseShadowMemory:
-    cdef dict taint_pages
-    cdef dict state_pages
+    cdef PageMap taint_map
+    cdef PageMap state_map
 
-    # Single-entry taint-page cache.  The pages dict is keyed by a Python int,
-    # so every lookup allocated a PyLong for the key and ran a hashed compare
-    # (perf: PyDict_GetItemWithError + PyLong_FromUnsignedLong + RichCompareBool
-    # were ~6% of the taint phase).  Consecutive shadow accesses almost always
-    # land in the same page, so remember the last one.  _tp_gen is bumped
-    # whenever a page is CREATED, which is the only event that can invalidate a
-    # cached entry (including a cached MISS -- pages are never deleted).
-    cdef uint64_t _tp_last_pb
-    cdef object   _tp_last_page
-    cdef uint64_t _tp_gen
-    cdef uint64_t _tp_last_gen
-    cdef bint     _tp_last_set
+    cdef inline uint64_t _page_base(self, uint64_t address) noexcept nogil
+    cdef inline int _offset(self, uint64_t address) noexcept nogil
 
-    cdef inline object _lookup_taint_page(self, uint64_t page_base)
-    cdef inline bytearray _get_taint_page(self, uint64_t page_base)
-    cdef inline bytearray _get_state_page(self, uint64_t page_base)
-    cdef inline uint64_t _page_base(self, uint64_t address)
-    cdef inline int _offset(self, uint64_t address)
+    # Pure-C cores: no Python objects, no exceptions, callable without the GIL.
+    cdef uint64_t read_mask_c(self, uint64_t address, int size) noexcept nogil
+    cdef void write_mask_c(self, uint64_t address, uint64_t mask, int size) noexcept nogil
 
     cpdef void write_bytes(self, uint64_t address, object taint)
     cpdef bytearray read_bytes(self, uint64_t address, int count)

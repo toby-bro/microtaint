@@ -5,6 +5,8 @@
 # cython: infer_types=True
 
 from libc.stdint cimport uint64_t, uint8_t
+from libc.stdlib cimport malloc, calloc, free
+from libc.string cimport memset
 
 # ---------------------------------------------------------------------------
 # BitPreciseShadowMemory
@@ -24,6 +26,111 @@ cdef int PAGE_MASK = PAGE_SIZE - 1
 cdef uint8_t STATE_POISONED = 0xFF
 
 
+
+
+# ---------------------------------------------------------------------------
+# C page table.  Replaces the Python dict of bytearrays: a dict keyed by a
+# Python int allocated a PyLong per lookup and ran a hashed compare, which
+# showed up in the taint hot path as PyDict_GetItemWithError +
+# PyLong_FromUnsignedLong + RichCompareBool.  Open addressing, power-of-two
+# capacity, linear probing.  EMPTY_KEY can never collide with a real page base
+# because page bases are 4096-aligned.
+# ---------------------------------------------------------------------------
+cdef uint64_t EMPTY_KEY = <uint64_t>0xFFFFFFFFFFFFFFFF
+
+
+cdef int pm_init(PageMap *m, Py_ssize_t cap) noexcept nogil:
+    cdef Py_ssize_t i
+    m.keys = <uint64_t *>malloc(<size_t>cap * sizeof(uint64_t))
+    if m.keys == NULL:
+        return -1
+    m.vals = <unsigned char **>calloc(<size_t>cap, sizeof(unsigned char *))
+    if m.vals == NULL:
+        free(m.keys); m.keys = NULL
+        return -1
+    for i in range(cap):
+        m.keys[i] = EMPTY_KEY
+    m.cap = cap
+    m.n = 0
+    return 0
+
+
+cdef void pm_free(PageMap *m) noexcept nogil:
+    cdef Py_ssize_t i
+    if m.vals != NULL:
+        for i in range(m.cap):
+            if m.vals[i] != NULL:
+                free(m.vals[i])
+        free(m.vals); m.vals = NULL
+    if m.keys != NULL:
+        free(m.keys); m.keys = NULL
+    m.cap = 0
+    m.n = 0
+
+
+cdef inline Py_ssize_t pm_slot(PageMap *m, uint64_t key) noexcept nogil:
+    cdef uint64_t h = key * <uint64_t>0x9E3779B97F4A7C15
+    h ^= h >> 29
+    cdef Py_ssize_t i = <Py_ssize_t>(h & <uint64_t>(m.cap - 1))
+    while m.keys[i] != EMPTY_KEY and m.keys[i] != key:
+        i = (i + 1) & (m.cap - 1)
+    return i
+
+
+cdef int pm_grow(PageMap *m) noexcept nogil:
+    cdef PageMap nm
+    cdef Py_ssize_t i, j
+    if pm_init(&nm, m.cap * 2) != 0:
+        return -1
+    for i in range(m.cap):
+        if m.keys[i] != EMPTY_KEY:
+            j = pm_slot(&nm, m.keys[i])
+            nm.keys[j] = m.keys[i]
+            nm.vals[j] = m.vals[i]
+            nm.n += 1
+    # free the old spine only; the pages themselves moved to the new table
+    free(m.keys)
+    free(m.vals)
+    m.keys = nm.keys
+    m.vals = nm.vals
+    m.cap = nm.cap
+    m.n = nm.n
+    return 0
+
+
+cdef inline unsigned char *pm_get(PageMap *m, uint64_t key) noexcept nogil:
+    """Page for key, or NULL.  Never allocates."""
+    cdef Py_ssize_t i
+    if m.cap == 0:
+        return NULL
+    i = pm_slot(m, key)
+    if m.keys[i] == key:
+        return m.vals[i]
+    return NULL
+
+
+cdef inline unsigned char *pm_get_or_create(PageMap *m, uint64_t key, int page_size) noexcept nogil:
+    """Page for key, allocating a zeroed one if absent.  NULL only on OOM."""
+    cdef Py_ssize_t i
+    cdef unsigned char *p
+    if m.cap == 0:
+        if pm_init(m, 64) != 0:
+            return NULL
+    if (m.n + 1) * 10 >= m.cap * 7:      # keep load factor under ~0.7
+        if pm_grow(m) != 0:
+            return NULL
+    i = pm_slot(m, key)
+    if m.keys[i] == key:
+        return m.vals[i]
+    p = <unsigned char *>calloc(<size_t>page_size, 1)
+    if p == NULL:
+        return NULL
+    m.keys[i] = key
+    m.vals[i] = p
+    m.n += 1
+    return p
+
+
 cdef class BitPreciseShadowMemory:
     """
     Fast Cython implementation of bit-precise shadow memory.
@@ -39,58 +146,70 @@ cdef class BitPreciseShadowMemory:
     """
 
     def __init__(self):
-        self.taint_pages = {}
-        self.state_pages = {}
-        self._tp_last_pb = 0
-        self._tp_last_page = None
-        self._tp_gen = 1
-        self._tp_last_gen = 0
-        self._tp_last_set = False
+        # Lazily sized; pm_get_or_create initialises on first write.
+        self.taint_map.keys = NULL
+        self.taint_map.vals = NULL
+        self.taint_map.cap = 0
+        self.taint_map.n = 0
+        self.state_map.keys = NULL
+        self.state_map.vals = NULL
+        self.state_map.cap = 0
+        self.state_map.n = 0
+
+    def __dealloc__(self):
+        pm_free(&self.taint_map)
+        pm_free(&self.state_map)
 
     # ------------------------------------------------------------------
-    # Internal helpers — cdef, never visible to Python
+    # Internal helpers — pure C, no Python objects, callable without the GIL
     # ------------------------------------------------------------------
 
-    cdef inline object _lookup_taint_page(self, uint64_t page_base):
-        """taint page for page_base, or None.  Serves the common case (same page
-        as last time) from a C-level compare, with no PyLong key allocation and
-        no dict lookup.  A cached MISS is valid too: only page CREATION can turn
-        a miss into a hit, and that bumps _tp_gen."""
-        cdef object page
-        if self._tp_last_set and self._tp_last_pb == page_base \
-                and self._tp_last_gen == self._tp_gen:
-            return self._tp_last_page
-        page = self.taint_pages.get(page_base)
-        self._tp_last_pb = page_base
-        self._tp_last_page = page
-        self._tp_last_gen = self._tp_gen
-        self._tp_last_set = True
-        return page
-
-    cdef inline bytearray _get_taint_page(self, uint64_t page_base):
-        cdef bytearray page
-        try:
-            return <bytearray>self.taint_pages[page_base]
-        except KeyError:
-            page = bytearray(PAGE_SIZE)
-            self.taint_pages[page_base] = page
-            self._tp_gen += 1          # invalidates any cached lookup (incl. misses)
-            return page
-
-    cdef inline bytearray _get_state_page(self, uint64_t page_base):
-        cdef bytearray page
-        try:
-            return <bytearray>self.state_pages[page_base]
-        except KeyError:
-            page = bytearray(PAGE_SIZE)
-            self.state_pages[page_base] = page
-            return page
-
-    cdef inline uint64_t _page_base(self, uint64_t address):
+    cdef inline uint64_t _page_base(self, uint64_t address) noexcept nogil:
         return address & ~<uint64_t>PAGE_MASK
 
-    cdef inline int _offset(self, uint64_t address):
+    cdef inline int _offset(self, uint64_t address) noexcept nogil:
         return <int>(address & <uint64_t>PAGE_MASK)
+
+    cdef uint64_t read_mask_c(self, uint64_t address, int size) noexcept nogil:
+        """Pure-C core of read_mask.  Same little-endian packing, same page
+        caching across the byte loop; just no Python anywhere."""
+        cdef uint64_t result = 0
+        cdef int i
+        cdef uint64_t addr, pb
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef unsigned char *page = NULL
+        cdef unsigned char tb
+        for i in range(size):
+            addr = address + <uint64_t>i
+            pb = addr & ~<uint64_t>PAGE_MASK
+            if not have or pb != cur_pb:
+                page = pm_get(&self.taint_map, pb)
+                cur_pb = pb
+                have = True
+            if page != NULL:
+                tb = page[<int>(addr & <uint64_t>PAGE_MASK)]
+                if tb:
+                    result |= (<uint64_t>tb) << (i * 8)
+        return result
+
+    cdef void write_mask_c(self, uint64_t address, uint64_t mask, int size) noexcept nogil:
+        """Pure-C core of write_mask.  Writing 0 explicitly clears, exactly as
+        before, so an all-zero mask still allocates the page and zeroes it."""
+        cdef int i
+        cdef uint64_t addr, pb
+        cdef uint64_t cur_pb = 0
+        cdef bint have = False
+        cdef unsigned char *page = NULL
+        for i in range(size):
+            addr = address + <uint64_t>i
+            pb = addr & ~<uint64_t>PAGE_MASK
+            if not have or pb != cur_pb:
+                page = pm_get_or_create(&self.taint_map, pb, PAGE_SIZE)
+                cur_pb = pb
+                have = True
+            if page != NULL:
+                page[<int>(addr & <uint64_t>PAGE_MASK)] = <unsigned char>((mask >> (i * 8)) & 0xFF)
 
     # ------------------------------------------------------------------
     # Taint API — cpdef so both Python and Cython can call without boxing
@@ -106,19 +225,20 @@ cdef class BitPreciseShadowMemory:
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
         cdef bint have = False
-        cdef bytearray page = None
-        cdef uint8_t tb
+        cdef unsigned char *page = NULL
+        cdef unsigned char tb
 
         length = len(taint)
         for i in range(length):
             addr = address + <uint64_t>i
-            tb   = <uint8_t>taint[i]
-            pb   = self._page_base(addr)
+            tb = <unsigned char>taint[i]
+            pb = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = self._get_taint_page(pb)
+                page = pm_get_or_create(&self.taint_map, pb, PAGE_SIZE)
                 cur_pb = pb
-                have   = True
-            page[self._offset(addr)] = tb
+                have = True
+            if page != NULL:
+                page[self._offset(addr)] = tb
 
     cpdef bytearray read_bytes(self, uint64_t address, int count):
         """
@@ -129,16 +249,16 @@ cdef class BitPreciseShadowMemory:
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
         cdef bint have = False
-        cdef bytearray page = None
+        cdef unsigned char *page = NULL
 
         for i in range(count):
             addr = address + <uint64_t>i
-            pb   = self._page_base(addr)
+            pb = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = <bytearray>self._lookup_taint_page(pb)
+                page = pm_get(&self.taint_map, pb)
                 cur_pb = pb
-                have   = True
-            if page is not None:
+                have = True
+            if page != NULL:
                 result[i] = page[self._offset(addr)]
         return result
 
@@ -148,22 +268,7 @@ cdef class BitPreciseShadowMemory:
         mask bit group [i*8 .. i*8+7] is the taint mask for memory byte address+i.
         Calling write_mask(addr, 0, n) explicitly clears n bytes of taint.
         """
-        cdef int i
-        cdef uint64_t addr, pb
-        cdef uint64_t cur_pb = 0
-        cdef bint have = False
-        cdef uint8_t byte_taint
-        cdef bytearray page = None
-
-        for i in range(size):
-            addr       = address + <uint64_t>i
-            byte_taint = <uint8_t>((mask >> (i * 8)) & 0xFF)
-            pb         = self._page_base(addr)
-            if not have or pb != cur_pb:
-                page   = self._get_taint_page(pb)
-                cur_pb = pb
-                have   = True
-            page[self._offset(addr)] = byte_taint
+        self.write_mask_c(address, mask, size)
 
     cpdef uint64_t read_mask(self, uint64_t address, int size):
         """
@@ -171,30 +276,7 @@ cdef class BitPreciseShadowMemory:
         Bit group [i*8 .. i*8+7] is the taint mask for memory byte address+i.
         Returns 0 if no bytes in the range are tainted.
         """
-        cdef uint64_t result = 0
-        cdef int i
-        cdef uint64_t addr, pb
-        cdef uint64_t cur_pb = 0
-        cdef bint have = False
-        cdef bytearray page = None
-        cdef uint8_t tb
-
-        # Cache the current page across the byte loop: a read almost always
-        # lies within one 4096-byte page, so this turns the old per-byte
-        # `contains`+subscript double dict lookup into ONE `.get()` per page.
-        # Bit-exact: same bytes read, same little-endian packing.
-        for i in range(size):
-            addr = address + <uint64_t>i
-            pb   = self._page_base(addr)
-            if not have or pb != cur_pb:
-                page   = <bytearray>self._lookup_taint_page(pb)
-                cur_pb = pb
-                have   = True
-            if page is not None:
-                tb = <uint8_t>page[self._offset(addr)]
-                if tb:
-                    result |= (<uint64_t>tb) << (i * 8)
-        return result
+        return self.read_mask_c(address, size)
 
     cpdef bint is_tainted(self, uint64_t address, int size):
         """True if any byte in [address, address+size) carries any taint."""
@@ -202,16 +284,16 @@ cdef class BitPreciseShadowMemory:
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
         cdef bint have = False
-        cdef bytearray page = None
+        cdef unsigned char *page = NULL
 
         for i in range(size):
             addr = address + <uint64_t>i
-            pb   = self._page_base(addr)
+            pb = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = <bytearray>self._lookup_taint_page(pb)
+                page = pm_get(&self.taint_map, pb)
                 cur_pb = pb
-                have   = True
-            if page is not None and page[self._offset(addr)]:
+                have = True
+            if page != NULL and page[self._offset(addr)]:
                 return True
         return False
 
@@ -221,16 +303,16 @@ cdef class BitPreciseShadowMemory:
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
         cdef bint have = False
-        cdef bytearray page = None
+        cdef unsigned char *page = NULL
 
         for i in range(size):
             addr = address + <uint64_t>i
-            pb   = self._page_base(addr)
+            pb = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = <bytearray>self._lookup_taint_page(pb)
+                page = pm_get(&self.taint_map, pb)
                 cur_pb = pb
-                have   = True
-            if page is not None:
+                have = True
+            if page != NULL:
                 page[self._offset(addr)] = 0
 
     # ------------------------------------------------------------------
@@ -243,16 +325,17 @@ cdef class BitPreciseShadowMemory:
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
         cdef bint have = False
-        cdef bytearray page = None
+        cdef unsigned char *page = NULL
 
         for i in range(size):
             addr = address + <uint64_t>i
-            pb   = self._page_base(addr)
+            pb = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = self._get_state_page(pb)
+                page = pm_get_or_create(&self.state_map, pb, PAGE_SIZE)
                 cur_pb = pb
-                have   = True
-            page[self._offset(addr)] = STATE_POISONED
+                have = True
+            if page != NULL:
+                page[self._offset(addr)] = STATE_POISONED
 
     cpdef void unpoison(self, uint64_t address, int size):
         """Un-poison size bytes (e.g. when a region is re-allocated)."""
@@ -260,16 +343,16 @@ cdef class BitPreciseShadowMemory:
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
         cdef bint have = False
-        cdef bytearray page = None
+        cdef unsigned char *page = NULL
 
         for i in range(size):
             addr = address + <uint64_t>i
-            pb   = self._page_base(addr)
+            pb = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = <bytearray>self.state_pages.get(pb)
+                page = pm_get(&self.state_map, pb)
                 cur_pb = pb
-                have   = True
-            if page is not None:
+                have = True
+            if page != NULL:
                 page[self._offset(addr)] = 0
 
     cpdef bint is_poisoned(self, uint64_t address, int size):
@@ -278,16 +361,16 @@ cdef class BitPreciseShadowMemory:
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
         cdef bint have = False
-        cdef bytearray page = None
+        cdef unsigned char *page = NULL
 
         for i in range(size):
             addr = address + <uint64_t>i
-            pb   = self._page_base(addr)
+            pb = self._page_base(addr)
             if not have or pb != cur_pb:
-                page   = <bytearray>self.state_pages.get(pb)
+                page = pm_get(&self.state_map, pb)
                 cur_pb = pb
-                have   = True
-            if page is not None and page[self._offset(addr)]:
+                have = True
+            if page != NULL and page[self._offset(addr)]:
                 return True
         return False
 
@@ -329,11 +412,14 @@ cdef struct _ShadowCAPI:
 cdef uint64_t _capi_read_mask(object shadow, uint64_t address, int size) noexcept:
     # `shadow` is a borrowed ref the C caller already holds; the cast is
     # unchecked (the caller only ever passes a BitPreciseShadowMemory).
-    return (<BitPreciseShadowMemory>shadow).read_mask(address, size)
+    # Calls the pure-C core, not the cpdef wrapper: the wrapper is a Python-
+    # callable and Cython emits a PyErr_Occurred check after it, which perf
+    # attributed ~2% of the taint phase to on this path.
+    return (<BitPreciseShadowMemory>shadow).read_mask_c(address, size)
 
 
 cdef void _capi_write_mask(object shadow, uint64_t address, uint64_t mask, int size) noexcept:
-    (<BitPreciseShadowMemory>shadow).write_mask(address, mask, size)
+    (<BitPreciseShadowMemory>shadow).write_mask_c(address, mask, size)
 
 
 cdef _ShadowCAPI _shadow_capi_struct
