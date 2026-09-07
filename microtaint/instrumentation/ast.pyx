@@ -252,14 +252,7 @@ def _resolve_register_alias(str name, dict state, object arch) -> object:
     return None
 
 cdef class EvalContext:
-    cdef public dict input_taint
-    cdef public dict input_values
-    cdef public object simulator
-    cdef public object implicit_policy
-    cdef public object shadow_memory
-    cdef public object mem_reader
-    cdef public str arch_str  # cached once, avoids str(simulator.arch) per TaintOperand miss
-    cdef public bint share_frames  # frame-recycle: route cell exec through the per-evaluate frame cache
+    # Attributes are declared in ast.pxd (see the note on LogicCircuit there).
 
     def __init__(
         self,
@@ -1216,19 +1209,8 @@ def _collect_taint_operand_names(expr, result_set):
 
 
 cdef class LogicCircuit:
-    cdef public list assignments
-    cdef public object architecture
-    cdef public str instruction
-    cdef public list state_format
-    cdef public str _pc_target      # pre-computed: 'RIP'/'EIP'/'PC' or None
-    cdef public bint has_unicorn_cells  # True if any assignment uses InstructionCellExpr
-    cdef public object input_reg_names  # set of register names needed as value inputs
-    cdef public object _compiled       # cached CompiledCircuit (or None if compile failed/disabled)
-    # True iff the taint output is a pure function of the input taints (all p-code
-    # ops are value-independent: COPY/XOR/NOT/ZEXT/SEXT/const-shift).  Set by the
-    # circuit builder; the compiled circuit copies it and the instruction cache
-    # then keys on the taint signature alone.  Default False (value-dependent).
-    cdef public bint value_independent
+    # Attributes are declared in ast.pxd so other Cython modules can reach them
+    # at the C level; Cython requires them not to be repeated here.
 
     def __init__(self, list assignments, object architecture, str instruction, list state_format):
         self.assignments = assignments

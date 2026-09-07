@@ -35,6 +35,7 @@ from cpython.ref cimport Py_INCREF, Py_DECREF, Py_XINCREF, Py_XDECREF, PyObject
 from cpython.pycapsule cimport PyCapsule_GetPointer
 
 from microtaint.emulator.shadow cimport BitPreciseShadowMemory
+from microtaint.instrumentation.ast cimport LogicCircuit
 from libc.stdint cimport uint64_t
 from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memcpy, memcmp, memset
@@ -101,10 +102,51 @@ cdef int _mt_mem_read_c(void *ctx, uint64_t addr, int size, uint64_t *out) noexc
     out[0] = v
     return 0
 
+# Integer-returning forms of the same two evaluators.  The PyObject forms hand
+# back an int count or a list of (addr, size, taint) tuples, so every memory
+# instruction allocated a list, a tuple and three PyLongs (all GC-tracked) purely
+# to move 17 bytes of result across the boundary.  These write into caller-owned
+# C storage and return a plain int, so the steady state allocates nothing.
+DEF MT_EVAL_DECLINED = -1
+DEF MT_EVAL_ERROR = -2
+# Matches CMEM_MAX_WRITES in circuit_c.c.  The evaluator declines rather than
+# truncate, so a smaller buffer here would only cost fallbacks, never writes;
+# keeping them equal means the C path never declines for want of room.
+DEF MT_MAX_MEM_WRITES = 32
+
+cdef struct MtMemWrite:
+    uint64_t addr
+    uint64_t taint
+    int size
+
+# `except? -2` matches MT_EVAL_ERROR: on that value Cython checks for a pending
+# exception and propagates it, so a C-level failure surfaces exactly like the
+# PyObject forms' NULL return did.
+ctypedef int (*eval_arr_ptr_i_ft)(object compiled, uint64_t *taint, uint64_t *val,
+                                  int n_slots, object pcode,
+                                  object name_to_slot) except? -2
+ctypedef int (*eval_mem_ptr_ci_ft)(object compiled, uint64_t *taint, uint64_t *val,
+                                   int n_slots, object pcode, object shadow,
+                                   object mem_reader, object name_to_slot,
+                                   mt_mem_read_ft mem_fn, void *mem_ctx,
+                                   MtMemWrite *out, int out_cap) except? -2
+
+# Circuit capabilities the hot path consults per instruction.  Reading them as
+# Python attributes cost two PyObject_GenericGetAttr lookups per instruction.
+DEF MT_CF_C_EVALUABLE = 0x01
+DEF MT_CF_C_MEM_EVALUABLE = 0x02
+DEF MT_CF_HAS_MEM_OPS = 0x04
+DEF MT_CF_VALUE_INDEP = 0x08
+
+ctypedef int (*compiled_flags_ft)(object compiled) noexcept
+
 cdef struct CircuitCAPI:
     eval_arr_ptr_ft eval_arr_ptr
     eval_mem_ptr_ft eval_mem_ptr
     eval_mem_ptr_c_ft eval_mem_ptr_c
+    eval_arr_ptr_i_ft eval_arr_ptr_i
+    eval_mem_ptr_ci_ft eval_mem_ptr_ci
+    compiled_flags_ft compiled_flags
 
 cdef CircuitCAPI *_circuit_capi = NULL
 
@@ -207,10 +249,19 @@ cdef struct AddrEntry:
     int        size
     PyObject  *instr_bytes        # owned
     PyObject  *circuit            # owned
-    PyObject  *uc_arrs            # owned, may be NULL
+    PyObject  *uc_arrs            # owned, may be NULL; keeps the ctypes buffers alive
     int       *slots              # input-register slots, malloc'd
     int        n_in
     int        have_slots
+    # The parts of uc_arrs the register read actually needs, unpacked once.
+    # uc_arrs is an 11-element Python tuple; unpacking it per instruction cost
+    # eleven PyObject fetches and refcount pairs to reach four integers.
+    unsigned long long ids_addr
+    unsigned long long ptrs_addr
+    unsigned long long vals_addr
+    int        n_calls_i
+    int        need_ef
+    int        have_regs          # the four addresses above are valid
     uint64_t  *in_snap            # pre-state taint snapshot (n_slots entries)
     uint64_t  *out_snap           # post-state taint snapshot
     uint64_t  *val_snap           # operand values for value-dependent circuits
@@ -345,6 +396,15 @@ cdef class InstructionHook:
     cdef public object wrapper            # MicrotaintWrapper, for slow-path callbacks
     cdef public dict   register_taint     # mutated in-place
     cdef public set    last_tainted_writes
+    # C form of the same information, used by the array path.  The set version
+    # boxes a PyLong per tainted byte on the way in and another per written byte
+    # on the way out (MemWriteHook's membership test), for data that is at most
+    # a handful of (addr, size, mask) triples.  Holding the triples instead makes
+    # both sides pure integer work and lets the hot path stay callable from C.
+    # The set stays authoritative for the dict/fallback paths, which still fill
+    # it; MemWriteHook consults both, so the two representations never disagree.
+    cdef MtMemWrite ltw[MT_MAX_MEM_WRITES]
+    cdef int ltw_n
     cdef public dict   instr_cache        # address -> (frozenset, dict)  legacy entries
     cdef public dict   instr_cache_v      # address -> (taint_version, dict, taint_snapshot)
     cdef public dict   py_decode_cache    # address -> (size, bytes, circuit); dict path only
@@ -356,6 +416,10 @@ cdef class InstructionHook:
     cdef public unsigned long long code_hi
     cdef public BitPreciseShadowMemory shadow_mem  # cdef class — direct C-level method dispatch
     cdef public object sim                # CellSimulator
+    # sim._pcode, captured once.  CellSimulator assigns it in its __init__ and
+    # never again, so re-reading it per instruction only bought a
+    # PyObject_GenericGetAttr on the hot path.
+    cdef object pcode_obj
     cdef public object policy             # ImplicitTaintPolicy
     cdef public object reporter
     cdef public object ql                 # Qiling for emu_stop / mem.read fallback
@@ -410,6 +474,9 @@ cdef class InstructionHook:
     cdef int rip_slot                 # cached slot of the PC register
     cdef int eflags_slot              # cached slot of EFLAGS
     cdef list eflags_slot_bits        # cached [(flag slot, bit index), ...]
+    cdef int *ef_slots                # C form of the above, built once
+    cdef int *ef_bits
+    cdef int ef_n
 
     def __init__(self, wrapper, *,
                  uc_handle, uc_mem_read, uc_reg_read_batch, mem_buf,
@@ -430,6 +497,7 @@ cdef class InstructionHook:
         self.code_hi = 0
         self.shadow_mem = wrapper.shadow_mem
         self.sim = wrapper.sim
+        self.pcode_obj = getattr(wrapper.sim, '_pcode', None)
         self.policy = wrapper._policy
         self.reporter = wrapper.reporter
         self.ql = wrapper.ql
@@ -507,6 +575,12 @@ cdef class InstructionHook:
         if self.g_val != NULL:
             free(self.g_val)
             self.g_val = NULL
+        if self.ef_slots != NULL:
+            free(self.ef_slots)
+            self.ef_slots = NULL
+        if self.ef_bits != NULL:
+            free(self.ef_bits)
+            self.ef_bits = NULL
 
     # ------------------------------------------------------------------
     # Array-native taint state helpers (Phase 1.3c)
@@ -923,6 +997,31 @@ cdef class InstructionHook:
             # (The slot list has to live here rather than on `decoded` because
             # that is a cdef class and will not take a new attribute.)
             ent = am_get(&self.addr_map, address)
+            if ent != NULL and ent.have_regs:
+                # Steady state: everything the read needs is already in the C
+                # entry, so nothing here touches a Python object.
+                if _USE_CREGS and self.uc_rrb_addr != 0 and \
+                        (ent.n_in == 0 or ent.slots != NULL):
+                    if ent.n_in > 0:
+                        if self.uc_handle_addr == 0:
+                            self.uc_handle_addr = <unsigned long long>self.uc_handle.value
+                        (<uc_reg_read_batch_ft>(<void*>self.uc_rrb_addr))(
+                            <void*>self.uc_handle_addr,
+                            <void*>ent.ids_addr,
+                            <void*>ent.ptrs_addr,
+                            ent.n_calls_i)
+                        vptr = <uint64_t*>(<void*>ent.vals_addr)
+                        for i in range(ent.n_in):
+                            self.g_val[ent.slots[i]] = vptr[i]
+                    if ent.need_ef:
+                        self._explode_eflags()
+                    if self.rip_slot < 0:
+                        self.rip_slot = self._slot_for(self._pc_name())
+                    self.g_val[self.rip_slot] = <uint64_t>address
+                    return 0
+                # No registers to read, or the C batch read is unavailable: fall
+                # through to the general path below, which re-derives from
+                # uc_arrs.  Rare, so it is not worth a second specialisation.
             if ent != NULL and ent.have_slots and ent.uc_arrs != NULL:
                 uc_arrs = <object>ent.uc_arrs
                 (ids, vals, ptrs, n, names, need_ef, n_calls,
@@ -951,6 +1050,17 @@ cdef class InstructionHook:
                                 ent.slots[i] = self._slot_for(names[i])
                             ent.n_in = <int>n
                     ent.have_slots = 1
+                    # Unpack the parts the steady-state read needs into the
+                    # entry, so later visits never touch the tuple again.
+                    if (ids is not None and ent.slots != NULL and ent.n_in == <int>n
+                            and ids_addr is not None and ptrs_addr is not None
+                            and vals_addr is not None):
+                        ent.ids_addr = <unsigned long long>ids_addr
+                        ent.ptrs_addr = <unsigned long long>ptrs_addr
+                        ent.vals_addr = <unsigned long long>vals_addr
+                        ent.n_calls_i = <int>n_calls_int
+                        ent.need_ef = 1 if need_ef else 0
+                        ent.have_regs = 1
             if ids is not None:
                 if _USE_CREGS and self.uc_rrb_addr != 0:
                     if self.uc_handle_addr == 0:
@@ -971,15 +1081,7 @@ cdef class InstructionHook:
                             self.g_val[ent.slots[i]] = \
                                 <uint64_t>(int(vals[i]) & 0xFFFFFFFFFFFFFFFF)
                 if need_ef:
-                    if self.eflags_slot < 0:
-                        self.eflags_slot = self._slot_for('EFLAGS')
-                        self.eflags_slot_bits = [
-                            (self._slot_for(_f), int(_b))
-                            for _f, _b in self.eflags_bits.items()]
-                    ef = self.g_val[self.eflags_slot]
-                    for fpair in self.eflags_slot_bits:
-                        self.g_val[<int>(<object>fpair[0])] = \
-                            (ef >> <int>(<object>fpair[1])) & 1
+                    self._explode_eflags()
         except Exception:  # noqa: BLE001 - mirror _read_pre_regs' fallback
             pre = self.get_live_registers(self.uc_handle)
             for k, v in pre.items():
@@ -989,6 +1091,40 @@ cdef class InstructionHook:
             self.rip_slot = self._slot_for(self._pc_name())
         self.g_val[self.rip_slot] = <uint64_t>address
         return 0
+
+    cdef void _explode_eflags(self):
+        """Scatter the flag bits of the packed flags register into their own
+        value slots.  The (slot, bit) pairs are derived once from the arch's flag
+        map and then live in C arrays, so the per-instruction work is a shift and
+        a store per flag with no tuple indexing."""
+        cdef int i
+        cdef uint64_t ef
+        if self.eflags_slot < 0:
+            self.eflags_slot = self._slot_for('EFLAGS')
+            self.eflags_slot_bits = [
+                (self._slot_for(_f), int(_b)) for _f, _b in self.eflags_bits.items()]
+            self.ef_n = 0
+            if self.ef_slots != NULL:
+                free(self.ef_slots); self.ef_slots = NULL
+            if self.ef_bits != NULL:
+                free(self.ef_bits); self.ef_bits = NULL
+            i = len(self.eflags_slot_bits)
+            if i > 0:
+                self.ef_slots = <int*>malloc(<size_t>i * sizeof(int))
+                self.ef_bits = <int*>malloc(<size_t>i * sizeof(int))
+                if self.ef_slots != NULL and self.ef_bits != NULL:
+                    for i, fpair in enumerate(self.eflags_slot_bits):
+                        self.ef_slots[i] = <int>(<object>fpair[0])
+                        self.ef_bits[i] = <int>(<object>fpair[1])
+                    self.ef_n = len(self.eflags_slot_bits)
+        ef = self.g_val[self.eflags_slot]
+        if self.ef_n > 0:
+            for i in range(self.ef_n):
+                self.g_val[self.ef_slots[i]] = (ef >> self.ef_bits[i]) & 1
+        else:
+            for fpair in self.eflags_slot_bits:
+                self.g_val[<int>(<object>fpair[0])] = \
+                    (ef >> <int>(<object>fpair[1])) & 1
 
     cdef void _init_mem_ctx(self):
         """Populate the C read context from the LiveMemReader that already
@@ -1026,7 +1162,10 @@ cdef class InstructionHook:
 
         cdef int err
         cdef bytes instruction_bytes
-        cdef object circuit
+        # Typed so `circuit._compiled` below is a C struct read (see ast.pxd),
+        # not an attribute lookup.  The assignment is type-checked by Cython, so
+        # a rule generator returning anything else raises rather than misreads.
+        cdef LogicCircuit circuit
         cdef AddrEntry *aent = NULL
         if _USE_DECODE_CACHE:
             aent = am_get(&self.addr_map, address)
@@ -1051,6 +1190,7 @@ cdef class InstructionHook:
                     aent.size = size
                     # different bytes at this address: slots + snapshots are stale
                     aent.have_slots = 0
+                    aent.have_regs = 0
                     aent.have_snap = 0
                     aent.have_val = 0
                 if address < self.code_lo:
@@ -1065,11 +1205,25 @@ cdef class InstructionHook:
                 instruction_bytes = bytes(self.ql.mem.read(address, size))
             circuit = self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key)
 
+        # circuit._compiled is read fresh each call: it is lazily populated on the
+        # first evaluate and can be invalidated inside it, so the decode cache
+        # stores the circuit, not its compiled snapshot.  Through ast.pxd this is
+        # a C struct read.
         cdef object compiled_circuit = circuit._compiled
         cdef bint compiled_ok = (compiled_circuit is not None and compiled_circuit is not False)
-        cdef bint has_mem = compiled_ok and compiled_circuit.has_mem_ops
+        cdef int cflags = 0
+        cdef bint has_mem
+        if compiled_ok and _circuit_capi != NULL:
+            cflags = _circuit_capi.compiled_flags(compiled_circuit)
+            has_mem = (cflags & MT_CF_HAS_MEM_OPS) != 0
+        else:
+            has_mem = compiled_ok and compiled_circuit.has_mem_ops
         cdef bint can_cache = self.instr_cache_enabled and compiled_ok and not has_mem
-        cdef bint value_indep = can_cache and (<object>compiled_circuit).value_independent
+        cdef bint value_indep
+        if can_cache and _circuit_capi != NULL:
+            value_indep = (cflags & MT_CF_VALUE_INDEP) != 0
+        else:
+            value_indep = can_cache and (<object>compiled_circuit).value_independent
 
         cdef Py_ssize_t nbytes = self.n_slots * sizeof(uint64_t)
         cdef Py_ssize_t i
@@ -1098,6 +1252,7 @@ cdef class InstructionHook:
                 if hit:
                     memcpy(<void*>self.g_taint, <void*>aent.out_snap, nbytes)
                     self.instr_cache_hits += 1
+                    self.ltw_n = 0
                     if self.last_tainted_writes:
                         self.last_tainted_writes.clear()
                     return
@@ -1140,9 +1295,14 @@ cdef class InstructionHook:
                             aent.have_val = 0
                     want_store = (value_indep or aent.have_val)
 
+        # Memory writes come back in C storage on the stack; nothing is boxed.
+        cdef MtMemWrite mw[MT_MAX_MEM_WRITES]
+        cdef int n_mw = 0
+        cdef int rc = MT_EVAL_DECLINED
         cdef object result = None
         cdef object output_state = None
         cdef bint used_arr = False
+        cdef bint used_capi = False
         try:
             if compiled_ok:
                 if has_mem:
@@ -1150,29 +1310,35 @@ cdef class InstructionHook:
                         if _circuit_capi != NULL:
                             if not self.mem_ctx_ready:
                                 self._init_mem_ctx()
-                            result = _circuit_capi.eval_mem_ptr_c(
+                            rc = _circuit_capi.eval_mem_ptr_ci(
                                 compiled_circuit, self.g_taint, self.g_val,
-                                self.n_slots, self.sim._pcode, self.shadow_mem,
+                                self.n_slots, self.pcode_obj, self.shadow_mem,
                                 self.read_live_memory, self.slot_map,
-                                _mt_mem_read_c, <void*>&self.mem_ctx)
+                                _mt_mem_read_c, <void*>&self.mem_ctx,
+                                mw, MT_MAX_MEM_WRITES)
+                            used_arr = rc != MT_EVAL_DECLINED
+                            used_capi = used_arr
+                            if used_arr:
+                                n_mw = rc
                         else:
                             result = compiled_circuit.evaluate_c_mem_ptr(
                                 <unsigned long long>(<size_t>self.g_taint),
                                 <unsigned long long>(<size_t>self.g_val),
-                                self.n_slots, self.sim._pcode, self.shadow_mem,
+                                self.n_slots, self.pcode_obj, self.shadow_mem,
                                 self.read_live_memory, self.slot_map)
-                        used_arr = result is not None
+                            used_arr = result is not None
                 else:
                     if _circuit_capi != NULL:
-                        result = _circuit_capi.eval_arr_ptr(
+                        rc = _circuit_capi.eval_arr_ptr_i(
                             compiled_circuit, self.g_taint, self.g_val,
-                            self.n_slots, self.sim._pcode, self.slot_map)
+                            self.n_slots, self.pcode_obj, self.slot_map)
+                        used_arr = rc != MT_EVAL_DECLINED
                     else:
                         result = compiled_circuit.evaluate_c_arr_ptr(
                             <unsigned long long>(<size_t>self.g_taint),
                             <unsigned long long>(<size_t>self.g_val),
-                            self.n_slots, self.sim._pcode, self.slot_map)
-                    used_arr = result is not None
+                            self.n_slots, self.pcode_obj, self.slot_map)
+                        used_arr = result is not None
             if not used_arr:
                 output_state = self._eval_fallback_dict(
                     circuit, compiled_circuit, compiled_ok, instruction_bytes, address)
@@ -1183,12 +1349,19 @@ cdef class InstructionHook:
             raise
 
         # ---- apply ----
+        self.ltw_n = 0
         if self.last_tainted_writes:
             self.last_tainted_writes.clear()
-        cdef list mem_writes = []
+        # Only the AIW check reads this, so build the list only when it is on;
+        # otherwise every instruction allocated (and GC-tracked) an empty list
+        # that nothing ever looked at.  All three appenders are check_aiw-guarded.
+        cdef list mem_writes = [] if self.check_aiw else None
         if used_arr:
             if has_mem:
-                self._apply_mem_writes(result, mem_writes)
+                if used_capi:
+                    self._apply_mem_writes_c(mw, n_mw, mem_writes)
+                else:
+                    self._apply_mem_writes(result, mem_writes)
         else:
             self._apply_output_state_to_arr(output_state, mem_writes)
 
@@ -1288,6 +1461,35 @@ cdef class InstructionHook:
             return
         cdef object pre_regs = self._read_pre_regs(instruction_bytes, address)
         self._aiw_check(mem_writes, pre_regs, pre_taint, instruction_bytes, address)
+
+    cdef void _apply_mem_writes_c(self, MtMemWrite *writes, int n, list mem_writes):
+        """C-struct form of _apply_mem_writes: same effect, nothing boxed.
+
+        The shadow was already written inside the evaluator; what remains is to
+        record which bytes this instruction legitimately tainted, so the
+        UC_HOOK_MEM_WRITE callback does not immediately clear them again.  The
+        (addr, size, mask) triples are kept as-is rather than expanded to one
+        entry per byte: MemWriteHook can answer the same membership question
+        from them directly."""
+        cdef int k, ii
+        cdef uint64_t t
+        for k in range(n):
+            t = writes[k].taint
+            if t == 0:
+                continue
+            if self.ltw_n < MT_MAX_MEM_WRITES:
+                self.ltw[self.ltw_n] = writes[k]
+                self.ltw_n += 1
+            else:
+                # Cannot happen today (the evaluator declines above
+                # MT_MAX_MEM_WRITES), but dropping an entry would let the write
+                # hook clear taint this instruction legitimately produced, i.e.
+                # a silent under-taint.  Spill to the unbounded set instead.
+                for ii in range(writes[k].size):
+                    if (t >> (ii * 8)) & 0xFF:
+                        self.last_tainted_writes.add(writes[k].addr + <uint64_t>ii)
+            if self.check_aiw:
+                mem_writes.append((writes[k].addr, writes[k].size, t))
 
     cdef void _apply_mem_writes(self, object writes, list mem_writes):
         """Feed last_tainted_writes (+ AIW list) from evaluate_c_mem_ptr's
@@ -1547,12 +1749,34 @@ cdef class MemWriteClearHook:
             self.ql.emu_stop()
             return
 
-        if not lw:
+        # Bytes the current instruction legitimately tainted are exempt from the
+        # clear.  The array path records them as (addr, size, mask) triples on the
+        # instruction hook; the dict and Python fallback paths still use the set.
+        # Both are consulted, so whichever produced this instruction's writes is
+        # honoured and a byte is cleared only if NEITHER claims it.
+        cdef int n_ltw = ih.ltw_n if ih is not None else 0
+        if n_ltw == 0 and not lw:
             sm.clear(address, size)
             return
+        cdef int k
+        cdef unsigned long long off
+        cdef bint keep
         for i in range(size):
             a = address + <unsigned long long>i
-            if not PySet_Contains(lw, a):
+            keep = False
+            for k in range(n_ltw):
+                off = a - ih.ltw[k].addr   # unsigned: a below the range wraps large
+                if off < <unsigned long long>ih.ltw[k].size:
+                    # off >= 8 means the write is wider than its 64-bit mask can
+                    # describe (not reachable today: targets are <= 8 bytes, wide
+                    # vectors arrive pre-split).  Keeping the byte over-taints;
+                    # shifting past the mask width would drop taint.
+                    if off >= 8 or ((ih.ltw[k].taint >> (off * 8)) & 0xFF):
+                        keep = True
+                        break
+            if not keep and lw and PySet_Contains(lw, a):
+                keep = True
+            if not keep:
                 sm.clear(a, 1)
 
 
