@@ -33,6 +33,11 @@ WORK=${WORK:-${TMPDIR:-/tmp}/microtaint-perf-sweep}
 OUT=${OUT:-$REPO/tests/perf.log.norm.d}
 BUILD_WORKERS=${BUILD_WORKERS:-4}
 read -r -a BENCH_CPUS <<< "${BENCH_CPUS:-2 10}"
+# A measurement is only meaningful if the machine is otherwise idle: the same
+# commit measured under a loaded machine came out +71% slower, which swamps any
+# real change. Wait for the load to drop, and record it either way.
+MAX_LOAD=${MAX_LOAD:-1.5}
+IDLE_TIMEOUT=${IDLE_TIMEOUT:-3600}
 PY=${PY:-$REPO/.venv/bin/python}
 
 mkdir -p "$WORK" "$OUT"
@@ -112,9 +117,16 @@ bench_missing() {
         tar xzf "$WORK/snap/$sha.tgz" -C "$wt"
         apply_pinned "$wt"
         rm -rf "$wt/tests/perf.log.d"
+        wait_for_idle
+        l0=$(foreign_load)
         if ! (cd "$wt" && taskset -c "$cpu" .venv/bin/python "$PINNED/drive.py" "$wt/tests") >> "$WORK/bench.log" 2>&1; then
           echo "[r$i] $short BENCH-FAIL"; continue
         fi
+        l1=$(foreign_load)
+        printf '%s\t%s\t%s\t%s\n' "$short" "$l0" "$l1" "$(date -u +%FT%TZ)" >> "$OUT/conditions.tsv"
+        awk -v a="$l0" -v b="$l1" -v m="$MAX_LOAD" 'BEGIN{exit !(a>m||b>m)}' \
+          && echo "[r$i] $short measured UNDER LOAD ($l0 -> $l1) -- suspect" \
+          || true
         cp "$wt"/tests/perf.log.d/*-timing.json "$OUT/" 2>/dev/null
         echo "[r$i] $short measured"
       done < "$WORK/rlist.$i"
@@ -122,6 +134,27 @@ bench_missing() {
   done
   wait
   echo "logs: $(ls "$OUT"/*-timing.json 2>/dev/null | wc -l) / $(wc -l < "$LIST")"
+}
+
+# Load attributable to OTHER work: 1-minute average minus our own workers.
+foreign_load() {
+  awk -v w="${#BENCH_CPUS[@]}" '{l=$1-w; print (l>0)?l:0}' /proc/loadavg
+}
+
+wait_for_idle() {
+  local waited=0 l
+  l=$(foreign_load)
+  while awk -v l="$l" -v m="$MAX_LOAD" 'BEGIN{exit !(l>m)}'; do
+    [ "$waited" = 0 ] && echo "  waiting for the machine to go idle (foreign load $l > $MAX_LOAD)"
+    sleep 30; waited=$((waited + 30))
+    if [ "$waited" -ge "$IDLE_TIMEOUT" ]; then
+      echo "  WARNING: still loaded after ${waited}s, measuring anyway (results will be marked)"
+      return
+    fi
+    l=$(foreign_load)
+  done
+  [ "$waited" -gt 0 ] && echo "  machine idle after ${waited}s"
+  return 0
 }
 
 plot() {

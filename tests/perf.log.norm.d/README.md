@@ -55,25 +55,44 @@ touches before reading its step:
 
     git diff --stat <prev> <commit> -- microtaint/
 
-## Noise floor: how to read small steps
+## Measurement conditions dominate everything else
 
-`df218fc`, `e2041ba` and `746aac1` are a control triple -- the latter two change
-only tooling and docs, so `git diff df218fc 746aac1 -- microtaint/` is empty and
-all three runs measure the *same binary*. Their spread is pure measurement noise:
+A measurement is only meaningful on an otherwise idle machine. Measured
+directly: `8ffabf3` and `aba6dec` were re-measured while other test suites
+saturated all 16 threads (load average ~22), and came out **+28% and +71%
+slower** than the same snapshots measured earlier. Both converged to ~3718 ns,
+i.e. under saturation the number reports how much CPU the process was granted,
+not what the engine does.
+
+So `sweep.sh` now gates on load: before each measurement it waits until the
+*foreign* load (1-minute average minus its own workers) drops below `MAX_LOAD`
+(default 1.5), and records the load before and after each run in
+`conditions.tsv`. A run measured above the threshold is called out as suspect.
+
+    MAX_LOAD=1.5 IDLE_TIMEOUT=3600 ./scripts/sweep/sweep.sh
+
+**Runs recorded before that gate existed have unknown conditions** and are not
+in `conditions.tsv`. Re-measure the series on a quiet machine before drawing
+conclusions from small steps; the snapshots are kept, so it is measurement only.
+
+## Noise floor, on an idle machine
+
+`df218fc`, `e2041ba` and `746aac1` are a control triple -- the last two change
+only tooling and docs, so all three runs measure the *same binary*:
 
 | quantity | across the three identical-engine runs |
 |---|---|
 | `cells` / `assigns` / `nodes` totals | **identical** (2110 / 3480 / 162265) |
-| ns p50 | 2310 / 2201 / 2124 -> **8.8% spread** |
-| ns p100 (pairwise) | up to +42% |
+| ns p50 | 2310 / 2201 / 2124 -> 8.8% spread |
 | per-instruction \|delta\| | median 3.3%, p90 34.6%, max 74.5% |
 
-So the deterministic metrics are exactly reproducible, which is why the plot's
-vertical rules are trustworthy even where the ns curves wobble. Wall clock is
-not: **p50 carries roughly +-9%, and p100 is a single instruction's timing that
-swings +-40%.** Read the big structural steps -- the ones that persist across
-several commits or come with a vertical rule -- and treat an isolated sub-10%
-p50 step or a sub-40% p100 step as noise.
+Those three were taken at different times under load that was not recorded, so
+8.8% is an upper bound that mixes intrinsic noise with contention, not a clean
+noise floor. What it does establish is that the deterministic metrics are
+bit-identical regardless of load -- which is why the plot's vertical rules stay
+trustworthy even when the ns curves cannot be.
+
+Treat an isolated sub-10% p50 step, or a sub-40% p100 step, as noise.
 
 ## Plot
 
