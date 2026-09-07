@@ -28,6 +28,12 @@
  * stays ISA-agnostic -- it only resolves the arch's register NAMES to frame
  * offsets and shuttles their values. */
 #include "reexec.h"
+
+/* Address the instruction's p-code is lifted at.  MUST match the base passed to
+ * ctx.translate() in cell.pyx (_decode_instruction); PC-relative operands are
+ * baked against it, so a mismatch silently decouples them from the memory the
+ * caller seeds. */
+#define CELL_LIFT_BASE 0x1000
 #define REEXEC_MAX_REGS 40
 #endif
 
@@ -369,6 +375,16 @@ static PyObject *read_wide_pylong(const Frame *f, long off, int sz, int be) {
     return r;
 }
 
+/* The p-code is lifted at a FIXED base (see CELL_LIFT_BASE), so a PC-relative
+ * operand is baked into it as an absolute address at that base -- the executing
+ * p-code reads THERE, not at the guest's runtime PC.  A MEM_<PC>_<off>_<size>
+ * input must therefore be placed at the lift base plus the offset; placing it at
+ * the runtime PC leaves the load reading untouched memory, both differential
+ * corners see identical bytes, and the taint silently disappears. */
+static int is_pc_regname(const char *n) {
+    return strcmp(n, "RIP") == 0 || strcmp(n, "EIP") == 0 || strcmp(n, "PC") == 0;
+}
+
 static int load_flat(EvalC *self, Frame *f, PyObject *inputs_dict) {
     PyObject *key, *val;
     Py_ssize_t pos = 0;
@@ -437,7 +453,11 @@ static int load_flat(EvalC *self, Frame *f, PyObject *inputs_dict) {
             int64_t offset = (int64_t)atoll(inner + 1);
             int roff, rsz;
             if (!reg_off_size(self, regname, &roff, &rsz)) continue;
-            uint64_t base = frame_read_reg(f, roff, rsz);
+            /* See is_pc_regname: PC-relative operands resolve against the lift
+             * base, not the runtime PC. */
+            uint64_t base = is_pc_regname(regname)
+                          ? (uint64_t)CELL_LIFT_BASE
+                          : frame_read_reg(f, roff, rsz);
             addr = base + (uint64_t)offset;
         }
         mem_write(&f->mem, addr, v, size, f->is_big_endian);
@@ -875,9 +895,20 @@ static int cell_handle_init(EvalC *self, PyObject *cell_obj,
                 regname[rlen] = 0;
                 int roff, rsz;
                 if (!reg_off_size(self, regname, &roff, &rsz)) continue;
+                int64_t moff = (int64_t)atoll(inner + 1);
+                if (is_pc_regname(regname)) {
+                    /* PC-relative: the p-code has the address baked at the lift
+                     * base, so resolve it statically there rather than against
+                     * the runtime PC (see is_pc_regname). */
+                    h->inp_mem_addr[i]     = (uint64_t)CELL_LIFT_BASE + (uint64_t)moff;
+                    h->inp_mem_base_off[i] = -1;
+                    h->inp_is_mem[i]       = 1;
+                    h->inp_sz[i]           = msize;
+                    continue;
+                }
                 h->inp_mem_base_off[i] = roff;
                 h->inp_mem_base_sz[i]  = rsz;
-                h->inp_mem_off[i]      = (int64_t)atoll(inner + 1);
+                h->inp_mem_off[i]      = moff;
                 h->inp_is_mem[i]       = 1;
                 h->inp_sz[i]           = msize;
             }
