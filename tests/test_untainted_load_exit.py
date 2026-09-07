@@ -169,26 +169,11 @@ void _start(void){ for(int i=0;i<64;i++) clean_[i]=(char)i; sys_read(0,t,64);
 PAYLOAD = b'A' * 64
 
 
-# These guests all compile to load-into-register, store-to-memory, compare
-# against that memory. On this engine that chain currently loses the taint
-# BEFORE any fast path is involved: with MICROTAINT_ARR_HOOK=0 (the dict path,
-# which has no untainted-load exit at all) the destination stays clean and no
-# leak is reported, while the instructions are demonstrably hooked. So they
-# cannot yet witness anything about the exit. They are kept, and marked, because
-# they document a real pre-existing gap and will start failing as xpass the
-# moment it is fixed -- at which point they become live guards.
-_BLOCKED = pytest.mark.xfail(
-    reason='pre-existing: load-to-register then store-to-memory loses the taint '
-           'on BOTH the array and dict paths, so the branch is not reported',
-    strict=False,
-)
-_DISCRIMINATING = {'walking_pointer'}
-
-
-@pytest.mark.parametrize('name', [
-    n if n in _DISCRIMINATING else pytest.param(n, marks=_BLOCKED)
-    for n in sorted(CASES)
-])
+# All of these were blocked for a while by a separate, pre-existing bug: the
+# guests reach their data through RIP-relative operands, and PC-relative memory
+# taint was lost at any runtime PC other than the p-code lift base. They are
+# live guards now that it is fixed (see tests/test_pc_relative_mem_taint.py).
+@pytest.mark.parametrize('name', sorted(CASES))
 def test_tainted_load_still_reported(name: str) -> None:
     """A branch on a value loaded from tainted memory must still be caught."""
     assert _leak_reported(_build(CASES[name]), PAYLOAD), (

@@ -65,14 +65,12 @@ void _start(void) {
       clean[i] = v;
       acc = acc * 1099511628211UL + v;
     }
-    /* The sparse tainted slice. */
-    for (i = 0; i < CLEAN_SIZE; i += TAINT_EVERY) {
-      unsigned char t = tainted[i & (INPUT_SIZE - 1)];
-      t = (unsigned char)((t << 1) | (t >> 7));
-      t ^= clean[i];
-      tainted[i & (INPUT_SIZE - 1)] = t;
-      acc ^= t;
-    }
+    /* No tainted slice at all: this binary reads stdin (so taint IS injected
+     * and live in the shadow) and then never touches those bytes again. An
+     * engine that dismisses instructions with no tainted input should approach
+     * native speed here. Reading even ONE tainted byte and folding it into acc
+     * would poison the accumulator and, through it, the whole mixing loop --
+     * which is exactly what this binary must not do. */
   }
 
   sys_write(1, &acc, sizeof(acc));

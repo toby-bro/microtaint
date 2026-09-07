@@ -46,6 +46,7 @@ static unsigned char clean[CLEAN_SIZE];
 void _start(void) {
   int i, r;
   unsigned long acc = 0;
+  unsigned char tsink = 0;
 
   /* The ONLY tainted bytes in the program. */
   long n = sys_read(0, tainted, INPUT_SIZE);
@@ -71,11 +72,14 @@ void _start(void) {
       t = (unsigned char)((t << 1) | (t >> 7));
       t ^= clean[i];
       tainted[i & (INPUT_SIZE - 1)] = t;
-      acc ^= t;
+      tsink ^= t;   /* deliberately NOT acc: folding tainted data into the
+                     * clean accumulator would poison the whole mixing loop and
+                     * turn this into a dense benchmark wearing a sparse name. */
     }
   }
 
   sys_write(1, &acc, sizeof(acc));
+  sys_write(1, &tsink, 1);
   sys_write(1, tainted, INPUT_SIZE);
   sys_exit(0);
 }

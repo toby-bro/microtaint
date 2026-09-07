@@ -46,9 +46,16 @@ _BENCH_DIR = Path(__file__).resolve().parent.parent / 'benchmark' / 'taint_densi
 #            min fraction dismissed as untainted)
 # Measured values at the time of writing are roughly half of each ceiling for
 # cells and fallbacks, so these trip on a mechanism breaking, not on noise.
+# Baselined AFTER the PC-relative memory-taint fix. Before it, taint entering
+# through a RIP-relative load was silently dropped, so the untainted-input exit
+# dismissed instructions it had no right to dismiss and these counters looked far
+# better than the engine deserved (bench_untainted read 43 cells; the honest
+# figure is 36 only because the guest genuinely never reads its tainted bytes).
+# A ratchet baselined on buggy behaviour would have locked the bug in, so these
+# numbers are only meaningful together with tests/test_pc_relative_mem_taint.py.
 LIMITS = {
-    'bench_untainted.elf': (2_000, 500, 0.99, 0.85),
-    'bench_sparse.elf':    (2_000, 500, 0.99, 0.85),
+    'bench_untainted.elf': (500, 500, 0.99, 0.85),
+    'bench_sparse.elf':    (5_000, 500, 0.99, 0.85),
     'bench_dense.elf':     (200_000, 1_000, 0.99, 0.60),
 }
 
