@@ -170,6 +170,11 @@ cdef extern from "fastpath.h":
         int snap_n
         int have_snap
         int have_val
+        void *ir_fn
+        int ir_tried
+        int ir_n_acc
+        signed char ir_acc_kind[8]
+        signed char ir_acc_size[8]
 
     ctypedef struct AddrMap "MtAddrMap":
         uint64_t *keys
@@ -191,6 +196,11 @@ cdef extern from "fastpath.h":
         PyObject *slot_map
         mt_mem_read_ft mem_fn
         void *mem_ctx
+        uint64_t (*shadow_read_mask)(object shadow, uint64_t addr, int size) noexcept
+        void (*shadow_write_mask)(object shadow, uint64_t addr, uint64_t mask, int size) noexcept
+        uint64_t *ir_val
+        uint64_t *ir_taint
+        uint64_t *ir_out
         int *eflags_slot
         int **ef_slots
         int **ef_bits
@@ -274,6 +284,18 @@ cdef bint _USE_DEVAL_C = _os.environ.get('MICROTAINT_DISABLE_DO_EVALUATE_C') != 
 # for the test suite -- slow, never in production).
 cdef bint _USE_CMEM  = _os.environ.get('MICROTAINT_DISABLE_CMEM') != '1'
 cdef bint _DIFF_CMEM = _os.environ.get('MICROTAINT_DIFF_CMEM') == '1'
+
+# The compiled-taint-program path.  Off unless MICROTAINT_TAINT_IR is set: it
+# replaces the evaluator on the hot path, so it stays opt-in until the whole
+# suite has been run with it on.
+_taint_ir_on = _os.environ.get('MICROTAINT_TAINT_IR', '') not in ('', '0')
+_taint_ir_program_for = None
+if _taint_ir_on:
+    try:
+        from microtaint.taint_ir.engine_glue import program_for as _taint_ir_program_for
+    except Exception:
+        _taint_ir_on = False
+
 
 # Read input registers by calling uc_reg_read_batch through a C function pointer
 # (and reading the value array via a uint64*), instead of the Python ctypes call
@@ -427,6 +449,7 @@ cdef class InstructionHook:
     cdef public dict slot_map         # register name -> slot index
     cdef public dict arr_cache        # address -> (in_snap, out_snap, val_snap, slots)
     cdef public dict slots_cache      # instruction bytes -> list of input slots
+    cdef public dict taint_ir_progs   # instruction bytes -> compiled taint program (keeps its code alive)
     cdef AddrMap addr_map             # pure-C per-address cache (array path)
     # Handed to mt_fast_step.  Holds POINTERS to the mutable fields above rather
     # than copies, so slot growth and lazy slot interning are picked up with no
@@ -515,6 +538,7 @@ cdef class InstructionHook:
         self.n_slots = 0
         self.cap_slots = 0
         self.slot_map = {}
+        self.taint_ir_progs = {}
         self.arr_cache = {}
         self.slots_cache = {}
         self.addr_map.keys = NULL
@@ -995,6 +1019,26 @@ cdef class InstructionHook:
         if check_aiw and PyDict_Size(register_taint) and len(mem_writes) > 0:
             self._aiw_check(mem_writes, pre_regs, pre_taint, instruction_bytes, address)
 
+    cdef void _attach_taint_ir(self, AddrEntry *ent, object instruction_bytes) noexcept:
+        """Compile this instruction's taint program against the live slot map.
+
+        Returns quietly on any refusal -- an unsupported p-code shape, a
+        register with no slot yet, an emitter that declined.  The circuit path
+        stays in place for all of them, so this can only ever be an
+        acceleration, never a change of answer.
+        """
+        cdef unsigned long long addr_val
+        try:
+            got = _taint_ir_program_for(self.arch, instruction_bytes, self.slot_map)
+        except BaseException:
+            return
+        if got is None:
+            return
+        cap, addr_val = got
+        # The capsule owns the emitted code; hold it for the hook's lifetime.
+        self.taint_ir_progs[instruction_bytes] = cap
+        ent.ir_fn = <void*><size_t>addr_val
+
     cdef int _fill_vals_arr(self, bytes instruction_bytes,
                             unsigned long long address) except -1:
         """Read this instruction's live input-register values straight into the
@@ -1221,6 +1265,8 @@ cdef class InstructionHook:
                     aent.have_regs = 0
                     aent.have_snap = 0
                     aent.have_val = 0
+                    aent.ir_fn = NULL
+                    aent.ir_tried = 0
                 if address < self.code_lo:
                     self.code_lo = address
                 if address + <unsigned long long>size > self.code_hi:
@@ -1232,6 +1278,14 @@ cdef class InstructionHook:
             else:
                 instruction_bytes = bytes(self.ql.mem.read(address, size))
             circuit = self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key)
+
+        # A taint program compiled from this instruction's p-code replaces the
+        # whole per-output circuit evaluation with one call.  Resolved here
+        # rather than in C because building it is Python; retried while it is
+        # only waiting on a register slot the engine has not interned yet.
+        if _taint_ir_on and aent != NULL and aent.ir_fn == NULL and aent.ir_tried < 4:
+            aent.ir_tried += 1
+            self._attach_taint_ir(aent, instruction_bytes)
 
         # circuit._compiled is read fresh each call: it is lazily populated on the
         # first evaluate and can be invalidated inside it, so the decode cache

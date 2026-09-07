@@ -57,6 +57,20 @@
 /* dict lookup, tuple indexing or boxing on a repeat visit.                   */
 /* ------------------------------------------------------------------------ */
 
+/* Native code for one instruction's whole taint propagation, compiled from its
+ * p-code by microtaint/taint_ir.  It reads every input before storing any
+ * output, so the caller may pass the same array as taint and out_taint. */
+typedef void (*MtTaintIRFn)(const uint64_t *values, const uint64_t *taint,
+                            uint64_t *out_taint);
+
+/* Where a compiled program's memory state sits, past the register file.  Fixed
+ * rather than derived from the current slot count: a program is compiled once
+ * and the engine interns register slots as it goes, so a base that moved would
+ * make every already-compiled program address the wrong words. */
+#define MT_IR_MEM_BASE  512
+#define MT_IR_MAX_ACC   8
+#define MT_IR_SLOTS     (MT_IR_MEM_BASE + 4 * MT_IR_MAX_ACC)
+
 typedef struct {
     int        size;
     PyObject  *instr_bytes;       /* owned */
@@ -80,6 +94,16 @@ typedef struct {
     int        snap_n;
     int        have_snap;
     int        have_val;
+    /* Native code for this instruction's whole taint propagation, compiled
+     * from its p-code (microtaint/taint_ir).  When present it replaces the
+     * compiled-circuit evaluation entirely: one call, no per-output program,
+     * no cell re-execution.  NULL means "evaluate the circuit as before". */
+    void      *ir_fn;             /* MtTaintIRFn; void* so Cython can assign it */
+    int        ir_tried;          /* 0 until Python has had a chance to build it */
+    int        ir_n_acc;          /* memory accesses the program makes */
+    /* kind (0 load, 1 store) and size, per access, in the program's order. */
+    signed char ir_acc_kind[MT_IR_MAX_ACC];
+    signed char ir_acc_size[MT_IR_MAX_ACC];
 } MtAddrEntry;
 
 typedef struct {
@@ -216,6 +240,19 @@ typedef struct {
     PyObject *slot_map;
     mt_mem_read_fn mem_fn;
     void     *mem_ctx;
+    /* Shadow-memory access as plain C, for the compiled-program memory path.
+     * NULL when the shadow's capsule was unavailable, in which case that path
+     * is simply not taken. */
+    uint64_t (*shadow_read_mask)(PyObject *shadow, uint64_t addr, int size);
+    void     (*shadow_write_mask)(PyObject *shadow, uint64_t addr,
+                                  uint64_t mask, int size);
+    /* Scratch state for a compiled program that touches memory: it is run
+     * twice (once for the addresses, once for the taint) and must not commit
+     * anything until both passes have succeeded, so neither pass may write the
+     * live arrays. MT_IR_SLOTS entries each. */
+    uint64_t *ir_val;
+    uint64_t *ir_taint;
+    uint64_t *ir_out;
 
     /* flag-register explosion and PC slot, all resolved lazily */
     int  *eflags_slot;
@@ -372,6 +409,80 @@ static inline int mt_untainted_exit(MtFastCtx *c, PyObject *compiled,
  * the caller's fallback starts from an unmodified state.  Bailing after a
  * partial commit would leave taint the fallback would then compute again.
  */
+/* Run a compiled taint program that touches memory.
+ *
+ * The program is straight-line and call-free, so it cannot read the shadow
+ * itself: it publishes the addresses it wants and takes the answers back as
+ * inputs.  That makes this two passes -- evaluate for the addresses, resolve
+ * them, evaluate again for the taint -- which is sound exactly while no address
+ * depends on a value the same instruction loaded, a condition the builder
+ * checks before it will hand the program over.
+ *
+ * Nothing touches live state until both passes have succeeded and every store
+ * address has been shown to be untainted, so a refusal here leaves the
+ * instruction untouched for the slow path.  Returns the number of committed
+ * writes, or MT_EVAL_DECLINED.
+ */
+static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
+                          int out_cap) {
+    const int n_slots = *c->n_slots;
+    if (n_slots > MT_IR_MEM_BASE || ent->ir_n_acc > out_cap) return MT_EVAL_DECLINED;
+    if (!c->ir_val || !c->shadow_read_mask || !c->shadow_write_mask
+            || !c->mem_fn || !c->shadow) return MT_EVAL_DECLINED;
+
+    uint64_t *sv = c->ir_val, *st = c->ir_taint, *so = c->ir_out;
+    const size_t nb = (size_t)n_slots * sizeof(uint64_t);
+    MtTaintIRFn fn = (MtTaintIRFn)ent->ir_fn;
+
+    memcpy(sv, *c->g_val, nb);
+    memcpy(st, *c->g_taint, nb);
+    memset(sv + MT_IR_MEM_BASE, 0, 4 * (size_t)ent->ir_n_acc * sizeof(uint64_t));
+    memset(st + MT_IR_MEM_BASE, 0, 4 * (size_t)ent->ir_n_acc * sizeof(uint64_t));
+
+    /* Pass 1: the addresses.  Outputs land on top of a copy of the input
+     * taint, so a register the program does not write keeps its value. */
+    memcpy(so, st, nb);
+    memset(so + MT_IR_MEM_BASE, 0, 4 * (size_t)ent->ir_n_acc * sizeof(uint64_t));
+    fn(sv, st, so);
+
+    for (int k = 0; k < ent->ir_n_acc; k++) {
+        if (ent->ir_acc_kind[k] != 0) continue;          /* stores need no read */
+        const uint64_t addr = so[MT_IR_MEM_BASE + 4 * k + 1];
+        const int size = ent->ir_acc_size[k];
+        uint64_t val = 0;
+        if (c->mem_fn(c->mem_ctx, addr, size, &val) != 0) return MT_EVAL_DECLINED;
+        sv[MT_IR_MEM_BASE + 4 * k] = val;
+        st[MT_IR_MEM_BASE + 4 * k] = c->shadow_read_mask(c->shadow, addr, size);
+        if (PyErr_Occurred()) { PyErr_Clear(); return MT_EVAL_DECLINED; }
+    }
+
+    /* Pass 2: the taint, now that the loaded words are known. */
+    memcpy(so, st, nb);
+    fn(sv, st, so);
+
+    /* A store through a secret-dependent address writes somewhere unknown,
+     * which is a wider obligation than this path can discharge. */
+    for (int k = 0; k < ent->ir_n_acc; k++) {
+        if (ent->ir_acc_kind[k] == 1 && so[MT_IR_MEM_BASE + 4 * k + 2] != 0)
+            return MT_EVAL_DECLINED;
+    }
+
+    memcpy(*c->g_taint, so, nb);
+    int n_w = 0;
+    for (int k = 0; k < ent->ir_n_acc; k++) {
+        if (ent->ir_acc_kind[k] != 1) continue;
+        const uint64_t addr = so[MT_IR_MEM_BASE + 4 * k + 1];
+        const uint64_t mask = so[MT_IR_MEM_BASE + 4 * k + 3];
+        const int size = ent->ir_acc_size[k];
+        c->shadow_write_mask(c->shadow, addr, mask, size);
+        out[n_w].addr = addr;
+        out[n_w].taint = mask;
+        out[n_w].size = size;
+        n_w++;
+    }
+    return n_w;
+}
+
 static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
                         PyObject *compiled, int cflags) {
     if (!c->capi || !ent) return MT_FAST_SLOW;
@@ -473,12 +584,23 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
     /* ---- evaluate ------------------------------------------------------- */
     MtMemWrite mw[MT_MAX_MEM_WRITES];
     int rc;
-    if (has_mem) {
+    if (has_mem && ent->ir_fn && ent->ir_n_acc > 0
+            && !(cflags & MT_CF_PC_TARGET)) {
+        rc = mt_ir_mem_step(c, ent, mw, MT_MAX_MEM_WRITES);
+        if (rc == MT_EVAL_DECLINED) return MT_FAST_SLOW;
+    } else if (has_mem) {
         if (!c->use_cmem || !c->capi->eval_mem_ptr_ci) return MT_FAST_SLOW;
         rc = c->capi->eval_mem_ptr_ci(compiled, g_taint, g_val, n_slots,
                                       c->pcode, c->shadow, c->mem_reader, c->slot_map,
                                       c->mem_fn, c->mem_ctx, mw, MT_MAX_MEM_WRITES,
                                       c->implicit_policy);
+    } else if (ent->ir_fn && !(cflags & MT_CF_PC_TARGET)) {
+        /* The whole instruction's taint, flags included, as one call into code
+         * compiled from its p-code.  Writing through g_taint in place is safe:
+         * the emitted program reads every input before it stores any output,
+         * for exactly this aliasing. */
+        ((MtTaintIRFn)ent->ir_fn)(g_val, g_taint, g_taint);
+        rc = 0;
     } else {
         if (!c->capi->eval_arr_ptr_i) return MT_FAST_SLOW;
         rc = c->capi->eval_arr_ptr_i(compiled, g_taint, g_val, n_slots,

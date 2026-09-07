@@ -328,6 +328,17 @@ static PyObject *py_jit_size(PyObject *self, PyObject *args) {
     return PyLong_FromLong(p->jit_fn ? (long)p->jit_size : 0L);
 }
 
+/* Address of the emitted function, for a caller that will invoke it directly
+ * from its own C code.  Zero when the program was not emitted. */
+static PyObject *py_fn_addr(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    IRProgC *p = (IRProgC *)PyCapsule_GetPointer(cap, "microtaint.taint_ir.prog");
+    if (!p) return NULL;
+    return PyLong_FromVoidPtr((void *)p->jit_fn);
+}
+
 static PyObject *py_n_nodes(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *cap;
@@ -344,6 +355,7 @@ static PyMethodDef methods[] = {
     {"n_nodes", py_n_nodes, METH_VARARGS, "node count of a compiled program"},
     {"jit", py_jit, METH_VARARGS, "emit native code; True if the host emitter took it"},
     {"jit_size", py_jit_size, METH_VARARGS, "bytes of native code, or 0"},
+    {"fn_addr", py_fn_addr, METH_VARARGS, "address of the emitted function, or 0"},
     {NULL, NULL, 0, NULL}
 };
 
