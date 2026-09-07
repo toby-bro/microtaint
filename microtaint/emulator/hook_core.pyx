@@ -107,18 +107,7 @@ cdef int _mt_mem_read_c(void *ctx, uint64_t addr, int size, uint64_t *out) noexc
 # instruction allocated a list, a tuple and three PyLongs (all GC-tracked) purely
 # to move 17 bytes of result across the boundary.  These write into caller-owned
 # C storage and return a plain int, so the steady state allocates nothing.
-DEF MT_EVAL_DECLINED = -1
-DEF MT_EVAL_ERROR = -2
-# Matches CMEM_MAX_WRITES in circuit_c.c.  The evaluator declines rather than
-# truncate, so a smaller buffer here would only cost fallbacks, never writes;
-# keeping them equal means the C path never declines for want of room.
-DEF MT_MAX_MEM_WRITES = 32
-
-cdef struct MtMemWrite:
-    uint64_t addr
-    uint64_t taint
-    int size
-
+#
 # `except? -2` matches MT_EVAL_ERROR: on that value Cython checks for a pending
 # exception and propagates it, so a C-level failure surfaces exactly like the
 # PyObject forms' NULL return did.
@@ -131,22 +120,112 @@ ctypedef int (*eval_mem_ptr_ci_ft)(object compiled, uint64_t *taint, uint64_t *v
                                    mt_mem_read_ft mem_fn, void *mem_ctx,
                                    MtMemWrite *out, int out_cap) except? -2
 
+ctypedef int (*compiled_flags_ft)(object compiled) noexcept
+ctypedef int (*uc_reg_read_batch_c_ft)(void *uc, void *ids, void *ptrs, int count) noexcept nogil
+
+# ---------------------------------------------------------------------------
+# The C hot path (fastpath.h).
+#
+# The per-instruction steady state lives there as plain C so that the absence of
+# Python from it is mechanical rather than a claim: see that file's header.  All
+# the shared structs are DEFINED there and only declared here, so the two cannot
+# drift.  What stays on this side is everything that legitimately needs Python:
+# first-time decode, the dict fallback, implicit-taint reporting, SMC.
+# ---------------------------------------------------------------------------
+cdef extern from "fastpath.h":
+    ctypedef struct MtMemWrite:
+        uint64_t addr
+        uint64_t taint
+        int size
+
+    ctypedef struct CircuitCAPI:
+        eval_arr_ptr_ft eval_arr_ptr
+        eval_mem_ptr_ft eval_mem_ptr
+        eval_mem_ptr_c_ft eval_mem_ptr_c
+        eval_arr_ptr_i_ft eval_arr_ptr_i
+        eval_mem_ptr_ci_ft eval_mem_ptr_ci
+        compiled_flags_ft compiled_flags
+
+    ctypedef struct AddrEntry "MtAddrEntry":
+        int size
+        PyObject *instr_bytes
+        PyObject *circuit
+        PyObject *uc_arrs
+        int *slots
+        int n_in
+        int have_slots
+        unsigned long long ids_addr
+        unsigned long long ptrs_addr
+        unsigned long long vals_addr
+        int n_calls_i
+        int need_ef
+        int have_regs
+        uint64_t *in_snap
+        uint64_t *out_snap
+        uint64_t *val_snap
+        int snap_n
+        int have_snap
+        int have_val
+
+    ctypedef struct AddrMap "MtAddrMap":
+        uint64_t *keys
+        AddrEntry **vals
+        Py_ssize_t cap
+        Py_ssize_t n
+
+    ctypedef struct MtFastCtx:
+        uint64_t **g_taint
+        uint64_t **g_val
+        int *n_slots
+        AddrMap *map
+        unsigned long long *uc_handle_addr
+        uc_reg_read_batch_c_ft uc_reg_read_batch
+        const CircuitCAPI *capi
+        PyObject *pcode
+        PyObject *shadow
+        PyObject *mem_reader
+        PyObject *slot_map
+        mt_mem_read_ft mem_fn
+        void *mem_ctx
+        int *eflags_slot
+        int **ef_slots
+        int **ef_bits
+        int *ef_n
+        int *rip_slot
+        MtMemWrite *ltw
+        int *ltw_n
+        int instr_cache_enabled
+        int use_cregs
+        int use_cmem
+        unsigned long *hits
+        unsigned long *misses
+        unsigned long *fast_done
+
+    uint64_t MT_EMPTY_ADDR
+
+    void mt_am_clear(AddrMap *m)
+    void mt_am_free(AddrMap *m)
+    AddrEntry *mt_am_get(AddrMap *m, uint64_t key) noexcept
+    AddrEntry *mt_am_new(AddrMap *m, uint64_t key)
+    # Returns MT_FAST_DONE / MT_FAST_SLOW, or MT_FAST_ERROR with an exception set.
+    int mt_fast_step(MtFastCtx *c, uint64_t address, AddrEntry *ent,
+                     object compiled, int cflags) except? 2
+
+# Mirrors of the header's constants.  Cython needs compile-time literals to size
+# an array and to fold branch tests, so these are duplicated deliberately; the
+# header is the source of truth and the values must match it.
+DEF MT_EVAL_DECLINED = -1
+DEF MT_EVAL_ERROR = -2
+DEF MT_MAX_MEM_WRITES = 32
+DEF MT_FAST_DONE = 0
+DEF MT_FAST_SLOW = 1
+DEF MT_FAST_ERROR = 2
 # Circuit capabilities the hot path consults per instruction.  Reading them as
 # Python attributes cost two PyObject_GenericGetAttr lookups per instruction.
 DEF MT_CF_C_EVALUABLE = 0x01
 DEF MT_CF_C_MEM_EVALUABLE = 0x02
 DEF MT_CF_HAS_MEM_OPS = 0x04
 DEF MT_CF_VALUE_INDEP = 0x08
-
-ctypedef int (*compiled_flags_ft)(object compiled) noexcept
-
-cdef struct CircuitCAPI:
-    eval_arr_ptr_ft eval_arr_ptr
-    eval_mem_ptr_ft eval_mem_ptr
-    eval_mem_ptr_c_ft eval_mem_ptr_c
-    eval_arr_ptr_i_ft eval_arr_ptr_i
-    eval_mem_ptr_ci_ft eval_mem_ptr_ci
-    compiled_flags_ft compiled_flags
 
 cdef CircuitCAPI *_circuit_capi = NULL
 
@@ -230,157 +309,18 @@ cdef bint _USE_ARR_HOOK = _os.environ.get('MICROTAINT_ARR_HOOK') != '0'
 
 
 # ---------------------------------------------------------------------------
-# Per-address C cache (rework: pure-C fast path).
+# Per-address C cache.
 #
-# The array hot path used three Python dicts keyed by address (decode_cache,
-# slots_cache, arr_cache), so every instruction paid three dict lookups, and each
-# cache STORE allocated PyBytes snapshots.  This replaces them with ONE open
-# addressing C table address -> AddrEntry*, with the taint/value snapshots held
-# in malloc'd uint64 buffers instead of PyBytes.
+# The table itself (MtAddrMap / MtAddrEntry and the mt_am_* operations) lives in
+# fastpath.h so the C hot path and this module share one definition.  It replaced
+# three Python dicts keyed by address (decode_cache, slots_cache, arr_cache),
+# whose every lookup cost a PyLong key and a hashed probe, and whose every store
+# allocated PyBytes snapshots.
 #
-# PyObject fields (the instruction bytes, the circuit, the uc_arrays tuple) stay
-# PyObjects because the evaluator genuinely needs them, but they are now just
-# owned pointers: no per-instruction dict lookup, tuple indexing or boxing.
-# EMPTY_ADDR is ~0 which is never a real instruction address here.
+# The PyObject fields on an entry (instruction bytes, circuit, uc_arrays tuple)
+# stay PyObjects because the decoder and evaluator genuinely need them, but they
+# are owned pointers now: no dict lookup, tuple indexing or boxing per visit.
 # ---------------------------------------------------------------------------
-cdef uint64_t EMPTY_ADDR = <uint64_t>0xFFFFFFFFFFFFFFFF
-
-cdef struct AddrEntry:
-    int        size
-    PyObject  *instr_bytes        # owned
-    PyObject  *circuit            # owned
-    PyObject  *uc_arrs            # owned, may be NULL; keeps the ctypes buffers alive
-    int       *slots              # input-register slots, malloc'd
-    int        n_in
-    int        have_slots
-    # The parts of uc_arrs the register read actually needs, unpacked once.
-    # uc_arrs is an 11-element Python tuple; unpacking it per instruction cost
-    # eleven PyObject fetches and refcount pairs to reach four integers.
-    unsigned long long ids_addr
-    unsigned long long ptrs_addr
-    unsigned long long vals_addr
-    int        n_calls_i
-    int        need_ef
-    int        have_regs          # the four addresses above are valid
-    uint64_t  *in_snap            # pre-state taint snapshot (n_slots entries)
-    uint64_t  *out_snap           # post-state taint snapshot
-    uint64_t  *val_snap           # operand values for value-dependent circuits
-    int        snap_n
-    int        have_snap
-    int        have_val
-
-cdef struct AddrMap:
-    uint64_t   *keys
-    AddrEntry **vals
-    Py_ssize_t  cap
-    Py_ssize_t  n
-
-
-cdef int am_init(AddrMap *m, Py_ssize_t cap):
-    cdef Py_ssize_t i
-    m.keys = <uint64_t*>malloc(<size_t>cap * sizeof(uint64_t))
-    if m.keys == NULL:
-        return -1
-    m.vals = <AddrEntry**>calloc(<size_t>cap, sizeof(void*))
-    if m.vals == NULL:
-        free(m.keys); m.keys = NULL
-        return -1
-    for i in range(cap):
-        m.keys[i] = EMPTY_ADDR
-    m.cap = cap
-    m.n = 0
-    return 0
-
-
-cdef void ae_free(AddrEntry *e):
-    if e == NULL:
-        return
-    Py_XDECREF(e.instr_bytes)
-    Py_XDECREF(e.circuit)
-    Py_XDECREF(e.uc_arrs)
-    if e.slots != NULL: free(e.slots)
-    if e.in_snap != NULL: free(e.in_snap)
-    if e.out_snap != NULL: free(e.out_snap)
-    if e.val_snap != NULL: free(e.val_snap)
-    free(e)
-
-
-cdef void am_clear(AddrMap *m):
-    """Drop every entry but keep the table (used by invalidate_smc)."""
-    cdef Py_ssize_t i
-    if m.vals == NULL:
-        return
-    for i in range(m.cap):
-        if m.keys[i] != EMPTY_ADDR:
-            ae_free(m.vals[i])
-            m.vals[i] = NULL
-            m.keys[i] = EMPTY_ADDR
-    m.n = 0
-
-
-cdef void am_free(AddrMap *m):
-    am_clear(m)
-    if m.vals != NULL: free(m.vals); m.vals = NULL
-    if m.keys != NULL: free(m.keys); m.keys = NULL
-    m.cap = 0
-    m.n = 0
-
-
-cdef inline Py_ssize_t am_slot(AddrMap *m, uint64_t key) noexcept nogil:
-    cdef uint64_t h = key * <uint64_t>0x9E3779B97F4A7C15
-    h ^= h >> 29
-    cdef Py_ssize_t i = <Py_ssize_t>(h & <uint64_t>(m.cap - 1))
-    while m.keys[i] != EMPTY_ADDR and m.keys[i] != key:
-        i = (i + 1) & (m.cap - 1)
-    return i
-
-
-cdef int am_grow(AddrMap *m):
-    cdef AddrMap nm
-    cdef Py_ssize_t i, j
-    if am_init(&nm, m.cap * 2) != 0:
-        return -1
-    for i in range(m.cap):
-        if m.keys[i] != EMPTY_ADDR:
-            j = am_slot(&nm, m.keys[i])
-            nm.keys[j] = m.keys[i]
-            nm.vals[j] = m.vals[i]
-            nm.n += 1
-    free(m.keys); free(m.vals)
-    m.keys = nm.keys; m.vals = nm.vals; m.cap = nm.cap; m.n = nm.n
-    return 0
-
-
-cdef inline AddrEntry *am_get(AddrMap *m, uint64_t key) noexcept nogil:
-    cdef Py_ssize_t i
-    if m.cap == 0:
-        return NULL
-    i = am_slot(m, key)
-    if m.keys[i] == key:
-        return m.vals[i]
-    return NULL
-
-
-cdef AddrEntry *am_new(AddrMap *m, uint64_t key):
-    """Insert (or return existing) entry for key.  NULL on OOM."""
-    cdef Py_ssize_t i
-    cdef AddrEntry *e
-    if m.cap == 0:
-        if am_init(m, 256) != 0:
-            return NULL
-    if (m.n + 1) * 10 >= m.cap * 7:
-        if am_grow(m) != 0:
-            return NULL
-    i = am_slot(m, key)
-    if m.keys[i] == key:
-        return m.vals[i]
-    e = <AddrEntry*>calloc(1, sizeof(AddrEntry))
-    if e == NULL:
-        return NULL
-    m.keys[i] = key
-    m.vals[i] = e
-    m.n += 1
-    return e
 
 
 cdef class InstructionHook:
@@ -457,6 +397,10 @@ cdef class InstructionHook:
     # Counters
     cdef public unsigned long instr_cache_hits
     cdef public unsigned long instr_cache_misses
+    # Instructions the C fast path completed without entering Python at all,
+    # and the total it was offered, so coverage is a ratio and not a guess.
+    cdef public unsigned long fast_done
+    cdef public unsigned long instr_total
 
     # --- array-native taint state (Phase 1.3c; see _USE_ARR_HOOK note) ---
     cdef uint64_t *g_taint            # slot-indexed taint, authoritative during a run
@@ -467,6 +411,10 @@ cdef class InstructionHook:
     cdef public dict arr_cache        # address -> (in_snap, out_snap, val_snap, slots)
     cdef public dict slots_cache      # instruction bytes -> list of input slots
     cdef AddrMap addr_map             # pure-C per-address cache (array path)
+    # Handed to mt_fast_step.  Holds POINTERS to the mutable fields above rather
+    # than copies, so slot growth and lazy slot interning are picked up with no
+    # refresh step to forget; see the note in fastpath.h.
+    cdef MtFastCtx fctx
     cdef bint arr_loaded              # register_taint has been loaded into g_taint
     cdef public unsigned long arr_fallbacks   # instructions that had to use the dict path
     cdef MemReadCtx mem_ctx           # C guest-read context handed to circuit_c
@@ -559,6 +507,13 @@ cdef class InstructionHook:
         self.rip_slot = -1
         self.eflags_slot = -1
         self.eflags_slot_bits = None
+        self.ef_slots = NULL
+        self.ef_bits = NULL
+        self.ef_n = 0
+        self.ltw_n = 0
+        self.fast_done = 0
+        self.instr_total = 0
+        self._init_fast_ctx()
         # Pre-intern the arch's state-format registers so the slot space is
         # stable for the common case (SIMD VL_ lanes are interned on demand).
         cdef object _nm
@@ -567,8 +522,46 @@ cdef class InstructionHook:
                 _nm = _entry[0] if isinstance(_entry, tuple) else _entry
                 self._slot_for(_nm)
 
+    cdef void _init_fast_ctx(self):
+        """Point the C hot-path context at this object's own fields.
+
+        Everything mutable is passed as the ADDRESS of the field, which is fixed
+        for the object's lifetime, so the context never needs refreshing and can
+        never hold a stale g_taint after slot growth reallocates it.  The
+        PyObject members are borrowed: this object owns them and outlives every
+        call into the C path."""
+        self.fctx.g_taint = &self.g_taint
+        self.fctx.g_val = &self.g_val
+        self.fctx.n_slots = &self.n_slots
+        self.fctx.map = &self.addr_map
+        self.fctx.uc_handle_addr = &self.uc_handle_addr
+        self.fctx.uc_reg_read_batch = <uc_reg_read_batch_c_ft>(<void*>self.uc_rrb_addr)
+        self.fctx.capi = _circuit_capi
+        # Py_None rather than NULL for absent objects: the evaluator already
+        # treats None as "not provided", and a NULL would be a crash instead.
+        self.fctx.pcode = <PyObject*>self.pcode_obj if self.pcode_obj is not None else <PyObject*>None
+        self.fctx.shadow = <PyObject*>self.shadow_mem if self.shadow_mem is not None else <PyObject*>None
+        self.fctx.mem_reader = <PyObject*>self.read_live_memory \
+            if self.read_live_memory is not None else <PyObject*>None
+        self.fctx.slot_map = <PyObject*>self.slot_map
+        self.fctx.mem_fn = _mt_mem_read_c
+        self.fctx.mem_ctx = <void*>&self.mem_ctx
+        self.fctx.eflags_slot = &self.eflags_slot
+        self.fctx.ef_slots = &self.ef_slots
+        self.fctx.ef_bits = &self.ef_bits
+        self.fctx.ef_n = &self.ef_n
+        self.fctx.rip_slot = &self.rip_slot
+        self.fctx.ltw = self.ltw
+        self.fctx.ltw_n = &self.ltw_n
+        self.fctx.instr_cache_enabled = 1 if self.instr_cache_enabled else 0
+        self.fctx.use_cregs = 1 if _USE_CREGS else 0
+        self.fctx.use_cmem = 1 if _USE_CMEM else 0
+        self.fctx.hits = &self.instr_cache_hits
+        self.fctx.misses = &self.instr_cache_misses
+        self.fctx.fast_done = &self.fast_done
+
     def __dealloc__(self):
-        am_free(&self.addr_map)
+        mt_am_free(&self.addr_map)
         if self.g_taint != NULL:
             free(self.g_taint)
             self.g_taint = NULL
@@ -632,7 +625,7 @@ cdef class InstructionHook:
         if self.addr_map.vals == NULL:
             return
         for i in range(self.addr_map.cap):
-            if self.addr_map.keys[i] != EMPTY_ADDR:
+            if self.addr_map.keys[i] != MT_EMPTY_ADDR:
                 e = self.addr_map.vals[i]
                 if e != NULL:
                     e.have_snap = 0
@@ -996,7 +989,7 @@ cdef class InstructionHook:
             # instruction just to re-read the same _uc_arrays attribute.
             # (The slot list has to live here rather than on `decoded` because
             # that is a cdef class and will not take a new attribute.)
-            ent = am_get(&self.addr_map, address)
+            ent = mt_am_get(&self.addr_map, address)
             if ent != NULL and ent.have_regs:
                 # Steady state: everything the read needs is already in the C
                 # entry, so nothing here touches a Python object.
@@ -1035,7 +1028,7 @@ cdef class InstructionHook:
                 (ids, vals, ptrs, n, names, need_ef, n_calls,
                  ids_addr, ptrs_addr, vals_addr, n_calls_int) = uc_arrs
                 if ent == NULL:
-                    ent = am_new(&self.addr_map, address)
+                    ent = mt_am_new(&self.addr_map, address)
                 if ent != NULL:
                     Py_XINCREF(<PyObject*>uc_arrs)
                     Py_XDECREF(ent.uc_arrs)
@@ -1159,6 +1152,7 @@ cdef class InstructionHook:
         memcmp of an array snapshot.  No per-instruction dict is built."""
         if not self.arr_loaded:
             self._load_dict_to_arr()
+        self.instr_total += 1
 
         cdef int err
         cdef bytes instruction_bytes
@@ -1168,7 +1162,7 @@ cdef class InstructionHook:
         cdef LogicCircuit circuit
         cdef AddrEntry *aent = NULL
         if _USE_DECODE_CACHE:
-            aent = am_get(&self.addr_map, address)
+            aent = mt_am_get(&self.addr_map, address)
             if aent != NULL and aent.size == size and aent.circuit != NULL:
                 instruction_bytes = <bytes>(<object>aent.instr_bytes)
                 circuit = <object>aent.circuit
@@ -1179,7 +1173,7 @@ cdef class InstructionHook:
                 else:
                     instruction_bytes = bytes(self.ql.mem.read(address, size))
                 circuit = self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key)
-                aent = am_new(&self.addr_map, address)
+                aent = mt_am_new(&self.addr_map, address)
                 if aent != NULL:
                     Py_XINCREF(<PyObject*>instruction_bytes)
                     Py_XDECREF(aent.instr_bytes)
@@ -1225,6 +1219,33 @@ cdef class InstructionHook:
         else:
             value_indep = can_cache and (<object>compiled_circuit).value_independent
 
+        # ---- C hot path -----------------------------------------------
+        # Everything from here to the evaluator result is plain C (fastpath.h).
+        # It returns MT_FAST_SLOW for anything needing Python -- a first visit
+        # whose entry is not prepared, a lazily-interned slot that does not
+        # exist yet, or an evaluator that declined -- and in that case it has
+        # committed nothing to the taint array, so the fallback below starts
+        # from an unmodified state.
+        cdef int frc = MT_FAST_SLOW
+        if compiled_ok and aent != NULL and _circuit_capi != NULL:
+            if not self.mem_ctx_ready:
+                self._init_mem_ctx()
+            try:
+                frc = mt_fast_step(&self.fctx, address, aent, compiled_circuit, cflags)
+            except BaseException as e:
+                # Same handling the Python eval path gets: an implicit-taint
+                # report is a policy decision, not a failure.
+                if isinstance(e, ImplicitTaintError):
+                    self._handle_implicit_taint(instruction_bytes, address, e)
+                    return
+                raise
+            if frc == MT_FAST_DONE:
+                if self.last_tainted_writes:
+                    self.last_tainted_writes.clear()
+                if self.check_aiw and self.ltw_n > 0:
+                    self._aiw_check_from_ltw(instruction_bytes, address)
+                return
+
         cdef Py_ssize_t nbytes = self.n_slots * sizeof(uint64_t)
         cdef Py_ssize_t i
         cdef bint hit = False
@@ -1263,7 +1284,7 @@ cdef class InstructionHook:
             self._fill_vals_arr(instruction_bytes, address)
         # _fill_vals_arr may have created the entry (or grown the slot arrays)
         if aent == NULL:
-            aent = am_get(&self.addr_map, address)
+            aent = mt_am_get(&self.addr_map, address)
 
         # Snapshot the pre-state taint (and operand values) BEFORE eval, while
         # g_taint still holds the inputs; eval rewrites it in place.
@@ -1446,6 +1467,20 @@ cdef class InstructionHook:
                 self.g_taint[self._slot_for(key)] = \
                     <uint64_t>(int(val) & 0xFFFFFFFFFFFFFFFFULL)
 
+    cdef _aiw_check_from_ltw(self, bytes instruction_bytes,
+                             unsigned long long address):
+        """AIW check for an instruction the C path handled.
+
+        The C path deliberately builds no Python list; the writes it recorded
+        carry the same (addr, size, mask) triples the list used to, so the list
+        is materialised here, only when the check is actually enabled."""
+        cdef list mem_writes = []
+        cdef int k
+        for k in range(self.ltw_n):
+            mem_writes.append((self.ltw[k].addr, self.ltw[k].size, self.ltw[k].taint))
+        if mem_writes:
+            self._aiw_check_arr(mem_writes, instruction_bytes, address)
+
     cdef _aiw_check_arr(self, list mem_writes, bytes instruction_bytes,
                         unsigned long long address):
         """AIW needs dicts; build them lazily here (rare) rather than per
@@ -1530,7 +1565,7 @@ cdef class InstructionHook:
         out = {}
         if self.addr_map.vals != NULL:
             for i in range(self.addr_map.cap):
-                if self.addr_map.keys[i] != EMPTY_ADDR and self.addr_map.vals[i] != NULL:
+                if self.addr_map.keys[i] != MT_EMPTY_ADDR and self.addr_map.vals[i] != NULL:
                     out[self.addr_map.keys[i]] = self.addr_map.vals[i].size
         return out
 
@@ -1557,7 +1592,7 @@ cdef class InstructionHook:
             self.arr_cache.clear()
         if self.slots_cache:
             self.slots_cache.clear()
-        am_clear(&self.addr_map)
+        mt_am_clear(&self.addr_map)
         self.code_lo = 0xFFFFFFFFFFFFFFFF
         self.code_hi = 0
 
