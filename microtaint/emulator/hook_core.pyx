@@ -1763,6 +1763,11 @@ cdef class MemWriteClearHook:
 
     def __call__(self, object _uc, int _access, unsigned long long address,
                  int size, long long _value, object _user_data=None):
+        # ctypes-callback entry point, kept so the non-C registration path (and
+        # any direct caller) still works; the C trampoline calls _dispatch.
+        self._dispatch(address, size)
+
+    cdef void _dispatch(self, unsigned long long address, int size):
         # Hot path. Keep everything cdef.
         cdef BitPreciseShadowMemory sm = self.shadow_mem
         cdef set lw = self.last_tainted_writes
@@ -1838,6 +1843,9 @@ cdef class MemAccessHook:
 
     def __call__(self, object _uc, int _access, unsigned long long address,
                  int size, long long _value, object _user_data=None):
+        self._dispatch(address, size)
+
+    cdef void _dispatch(self, unsigned long long address, int size):
         if self.check_uaf and self.shadow_mem.is_poisoned(address, size):
             self.reporter.uaf(address, size)
             self.ql.emu_stop()
@@ -1958,3 +1966,36 @@ cdef class LiveMemReader:
             return int.from_bytes(self.ql.mem.read(address, size), 'little')
         except Exception:
             return 0
+
+# The memory hooks got the same treatment as the instruction hook above, and for
+# the same reason: registered as a ctypes CFUNCTYPE they pay libffi's closure
+# machinery (_CallPythonObject -> classify_argument -> per-argument isinstance
+# and boxing) plus a GIL acquire on EVERY guest load and store, which perf
+# attributes to _CallPythonObject/classify_argument/object_recursive_isinstance.
+# Through a raw C function pointer the callback is a direct call into the Cython
+# _dispatch, so only the GIL acquire remains.  Same bodies, same results.
+cdef void _c_mem_write_hook(void *uc, int access, unsigned long long address,
+                            int size, long long value, void *user_data) noexcept with gil:
+    cdef MemWriteClearHook hook = <MemWriteClearHook>user_data
+    hook._dispatch(address, size)
+
+
+cdef void _c_mem_access_hook(void *uc, int access, unsigned long long address,
+                             int size, long long value, void *user_data) noexcept with gil:
+    cdef MemAccessHook hook = <MemAccessHook>user_data
+    hook._dispatch(address, size)
+
+
+def c_mem_write_hook_ptr():
+    """Address (int) of the pure-C UC_HOOK_MEM_WRITE trampoline.
+
+    Register with the MemWriteClearHook instance as user_data (id(hook)); the
+    caller MUST keep that instance alive for the hook's lifetime.
+    """
+    return <unsigned long long>&_c_mem_write_hook
+
+
+def c_mem_access_hook_ptr():
+    """Address (int) of the pure-C UC_HOOK_MEM_READ trampoline.  Same contract
+    as c_mem_write_hook_ptr, with a MemAccessHook instance as user_data."""
+    return <unsigned long long>&_c_mem_access_hook

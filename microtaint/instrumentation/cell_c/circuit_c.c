@@ -149,6 +149,18 @@ typedef struct {
     int             n_const_u64;
     int             c_evaluable;
 
+    /* Resolved CellHandle capsule pointers, mirroring `cell_handles`.
+     * OP_CALL_CELL used to re-do PyList_GET_SIZE + PyList_GET_ITEM +
+     * PyCapsule_CheckExact + PyCapsule_GetPointer on EVERY cell call, and a
+     * single AMD64 instruction makes ~5 of those, purely to arrive at a pointer
+     * that never changes.  Resolved once here; a NULL entry means "that slot is
+     * not a usable capsule", which is exactly the condition the old inline
+     * checks were testing for.  Borrowed: the capsules are owned by
+     * cell_handles, which this object owns and which is not replaced after
+     * compilation. */
+    CellHandle_API **cell_h;
+    int             n_cell_h;
+
     /* Like c_evaluable but ALSO admits memory circuits: set when every constant
      * fits 64 bits and there is no python fallback (memory ops ARE allowed).
      * evaluate_c_mem runs the C-array interior for these, reading/writing shadow
@@ -814,6 +826,7 @@ static void CompiledCircuit_dealloc(CompiledCircuit *self) {
         free(self->progs);
     }
     free(self->const_u64);
+    free(self->cell_h);   /* borrowed pointers; the capsules belong to cell_handles */
     free(self->scratch_t);
     free(self->scratch_v);
     free(self->scratch_o);
@@ -1086,6 +1099,26 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
         }
         cc->c_evaluable = const_ok && !cc->has_python_fallback && !cc->has_mem_ops;
         cc->c_mem_evaluable = const_ok && !cc->has_python_fallback;
+    }
+
+    /* Resolve the cell capsules once (see cell_h in the struct).  Slots that are
+     * not usable capsules stay NULL and OP_CALL_CELL falls back exactly as it
+     * did when it tested them inline. */
+    if (cc->cell_handles && PyList_Check(cc->cell_handles)) {
+        Py_ssize_t nh = PyList_GET_SIZE(cc->cell_handles);
+        if (nh > 0) {
+            cc->cell_h = (CellHandle_API **)calloc((size_t)nh, sizeof(CellHandle_API *));
+            if (cc->cell_h) {
+                cc->n_cell_h = (int)nh;
+                for (Py_ssize_t hi = 0; hi < nh; hi++) {
+                    PyObject *cap = PyList_GET_ITEM(cc->cell_handles, hi);
+                    if (cap && cap != Py_None && PyCapsule_CheckExact(cap)) {
+                        cc->cell_h[hi] = (CellHandle_API *)PyCapsule_GetPointer(cap, "CellHandle");
+                        if (!cc->cell_h[hi]) PyErr_Clear();
+                    }
+                }
+            }
+        }
     }
     /* Airtight value-independence: only trust it when the whole circuit is
      * C-evaluated (no Python fallback that could read operand values outside
@@ -1552,31 +1585,28 @@ static PyObject *eval_program(CompiledCircuit *cc,
              * call cell_eval_fast directly with no Python boundary. */
             int fast_path_taken = 0;
             uint64_t fast_v = 0;
-            if (g_cell_capi && cell_idx < (int)PyList_GET_SIZE(cc->cell_handles)) {
-                PyObject *handle_cap = PyList_GET_ITEM(cc->cell_handles, cell_idx);
-                if (handle_cap && handle_cap != Py_None
-                    && PyCapsule_CheckExact(handle_cap)) {
-                    CellHandle_API *h = (CellHandle_API *)PyCapsule_GetPointer(handle_cap, "CellHandle");
-                    if (h) {
-                        /* Stack input slots: stack[sp - n_inputs .. sp - 1] */
-                        uint64_t inp_vals[16];
-                        for (int i = 0; i < n_inputs && i < 16; i++) {
-                            inp_vals[i] = stack[sp - n_inputs + i];
-                        }
-                        int rc = g_cell_capi->cell_eval_fast(
-                            (EvalC_API *)pcode_eval, h, inp_vals, &fast_v);
-                        if (rc == 0) {
-                            fast_path_taken = 1;
-                        } else if (rc == 1) {
-                            /* Fallback needed — raise PCodeFallbackNeeded
-                             * just like Python path would. */
-                            PyObject *exc = g_cell_capi->get_fallback_exc((EvalC_API *)pcode_eval);
-                            PyErr_SetString(exc, "instruction requires Unicorn");
-                            return NULL;
-                        }
-                        /* rc < 0: hard error, fall through to Python path */
-                    }
+            /* cell_h was resolved at compile time, so reaching the kernel costs
+             * one bounds check and one load rather than four Python API calls. */
+            CellHandle_API *h = (cell_idx >= 0 && cell_idx < cc->n_cell_h)
+                                ? cc->cell_h[cell_idx] : NULL;
+            if (g_cell_capi && h) {
+                /* Stack input slots: stack[sp - n_inputs .. sp - 1] */
+                uint64_t inp_vals[16];
+                for (int i = 0; i < n_inputs && i < 16; i++) {
+                    inp_vals[i] = stack[sp - n_inputs + i];
                 }
+                int rc = g_cell_capi->cell_eval_fast(
+                    (EvalC_API *)pcode_eval, h, inp_vals, &fast_v);
+                if (rc == 0) {
+                    fast_path_taken = 1;
+                } else if (rc == 1) {
+                    /* Fallback needed — raise PCodeFallbackNeeded
+                     * just like Python path would. */
+                    PyObject *exc = g_cell_capi->get_fallback_exc((EvalC_API *)pcode_eval);
+                    PyErr_SetString(exc, "instruction requires Unicorn");
+                    return NULL;
+                }
+                /* rc < 0: hard error, fall through to Python path */
             }
 
             if (fast_path_taken) {

@@ -19,6 +19,8 @@ from microtaint.emulator.hook_core import (
     MemWriteClearHook,
     UafUnmappedWriteHook,
     c_instruction_hook_ptr,
+    c_mem_access_hook_ptr,
+    c_mem_write_hook_ptr,
 )
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
@@ -802,18 +804,36 @@ class MicrotaintWrapper:
         `uccallback` + `__hook_mem_access_cb` Python frames for a single
         ctypes trampoline frame that calls into Cython's `__call__`.
 
-        The CFUNCTYPE instance must be kept alive for the lifetime of
-        the Unicorn instance; we stash it on `self._mem_cfuncs`.
+        When the hook is one of the Cython classes, we go one step further and
+        register a pure-C trampoline instead of a CFUNCTYPE, exactly as the
+        instruction hook does: a ctypes callback pays libffi closure setup and
+        per-argument conversion on EVERY guest load and store, which is one of
+        the largest remaining CPython costs in the profile. The hook object is
+        passed as user_data and kept alive on `self._mem_cfuncs`.
+
+        The CFUNCTYPE instance (non-C path) must likewise be kept alive for the
+        lifetime of the Unicorn instance.
         """
-        cfunc = _HOOK_MEM_ACCESS_CFUNC(hook_obj)
-        self._mem_cfuncs.append(cfunc)
+        cb_ud = None
+        if self._use_c_hook and isinstance(hook_obj, MemWriteClearHook):
+            self._mem_cfuncs.append(hook_obj)   # keep alive; user_data is its id
+            cb_ud = ctypes.c_void_p(id(hook_obj))
+            cb_ptr = ctypes.c_void_p(c_mem_write_hook_ptr())
+        elif self._use_c_hook and isinstance(hook_obj, MemAccessHook):
+            self._mem_cfuncs.append(hook_obj)
+            cb_ud = ctypes.c_void_p(id(hook_obj))
+            cb_ptr = ctypes.c_void_p(c_mem_access_hook_ptr())
+        else:
+            cfunc = _HOOK_MEM_ACCESS_CFUNC(hook_obj)
+            self._mem_cfuncs.append(cfunc)
+            cb_ptr = ctypes.cast(cfunc, ctypes.c_void_p)
         handle = ctypes.c_size_t()
         rc = _uc_hook_add(
             self._uc_handle,
             ctypes.byref(handle),
             hook_type,
-            ctypes.cast(cfunc, ctypes.c_void_p),
-            None,
+            cb_ptr,
+            cb_ud,
             ctypes.c_uint64(0),
             ctypes.c_uint64(0xFFFFFFFFFFFFFFFF),
         )
