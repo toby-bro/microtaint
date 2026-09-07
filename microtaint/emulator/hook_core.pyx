@@ -32,6 +32,7 @@ from cpython.bytes cimport (
 from cpython.set cimport PySet_Add, PySet_Discard, PySet_Contains
 from cpython.exc cimport PyErr_Clear, PyErr_Occurred, PyErr_ExceptionMatches
 from cpython.ref cimport Py_INCREF, Py_DECREF, PyObject
+from cpython.pycapsule cimport PyCapsule_GetPointer
 
 from microtaint.emulator.shadow cimport BitPreciseShadowMemory
 from libc.stdint cimport uint64_t
@@ -53,6 +54,39 @@ ctypedef int (*uc_reg_read_batch_ft)(void *uc, void *regs, void *vals, int count
 # isinstance + PyObject_Malloc/Free traffic they generate.  The fnptr call skips
 # all of it (same trick already used for uc_reg_read_batch).
 ctypedef int (*uc_mem_read_ft)(void *uc, uint64_t addr, void *buf, size_t size) noexcept nogil
+
+# circuit_c's C API (circuit_c_api.h).  Calling the array evaluators as Python
+# methods costs, per instruction, an attribute lookup + tuple build +
+# PyArg_ParseTuple + PyLong boxing of both array addresses.  Through the capsule
+# they are plain C calls taking uint64_t*.  Return convention is identical to the
+# methods (new ref; Py_None = declined; NULL = error), so the fallback logic is
+# unchanged.
+ctypedef object (*eval_arr_ptr_ft)(object compiled, uint64_t *taint, uint64_t *val,
+                                   int n_slots, object pcode, object name_to_slot)
+ctypedef object (*eval_mem_ptr_ft)(object compiled, uint64_t *taint, uint64_t *val,
+                                   int n_slots, object pcode, object shadow,
+                                   object mem_reader, object name_to_slot)
+
+cdef struct CircuitCAPI:
+    eval_arr_ptr_ft eval_arr_ptr
+    eval_mem_ptr_ft eval_mem_ptr
+
+cdef CircuitCAPI *_circuit_capi = NULL
+
+cdef void _load_circuit_capi():
+    global _circuit_capi
+    cdef object mod, cap
+    try:
+        from microtaint.instrumentation.cell_c import circuit_c as _cc
+        cap = getattr(_cc, '_circuit_capi', None)
+        if cap is not None:
+            _circuit_capi = <CircuitCAPI*>PyCapsule_GetPointer(
+                cap, b"microtaint.instrumentation.cell_c.circuit_c._circuit_capi")
+    except Exception:  # noqa: BLE001 - not fatal, we fall back to the methods
+        _circuit_capi = NULL
+        PyErr_Clear()
+
+_load_circuit_capi()
 
 import ctypes
 from microtaint.types import ImplicitTaintError as _ImplicitTaintError
@@ -863,17 +897,28 @@ cdef class InstructionHook:
             if compiled_ok:
                 if has_mem:
                     if _USE_CMEM:
-                        result = compiled_circuit.evaluate_c_mem_ptr(
-                            <unsigned long long>(<size_t>self.g_taint),
-                            <unsigned long long>(<size_t>self.g_val),
-                            self.n_slots, self.sim._pcode, self.shadow_mem,
-                            self.read_live_memory, self.slot_map)
+                        if _circuit_capi != NULL:
+                            result = _circuit_capi.eval_mem_ptr(
+                                compiled_circuit, self.g_taint, self.g_val,
+                                self.n_slots, self.sim._pcode, self.shadow_mem,
+                                self.read_live_memory, self.slot_map)
+                        else:
+                            result = compiled_circuit.evaluate_c_mem_ptr(
+                                <unsigned long long>(<size_t>self.g_taint),
+                                <unsigned long long>(<size_t>self.g_val),
+                                self.n_slots, self.sim._pcode, self.shadow_mem,
+                                self.read_live_memory, self.slot_map)
                         used_arr = result is not None
                 else:
-                    result = compiled_circuit.evaluate_c_arr_ptr(
-                        <unsigned long long>(<size_t>self.g_taint),
-                        <unsigned long long>(<size_t>self.g_val),
-                        self.n_slots, self.sim._pcode, self.slot_map)
+                    if _circuit_capi != NULL:
+                        result = _circuit_capi.eval_arr_ptr(
+                            compiled_circuit, self.g_taint, self.g_val,
+                            self.n_slots, self.sim._pcode, self.slot_map)
+                    else:
+                        result = compiled_circuit.evaluate_c_arr_ptr(
+                            <unsigned long long>(<size_t>self.g_taint),
+                            <unsigned long long>(<size_t>self.g_val),
+                            self.n_slots, self.sim._pcode, self.slot_map)
                     used_arr = result is not None
             if not used_arr:
                 output_state = self._eval_fallback_dict(

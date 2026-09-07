@@ -25,6 +25,7 @@
 #include <string.h>
 #include "circuit_bytecode.h"
 #include "cell_c_api.h"
+#include "circuit_c_api.h"
 
 /* Global CAPI pointer — populated at module init via PyCapsule_Import. */
 static CellCAPI *g_cell_capi = NULL;
@@ -2349,12 +2350,8 @@ static PyObject *CompiledCircuit_evaluate_c_arr(CompiledCircuit *self, PyObject 
  * array untouched, so state never half-updates).  No dict is built on input or
  * output: this is the whole point of the C-native interface.  Pass-through
  * (untouched slots) is the identity on the live array. */
-static PyObject *CompiledCircuit_evaluate_c_arr_ptr(CompiledCircuit *self, PyObject *args) {
-    unsigned long long taint_addr = 0, val_addr = 0;
-    int n_slots = 0;
-    PyObject *pcode, *name_to_slot;
-    if (!PyArg_ParseTuple(args, "KKiOO", &taint_addr, &val_addr, &n_slots, &pcode, &name_to_slot))
-        return NULL;
+static PyObject *arr_ptr_core(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
+                              int n_slots, PyObject *pcode, PyObject *name_to_slot) {
     if (!self->c_evaluable) { Py_RETURN_NONE; }
     if (self->pc_target_idx >= 0) { Py_RETURN_NONE; }
 
@@ -2371,8 +2368,6 @@ static PyObject *CompiledCircuit_evaluate_c_arr_ptr(CompiledCircuit *self, PyObj
         self->pool_to_slot_n = npool;
     }
     if (ensure_scratch(self, npool) != 0) return PyErr_NoMemory();
-    uint64_t *g_t = (uint64_t *)(uintptr_t)taint_addr;
-    uint64_t *g_v = (uint64_t *)(uintptr_t)val_addr;
     uint64_t *in_t = self->scratch_t, *in_v = self->scratch_v, *out_t = self->scratch_o;
     for (int i = 0; i < npool; i++) {
         int slot = self->pool_to_slot[i];
@@ -2546,13 +2541,9 @@ static PyObject *CompiledCircuit_evaluate_c_mem(CompiledCircuit *self, PyObject 
  * hook can update last_tainted_writes + run the AIW check exactly as it does
  * from the MEM_ dict keys today -- no MEM_ string round-trip is built. */
 #define CMEM_MAX_WRITES 32
-static PyObject *CompiledCircuit_evaluate_c_mem_ptr(CompiledCircuit *self, PyObject *args) {
-    unsigned long long taint_addr = 0, val_addr = 0;
-    int n_slots = 0;
-    PyObject *pcode, *shadow_memory, *mem_reader, *name_to_slot;
-    if (!PyArg_ParseTuple(args, "KKiOOOO", &taint_addr, &val_addr, &n_slots,
-                          &pcode, &shadow_memory, &mem_reader, &name_to_slot))
-        return NULL;
+static PyObject *mem_ptr_core(CompiledCircuit *self, uint64_t *g_t, uint64_t *g_v,
+                              int n_slots, PyObject *pcode, PyObject *shadow_memory,
+                              PyObject *mem_reader, PyObject *name_to_slot) {
     if (!self->c_mem_evaluable) { Py_RETURN_NONE; }
     if (self->pc_target_idx >= 0) { Py_RETURN_NONE; }
     if (!ensure_shadow_capi()) { Py_RETURN_NONE; }
@@ -2570,8 +2561,6 @@ static PyObject *CompiledCircuit_evaluate_c_mem_ptr(CompiledCircuit *self, PyObj
         self->pool_to_slot_n = npool;
     }
     if (ensure_scratch(self, npool) != 0) return PyErr_NoMemory();
-    uint64_t *g_t = (uint64_t *)(uintptr_t)taint_addr;
-    uint64_t *g_v = (uint64_t *)(uintptr_t)val_addr;
     uint64_t *in_t = self->scratch_t, *in_v = self->scratch_v, *out_t = self->scratch_o;
     for (int i = 0; i < npool; i++) {
         int slot = self->pool_to_slot[i];
@@ -2657,6 +2646,51 @@ static PyObject *CompiledCircuit_evaluate_c_mem_ptr(CompiledCircuit *self, PyObj
     }
     return writes;
 }
+
+/* ---- Python-level wrappers (unchanged signatures) ---------------------- */
+
+static PyObject *CompiledCircuit_evaluate_c_arr_ptr(CompiledCircuit *self, PyObject *args) {
+    unsigned long long taint_addr = 0, val_addr = 0;
+    int n_slots = 0;
+    PyObject *pcode, *name_to_slot;
+    if (!PyArg_ParseTuple(args, "KKiOO", &taint_addr, &val_addr, &n_slots, &pcode, &name_to_slot))
+        return NULL;
+    return arr_ptr_core(self, (uint64_t *)(uintptr_t)taint_addr,
+                        (uint64_t *)(uintptr_t)val_addr, n_slots, pcode, name_to_slot);
+}
+
+static PyObject *CompiledCircuit_evaluate_c_mem_ptr(CompiledCircuit *self, PyObject *args) {
+    unsigned long long taint_addr = 0, val_addr = 0;
+    int n_slots = 0;
+    PyObject *pcode, *shadow_memory, *mem_reader, *name_to_slot;
+    if (!PyArg_ParseTuple(args, "KKiOOOO", &taint_addr, &val_addr, &n_slots,
+                          &pcode, &shadow_memory, &mem_reader, &name_to_slot))
+        return NULL;
+    return mem_ptr_core(self, (uint64_t *)(uintptr_t)taint_addr,
+                        (uint64_t *)(uintptr_t)val_addr, n_slots, pcode,
+                        shadow_memory, mem_reader, name_to_slot);
+}
+
+/* ---- C API (see circuit_c_api.h): same cores, no Python call machinery ---- */
+
+static PyObject *capi_eval_arr_ptr(PyObject *compiled, uint64_t *taint, uint64_t *val,
+                                   int n_slots, PyObject *pcode, PyObject *name_to_slot) {
+    /* The cast below is unchecked, so verify the type here: a Python method call
+     * would have raised AttributeError on a wrong object, but a bad cast would
+     * corrupt memory.  One pointer compare per instruction. */
+    if (!PyObject_TypeCheck(compiled, &CompiledCircuitType)) { Py_RETURN_NONE; }
+    return arr_ptr_core((CompiledCircuit *)compiled, taint, val, n_slots, pcode, name_to_slot);
+}
+
+static PyObject *capi_eval_mem_ptr(PyObject *compiled, uint64_t *taint, uint64_t *val,
+                                   int n_slots, PyObject *pcode, PyObject *shadow,
+                                   PyObject *mem_reader, PyObject *name_to_slot) {
+    if (!PyObject_TypeCheck(compiled, &CompiledCircuitType)) { Py_RETURN_NONE; }
+    return mem_ptr_core((CompiledCircuit *)compiled, taint, val, n_slots, pcode,
+                        shadow, mem_reader, name_to_slot);
+}
+
+static CircuitCAPI g_circuit_capi_struct = { capi_eval_arr_ptr, capi_eval_mem_ptr };
 
 static PyMethodDef CompiledCircuit_methods[] = {
     {"evaluate",      (PyCFunction)CompiledCircuit_evaluate,      METH_VARARGS, NULL},
@@ -2749,6 +2783,17 @@ PyMODINIT_FUNC PyInit_circuit_c(void) {
     if (!m) return NULL;
     Py_INCREF(&CompiledCircuitType);
     PyModule_AddObject(m, "CompiledCircuit", (PyObject *)&CompiledCircuitType);
+
+    /* Publish the C API so hook_core can call the array evaluators directly,
+     * without the per-instruction attribute lookup / tuple / PyArg_ParseTuple /
+     * PyLong boxing that a Python method call costs. */
+    {
+        PyObject *cap = PyCapsule_New((void *)&g_circuit_capi_struct,
+                                      "microtaint.instrumentation.cell_c.circuit_c._circuit_capi",
+                                      NULL);
+        if (cap) PyModule_AddObject(m, "_circuit_capi", cap);
+        else PyErr_Clear();  /* not fatal: caller falls back to the methods */
+    }
 
     /* Import cell_c's CellCAPI capsule.  If cell_c isn't available or
      * the capsule isn't there, g_cell_capi stays NULL and we use the
