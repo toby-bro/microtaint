@@ -172,10 +172,19 @@ def ir_mem_taint(arch, code, reg_taint, reg_vals, mem_taint, mem_vals, *, be=Fal
     Unsupported when the shape is outside the lowering.
     """
     from microtaint.taint_ir.frompcode import build_ir
+    from tests.taint_ir_bank import name_offset
 
     prog = build_ir(arch, code)
-    vals = dict(reg_vals)
-    tnts = dict(reg_taint)
+    # The IR keys registers by byte offset, since one offset carries several
+    # names; the caller names them however its own state does.
+    vals, tnts = {}, {}
+    for n in set(reg_vals) | set(reg_taint):
+        off = name_offset(arch, n)
+        if off is None:
+            continue
+        for sz in range(1, 9):
+            vals[('reg', off, sz)] = reg_vals.get(n, 0)
+            tnts[('reg', off, sz)] = reg_taint.get(n, 0)
     for k in range(len(prog.accesses)):
         vals[('mem', k)] = 0
         tnts[('mem', k)] = 0
@@ -191,7 +200,14 @@ def ir_mem_taint(arch, code, reg_taint, reg_vals, mem_taint, mem_vals, *, be=Fal
     # A register the instruction does not write keeps its input taint; the
     # program only emits what it changes, so pass-through is reconstructed here.
     reg_out = dict(reg_taint)
-    reg_out.update({k: v for k, v in out.items() if not isinstance(k, tuple)})
+    for n in reg_out:
+        off = name_offset(arch, n)
+        if off is None:
+            continue
+        for sz in range(1, 9):
+            if ('reg', off, sz) in out:
+                reg_out[n] = out[('reg', off, sz)]
+                break
     mem_out = list(mem_taint)
     for k, acc in enumerate(prog.accesses):
         if acc['kind'] != 'store':

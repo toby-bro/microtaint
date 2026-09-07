@@ -26,7 +26,12 @@ MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
 def _slot_map(spec):
-    """(ordered engine register names, name -> slot) over the whole arch."""
+    """(ordered register names, name -> slot) over the whole architecture.
+
+    Every register the architecture declares gets a slot, not just the ones the
+    bank lists: a lifted instruction routinely reads a register outside the
+    bank's set, and a program with an unplaceable input cannot be run at all.
+    """
     from microtaint.taint_ir.frompcode import _BUILDERS, Builder
     key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
     b = _BUILDERS.get(key)
@@ -45,14 +50,19 @@ def _state_for(names, spec, seed, alias):
     provably clean or a mask provably zero -- so they are drawn once and pinned
     rather than left to whatever a run happens to produce.
     """
+    from tests.taint_ir_bank import name_offset
     rng = random.Random(f'irperf:{seed}')
     sizes = _sizes(spec.arch)
-    tainted = {alias.get(r.name, r.name) for r in spec.regs[:4]}
+    # Taint follows the OFFSET, not the name: the bank and the register file
+    # spell the same lane differently.
+    tainted_offs = {name_offset(spec.arch, alias.get(r.name, r.name))
+                    for r in spec.regs[:4]}
     vals, tnts = [], []
     for n in names:
         m = (1 << (sizes.get(n, 8) * 8)) - 1
         vals.append(rng.randint(1, MASK64) & m)
-        tnts.append((MASK64 if n in tainted else 0) & m)
+        hot = name_offset(spec.arch, n) in tainted_offs
+        tnts.append((MASK64 if hot else 0) & m)
     return vals, tnts
 
 
@@ -78,6 +88,7 @@ def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
     from microtaint.taint_ir.exec import compile_program
     from microtaint.taint_ir.frompcode import Unsupported, build_ir
     from tests.perop_c_bank import _engine_names
+    from tests.taint_ir_bank import slot_resolver
 
     # Slots must cover every register the ARCHITECTURE declares, not just the
     # ones the bank happens to list: a lifted instruction routinely reads a
@@ -85,9 +96,7 @@ def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
     # unplaceable input is a program that cannot be run at all.
     names, slot = _slot_map(spec)
     alias = _engine_names(spec.arch, [r.name for r in spec.regs])
-
-    def slot_of(n):
-        return slot.get(n)
+    slot_of = slot_resolver(spec.arch, slot)
 
     progs, srcs, fnames, labels = [], [], [], []
     declined = 0
@@ -112,9 +121,18 @@ def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
     bench, call = bind_driver(lib)
 
     vals, tnts = _state_for(names, spec, isa, alias)
-    V = (ctypes.c_uint64 * len(names))(*vals)
-    T = (ctypes.c_uint64 * len(names))(*tnts)
-    O = (ctypes.c_uint64 * len(names))()
+    # Memory accesses live in slots past the register file, so the state arrays
+    # have to be long enough for the worst program in the batch -- a program
+    # writing an address into a slot the caller never allocated would run off
+    # the end of the array.
+    from microtaint.taint_ir.frompcode import MEM_SLOTS_PER_ACCESS
+    max_acc = max((len(p.accesses) for p in progs), default=0)
+    total = len(names) + MEM_SLOTS_PER_ACCESS * (max_acc + 1)
+    vals = vals + [0] * (total - len(vals))
+    tnts = tnts + [0] * (total - len(tnts))
+    V = (ctypes.c_uint64 * total)(*vals)
+    T = (ctypes.c_uint64 * total)(*tnts)
+    O = (ctypes.c_uint64 * total)()
 
     rows, mismatches = [], []
     n_jit, jit_compile_total = [0], [0.0]
@@ -124,7 +142,7 @@ def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
         except KeyError:
             continue
         got_i = taint_ir_c.run(cap, list(vals), list(tnts))
-        for k in range(len(names)):
+        for k in range(total):
             O[k] = tnts[k]
         call(i, V, T, O)
         bad = [k for k, n in p.outputs

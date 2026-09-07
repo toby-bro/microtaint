@@ -153,9 +153,14 @@ class SymFrame:
         if sp == 'register':
             decl = self.declared.get(off)
             if decl is not None:
-                name, size = decl
-                node = (self.p.input_value(name, size * 8) if self.kind == 'v'
-                        else self.p.input_taint(name, size * 8))
+                _name, size = decl
+                # Keyed by BYTE OFFSET, not by name: one offset carries several
+                # names (Ghidra's XMM0_QA is the engine geometry's VL_0x1200),
+                # and choosing one of them here would hand the caller a key its
+                # state does not use.  The offset is p-code's own vocabulary.
+                key = ('reg', off, size)
+                node = (self.p.input_value(key, size * 8) if self.kind == 'v'
+                        else self.p.input_taint(key, size * 8))
                 c = (node, size)
                 d[off] = c
                 return c
@@ -242,16 +247,35 @@ class Builder:
     def __init__(self, arch, be: bool):
         from microtaint.instrumentation.cell import _build_reg_maps
         offsets, sizes = _build_reg_maps(arch)[:2]
-        declared: dict = {}
-        self.name_by_off: dict = {}
+        # Keep a NON-OVERLAPPING cover of the register file, widest first.
+        #
+        # A register file names the same bytes many times over -- RAX and EAX
+        # and AH, XMM0_QA and XMM0_DB -- while a caller's taint state holds one
+        # slot per architectural lane, not one per name.  Declaring every name
+        # would make a sub-register its own input, so reading it would return
+        # zero instead of resolving through the lane the caller actually
+        # supplied.  Overlapping names are dropped; the symbolic frame already
+        # resolves reads and writes inside a wider slot, exactly as the runtime
+        # frame does.
+        candidates = []
+        self.offset_of: dict = {}
         for name, off in offsets.items():
             size = sizes.get(name, 8)
-            if size > 8:
+            self.offset_of.setdefault(name, off)
+            if size > 8 or size <= 0:
                 continue
-            prev = declared.get(off)
-            if prev is None or size > prev[1]:
-                declared[off] = (name, size)
-                self.name_by_off[off] = name
+            candidates.append((off, -size, name))
+        candidates.sort()
+        declared: dict = {}
+        self.name_by_off: dict = {}
+        covered: set = set()
+        for off, negsz, name in candidates:
+            size = -negsz
+            if any(b in covered for b in range(off, off + size)):
+                continue
+            covered.update(range(off, off + size))
+            declared[off] = (name, size)
+            self.name_by_off[off] = name
         self.declared = declared
         self.names = {n for n, _s in declared.values()}
         self.be = be
@@ -344,10 +368,10 @@ class Builder:
             width = cell[1] if cell else 1
             dirty_bytes.update(range(off, off + width))
         for off in sorted(self.declared):
-            nm, size = self.declared[off]
+            _nm, size = self.declared[off]
             if not dirty_bytes.intersection(range(off, off + size)):
                 continue
-            p.outputs.append((nm, t.read('register', off, size)))
+            p.outputs.append((('reg', off, size), t.read('register', off, size)))
         p.spans = self.spans
         p.accesses = self.accesses
         self._check_address_independence(p)
@@ -492,9 +516,100 @@ class Builder:
         self.v.write(sp, vn.offset, vn.size, new_v)
         self.t.write(sp, vn.offset, vn.size, p.op(OR, new_t, leak))
 
+    # -- wide varnodes -------------------------------------------------
+    #: Opcodes whose every output bit depends only on the input bits in the
+    #: same position, so a varnode wider than a machine word can be done one
+    #: 8-byte lane at a time with no loss.  Carry-coupled and position-sensitive
+    #: opcodes are deliberately absent: splitting those would drop the coupling
+    #: between lanes and under-taint.
+    _LANE_OPS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'INT_NEGATE',
+                 'INT_AND', 'INT_OR', 'INT_XOR'}
+
+    def _read_lane(self, vn, lane, lsz):
+        """One 8-byte lane of a varnode, as (value, taint)."""
+        p = self.p
+        sp = vn.space.name
+        if sp == 'const':
+            return p.const((vn.offset >> (8 * lane)) & _mask_of(lsz)), p.const(0)
+        if sp in ('register', 'unique'):
+            return (self.v.read(sp, vn.offset + lane, lsz),
+                    self.t.read(sp, vn.offset + lane, lsz))
+        raise Unsupported(f'wide input space {sp}')
+
+    def _write_lane(self, vn, lane, lsz, val, tnt):
+        p = self.p
+        sp = vn.space.name
+        if sp not in ('register', 'unique'):
+            raise Unsupported(f'wide output space {sp}')
+        if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
+            raise Unsupported('predicated wide write')
+        self.v.write(sp, vn.offset + lane, lsz, val)
+        self.t.write(sp, vn.offset + lane, lsz, tnt)
+
+    def _emit_wide(self, name, op):
+        """Lane-by-lane emission for a bit-parallel op on a wide varnode.
+
+        Vector movement and vector logic are most of what a SIMD lifter emits
+        at full register width, and they cost nothing extra here: the symbolic
+        frame is byte-addressed, so a lane is just an offset.
+        """
+        p = self.p
+        if self.be:
+            # Lane 0 is taken as the least significant; on a big-endian target
+            # the lowest byte offset is the MOST significant, so the order would
+            # invert.  No big-endian ISA in the corpus lifts a wide varnode, so
+            # decline rather than guess.
+            raise Unsupported('wide varnode on a big-endian target')
+        osz = op.output.size
+        isz = op.inputs[0].size if op.inputs else osz
+        fill_v = fill_t = None
+        if name == 'INT_SEXT':
+            # The fill comes from the source's top lane and must be read before
+            # any output lane is written, in case they alias.
+            top_lane = ((isz - 1) // 8) * 8
+            top_sz = isz - top_lane
+            sv, st = self._read_lane(op.inputs[0], top_lane, top_sz)
+            sh = p.const(top_sz * 8 - 1)
+            fill_v = p.splat(p.mask(p.op(SHR, sv, sh), 1))
+            fill_t = p.splat(p.mask(p.op(SHR, st, sh), 1))
+        for lane in range(0, osz, 8):
+            lsz = min(8, osz - lane)
+            if name in ('INT_ZEXT', 'INT_SEXT') and lane >= isz:
+                v, tnt = ((p.const(0), p.const(0)) if name == 'INT_ZEXT'
+                          else (fill_v, fill_t))
+            else:
+                av, at = self._read_lane(op.inputs[0], lane, lsz)
+                if name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
+                    v, tnt = av, at
+                elif name == 'INT_NEGATE':
+                    v, tnt = p.op(NOT, av), at
+                else:
+                    bv, bt = self._read_lane(op.inputs[1], lane, lsz)
+                    if name == 'INT_AND':
+                        v = p.op(AND, av, bv)
+                        tnt = p.op(OR, p.op(OR, p.op(AND, at, bv),
+                                            p.op(AND, bt, av)),
+                                   p.op(AND, at, bt))
+                    elif name == 'INT_OR':
+                        v = p.op(OR, av, bv)
+                        tnt = p.op(OR, p.op(OR, p.op(AND, at, p.op(NOT, bv)),
+                                            p.op(AND, bt, p.op(NOT, av))),
+                                   p.op(AND, at, bt))
+                    else:
+                        v = p.op(XOR, av, bv)
+                        tnt = p.op(OR, at, bt)
+            self._write_lane(op.output, lane, lsz,
+                             p.mask(v, lsz * 8), p.mask(tnt, lsz * 8))
+
     # -- the per-opcode lowering ---------------------------------------
     def _emit_op(self, name, op):
         p = self.p
+        if any(s > 8 for s in
+               [x.size for x in op.inputs] + [op.output.size]):
+            if name not in self._LANE_OPS:
+                raise Unsupported(f'wide varnode ({name})')
+            self._emit_wide(name, op)
+            return
         ins = [self._read_in(x) for x in op.inputs]
         av, at = ins[0] if ins else (p.const(0), p.const(0))
         bv, bt = ins[1] if len(ins) > 1 else (p.const(0), p.const(0))

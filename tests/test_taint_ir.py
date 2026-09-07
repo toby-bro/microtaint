@@ -133,3 +133,21 @@ def test_memory_taint_matches_ground_truth(isa):
             f'  {label}: {[(k, hex(v)) for k, v in list(u.items())[:6]]}'
             for label, u in rep.under_examples[:5])
         pytest.fail(f'{isa}: {rep.under} memory case(s) under-taint:\n{detail}')
+
+
+def test_vector_lanes_match_ground_truth():
+    """Lane splitting, against per-bit truth read straight out of XMM.
+
+    The bank's Unicorn descriptors cover general-purpose registers only, so
+    without this a wrong lane order would show up merely as a disagreement with
+    the engine's own differential -- which cannot distinguish a bug from the
+    precision gain lane splitting is supposed to produce.
+    """
+    from tests.taint_ir_simd import run_simd_bank
+
+    n, under = run_simd_bank(n_vec=3)
+    assert n > 0, 'no SIMD cases evaluated'
+    if under:
+        detail = '\n'.join(f'  {lbl}: {items[0]}' for lbl, items in
+                           list(under.items())[:5])
+        pytest.fail(f'{len(under)} vector instruction(s) under-taint:\n{detail}')

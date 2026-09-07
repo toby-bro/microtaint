@@ -19,6 +19,78 @@ from microtaint.taint_ir.frompcode import Unsupported, build_ir
 from tests.perop_c_bank import Declined, _engine_names
 
 _CACHE: dict = {}
+_OFFSETS: dict = {}
+
+
+def _offsets(arch):
+    key = arch.value if hasattr(arch, 'value') else str(arch)
+    o = _OFFSETS.get(key)
+    if o is None:
+        from microtaint.instrumentation.cell import _build_reg_maps
+        o = dict(_build_reg_maps(arch)[0])
+        _OFFSETS[key] = o
+    return o
+
+
+def name_offset(arch, name):
+    """Byte offset of a register the caller named.
+
+    Vector lanes reach the engine's taint state as `VL_0x<offset>` -- a name
+    generated FROM the geometry rather than taken from the register file -- so
+    the cell evaluator's name table does not contain them.  The offset is right
+    there in the name.
+    """
+    off = _offsets(arch).get(name)
+    if off is not None:
+        return off
+    if name.startswith('VL_0x'):
+        try:
+            return int(name[3:], 16)
+        except ValueError:
+            return None
+    return None
+
+
+def slot_resolver(arch, name_to_slot):
+    """A `slot_of` for IR keys, given the caller's register-name slot map.
+
+    The IR names registers by BYTE OFFSET because a register file gives one
+    offset several names; the caller names them however its own state does.
+    Resolving through the offset is what lets the two meet without either side
+    having to know the other's spelling.
+    """
+    offs = _offsets(arch)
+    by_off = {}
+    for name, slot in name_to_slot.items():
+        off = name_offset(arch, name)
+        if off is not None:
+            by_off.setdefault(off, slot)
+    n_slots = (max(name_to_slot.values()) + 1) if name_to_slot else 0
+
+    def slot_of(key):
+        if isinstance(key, tuple):
+            kind = key[0]
+            if kind == 'reg':
+                return by_off.get(key[1])
+            from microtaint.taint_ir.frompcode import access_slot
+            if kind in ('mem', 'addr', 'addrt', 'sttaint'):
+                return access_slot(n_slots, key[1], kind)
+        return name_to_slot.get(key)
+
+    return slot_of
+
+
+def ir_state(arch, names, values, taints):
+    """Register state keyed the way the IR keys it."""
+    v, t = {}, {}
+    for n in names:
+        off = name_offset(arch, n)
+        if off is None:
+            continue
+        for key in ((('reg', off, sz)) for sz in range(1, 9)):
+            v[key] = values.get(n, 0)
+            t[key] = taints.get(n, 0)
+    return v, t
 
 
 def _prog(arch, code):
@@ -42,20 +114,31 @@ def ir_step(arch, code: bytes, regs, in_taint, in_values):
     key = arch.value if hasattr(arch, 'value') else str(arch)
     declared = _BUILDERS[key].declared
     size_of = {nm: sz for nm, sz in declared.values()}
+    from microtaint.instrumentation.cell import _build_reg_maps
+    size_of.update(_build_reg_maps(arch)[1])
 
     names = [r.name for r in regs]
     alias = _engine_names(arch, names)
     values, taints = {}, {}
     for n in names:
         en = alias[n]
+        off = name_offset(arch, en)
+        if off is None:
+            continue
         m = (1 << (size_of.get(en, 8) * 8)) - 1
-        values[en] = in_values.get(n, 0) & m
-        taints[en] = in_taint.get(n, 0) & m
+        for sz in range(1, 9):
+            values[('reg', off, sz)] = in_values.get(n, 0) & m
+            taints[('reg', off, sz)] = in_taint.get(n, 0) & m
     out = prog.run(values, taints)
     res = {n: in_taint.get(n, 0) for n in names}
     for n in names:
-        if alias[n] in out:
-            res[n] = out[alias[n]]
+        off = name_offset(arch, alias[n])
+        if off is None:
+            continue
+        for sz in range(1, 9):
+            if ('reg', off, sz) in out:
+                res[n] = out[('reg', off, sz)]
+                break
     cost = {'ops': prog.cost(), 'pcode_ops': 0, 'n_route': 0, 'n_diff': 0,
             'n_floor': 0, 'n_cube': 0, 'reads': 0, 'writes': 0, 'forks': 0}
     return res, {}, cost
