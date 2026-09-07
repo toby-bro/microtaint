@@ -29,13 +29,14 @@
  * offsets and shuttles their values. */
 #include "reexec.h"
 
+#define REEXEC_MAX_REGS 40
+#endif
+
 /* Address the instruction's p-code is lifted at.  MUST match the base passed to
  * ctx.translate() in cell.pyx (_decode_instruction); PC-relative operands are
  * baked against it, so a mismatch silently decouples them from the memory the
  * caller seeds. */
 #define CELL_LIFT_BASE 0x1000
-#define REEXEC_MAX_REGS 40
-#endif
 
 /* ──────────── Per-architecture register table ──────────── */
 
@@ -111,6 +112,8 @@ typedef struct {
     PyObject_HEAD
     Frame    frame_a;
     Frame    frame_b;
+    /* Taint frame for the one-pass per-op composer (execute_decoded_t). */
+    Frame    frame_t;
     /* frame-recycle frame sharing (see above) */
     Frame      frame_pool[RECYCLE_POOL];
     RecycleEntry recycle_cache[RECYCLE_POOL];
@@ -544,8 +547,12 @@ static PyObject *EvalC_new(PyTypeObject *type, PyObject *args, PyObject *kw) {
     if (!self) return NULL;
     memset(&self->frame_a, 0, sizeof(Frame));
     memset(&self->frame_b, 0, sizeof(Frame));
+    memset(&self->frame_t, 0, sizeof(Frame));
+    /* An all-zero mem hash is not an EMPTY one: slot 0 would read as the
+     * live key 0 and every probe for another address would scan forever. */
     mem_clear(&self->frame_a.mem);
     mem_clear(&self->frame_b.mem);
+    mem_clear(&self->frame_t.mem);
     memset(self->frame_pool, 0, sizeof(self->frame_pool));
     for (int i = 0; i < RECYCLE_POOL; i++) mem_clear(&self->frame_pool[i].mem);
     self->recycle_count = 0;
@@ -594,6 +601,7 @@ static int EvalC_init(EvalC *self, PyObject *args, PyObject *kw) {
         }
         self->frame_a.is_big_endian = be;
         self->frame_b.is_big_endian = be;
+        self->frame_t.is_big_endian = be;
         for (int _i = 0; _i < RECYCLE_POOL; _i++) self->frame_pool[_i].is_big_endian = be;
     }
 
@@ -1362,6 +1370,75 @@ static PyObject *EvalC_evaluate_concrete_flat(EvalC *self, PyObject *args) {
     return out;
 }
 
+
+/* taint_step(code, values, taints, out_names) -> (taints, values, cost) | None
+ *
+ * The one-pass per-op taint composer, exposed for validation and measurement.
+ * `code` is the raw instruction bytes; `values` and `taints` map register names
+ * to the concrete input state and its taint mask.  One call runs the whole
+ * p-code program once and every requested output -- result registers and flags
+ * alike -- reads its taint straight off the taint frame.
+ *
+ * Returns None when the pass declines (a shape it does not model), which the
+ * caller must treat as "fall back to the monolithic differential", never as
+ * "no taint".
+ */
+static PyObject *EvalC_taint_step(EvalC *self, PyObject *args) {
+    PyObject *code_obj, *vals, *taints, *outs;
+    if (!PyArg_ParseTuple(args, "OOOO", &code_obj, &vals, &taints, &outs))
+        return NULL;
+    if (!PyDict_Check(vals) || !PyDict_Check(taints)) {
+        PyErr_SetString(PyExc_TypeError, "values and taints must be dicts");
+        return NULL;
+    }
+    DecodedBundle *bundle = get_bundle(self, code_obj);
+    if (!bundle) return NULL;
+    if (bundle->has_fallback) Py_RETURN_NONE;
+
+    Frame *f  = &self->frame_a;
+    Frame *tf = &self->frame_t;
+    frame_clear(f);
+    frame_clear(tf);
+    f->arch_pc_off  = (uint64_t)self->pc_off;
+    f->arch_pc_sz   = self->pc_sz;
+    tf->arch_pc_off = (uint64_t)self->pc_off;
+    tf->arch_pc_sz  = self->pc_sz;
+    load_regs_state(self, f, vals);
+    load_regs_state(self, tf, taints);
+
+    MtTaintCost tc;
+    memset(&tc, 0, sizeof(tc));
+    int rc = execute_decoded_t(f, tf, bundle, &tc);
+    if (rc != EXEC_OK) Py_RETURN_NONE;
+
+    PyObject *td = PyDict_New(), *vd = PyDict_New();
+    if (!td || !vd) { Py_XDECREF(td); Py_XDECREF(vd); return NULL; }
+    Py_ssize_t n = PySequence_Size(outs);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *item = PySequence_GetItem(outs, i);
+        if (!item) { Py_DECREF(td); Py_DECREF(vd); return NULL; }
+        const char *name = PyUnicode_AsUTF8(item);
+        char up[24];
+        int off, sz;
+        if (name && upper_into(up, sizeof(up), name)
+                 && reg_off_size(self, up, &off, &sz) && sz <= 8) {
+            PyObject *tv = PyLong_FromUnsignedLongLong(frame_read_reg(tf, off, sz));
+            PyObject *vv = PyLong_FromUnsignedLongLong(frame_read_reg(f,  off, sz));
+            if (tv) { PyDict_SetItem(td, item, tv); Py_DECREF(tv); }
+            if (vv) { PyDict_SetItem(vd, item, vv); Py_DECREF(vv); }
+        }
+        Py_DECREF(item);
+    }
+    PyObject *cost = Py_BuildValue(
+        "{s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I}",
+        "pcode_ops", tc.pcode_ops, "ops", tc.ops,
+        "n_route", tc.n_route, "n_diff", tc.n_diff,
+        "n_floor", tc.n_floor, "n_cube", tc.n_cube,
+        "reads", tc.reads, "writes", tc.writes, "forks", tc.forks);
+    if (!cost) { Py_DECREF(td); Py_DECREF(vd); return NULL; }
+    return Py_BuildValue("(NNN)", td, vd, cost);
+}
+
 static PyObject *EvalC_stats(EvalC *self, PyObject *_unused) {
     (void)_unused;
     double total = self->native_calls + self->fallback_calls;
@@ -1419,6 +1496,7 @@ static PyMethodDef EvalC_methods[] = {
     {"evaluate_concrete_state", (PyCFunction)EvalC_evaluate_concrete_state, METH_VARARGS, NULL},
     {"evaluate_concrete_flat",  (PyCFunction)EvalC_evaluate_concrete_flat,  METH_VARARGS, NULL},
     {"make_cell_handle",        (PyCFunction)EvalC_make_cell_handle,        METH_VARARGS, NULL},
+    {"taint_step",              (PyCFunction)EvalC_taint_step,              METH_VARARGS, NULL},
     {"stats",                   (PyCFunction)EvalC_stats,                   METH_NOARGS,  NULL},
     {NULL}
 };

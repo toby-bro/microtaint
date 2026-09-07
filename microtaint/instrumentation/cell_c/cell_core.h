@@ -19,45 +19,8 @@
 #define MAX_UNIQ       64
 #define MAX_DIRTY      128
 
-#define SP_CONST     0
-#define SP_REGISTER  1
-#define SP_UNIQUE    2
-#define SP_RAM       3
-#define SP_OTHER    -1
-#define NO_OUT_SPACE -2
-
-/* Opcode enum — must match _OpcodeID in cell.pyx exactly */
-typedef enum {
-    OP_UNKNOWN=0, OP_COPY, OP_LOAD, OP_STORE, OP_MULTIEQUAL, OP_INDIRECT,
-    OP_INT_ADD, OP_INT_SUB, OP_INT_MULT, OP_INT_DIV, OP_INT_SDIV,
-    OP_INT_REM, OP_INT_SREM, OP_INT_2COMP, OP_INT_NEGATE,
-    OP_INT_AND, OP_INT_OR, OP_INT_XOR,
-    OP_INT_LEFT, OP_INT_RIGHT, OP_INT_SRIGHT,
-    OP_INT_EQUAL, OP_INT_NOTEQUAL,
-    OP_INT_LESS, OP_INT_LESSEQUAL, OP_INT_SLESS, OP_INT_SLESSEQUAL,
-    OP_INT_CARRY, OP_INT_SCARRY, OP_INT_SBORROW,
-    OP_INT_ZEXT, OP_INT_SEXT, OP_INT_TRUNC, OP_CAST,
-    OP_POPCOUNT, OP_LZCOUNT,
-    OP_PIECE, OP_SUBPIECE, OP_PTRADD, OP_PTRSUB,
-    OP_BOOL_AND, OP_BOOL_OR, OP_BOOL_XOR, OP_BOOL_NEGATE,
-    OP_BRANCH, OP_CBRANCH, OP_BRANCHIND, OP_CALL, OP_CALLIND,
-    OP_CALLOTHER, OP_RETURN, OP_IMARK, OP_UNIMPLEMENTED,
-    OP_SEGMENT, OP_CPOOLREF, OP_NEW, OP_INSERT, OP_EXTRACT,
-    OP_FLOAT_ANY, OP_TRUNC_FLOAT
-} OpcodeID;
-
-/* Pre-decoded P-code op (mirrors PCodeOp in cell.pyx) */
-typedef struct {
-    int           oid;
-    int           o_sp;
-    unsigned long o_off;
-    int           o_sz;
-    int           callother_out;
-    int           n_ins;
-    int           i0_sp;  unsigned long i0_off;  int i0_sz;
-    int           i1_sp;  unsigned long i1_off;  int i1_sz;
-    int           i2_sp;  unsigned long i2_off;  int i2_sz;
-} PCOp;
+#include "pcode_defs.h"
+#include "taint_core.h"
 
 /* Open-addressing hash for memory (single-byte values) */
 #define MEM_CAP    256
@@ -333,6 +296,11 @@ typedef struct {
 
 #define EXEC_OK          0
 #define EXEC_FALLBACK    1
+/* The taint pass met a p-code shape it does not model (wide vector, memory,
+ * opaque op, tainted branch condition).  The VALUE state is undefined at that
+ * point, so the caller must re-run without the taint frame or fall back to the
+ * monolithic differential -- it must never read a partial taint answer. */
+#define EXEC_TAINT_DECLINE 2
 
 /* Linear-scan lookup of an IMARK address in the bundle's imark table.
  * Returns the pcode pc for that address, or -1 if not present.  Typical
@@ -379,7 +347,23 @@ static inline int64_t sign_extend_n(uint64_t v, int sz) {
 
 #define EXEC_LOOP_BUDGET 256
 
-static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
+/* Execute the decoded p-code.
+ *
+ * With `tf == NULL` this is the value-only interpreter it has always been.
+ * With `tf` supplied it is the ONE-PASS taint composer: `tf` is a second Frame
+ * holding a taint word beside every varnode, and each op's output taint is
+ * derived from its inputs' (value, taint) by the per-opcode rules in
+ * taint_core.h.  Because taint aliases registers exactly the way values do
+ * (AL inside RAX, a flag byte inside a flag block), the same Frame machinery --
+ * partial writes, sub-register overlay, endianness -- serves both, so there is
+ * no separate taint state model to keep in sync.
+ *
+ * Every output of the instruction, result registers and flags alike, is simply
+ * read off `tf` when the pass returns.  No per-output program, no second pass,
+ * no waiting on an intermediate.
+ */
+static inline int execute_decoded_t(Frame *f, Frame *tf, const DecodedBundle *d,
+                                    MtTaintCost *tc) {
     int skip = 0;
     uint64_t next_addr = d->next_instr_addr;
     int loop_iters = 0;
@@ -389,6 +373,56 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
         const PCOp *op = &d->buf[pc];
         int oid = op->oid;
         if (skip && oid != OP_IMARK) { pc++; continue; }
+
+        /* ── taint pass: capture inputs, then gate ────────────────────
+         * Inputs are read BEFORE the op executes: SLEIGH freely writes a
+         * varnode it also reads (add writes RAX after INT_CARRY read it), so
+         * reading them afterwards would compose the taint of the wrong value.
+         *
+         * The gate is deliberately narrow.  Anything outside the modelled set
+         * declines the whole instruction rather than contributing a partial
+         * answer, because an unmodelled op silently producing 0 taint is an
+         * under-taint, and under-taint is never acceptable. */
+        uint64_t t_iv[3] = {0, 0, 0}, t_it[3] = {0, 0, 0};
+        if (tf) {
+            if (op->o_sz > 8 || op->i0_sz > 8 || op->i1_sz > 8 || op->i2_sz > 8)
+                return EXEC_TAINT_DECLINE;
+            switch (oid) {
+            case OP_LOAD: case OP_STORE: case OP_CALLOTHER:
+            case OP_FLOAT_ANY: case OP_TRUNC_FLOAT: case OP_UNKNOWN:
+            case OP_PTRADD: case OP_PTRSUB: case OP_MULTIEQUAL:
+            case OP_INDIRECT: case OP_CPOOLREF: case OP_NEW: case OP_SEGMENT:
+            case OP_INSERT: case OP_EXTRACT: case OP_UNIMPLEMENTED:
+            case OP_BRANCHIND: case OP_CALLIND: case OP_CALL: case OP_RETURN:
+                return EXEC_TAINT_DECLINE;
+            default: break;
+            }
+            if (op->n_ins > 0 && op->i0_sp != SP_CONST) {
+                t_iv[0] = frame_read_d(f,  op->i0_sp, op->i0_off, op->i0_sz);
+                t_it[0] = frame_read_d(tf, op->i0_sp, op->i0_off, op->i0_sz);
+            } else if (op->n_ins > 0) {
+                t_iv[0] = mask64((uint64_t)op->i0_off, op->i0_sz);
+            }
+            if (op->n_ins > 1 && op->i1_sp != SP_CONST) {
+                t_iv[1] = frame_read_d(f,  op->i1_sp, op->i1_off, op->i1_sz);
+                t_it[1] = frame_read_d(tf, op->i1_sp, op->i1_off, op->i1_sz);
+            } else if (op->n_ins > 1) {
+                t_iv[1] = mask64((uint64_t)op->i1_off, op->i1_sz);
+            }
+            if (op->n_ins > 2 && op->i2_sp != SP_CONST) {
+                t_iv[2] = frame_read_d(f,  op->i2_sp, op->i2_off, op->i2_sz);
+                t_it[2] = frame_read_d(tf, op->i2_sp, op->i2_off, op->i2_sz);
+            } else if (op->n_ins > 2) {
+                t_iv[2] = mask64((uint64_t)op->i2_off, op->i2_sz);
+            }
+            if (tc) { tc->pcode_ops++; tc->reads += 2 * (op->n_ins > 3 ? 3 : op->n_ins); }
+            /* A tainted branch condition is implicit flow: the not-taken side's
+             * writes are still observable through the taken side's absence.  A
+             * straight-line pass would follow one side and drop the other, so
+             * decline until the fork-and-merge path lands. */
+            if (oid == OP_CBRANCH && op->n_ins > 1 && t_it[1] != 0)
+                return EXEC_TAINT_DECLINE;
+        }
 
         uint64_t a, b, result;
         int64_t  sa, sb;
@@ -957,6 +991,13 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
         case OP_FLOAT_ANY: case OP_TRUNC_FLOAT: case OP_UNKNOWN: return EXEC_FALLBACK;
         default: break;
         }
+        if (tf && op->o_sp != NO_OUT_SPACE) {
+            int decline = 0;
+            uint64_t ot = mt_op_taint(op, t_iv, t_it, tc, &decline);
+            if (decline) return EXEC_TAINT_DECLINE;
+            frame_write_d(tf, op->o_sp, op->o_off, op->o_sz, ot);
+            if (tc) tc->writes++;
+        }
         pc++;
     }
     /* Note: pcode-native does NOT write RIP at end-of-cell for in-cell
@@ -967,6 +1008,11 @@ static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
      * is the more precise answer and the parity test should be relaxed
      * for these cases. */
     return EXEC_OK;
+}
+
+/* Value-only execution: the historical entry point, unchanged in behaviour. */
+static inline int execute_decoded(Frame *f, const DecodedBundle *d) {
+    return execute_decoded_t(f, NULL, d, NULL);
 }
 
 #endif
