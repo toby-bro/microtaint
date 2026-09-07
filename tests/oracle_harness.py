@@ -188,7 +188,23 @@ def _uc_desc_arm64() -> UcDesc:
     )
 
 
-UC_DESCS = {'AMD64': _uc_desc_amd64, 'ARM64': _uc_desc_arm64}
+def _uc_desc_riscv64() -> UcDesc:
+    import unicorn
+    import unicorn.riscv_const as ur
+    # RISC-V has no architectural condition-flag register (compares write GP
+    # registers), so flags is empty.  Track the argument registers a0-a5.
+    return UcDesc(
+        uc_arch=unicorn.UC_ARCH_RISCV, uc_mode=unicorn.UC_MODE_RISCV64, code_addr=0x1000,
+        gp={'A0': ur.UC_RISCV_REG_A0, 'A1': ur.UC_RISCV_REG_A1,
+            'A2': ur.UC_RISCV_REG_A2, 'A3': ur.UC_RISCV_REG_A3,
+            'A4': ur.UC_RISCV_REG_A4, 'A5': ur.UC_RISCV_REG_A5},
+        flags={},
+        eflags_reg=None,
+    )
+
+
+UC_DESCS = {'AMD64': _uc_desc_amd64, 'ARM64': _uc_desc_arm64,
+            'RISCV64': _uc_desc_riscv64}
 
 
 def _uc_run(desc: UcDesc, code: bytes, vals: dict) -> dict:

@@ -166,9 +166,10 @@ def test_perop_slicewise_sound_and_covers():
     truth), and coverage must be high (reconvergence is usually confined to a few
     flags, so most slices stay on the fast path)."""
     pytest.importorskip('unicorn')
-    for isa in ('AMD64', 'ARM64'):
+    # min cases per ISA (RISCV bank is small); all must be sound + high coverage.
+    for isa, min_cases in (('AMD64', 300), ('ARM64', 300), ('RISCV64', 40)):
         n_cases, tot, clean, n_new_under, ex = slicewise_report(isa, n_per=2)
-        assert n_cases > 300, f'{isa}: too few cases: {n_cases}'
+        assert n_cases > min_cases, f'{isa}: too few cases: {n_cases}'
         assert n_new_under == 0, f'{isa}: NEW under-taints on clean slices: {ex}'
         cov = clean / max(1, tot)
         assert cov > 0.85, f'{isa}: slice coverage too low: {cov:.2f}'
