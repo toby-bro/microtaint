@@ -190,6 +190,9 @@ cdef class InstructionHook:
     cdef public dict slots_cache      # instruction bytes -> list of input slots
     cdef bint arr_loaded              # register_taint has been loaded into g_taint
     cdef public unsigned long arr_fallbacks   # instructions that had to use the dict path
+    cdef int rip_slot                 # cached slot of the PC register
+    cdef int eflags_slot              # cached slot of EFLAGS
+    cdef list eflags_slot_bits        # cached [(flag slot, bit index), ...]
 
     def __init__(self, wrapper, *,
                  uc_handle, uc_mem_read, uc_reg_read_batch, mem_buf,
@@ -263,6 +266,9 @@ cdef class InstructionHook:
         self.slots_cache = {}
         self.arr_loaded = False
         self.arr_fallbacks = 0
+        self.rip_slot = -1
+        self.eflags_slot = -1
+        self.eflags_slot_bits = None
         # Pre-intern the arch's state-format registers so the slot space is
         # stable for the common case (SIMD VL_ lanes are interned on demand).
         cdef object _nm
@@ -315,6 +321,7 @@ cdef class InstructionHook:
         self.n_slots = slot + 1
         PyDict_SetItem(self.slot_map, name, slot)
         # Snapshots in arr_cache are sized to the old n_slots; drop them.
+        # (slots_cache holds slot INDICES, which stay valid across growth.)
         if self.arr_cache:
             self.arr_cache.clear()
         return slot
@@ -679,13 +686,16 @@ cdef class InstructionHook:
                 # `decoded` is a cdef class, so stashing a new attribute on it
                 # raises AttributeError (which would silently push every
                 # instruction onto the slow get_live_registers fallback).
-                slots = self.slots_cache.get(instruction_bytes)
+                # Keyed by ADDRESS: an int hash, versus hashing the instruction
+                # bytes on every single instruction.  Dropped by invalidate_smc
+                # along with the other address-keyed caches.
+                slots = self.slots_cache.get(address)
                 if slots is None:
                     slist = []
                     for i in range(n):
                         slist.append(self._slot_for(names[i]))
                     slots = slist
-                    self.slots_cache[instruction_bytes] = slots
+                    self.slots_cache[address] = slots
                 if _USE_CREGS and self.uc_rrb_addr != 0:
                     if self.uc_handle_addr == 0:
                         self.uc_handle_addr = <unsigned long long>self.uc_handle.value
@@ -703,16 +713,31 @@ cdef class InstructionHook:
                         self.g_val[<int>(<object>slots[i])] = \
                             <uint64_t>(int(vals[i]) & 0xFFFFFFFFFFFFFFFF)
                 if need_ef:
-                    ef = self.g_val[self._slot_for('EFLAGS')]
-                    for fname, fbit in self.eflags_bits.items():
-                        self.g_val[self._slot_for(fname)] = (ef >> <int>fbit) & 1
+                    if self.eflags_slot < 0:
+                        self.eflags_slot = self._slot_for('EFLAGS')
+                        self.eflags_slot_bits = [
+                            (self._slot_for(_f), int(_b))
+                            for _f, _b in self.eflags_bits.items()]
+                    ef = self.g_val[self.eflags_slot]
+                    for fpair in self.eflags_slot_bits:
+                        self.g_val[<int>(<object>fpair[0])] = \
+                            (ef >> <int>(<object>fpair[1])) & 1
         except Exception:  # noqa: BLE001 - mirror _read_pre_regs' fallback
             pre = self.get_live_registers(self.uc_handle)
             for k, v in pre.items():
                 self.g_val[self._slot_for(k)] = \
                     <uint64_t>(int(v) & 0xFFFFFFFFFFFFFFFF)
-        self.g_val[self._slot_for('RIP')] = <uint64_t>address
+        if self.rip_slot < 0:
+            self.rip_slot = self._slot_for(self._pc_name())
+        self.g_val[self.rip_slot] = <uint64_t>address
         return 0
+
+    cdef object _pc_name(self):
+        """PC register name for this arch (the wrapper owns the mapping)."""
+        try:
+            return self.wrapper._pc_reg_name
+        except AttributeError:
+            return 'RIP'
 
     cdef inline _evaluate_arr(self, unsigned long long address, int size):
         """Array-native hot path (Phase 1.3c).  Taint and input values live in
@@ -818,7 +843,7 @@ cdef class InstructionHook:
         if can_cache:
             pre_snap = PyBytes_FromStringAndSize(<char*>self.g_taint, nbytes)
             if not value_indep:
-                in_slots = self._input_slots(instruction_bytes)
+                in_slots = self._input_slots(address)
                 ns = len(in_slots)
                 # A value-dependent circuit MUST carry a non-empty operand-value
                 # snapshot, else a later hit would ignore changed values and
@@ -970,10 +995,11 @@ cdef class InstructionHook:
         cdef object pre_regs = self._read_pre_regs(instruction_bytes, address)
         self._aiw_check(mem_writes, pre_regs, pre_taint, instruction_bytes, address)
 
-    cdef object _input_slots(self, bytes instruction_bytes):
+    cdef object _input_slots(self, unsigned long long address):
         """Slot list for this instruction's input registers (filled by
-        _fill_vals_arr, held hook-side because `decoded` is a cdef class)."""
-        cdef object slots = self.slots_cache.get(instruction_bytes)
+        _fill_vals_arr, held hook-side because the decoded object is a cdef
+        class and will not accept a new attribute)."""
+        cdef object slots = self.slots_cache.get(address)
         return slots if slots is not None else []
 
     cdef void _apply_mem_writes(self, object writes, list mem_writes):
@@ -1019,6 +1045,8 @@ cdef class InstructionHook:
         # computed for the pre-write instruction unless dropped here.
         if self.arr_cache:
             self.arr_cache.clear()
+        if self.slots_cache:
+            self.slots_cache.clear()
         self.code_lo = 0xFFFFFFFFFFFFFFFF
         self.code_hi = 0
 
