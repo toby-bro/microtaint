@@ -109,6 +109,11 @@ venv.bak/
 .mypy_cache/
 
 *.json
+# ...except the ratchet baselines: they ARE the record of what performance and
+# op counts were, so they have to be versioned with the code that produced them.
+!tests/perf_baseline.json
+!tests/perop_op_baseline.json
+!tests/taint_ir_perf_baseline.json
 # ...and the artifact's committed results, which ARE the evidence a
 # reviewer compares their run against.
 !artifacts/ndss27/**/*.json
@@ -133,6 +138,20 @@ debug_*.py
 *.patch
 paper
 
+bench.c
+bench.elf
+cellift.txt
+build_maat.sh
+debug*.py
+input
+plot_*.py
+verify_patches.py
+*demo*.py
+sleigh-translate.py
+bench_kernel.py
+# Derived artifacts that kept showing up as untracked noise.
+# Profiler dumps: regenerable, and cProfile output in particular is misleading
+# for this codebase (it cannot see Cython cdef / C frames -- use perf).
 *.prof
 *.elf
 

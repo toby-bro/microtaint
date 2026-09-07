@@ -4,6 +4,7 @@ Hatchling build hook for microtaint's hand-written C extensions.
 Compiles:
   microtaint/instrumentation/cell_c/cell_c.c    → cell_c.<EXT>
   microtaint/instrumentation/cell_c/circuit_c.c → circuit_c.<EXT>
+  microtaint/instrumentation/cell_c/taint_ir_c.c → taint_ir_c.<EXT>
 
 These are pure CPython C extensions (no Cython preprocessing). They
 provide the bit-precise taint-propagation kernel and the AST-bytecode
@@ -59,6 +60,7 @@ _REEXEC_SOURCES = ['microtaint/reexec/reexec.c', _REEXEC_ASM] if _REEXEC_AVAILAB
 C_EXTENSIONS: list[tuple[str, str]] = [
     ('microtaint/instrumentation/cell_c/cell_c.c', 'cell_c'),
     ('microtaint/instrumentation/cell_c/circuit_c.c', 'circuit_c'),
+    ('microtaint/instrumentation/cell_c/taint_ir_c.c', 'taint_ir_c'),
 ]
 
 

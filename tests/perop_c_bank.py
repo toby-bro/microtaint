@@ -58,10 +58,17 @@ def _engine_names(arch, names):
     key = arch.value if hasattr(arch, 'value') else str(arch)
     cached = _NAME_MAPS.get(key)
     if cached is None:
+        cached = {}
+        _NAME_MAPS[key] = cached
+    missing = [n for n in names if n not in cached]
+    if missing:
+        # Extend rather than rebuild: two bank sections can share an
+        # architecture and spell the same registers differently (ARM64 uses
+        # X0/N/Z/C/V, ARM64_SIMD uses x0/NG/ZR), and a cache keyed only by
+        # architecture would hand the second section the first one's names.
         from microtaint.instrumentation.cell import _build_reg_maps
         offsets = _build_reg_maps(arch)[0]
-        cached = {}
-        for n in names:
+        for n in missing:
             if n in offsets:
                 cached[n] = n
             elif _NAME_ALIASES.get(n) in offsets:
@@ -70,7 +77,6 @@ def _engine_names(arch, names):
                 cached[n] = n.upper()
             else:
                 cached[n] = n          # unresolved: taint_step ignores it
-        _NAME_MAPS[key] = cached
     return cached
 
 
