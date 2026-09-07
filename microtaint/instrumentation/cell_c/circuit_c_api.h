@@ -23,6 +23,12 @@
 #include <stdint.h>
 #include <Python.h>
 
+/* Optional C-level guest-memory reader.  Returns 0 on success (*out set); any
+ * other value means "could not read, use the Python reader for this access".
+ * Lets OP_PUSH_MEM_VALUE fetch a value without PyLong-boxing the address, doing
+ * a Python call, and boxing the result again. */
+typedef int (*mt_mem_read_fn)(void *ctx, uint64_t addr, int size, uint64_t *out);
+
 typedef struct {
     /* `compiled` is a CompiledCircuit (borrowed).  Registers only. */
     PyObject *(*eval_arr_ptr)(PyObject *compiled, uint64_t *taint, uint64_t *val,
@@ -32,6 +38,14 @@ typedef struct {
     PyObject *(*eval_mem_ptr)(PyObject *compiled, uint64_t *taint, uint64_t *val,
                               int n_slots, PyObject *pcode, PyObject *shadow,
                               PyObject *mem_reader, PyObject *name_to_slot);
+    /* As eval_mem_ptr, but installs `mem_fn`/`mem_ctx` as the C reader for the
+     * duration of the call (restored afterwards, so nested/other users are
+     * unaffected).  `mem_reader` is still required as the fallback for reads the
+     * C function declines. */
+    PyObject *(*eval_mem_ptr_c)(PyObject *compiled, uint64_t *taint, uint64_t *val,
+                                int n_slots, PyObject *pcode, PyObject *shadow,
+                                PyObject *mem_reader, PyObject *name_to_slot,
+                                mt_mem_read_fn mem_fn, void *mem_ctx);
 } CircuitCAPI;
 
 #endif /* CIRCUIT_C_API_H */

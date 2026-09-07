@@ -66,10 +66,45 @@ ctypedef object (*eval_arr_ptr_ft)(object compiled, uint64_t *taint, uint64_t *v
 ctypedef object (*eval_mem_ptr_ft)(object compiled, uint64_t *taint, uint64_t *val,
                                    int n_slots, object pcode, object shadow,
                                    object mem_reader, object name_to_slot)
+# C guest-memory reader handed to circuit_c so OP_PUSH_MEM_VALUE never enters
+# Python: 0 = read ok (*out set), anything else = "use the Python reader".
+ctypedef int (*mt_mem_read_ft)(void *ctx, uint64_t addr, int size, uint64_t *out) noexcept nogil
+ctypedef object (*eval_mem_ptr_c_ft)(object compiled, uint64_t *taint, uint64_t *val,
+                                     int n_slots, object pcode, object shadow,
+                                     object mem_reader, object name_to_slot,
+                                     mt_mem_read_ft mem_fn, void *mem_ctx)
+
+cdef struct MemReadCtx:
+    unsigned long long uc_handle
+    unsigned long long uc_mr_addr
+    unsigned long long buf_addr
+
+cdef int _mt_mem_read_c(void *ctx, uint64_t addr, int size, uint64_t *out) noexcept nogil:
+    """Pure-C guest read: uc_mem_read through the fnptr, little-endian assembly
+    out of the buffer.  Identical semantics to LiveMemReader's fast path.
+    Declines (non-zero) for widths it does not handle or a failed read, so the
+    Python reader keeps its Qiling fallback."""
+    cdef MemReadCtx *c = <MemReadCtx*>ctx
+    cdef unsigned char *p
+    cdef uint64_t v = 0
+    cdef int i
+    if c == NULL or c.uc_mr_addr == 0 or c.buf_addr == 0:
+        return 1
+    if size <= 0 or size > 8:
+        return 1
+    if (<uc_mem_read_ft>(<void*>c.uc_mr_addr))(
+            <void*>c.uc_handle, addr, <void*>c.buf_addr, <size_t>size) != 0:
+        return 1
+    p = <unsigned char*>c.buf_addr
+    for i in range(size):
+        v |= (<uint64_t>p[i]) << (8 * i)
+    out[0] = v
+    return 0
 
 cdef struct CircuitCAPI:
     eval_arr_ptr_ft eval_arr_ptr
     eval_mem_ptr_ft eval_mem_ptr
+    eval_mem_ptr_c_ft eval_mem_ptr_c
 
 cdef CircuitCAPI *_circuit_capi = NULL
 
@@ -224,6 +259,8 @@ cdef class InstructionHook:
     cdef public dict slots_cache      # instruction bytes -> list of input slots
     cdef bint arr_loaded              # register_taint has been loaded into g_taint
     cdef public unsigned long arr_fallbacks   # instructions that had to use the dict path
+    cdef MemReadCtx mem_ctx           # C guest-read context handed to circuit_c
+    cdef bint mem_ctx_ready
     cdef int rip_slot                 # cached slot of the PC register
     cdef int eflags_slot              # cached slot of EFLAGS
     cdef list eflags_slot_bits        # cached [(flag slot, bit index), ...]
@@ -300,6 +337,7 @@ cdef class InstructionHook:
         self.slots_cache = {}
         self.arr_loaded = False
         self.arr_fallbacks = 0
+        self.mem_ctx_ready = False
         self.rip_slot = -1
         self.eflags_slot = -1
         self.eflags_slot_bits = None
@@ -766,6 +804,25 @@ cdef class InstructionHook:
         self.g_val[self.rip_slot] = <uint64_t>address
         return 0
 
+    cdef void _init_mem_ctx(self):
+        """Populate the C read context from the LiveMemReader that already
+        resolved the uc_mem_read fnptr and buffer address.  If anything is
+        missing the context stays zeroed and _mt_mem_read_c declines, so
+        circuit_c falls back to the Python reader."""
+        cdef LiveMemReader r
+        self.mem_ctx.uc_handle = 0
+        self.mem_ctx.uc_mr_addr = 0
+        self.mem_ctx.buf_addr = 0
+        try:
+            if isinstance(self.read_live_memory, LiveMemReader):
+                r = <LiveMemReader>self.read_live_memory
+                self.mem_ctx.uc_handle = r.uc_handle
+                self.mem_ctx.uc_mr_addr = r.uc_mr_addr
+                self.mem_ctx.buf_addr = r.mem_buf_addr
+        except Exception:  # noqa: BLE001
+            pass
+        self.mem_ctx_ready = True
+
     cdef object _pc_name(self):
         """PC register name for this arch (the wrapper owns the mapping)."""
         try:
@@ -898,10 +955,13 @@ cdef class InstructionHook:
                 if has_mem:
                     if _USE_CMEM:
                         if _circuit_capi != NULL:
-                            result = _circuit_capi.eval_mem_ptr(
+                            if not self.mem_ctx_ready:
+                                self._init_mem_ctx()
+                            result = _circuit_capi.eval_mem_ptr_c(
                                 compiled_circuit, self.g_taint, self.g_val,
                                 self.n_slots, self.sim._pcode, self.shadow_mem,
-                                self.read_live_memory, self.slot_map)
+                                self.read_live_memory, self.slot_map,
+                                _mt_mem_read_c, <void*>&self.mem_ctx)
                         else:
                             result = compiled_circuit.evaluate_c_mem_ptr(
                                 <unsigned long long>(<size_t>self.g_taint),

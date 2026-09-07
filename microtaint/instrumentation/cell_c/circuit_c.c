@@ -30,6 +30,13 @@
 /* Global CAPI pointer — populated at module init via PyCapsule_Import. */
 static CellCAPI *g_cell_capi = NULL;
 
+/* Optional C-level guest-memory reader, installed for the duration of one
+ * eval_mem_ptr_c call and then restored (so multiple wrappers in one process
+ * stay independent).  Declared here because OP_PUSH_MEM_VALUE, far above the
+ * capsule shims, is what consults it. */
+static mt_mem_read_fn g_mem_fn = NULL;
+static void *g_mem_ctx = NULL;
+
 /* Shadow-memory C API — exported by microtaint.emulator.shadow as the
  * "_shadow_capi" capsule (a struct of function pointers).  Lets the C taint
  * eval path (evaluate_c_mem) read/write shadow taint at the C level, skipping
@@ -1505,8 +1512,14 @@ static PyObject *eval_program(CompiledCircuit *cc,
              * callable, valid because the caller holds the GIL); the dict
              * fallback needs input_values, which C mode does not supply, so bail
              * if there is no reader. */
-            if (c_out && (mem_reader == NULL || mem_reader == Py_None)) goto err;
-            if (mem_reader != Py_None && mem_reader != NULL) {
+            if (c_out && (mem_reader == NULL || mem_reader == Py_None)
+                      && g_mem_fn == NULL) goto err;
+            /* C reader first: no PyLong for the address, no Python call, no
+             * PyLong for the result.  Falls through to the Python reader for any
+             * access it declines (short read, unmapped, width > 8). */
+            if (g_mem_fn != NULL && g_mem_fn(g_mem_ctx, addr, size, &v) == 0) {
+                /* value already in v */
+            } else if (mem_reader != Py_None && mem_reader != NULL) {
                 PyObject *addr_obj = PyLong_FromUnsignedLongLong(addr);
                 PyObject *sz_obj   = PyLong_FromLong(size);
                 PyObject *r = PyObject_CallFunctionObjArgs(mem_reader, addr_obj, sz_obj, NULL);
@@ -2690,7 +2703,22 @@ static PyObject *capi_eval_mem_ptr(PyObject *compiled, uint64_t *taint, uint64_t
                         shadow, mem_reader, name_to_slot);
 }
 
-static CircuitCAPI g_circuit_capi_struct = { capi_eval_arr_ptr, capi_eval_mem_ptr };
+static PyObject *capi_eval_mem_ptr_c(PyObject *compiled, uint64_t *taint, uint64_t *val,
+                                     int n_slots, PyObject *pcode, PyObject *shadow,
+                                     PyObject *mem_reader, PyObject *name_to_slot,
+                                     mt_mem_read_fn mem_fn, void *mem_ctx) {
+    if (!PyObject_TypeCheck(compiled, &CompiledCircuitType)) { Py_RETURN_NONE; }
+    mt_mem_read_fn prev_fn = g_mem_fn;
+    void *prev_ctx = g_mem_ctx;
+    g_mem_fn = mem_fn; g_mem_ctx = mem_ctx;
+    PyObject *r = mem_ptr_core((CompiledCircuit *)compiled, taint, val, n_slots, pcode,
+                               shadow, mem_reader, name_to_slot);
+    g_mem_fn = prev_fn; g_mem_ctx = prev_ctx;
+    return r;
+}
+
+static CircuitCAPI g_circuit_capi_struct = { capi_eval_arr_ptr, capi_eval_mem_ptr,
+                                             capi_eval_mem_ptr_c };
 
 static PyMethodDef CompiledCircuit_methods[] = {
     {"evaluate",      (PyCFunction)CompiledCircuit_evaluate,      METH_VARARGS, NULL},
