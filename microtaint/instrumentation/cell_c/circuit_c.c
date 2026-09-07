@@ -102,6 +102,13 @@ typedef struct {
 } AssignmentProg;
 
 /* Per-circuit compiled form */
+/* One memory READ's address program (see mem_reads on CompiledCircuit). */
+typedef struct {
+    uint32_t *bc;
+    int       bc_len;
+    int       size_bytes;
+} MemReadSite;
+
 typedef struct {
     PyObject_HEAD
 
@@ -165,6 +172,25 @@ typedef struct {
      * MtOutSlot.  Built on first use, invalidated with pool_to_slot because the
      * slots come from the same name_to_slot mapping.  out_ok is 0 when the
      * circuit is not eligible, so ineligibility is decided once, not per call. */
+    /* The circuit READS memory somewhere (a load, or a mem-ALU operand), as
+     * opposed to merely writing it.  A store-only circuit cannot pull taint in
+     * from memory, so when its register inputs are clean its result is clean --
+     * which is what lets the untainted-input exit cover stores.  A circuit that
+     * reads memory needs the effective address before that can be decided, and
+     * the address is computed inline in the bytecode, so those still evaluate. */
+    int             has_mem_source;
+
+    /* One standalone address program per memory READ, captured at compile time.
+     * A load's address is computed inline in the main bytecode, so there is no
+     * way to ask "is this load's source tainted?" without it.  Recompiling the
+     * same address expression into its own program lets the untainted-input exit
+     * evaluate just the address (values only, no cells) and consult the shadow.
+     * mem_reads_ok is cleared if ANY read site could not be captured faithfully,
+     * because a partial list would check some loads and silently skip others. */
+    MemReadSite    *mem_reads;
+    int             n_mem_reads;
+    int             mem_reads_ok;
+
     MtOutSlot      *out_slots;
     int             n_out_slots;
     int             out_built;
@@ -256,6 +282,12 @@ typedef struct {
     int       len;
     int       overflow;     /* set if buf overflowed */
     int       fallback;     /* set if uncompilable opcode encountered */
+    /* Counted so a captured address subprogram can be vetted for the things
+     * that would make evaluating it standalone unsound: a cell call (its value
+     * would be missing) or a memory read (the address would depend on memory we
+     * have not proven clean). */
+    int       n_cells;
+    int       n_mem;
 } BCEmit;
 
 static void emit(BCEmit *e, uint32_t v) {
@@ -321,6 +353,7 @@ static void emit_call_cell(CompiledCircuit *cc, BCEmit *e, PyObject *cell_obj) {
     }
     Py_DECREF(inputs);
 
+    e->n_cells++;
     emit(e, OP_CALL_CELL);
     emit(e, (uint32_t)cell_idx);
     emit(e, (uint32_t)n);
@@ -396,6 +429,57 @@ static int pylong_to_u64(PyObject *v, uint64_t *out) {
 }
 
 /* Compile one Expr subtree into bytecode (post-order walk: emit operands first). */
+
+/* Capture a standalone program computing THIS memory read's address.
+ *
+ * The address is otherwise only computed inline in the main bytecode, mixed
+ * into the surrounding taint computation, so there is no way to ask "is this
+ * load's source tainted?" without re-deriving it.  Recompiling the same address
+ * expression into its own program gives the untainted-input exit something it
+ * can evaluate on values alone.
+ *
+ * Refuses (and disables the whole mechanism for this circuit) whenever the
+ * address could not be reproduced faithfully:
+ *   - a cell call in the address: its concrete value would be missing, and a
+ *     wrong address means consulting the shadow for the wrong bytes, which
+ *     would report clean for a tainted load.  That is a silent UNDER-taint, so
+ *     it is refused rather than approximated.
+ *   - a memory read in the address (a load whose pointer itself comes from
+ *     memory): the pointer's own taint is not established at that point.
+ *   - a width the 64-bit shadow mask cannot describe in one read.
+ * Refusal costs a fast path, never correctness.
+ *
+ * compile_expr appends any cell it meets to cc->cells, so the second compile is
+ * rolled back to the prior length; otherwise a rejected capture would leave a
+ * duplicate cell behind. */
+static void record_mem_read(CompiledCircuit *cc, PyObject *addr_e, int size_bytes) {
+    if (!cc->mem_reads_ok) return;
+    if (size_bytes <= 0 || size_bytes > 8) { cc->mem_reads_ok = 0; return; }
+
+    Py_ssize_t cells_before = PyList_GET_SIZE(cc->cells);
+    BCEmit ae = {{0}, 0, 0, 0, 0, 0};
+    compile_expr(cc, &ae, addr_e);
+    if (PyList_GET_SIZE(cc->cells) > cells_before)
+        PyList_SetSlice(cc->cells, cells_before, PyList_GET_SIZE(cc->cells), NULL);
+
+    if (ae.fallback || ae.overflow || ae.n_cells || ae.n_mem) { cc->mem_reads_ok = 0; return; }
+    emit(&ae, OP_END);
+    if (ae.overflow) { cc->mem_reads_ok = 0; return; }
+
+    MemReadSite *grown = (MemReadSite *)realloc(
+        cc->mem_reads, (size_t)(cc->n_mem_reads + 1) * sizeof(MemReadSite));
+    if (!grown) { cc->mem_reads_ok = 0; return; }
+    cc->mem_reads = grown;
+    MemReadSite *site = &cc->mem_reads[cc->n_mem_reads];
+    site->bc = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)ae.len);
+    if (!site->bc) { cc->mem_reads_ok = 0; return; }
+    memcpy(site->bc, ae.buf, sizeof(uint32_t) * (size_t)ae.len);
+    site->bc_len = ae.len;
+    site->size_bytes = size_bytes;
+    cc->n_mem_reads++;
+}
+
+
 static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
     if (e->fallback || e->overflow) return;
     if (!expr || expr == Py_None) {
@@ -776,11 +860,14 @@ static void compile_expr(CompiledCircuit *cc, BCEmit *e, PyObject *expr) {
         int is_taint = PyObject_IsTrue(it);
         Py_DECREF(sz); Py_DECREF(it);
         compile_expr(cc, e, addr_e);
+        if (e->fallback) { Py_DECREF(addr_e); return; }
+        record_mem_read(cc, addr_e, size_bytes);
         Py_DECREF(addr_e);
-        if (e->fallback) return;
+        e->n_mem++;
         emit(e, is_taint ? OP_PUSH_MEM_TAINT : OP_PUSH_MEM_VALUE);
         emit(e, (uint32_t)size_bytes);
         cc->has_mem_ops = 1;
+        cc->has_mem_source = 1;   /* reads memory: see has_mem_source */
         return;
     }
     /* Unknown expression form — fall back to the Python evaluator */
@@ -806,6 +893,10 @@ static PyObject *CompiledCircuit_new(PyTypeObject *t, PyObject *a, PyObject *k) 
     self->progs = NULL;
     self->n_progs = 0;
     self->pc_target_idx = -1;
+    self->has_mem_source = 0;
+    self->mem_reads = NULL;
+    self->n_mem_reads = 0;
+    self->mem_reads_ok = 1;
     self->has_python_fallback = 0;
     self->value_independent = 0;  /* set from the LogicCircuit in compile_circuit */
     self->c_mem_evaluable = 0;    /* set in compile_circuit; 0 => fall back to do_evaluate */
@@ -841,6 +932,10 @@ static void CompiledCircuit_dealloc(CompiledCircuit *self) {
     free(self->const_u64);
     free(self->cell_h);   /* borrowed pointers; the capsules belong to cell_handles */
     free(self->out_slots);
+    if (self->mem_reads) {
+        for (int i = 0; i < self->n_mem_reads; i++) free(self->mem_reads[i].bc);
+        free(self->mem_reads);
+    }
     free(self->scratch_t);
     free(self->scratch_v);
     free(self->scratch_o);
@@ -926,7 +1021,7 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
                 cc->has_python_fallback = 1; cc->has_mem_ops = 1;
                 continue;
             }
-            BCEmit addr_emit = {{0}, 0, 0, 0};
+            BCEmit addr_emit = {{0}, 0, 0, 0, 0, 0};
             compile_expr(cc, &addr_emit, addr_e);
             Py_DECREF(addr_e);
             if (addr_emit.fallback || addr_emit.overflow) {
@@ -2870,7 +2965,15 @@ static int capi_compiled_prefilter(PyObject *compiled, PyObject *name_to_slot,
                                    MtPrefilter *pf) {
     if (!compiled || !PyObject_TypeCheck(compiled, &CompiledCircuitType)) return -1;
     CompiledCircuit *cc = (CompiledCircuit *)compiled;
-    if (!cc->c_evaluable || cc->pc_target_idx >= 0 || cc->has_python_fallback) return -1;
+    if (cc->pc_target_idx >= 0 || cc->has_python_fallback) return -1;
+    /* Register-only circuits, plus memory circuits that only WRITE memory: a
+     * store cannot bring taint in, and the shadow bytes it dirties are cleared
+     * by the UC_HOOK_MEM_WRITE callback, which clears any written address this
+     * instruction did not claim as tainted (and with clean inputs it claims
+     * none).  A circuit that reads memory is not eligible: deciding whether the
+     * source is tainted needs the effective address. */
+    if (cc->has_mem_source && !(cc->mem_reads_ok && cc->n_mem_reads > 0)) return -1;
+    if (!cc->c_evaluable && !cc->c_mem_evaluable) return -1;
 
     int npool = (int)PyList_GET_SIZE(cc->string_pool);
     if (ensure_pool_to_slot(cc, name_to_slot, npool) != 0) { PyErr_Clear(); return -1; }
@@ -2886,20 +2989,23 @@ static int capi_compiled_prefilter(PyObject *compiled, PyObject *name_to_slot,
             cc->out_slots = (MtOutSlot *)calloc((size_t)n, sizeof(MtOutSlot));
             if (!cc->out_slots) return -1;
             int ok = 1;
+            int n_out = 0;   /* only register targets land here */
             for (int i = 0; i < n; i++) {
                 AssignmentProg *pr = &cc->progs[i];
-                if (pr->target_kind != TGT_REG || pr->python_assignment) { ok = 0; break; }
+                if (pr->python_assignment) { ok = 0; break; }
+                if (pr->target_kind != TGT_REG) continue;   /* store: nothing in g_t to clear */
                 int bs = pr->target_bit_start, be = pr->target_bit_end;
                 int width = be - bs + 1;
                 if (bs < 0 || width <= 0 || bs + width > 64) { ok = 0; break; }
                 int idx = pr->target_name_idx;
                 if (idx < 0 || idx >= npool) { ok = 0; break; }
-                cc->out_slots[i].slot = cc->pool_to_slot[idx];
-                cc->out_slots[i].clear_mask =
+                cc->out_slots[n_out].slot = cc->pool_to_slot[idx];
+                cc->out_slots[n_out].clear_mask =
                     ((width >= 64) ? ~(uint64_t)0 : (((uint64_t)1 << width) - 1)) << bs;
+                n_out++;
             }
             if (!ok) { free(cc->out_slots); cc->out_slots = NULL; return -1; }
-            cc->n_out_slots = n;
+            cc->n_out_slots = n_out;
         }
         cc->out_ok = 1;
     }
@@ -2909,13 +3015,63 @@ static int capi_compiled_prefilter(PyObject *compiled, PyObject *name_to_slot,
     pf->n_pool = npool;
     pf->outs = cc->out_slots;
     pf->n_out = cc->n_out_slots;
+    pf->reads_memory = cc->has_mem_source;
     return 0;
+}
+
+
+/* See mem_reads_clean in circuit_c_api.h.
+ *
+ * Evaluates each captured load-address program on the CURRENT operand values
+ * and asks the shadow whether the bytes at that address carry taint.  The
+ * address programs were vetted at capture time to contain no cell call and no
+ * memory read, so evaluating them here needs values only and cannot itself
+ * consult memory.
+ *
+ * Conservative at every exit: anything unproven returns 0 (not clean), which
+ * costs a fast path.  The failure that must not happen is the opposite --
+ * returning 1 for a load whose source is tainted -- so every uncertainty is
+ * resolved against the exit. */
+static int capi_mem_reads_clean(PyObject *compiled, uint64_t *g_t, uint64_t *g_v,
+                                int n_slots, PyObject *pcode, PyObject *shadow,
+                                PyObject *name_to_slot) {
+    if (!compiled || !PyObject_TypeCheck(compiled, &CompiledCircuitType)) return 0;
+    CompiledCircuit *cc = (CompiledCircuit *)compiled;
+    if (!cc->mem_reads_ok || cc->n_mem_reads <= 0) return 0;
+    if (!ensure_shadow_capi()) return 0;
+
+    int npool = (int)PyList_GET_SIZE(cc->string_pool);
+    if (ensure_pool_to_slot(cc, name_to_slot, npool) != 0) { PyErr_Clear(); return 0; }
+    if (ensure_scratch(cc, npool) != 0) { PyErr_Clear(); return 0; }
+
+    uint64_t *in_t = cc->scratch_t, *in_v = cc->scratch_v;
+    for (int i = 0; i < npool; i++) {
+        int slot = cc->pool_to_slot[i];
+        int ok = (slot >= 0 && slot < n_slots);
+        in_t[i] = ok ? g_t[slot] : 0;
+        in_v[i] = ok ? g_v[slot] : 0;
+    }
+
+    for (int r = 0; r < cc->n_mem_reads; r++) {
+        MemReadSite *site = &cc->mem_reads[r];
+        uint64_t addr = 0;
+        PyObject *rc = eval_program(cc, site->bc, site->bc_len, NULL, NULL, NULL,
+                                    shadow, NULL, pcode, NULL, in_t, in_v, &addr);
+        if (rc != (PyObject *)cc) {           /* bailed: address not established */
+            if (rc && rc != (PyObject *)cc) Py_DECREF(rc);
+            if (PyErr_Occurred()) PyErr_Clear();
+            return 0;
+        }
+        if (g_shadow_capi->read_mask(shadow, addr, site->size_bytes) != 0) return 0;
+    }
+    return 1;
 }
 
 static CircuitCAPI g_circuit_capi_struct = { capi_eval_arr_ptr, capi_eval_mem_ptr,
                                              capi_eval_mem_ptr_c,
                                              capi_eval_arr_ptr_i, capi_eval_mem_ptr_ci,
-                                             capi_compiled_flags, capi_compiled_prefilter };
+                                             capi_compiled_flags, capi_compiled_prefilter,
+                                             capi_mem_reads_clean };
 
 static PyMethodDef CompiledCircuit_methods[] = {
     {"evaluate",      (PyCFunction)CompiledCircuit_evaluate,      METH_VARARGS, NULL},

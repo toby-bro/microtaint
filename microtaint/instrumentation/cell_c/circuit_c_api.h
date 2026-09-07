@@ -78,6 +78,10 @@ typedef struct {
     int              n_pool;
     const MtOutSlot *outs;
     int              n_out;
+    /* The circuit READS memory, so clean registers are not sufficient: the
+     * caller must also establish that every load's source is clean, via
+     * mem_reads_clean(), before taking the exit. */
+    int              reads_memory;
 } MtPrefilter;
 
 #define MT_CF_C_EVALUABLE     0x01
@@ -133,6 +137,14 @@ typedef struct {
      * evaluate normally. */
     int (*compiled_prefilter)(PyObject *compiled, PyObject *name_to_slot,
                               MtPrefilter *pf);
+
+    /* For a circuit with reads_memory set: evaluate each load's address from
+     * `val` and ask the shadow whether those bytes carry taint.
+     * Returns 1 if every read's source is provably clean, 0 if any is tainted
+     * or the answer cannot be established, -1 with an exception set. */
+    int (*mem_reads_clean)(PyObject *compiled, uint64_t *taint, uint64_t *val,
+                           int n_slots, PyObject *pcode, PyObject *shadow,
+                           PyObject *name_to_slot);
 } CircuitCAPI;
 
 #endif /* CIRCUIT_C_API_H */

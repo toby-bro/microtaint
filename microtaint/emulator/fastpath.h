@@ -312,9 +312,18 @@ static inline void mt_apply_mem_writes(MtFastCtx *c, const MtMemWrite *w, int n)
  * declines and takes the full path (which clears it correctly).  Cheaper to be
  * conservative here than to track read-vs-written per name.
  *
+ * Store-only memory circuits are eligible too.  A store cannot pull taint in,
+ * and the shadow bytes it dirties are cleared by the memory-write callback,
+ * which clears every written address this instruction did not claim as tainted
+ * -- and with clean inputs it claims none, so ltw_n stays 0 and the clear
+ * happens.  Circuits that READ memory are rejected by compiled_prefilter:
+ * deciding whether the source is tainted needs the effective address, which is
+ * computed inline in the bytecode.
+ *
  * Returns 1 if it handled the instruction.
  */
-static inline int mt_untainted_exit(MtFastCtx *c, PyObject *compiled) {
+static inline int mt_untainted_exit(MtFastCtx *c, PyObject *compiled,
+                                   MtAddrEntry *ent, uint64_t address) {
     if (!c->capi->compiled_prefilter) return 0;
     MtPrefilter pf;
     if (c->capi->compiled_prefilter(compiled, c->slot_map, &pf) != 0) return 0;
@@ -324,6 +333,21 @@ static inline int mt_untainted_exit(MtFastCtx *c, PyObject *compiled) {
     for (int i = 0; i < pf.n_pool; i++) {
         int slot = pf.pool_slots[i];
         if (slot >= 0 && slot < n_slots && g_taint[slot]) return 0;
+    }
+    /* Clean registers are not enough for a circuit that READS memory: a load can
+     * pull taint in from the shadow.  Establish that every load's source is
+     * clean before clearing anything -- mem_reads_clean answers 0 for anything
+     * it cannot prove, so an unprovable case costs the fast path, not soundness. */
+    if (pf.reads_memory) {
+        if (!c->capi->mem_reads_clean) return 0;
+        /* The address is computed from operand VALUES, and at this point in the
+         * step they are still the previous instruction's.  Read them first --
+         * skipping this would query the shadow at a stale address, which can
+         * report clean for a tainted load: a silent under-taint. */
+        if (mt_read_regs(c, ent, address) != 0) return 0;
+        if (c->capi->mem_reads_clean(compiled, g_taint, *c->g_val, n_slots,
+                                     c->pcode, c->shadow, c->slot_map) != 1)
+            return 0;
     }
     for (int k = 0; k < pf.n_out; k++) {
         int slot = pf.outs[k].slot;
@@ -354,8 +378,10 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
 
     const int has_mem = (cflags & MT_CF_HAS_MEM_OPS) != 0;
     /* Cheapest possible answer first: a handful of loads, before any register
-     * read, cache probe or evaluation. */
-    if (!has_mem && mt_untainted_exit(c, compiled)) return MT_FAST_DONE;
+     * read, cache probe or evaluation.  Eligibility (register-only, or a
+     * store-only memory circuit) is decided by compiled_prefilter, so has_mem
+     * is deliberately not tested here. */
+    if (mt_untainted_exit(c, compiled, ent, address)) return MT_FAST_DONE;
 
     const int can_cache = c->instr_cache_enabled && !has_mem;
     const int value_indep = can_cache && (cflags & MT_CF_VALUE_INDEP) != 0;
