@@ -31,12 +31,12 @@ from cpython.bytes cimport (
 )
 from cpython.set cimport PySet_Add, PySet_Discard, PySet_Contains
 from cpython.exc cimport PyErr_Clear, PyErr_Occurred, PyErr_ExceptionMatches
-from cpython.ref cimport Py_INCREF, Py_DECREF, PyObject
+from cpython.ref cimport Py_INCREF, Py_DECREF, Py_XINCREF, Py_XDECREF, PyObject
 from cpython.pycapsule cimport PyCapsule_GetPointer
 
 from microtaint.emulator.shadow cimport BitPreciseShadowMemory
 from libc.stdint cimport uint64_t
-from libc.stdlib cimport malloc, free, realloc
+from libc.stdlib cimport malloc, calloc, free, realloc
 from libc.string cimport memcpy, memcmp, memset
 
 # uc_reg_read_batch(uc_engine *uc, int *regs, void **vals, int count) -> uc_err.
@@ -187,6 +187,151 @@ cdef bint _USE_DECODE_CACHE = _os.environ.get('MICROTAINT_DISABLE_DECODE_CACHE')
 cdef bint _USE_ARR_HOOK = _os.environ.get('MICROTAINT_ARR_HOOK') != '0'
 
 
+# ---------------------------------------------------------------------------
+# Per-address C cache (rework: pure-C fast path).
+#
+# The array hot path used three Python dicts keyed by address (decode_cache,
+# slots_cache, arr_cache), so every instruction paid three dict lookups, and each
+# cache STORE allocated PyBytes snapshots.  This replaces them with ONE open
+# addressing C table address -> AddrEntry*, with the taint/value snapshots held
+# in malloc'd uint64 buffers instead of PyBytes.
+#
+# PyObject fields (the instruction bytes, the circuit, the uc_arrays tuple) stay
+# PyObjects because the evaluator genuinely needs them, but they are now just
+# owned pointers: no per-instruction dict lookup, tuple indexing or boxing.
+# EMPTY_ADDR is ~0 which is never a real instruction address here.
+# ---------------------------------------------------------------------------
+cdef uint64_t EMPTY_ADDR = <uint64_t>0xFFFFFFFFFFFFFFFF
+
+cdef struct AddrEntry:
+    int        size
+    PyObject  *instr_bytes        # owned
+    PyObject  *circuit            # owned
+    PyObject  *uc_arrs            # owned, may be NULL
+    int       *slots              # input-register slots, malloc'd
+    int        n_in
+    int        have_slots
+    uint64_t  *in_snap            # pre-state taint snapshot (n_slots entries)
+    uint64_t  *out_snap           # post-state taint snapshot
+    uint64_t  *val_snap           # operand values for value-dependent circuits
+    int        snap_n
+    int        have_snap
+    int        have_val
+
+cdef struct AddrMap:
+    uint64_t   *keys
+    AddrEntry **vals
+    Py_ssize_t  cap
+    Py_ssize_t  n
+
+
+cdef int am_init(AddrMap *m, Py_ssize_t cap):
+    cdef Py_ssize_t i
+    m.keys = <uint64_t*>malloc(<size_t>cap * sizeof(uint64_t))
+    if m.keys == NULL:
+        return -1
+    m.vals = <AddrEntry**>calloc(<size_t>cap, sizeof(void*))
+    if m.vals == NULL:
+        free(m.keys); m.keys = NULL
+        return -1
+    for i in range(cap):
+        m.keys[i] = EMPTY_ADDR
+    m.cap = cap
+    m.n = 0
+    return 0
+
+
+cdef void ae_free(AddrEntry *e):
+    if e == NULL:
+        return
+    Py_XDECREF(e.instr_bytes)
+    Py_XDECREF(e.circuit)
+    Py_XDECREF(e.uc_arrs)
+    if e.slots != NULL: free(e.slots)
+    if e.in_snap != NULL: free(e.in_snap)
+    if e.out_snap != NULL: free(e.out_snap)
+    if e.val_snap != NULL: free(e.val_snap)
+    free(e)
+
+
+cdef void am_clear(AddrMap *m):
+    """Drop every entry but keep the table (used by invalidate_smc)."""
+    cdef Py_ssize_t i
+    if m.vals == NULL:
+        return
+    for i in range(m.cap):
+        if m.keys[i] != EMPTY_ADDR:
+            ae_free(m.vals[i])
+            m.vals[i] = NULL
+            m.keys[i] = EMPTY_ADDR
+    m.n = 0
+
+
+cdef void am_free(AddrMap *m):
+    am_clear(m)
+    if m.vals != NULL: free(m.vals); m.vals = NULL
+    if m.keys != NULL: free(m.keys); m.keys = NULL
+    m.cap = 0
+    m.n = 0
+
+
+cdef inline Py_ssize_t am_slot(AddrMap *m, uint64_t key) noexcept nogil:
+    cdef uint64_t h = key * <uint64_t>0x9E3779B97F4A7C15
+    h ^= h >> 29
+    cdef Py_ssize_t i = <Py_ssize_t>(h & <uint64_t>(m.cap - 1))
+    while m.keys[i] != EMPTY_ADDR and m.keys[i] != key:
+        i = (i + 1) & (m.cap - 1)
+    return i
+
+
+cdef int am_grow(AddrMap *m):
+    cdef AddrMap nm
+    cdef Py_ssize_t i, j
+    if am_init(&nm, m.cap * 2) != 0:
+        return -1
+    for i in range(m.cap):
+        if m.keys[i] != EMPTY_ADDR:
+            j = am_slot(&nm, m.keys[i])
+            nm.keys[j] = m.keys[i]
+            nm.vals[j] = m.vals[i]
+            nm.n += 1
+    free(m.keys); free(m.vals)
+    m.keys = nm.keys; m.vals = nm.vals; m.cap = nm.cap; m.n = nm.n
+    return 0
+
+
+cdef inline AddrEntry *am_get(AddrMap *m, uint64_t key) noexcept nogil:
+    cdef Py_ssize_t i
+    if m.cap == 0:
+        return NULL
+    i = am_slot(m, key)
+    if m.keys[i] == key:
+        return m.vals[i]
+    return NULL
+
+
+cdef AddrEntry *am_new(AddrMap *m, uint64_t key):
+    """Insert (or return existing) entry for key.  NULL on OOM."""
+    cdef Py_ssize_t i
+    cdef AddrEntry *e
+    if m.cap == 0:
+        if am_init(m, 256) != 0:
+            return NULL
+    if (m.n + 1) * 10 >= m.cap * 7:
+        if am_grow(m) != 0:
+            return NULL
+    i = am_slot(m, key)
+    if m.keys[i] == key:
+        return m.vals[i]
+    e = <AddrEntry*>calloc(1, sizeof(AddrEntry))
+    if e == NULL:
+        return NULL
+    m.keys[i] = key
+    m.vals[i] = e
+    m.n += 1
+    return e
+
+
 cdef class InstructionHook:
     """
     Compiled hook callable. Holds a typed reference to the wrapper's fields
@@ -202,7 +347,7 @@ cdef class InstructionHook:
     cdef public set    last_tainted_writes
     cdef public dict   instr_cache        # address -> (frozenset, dict)  legacy entries
     cdef public dict   instr_cache_v      # address -> (taint_version, dict, taint_snapshot)
-    cdef public dict   decode_cache       # address -> (size, instruction_bytes, circuit)
+    cdef public dict   py_decode_cache    # address -> (size, bytes, circuit); dict path only
     # Bounds of every address currently in decode_cache, [code_lo, code_hi).  The
     # mem-write hook uses this to detect self-modifying / JIT'd code: a guest
     # write intersecting this range invalidates the decode + output caches so the
@@ -257,6 +402,7 @@ cdef class InstructionHook:
     cdef public dict slot_map         # register name -> slot index
     cdef public dict arr_cache        # address -> (in_snap, out_snap, val_snap, slots)
     cdef public dict slots_cache      # instruction bytes -> list of input slots
+    cdef AddrMap addr_map             # pure-C per-address cache (array path)
     cdef bint arr_loaded              # register_taint has been loaded into g_taint
     cdef public unsigned long arr_fallbacks   # instructions that had to use the dict path
     cdef MemReadCtx mem_ctx           # C guest-read context handed to circuit_c
@@ -278,7 +424,7 @@ cdef class InstructionHook:
         # On hit, no dict-equality check needed: same version means same state.
         self.instr_cache_v = {}
         # Address-keyed decode cache (see _USE_DECODE_CACHE note at module top).
-        self.decode_cache = {}
+        self.py_decode_cache = {}
         # Empty range: code_lo > code_hi means "no cached code yet".
         self.code_lo = 0xFFFFFFFFFFFFFFFF
         self.code_hi = 0
@@ -335,6 +481,10 @@ cdef class InstructionHook:
         self.slot_map = {}
         self.arr_cache = {}
         self.slots_cache = {}
+        self.addr_map.keys = NULL
+        self.addr_map.vals = NULL
+        self.addr_map.cap = 0
+        self.addr_map.n = 0
         self.arr_loaded = False
         self.arr_fallbacks = 0
         self.mem_ctx_ready = False
@@ -350,6 +500,7 @@ cdef class InstructionHook:
                 self._slot_for(_nm)
 
     def __dealloc__(self):
+        am_free(&self.addr_map)
         if self.g_taint != NULL:
             free(self.g_taint)
             self.g_taint = NULL
@@ -392,11 +543,26 @@ cdef class InstructionHook:
         self.g_val[slot] = 0
         self.n_slots = slot + 1
         PyDict_SetItem(self.slot_map, name, slot)
-        # Snapshots in arr_cache are sized to the old n_slots; drop them.
-        # (slots_cache holds slot INDICES, which stay valid across growth.)
+        # Snapshots are sized to the old n_slots; drop them.  Slot INDICES stay
+        # valid across growth, so the decode/slots part of each entry is kept.
+        self._drop_snapshots()
         if self.arr_cache:
             self.arr_cache.clear()
         return slot
+
+    cdef void _drop_snapshots(self):
+        """Invalidate cached taint snapshots (they are sized to n_slots) while
+        keeping decode + slot data, which stays valid when the arrays grow."""
+        cdef Py_ssize_t i
+        cdef AddrEntry *e
+        if self.addr_map.vals == NULL:
+            return
+        for i in range(self.addr_map.cap):
+            if self.addr_map.keys[i] != EMPTY_ADDR:
+                e = self.addr_map.vals[i]
+                if e != NULL:
+                    e.have_snap = 0
+                    e.have_val = 0
 
     cdef void _load_dict_to_arr(self):
         """register_taint (the external contract) -> g_taint.  Called once at the
@@ -459,9 +625,9 @@ cdef class InstructionHook:
         cdef int err
         cdef bytes instruction_bytes
         cdef object circuit
-        cdef object dentry
+        cdef AddrEntry *aent = NULL
         if _USE_DECODE_CACHE:
-            dentry = self.decode_cache.get(address)
+            dentry = self.py_decode_cache.get(address)
             if dentry is not None and (<int>(<object>dentry[0])) == size:
                 instruction_bytes = <bytes>dentry[1]
                 circuit = <object>dentry[2]
@@ -472,7 +638,7 @@ cdef class InstructionHook:
                 else:
                     instruction_bytes = bytes(self.ql.mem.read(address, size))
                 circuit = self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key)
-                self.decode_cache[address] = (size, instruction_bytes, circuit)
+                self.py_decode_cache[address] = (size, instruction_bytes, circuit)
                 # Extend the cached-code bounds so the mem-write hook can spot a
                 # write that lands on any cached instruction (self-modifying code).
                 if address < self.code_lo:
@@ -740,6 +906,7 @@ cdef class InstructionHook:
         cdef object decoded, uc_arrs, ids, vals, ptrs, names, n_calls
         cdef object ids_addr, ptrs_addr, vals_addr, n_calls_int, slots
         cdef object fname, fbit, k, v, pre
+        cdef AddrEntry *ent
         cdef Py_ssize_t n, i
         cdef bint need_ef
         cdef uint64_t *vptr
@@ -755,10 +922,9 @@ cdef class InstructionHook:
             # instruction just to re-read the same _uc_arrays attribute.
             # (The slot list has to live here rather than on `decoded` because
             # that is a cdef class and will not take a new attribute.)
-            entry = self.slots_cache.get(address)
-            if entry is not None:
-                slots = <object>entry[0]
-                uc_arrs = <object>entry[1]
+            ent = am_get(&self.addr_map, address)
+            if ent != NULL and ent.have_slots and ent.uc_arrs != NULL:
+                uc_arrs = <object>ent.uc_arrs
                 (ids, vals, ptrs, n, names, need_ef, n_calls,
                  ids_addr, ptrs_addr, vals_addr, n_calls_int) = uc_arrs
             else:
@@ -769,12 +935,22 @@ cdef class InstructionHook:
                     decoded._uc_arrays = uc_arrs
                 (ids, vals, ptrs, n, names, need_ef, n_calls,
                  ids_addr, ptrs_addr, vals_addr, n_calls_int) = uc_arrs
-                slist = []
-                if ids is not None:
-                    for i in range(n):
-                        slist.append(self._slot_for(names[i]))
-                slots = slist
-                self.slots_cache[address] = (slots, uc_arrs)
+                if ent == NULL:
+                    ent = am_new(&self.addr_map, address)
+                if ent != NULL:
+                    Py_XINCREF(<PyObject*>uc_arrs)
+                    Py_XDECREF(ent.uc_arrs)
+                    ent.uc_arrs = <PyObject*>uc_arrs
+                    if ent.slots != NULL:
+                        free(ent.slots); ent.slots = NULL
+                    ent.n_in = 0
+                    if ids is not None and n > 0:
+                        ent.slots = <int*>malloc(<size_t>n * sizeof(int))
+                        if ent.slots != NULL:
+                            for i in range(n):
+                                ent.slots[i] = self._slot_for(names[i])
+                            ent.n_in = <int>n
+                    ent.have_slots = 1
             if ids is not None:
                 if _USE_CREGS and self.uc_rrb_addr != 0:
                     if self.uc_handle_addr == 0:
@@ -785,13 +961,15 @@ cdef class InstructionHook:
                         <void*>(<unsigned long long>ptrs_addr),
                         <int>n_calls_int)
                     vptr = <uint64_t*>(<void*>(<unsigned long long>vals_addr))
-                    for i in range(n):
-                        self.g_val[<int>(<object>slots[i])] = vptr[i]
+                    if ent != NULL and ent.slots != NULL:
+                        for i in range(n):
+                            self.g_val[ent.slots[i]] = vptr[i]
                 else:
                     self.uc_reg_read_batch(self.uc_handle, ids, ptrs, n_calls)
-                    for i in range(n):
-                        self.g_val[<int>(<object>slots[i])] = \
-                            <uint64_t>(int(vals[i]) & 0xFFFFFFFFFFFFFFFF)
+                    if ent != NULL and ent.slots != NULL:
+                        for i in range(n):
+                            self.g_val[ent.slots[i]] = \
+                                <uint64_t>(int(vals[i]) & 0xFFFFFFFFFFFFFFFF)
                 if need_ef:
                     if self.eflags_slot < 0:
                         self.eflags_slot = self._slot_for('EFLAGS')
@@ -849,12 +1027,12 @@ cdef class InstructionHook:
         cdef int err
         cdef bytes instruction_bytes
         cdef object circuit
-        cdef object dentry
+        cdef AddrEntry *aent = NULL
         if _USE_DECODE_CACHE:
-            dentry = self.decode_cache.get(address)
-            if dentry is not None and (<int>(<object>dentry[0])) == size:
-                instruction_bytes = <bytes>dentry[1]
-                circuit = <object>dentry[2]
+            aent = am_get(&self.addr_map, address)
+            if aent != NULL and aent.size == size and aent.circuit != NULL:
+                instruction_bytes = <bytes>(<object>aent.instr_bytes)
+                circuit = <object>aent.circuit
             else:
                 err = self.uc_mem_read(self.uc_handle, address, self.mem_buf, size)
                 if err == 0:
@@ -862,7 +1040,19 @@ cdef class InstructionHook:
                 else:
                     instruction_bytes = bytes(self.ql.mem.read(address, size))
                 circuit = self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key)
-                self.decode_cache[address] = (size, instruction_bytes, circuit)
+                aent = am_new(&self.addr_map, address)
+                if aent != NULL:
+                    Py_XINCREF(<PyObject*>instruction_bytes)
+                    Py_XDECREF(aent.instr_bytes)
+                    aent.instr_bytes = <PyObject*>instruction_bytes
+                    Py_XINCREF(<PyObject*>circuit)
+                    Py_XDECREF(aent.circuit)
+                    aent.circuit = <PyObject*>circuit
+                    aent.size = size
+                    # different bytes at this address: slots + snapshots are stale
+                    aent.have_slots = 0
+                    aent.have_snap = 0
+                    aent.have_val = 0
                 if address < self.code_lo:
                     self.code_lo = address
                 if address + <unsigned long long>size > self.code_hi:
@@ -882,10 +1072,8 @@ cdef class InstructionHook:
         cdef bint value_indep = can_cache and (<object>compiled_circuit).value_independent
 
         cdef Py_ssize_t nbytes = self.n_slots * sizeof(uint64_t)
-        cdef object entry, in_snap, out_snap, val_snap, slots
-        cdef char *p
-        cdef Py_ssize_t i, ns
-        cdef uint64_t tmpv[64]
+        cdef Py_ssize_t i
+        cdef bint hit = False
         cdef bint vals_filled = False
 
         # Values are needed for evaluation and for the value-aware cache key of
@@ -895,65 +1083,62 @@ cdef class InstructionHook:
             self._fill_vals_arr(instruction_bytes, address)
             vals_filled = True
 
-        # ---- array-keyed output cache probe ----
+        # ---- output cache probe (C snapshots on the per-address entry) ----
+        if can_cache and aent != NULL and aent.have_snap and aent.snap_n == self.n_slots:
+            if memcmp(<void*>self.g_taint, <void*>aent.in_snap, nbytes) == 0:
+                hit = True
+                if aent.have_val:
+                    # A value-dependent circuit must re-check the operand values;
+                    # n_in == 0 would make that check vacuous, so such entries are
+                    # never stored with have_val set.
+                    for i in range(aent.n_in):
+                        if self.g_val[aent.slots[i]] != aent.val_snap[i]:
+                            hit = False
+                            break
+                if hit:
+                    memcpy(<void*>self.g_taint, <void*>aent.out_snap, nbytes)
+                    self.instr_cache_hits += 1
+                    if self.last_tainted_writes:
+                        self.last_tainted_writes.clear()
+                    return
         if can_cache:
-            entry = self.arr_cache.get(address)
-            if entry is not None:
-                in_snap = <object>entry[0]
-                if PyBytes_GET_SIZE(in_snap) == nbytes and memcmp(
-                        <void*>self.g_taint, <void*>PyBytes_AS_STRING(in_snap), nbytes) == 0:
-                    val_snap = <object>entry[2]
-                    slots = <object>entry[3]
-                    if val_snap is None:
-                        out_snap = <object>entry[1]
-                        memcpy(<void*>self.g_taint,
-                               <void*>PyBytes_AS_STRING(out_snap), nbytes)
-                        self.instr_cache_hits += 1
-                        if self.last_tainted_writes:
-                            self.last_tainted_writes.clear()
-                        return
-                    ns = len(slots)
-                    # ns == 0 would make the value comparison vacuous (memcmp of
-                    # zero bytes always matches), replaying a value-dependent
-                    # output for changed operands.  Such entries are never stored,
-                    # but guard the probe too.
-                    if ns > 0 and ns <= 64 and PyBytes_GET_SIZE(val_snap) == ns * <Py_ssize_t>sizeof(uint64_t):
-                        for i in range(ns):
-                            tmpv[i] = self.g_val[<int>(<object>slots[i])]
-                        if memcmp(<void*>tmpv, <void*>PyBytes_AS_STRING(val_snap),
-                                  ns * sizeof(uint64_t)) == 0:
-                            out_snap = <object>entry[1]
-                            memcpy(<void*>self.g_taint,
-                                   <void*>PyBytes_AS_STRING(out_snap), nbytes)
-                            self.instr_cache_hits += 1
-                            if self.last_tainted_writes:
-                                self.last_tainted_writes.clear()
-                            return
             self.instr_cache_misses += 1
 
         if not vals_filled:
             self._fill_vals_arr(instruction_bytes, address)
+        # _fill_vals_arr may have created the entry (or grown the slot arrays)
+        if aent == NULL:
+            aent = am_get(&self.addr_map, address)
 
-        # Snapshot the input taint BEFORE eval (cache key) while it is still the
-        # pre-state; eval writes g_taint in place.
-        cdef object pre_snap = None
-        cdef object pre_vals = None
-        cdef object in_slots = None
-        if can_cache:
-            pre_snap = PyBytes_FromStringAndSize(<char*>self.g_taint, nbytes)
-            if not value_indep:
-                in_slots = self._input_slots(address)
-                ns = len(in_slots)
-                # A value-dependent circuit MUST carry a non-empty operand-value
-                # snapshot, else a later hit would ignore changed values and
-                # under/over-taint.  No slots (decode fallback) -> do not cache.
-                if ns > 0 and ns <= 64:
-                    for i in range(ns):
-                        tmpv[i] = self.g_val[<int>(<object>in_slots[i])]
-                    pre_vals = PyBytes_FromStringAndSize(
-                        <char*>tmpv, ns * <Py_ssize_t>sizeof(uint64_t))
-                else:
-                    can_cache = False
+        # Snapshot the pre-state taint (and operand values) BEFORE eval, while
+        # g_taint still holds the inputs; eval rewrites it in place.
+        cdef bint want_store = False
+        if can_cache and aent != NULL:
+            if not value_indep and (not aent.have_slots or aent.n_in <= 0):
+                # no operand-value snapshot possible -> do not cache, else a later
+                # hit would ignore changed values
+                want_store = False
+            else:
+                if aent.snap_n != self.n_slots:
+                    if aent.in_snap != NULL: free(aent.in_snap)
+                    if aent.out_snap != NULL: free(aent.out_snap)
+                    aent.in_snap = <uint64_t*>malloc(<size_t>nbytes)
+                    aent.out_snap = <uint64_t*>malloc(<size_t>nbytes)
+                    aent.snap_n = self.n_slots if (aent.in_snap != NULL and aent.out_snap != NULL) else 0
+                if aent.snap_n == self.n_slots:
+                    memcpy(<void*>aent.in_snap, <void*>self.g_taint, nbytes)
+                    if value_indep:
+                        aent.have_val = 0
+                    else:
+                        if aent.val_snap == NULL:
+                            aent.val_snap = <uint64_t*>malloc(<size_t>aent.n_in * sizeof(uint64_t))
+                        if aent.val_snap != NULL:
+                            for i in range(aent.n_in):
+                                aent.val_snap[i] = self.g_val[aent.slots[i]]
+                            aent.have_val = 1
+                        else:
+                            aent.have_val = 0
+                    want_store = (value_indep or aent.have_val)
 
         cdef object result = None
         cdef object output_state = None
@@ -1007,13 +1192,9 @@ cdef class InstructionHook:
         else:
             self._apply_output_state_to_arr(output_state, mem_writes)
 
-        if can_cache and used_arr:
-            self.arr_cache[address] = (
-                pre_snap,
-                PyBytes_FromStringAndSize(<char*>self.g_taint, nbytes),
-                pre_vals,
-                in_slots,
-            )
+        if want_store and used_arr and aent != NULL and aent.snap_n == self.n_slots:
+            memcpy(<void*>aent.out_snap, <void*>self.g_taint, nbytes)
+            aent.have_snap = 1
 
         if self.check_aiw and len(mem_writes) > 0:
             self._aiw_check_arr(mem_writes, instruction_bytes, address)
@@ -1108,13 +1289,6 @@ cdef class InstructionHook:
         cdef object pre_regs = self._read_pre_regs(instruction_bytes, address)
         self._aiw_check(mem_writes, pre_regs, pre_taint, instruction_bytes, address)
 
-    cdef object _input_slots(self, unsigned long long address):
-        """Slot list for this instruction's input registers (filled by
-        _fill_vals_arr, held hook-side because the decoded object is a cdef
-        class and will not accept a new attribute)."""
-        cdef object entry = self.slots_cache.get(address)
-        return (<object>entry[0]) if entry is not None else []
-
     cdef void _apply_mem_writes(self, object writes, list mem_writes):
         """Feed last_tainted_writes (+ AIW list) from evaluate_c_mem_ptr's
         (addr, size, taint) results.  The shadow itself was already written at the
@@ -1137,6 +1311,27 @@ cdef class InstructionHook:
                 if self.check_aiw:
                     mem_writes.append((mem_addr, msize, int(<object>w[2])))
 
+    @property
+    def decode_cache(self):
+        """Introspection view of the address-keyed decode cache.
+
+        The array path keeps decode entries in a C table so the hot path holds no
+        Python dict; this rebuilds a {address: size} mapping on demand so tests
+        and tools can still verify the cache is populated and invalidated.  Built
+        only when read, never on the hot path.  With MICROTAINT_ARR_HOOK=0 the
+        dict path's own cache is returned instead.
+        """
+        cdef Py_ssize_t i
+        cdef dict out
+        if not _USE_ARR_HOOK:
+            return self.py_decode_cache
+        out = {}
+        if self.addr_map.vals != NULL:
+            for i in range(self.addr_map.cap):
+                if self.addr_map.keys[i] != EMPTY_ADDR and self.addr_map.vals[i] != NULL:
+                    out[self.addr_map.keys[i]] = self.addr_map.vals[i].size
+        return out
+
     cpdef void invalidate_smc(self):
         """Drop every address-keyed cache after a write hit cached code.
 
@@ -1148,8 +1343,8 @@ cdef class InstructionHook:
         execution.  Rare (only self-modifying / JIT'd code writes into the
         code range), so a full clear + lazy rebuild is fine.
         """
-        if self.decode_cache:
-            self.decode_cache.clear()
+        if self.py_decode_cache:
+            self.py_decode_cache.clear()
         if self.instr_cache_v:
             self.instr_cache_v.clear()
         if self.instr_cache:
@@ -1160,6 +1355,7 @@ cdef class InstructionHook:
             self.arr_cache.clear()
         if self.slots_cache:
             self.slots_cache.clear()
+        am_clear(&self.addr_map)
         self.code_lo = 0xFFFFFFFFFFFFFFFF
         self.code_hi = 0
 
