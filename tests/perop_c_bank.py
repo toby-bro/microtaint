@@ -281,7 +281,8 @@ def gt_vectors(desc, reg_names, rng, n):
 
 
 def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
-                     max_examples=12, skip_mem=True, ref='ground_truth'):
+                     max_examples=12, skip_mem=True, ref='ground_truth',
+                     step=None):
     """Sweep the bank; validate and collect op counts.
 
     `ref='ground_truth'` compares against Unicorn per-bit sensitivity, which is
@@ -295,6 +296,8 @@ def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
 
     from tests import oracle_harness as oh
 
+    if step is None:
+        step = perop_c_step
     rep = BankReport()
     specs = load_bank(isas=set(isas) if isas else None)
     for spec in specs.values():
@@ -340,8 +343,8 @@ def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
             answered = False
             for in_taint, in_values in vectors:
                 try:
-                    got, _vals, cost = perop_c_step(spec.arch, ins.bytes, spec.regs,
-                                                    in_taint, in_values)
+                    got, _vals, cost = step(spec.arch, ins.bytes, spec.regs,
+                                            in_taint, in_values)
                 except Declined:
                     break
                 except Exception as e:  # noqa: BLE001
