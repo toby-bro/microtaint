@@ -208,7 +208,7 @@ def main(argv=None):
         if args.top:
             worst = sorted(res['rows'], key=lambda r: -r[2])[:args.top]
             print(f'{"":12s} slowest: ' +
-                  ', '.join(f'{lbl}={ns:.1f}ns' for lbl, _o, ns, _i in worst))
+                  ', '.join(f'{r[0]}={r[2]:.1f}ns' for r in worst))
         print(f'{"":12s} host jit: {1e6*res["jit_compile_s"]/max(1, res["n_jit"]):.0f} us '
               f'per program (clang: '
               f'{1000*res["compile_s"]/res["n_progs"]:.1f} ms)')

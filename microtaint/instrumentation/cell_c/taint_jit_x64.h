@@ -58,6 +58,11 @@ static const int JIT_POOL[] = {0, 2, 3, 6, 7, 8, 9, 10, 11, 12};
 
 #define JIT_SPILL_BASE 100
 #define JIT_MAX_SPILL  256
+/* A constant that has not been materialised.  Most nodes that feed a taint rule
+ * are masks and shift counts fixed at lift time, and x86 takes an immediate
+ * operand directly -- so giving each one a register and a `mov` would spend a
+ * scarce resource on something the instruction encoding can carry for free. */
+#define JIT_CONST_LOC  (JIT_SPILL_BASE + JIT_MAX_SPILL)
 
 typedef struct {
     uint8_t *buf;
@@ -170,6 +175,33 @@ static void j_cmp_ri(JitBuf *b, int r, int imm) {   /* cmp r64, imm8 */
     rex_w(b, 0, r); jb_byte(b, 0x83);
     jb_byte(b, (uint8_t)(0xC0 | (7 << 3) | (r & 7))); jb_byte(b, (uint8_t)imm);
 }
+
+/* group-1 ALU with an immediate: add=0 or=1 and=4 sub=5 xor=6 cmp=7. */
+#define JI_ADD 0
+#define JI_OR  1
+#define JI_AND 4
+#define JI_SUB 5
+#define JI_XOR 6
+#define JI_CMP 7
+static void j_alu_ri(JitBuf *b, int ext, int dst, int64_t imm) {
+    rex_w(b, 0, dst);
+    if (imm >= -128 && imm <= 127) {
+        jb_byte(b, 0x83);
+        jb_byte(b, (uint8_t)(0xC0 | (ext << 3) | (dst & 7)));
+        jb_byte(b, (uint8_t)imm);
+    } else {
+        jb_byte(b, 0x81);
+        jb_byte(b, (uint8_t)(0xC0 | (ext << 3) | (dst & 7)));
+        jb_u32(b, (uint32_t)(int32_t)imm);
+    }
+}
+
+/* An immediate is usable when it survives the sign extension x86 applies to
+ * the 32-bit encoding. */
+static int j_fits_imm32(uint64_t v) {
+    int64_t s = (int64_t)v;
+    return s >= -2147483648LL && s <= 2147483647LL;
+}
 static void j_push(JitBuf *b, int r) {
     if (r >= 8) jb_byte(b, 0x41);
     jb_byte(b, (uint8_t)(0x50 + (r & 7)));
@@ -192,6 +224,7 @@ typedef struct {
     int     *last;       /* node -> index of its last use */
     int      occupant[16];   /* physreg -> node, or -1 */
     uint8_t  spill_used[JIT_MAX_SPILL];
+    const uint64_t *imm;     /* node -> its constant, when loc is JIT_CONST_LOC */
     int      n_spill;
     int      cur;        /* node being emitted, for last-use decisions */
     int      ok;
@@ -252,6 +285,13 @@ static int jit_take_reg(JitCtx *c, int avoid_a, int avoid_b) {
 static int jit_in_reg(JitCtx *c, int n, int avoid_a, int avoid_b) {
     int l = c->loc[n];
     if (l < JIT_SPILL_BASE) return l;
+    if (l == JIT_CONST_LOC) {
+        int r = jit_take_reg_ex(c, avoid_a, avoid_b, -1);
+        j_mov_ri(&c->b, r, c->imm[n]);
+        c->loc[n] = r;
+        c->occupant[r] = n;
+        return r;
+    }
     int slot = l - JIT_SPILL_BASE;
     int r = jit_take_reg_ex(c, avoid_a, avoid_b, -1);
     j_load(&c->b, r, JR_RSP, slot * 8);
@@ -264,7 +304,7 @@ static int jit_in_reg(JitCtx *c, int n, int avoid_a, int avoid_b) {
 static void jit_release(JitCtx *c, int n) {
     int l = c->loc[n];
     if (l < JIT_SPILL_BASE) c->occupant[l] = -1;
-    else c->spill_used[l - JIT_SPILL_BASE] = 0;
+    else if (l != JIT_CONST_LOC) c->spill_used[l - JIT_SPILL_BASE] = 0;
     c->loc[n] = -1;
 }
 
@@ -355,6 +395,7 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
     if (!c.b.buf || !c.loc || !c.last) {
         free(c.b.buf); free(c.loc); free(c.last); return NULL;
     }
+    c.imm = p->imm;
     for (int i = 0; i < 16; i++) c.occupant[i] = -1;
     for (int i = 0; i < n; i++) { c.loc[i] = -1; c.last[i] = -1; }
     for (int i = 0; i < n; i++) {
@@ -392,9 +433,31 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
         c.cur = i;
         uint8_t op = p->op[i];
         int an = p->a[i], bn = p->b[i], cn = p->c[i];
+
+        /* A constant costs nothing until something needs it in a register. */
+        if (op == IR_CONST) { c.loc[i] = JIT_CONST_LOC; continue; }
+
+        /* Can this op take its right operand as an immediate? */
+        int b_imm = 0;
+        int64_t imm_v = 0;
+        if (bn >= 0 && c.loc[bn] == JIT_CONST_LOC) {
+            switch (op) {
+            case IR_AND: case IR_OR: case IR_XOR: case IR_ADD: case IR_SUB:
+            case IR_ULT: case IR_SLT: case IR_EQ:
+                if (j_fits_imm32(p->imm[bn])) {
+                    b_imm = 1; imm_v = (int64_t)p->imm[bn];
+                }
+                break;
+            case IR_SHL: case IR_SHR: case IR_SAR:
+                b_imm = 1; imm_v = (int64_t)p->imm[bn];
+                break;
+            default: break;
+            }
+        }
+
         int ra = -1, rb = -1, rc = -1;
         if (an >= 0) ra = jit_in_reg(&c, an, -1, -1);
-        if (bn >= 0) rb = jit_in_reg(&c, bn, ra, -1);
+        if (bn >= 0 && !b_imm) rb = jit_in_reg(&c, bn, ra, -1);
         if (cn >= 0) rc = jit_in_reg(&c, cn, ra, rb);
         /* Operands dying here free their registers before the destination is
          * chosen, which is what makes the common case in-place. */
@@ -404,9 +467,18 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
 
         /* A select reads its condition AFTER writing the destination, so the
          * destination may not land on the condition's register.  Every other op
-         * reads all operands before its first write, so reuse is safe there. */
-        int dst = (op == IR_SEL) ? jit_take_reg_ex(&c, rc, -1, -1)
-                                 : jit_take_reg_ex(&c, -1, -1, -1);
+         * reads all operands before its first write, so reuse is safe there.
+         *
+         * Prefer the left operand's register when it just died: x86's
+         * two-address form then needs no move at all, which is most of what
+         * separates emitted code from compiled code on this kind of program. */
+        int excl = (op == IR_SEL) ? rc : -1;
+        int dst;
+        if (ra >= 0 && ra != excl && c.occupant[ra] < 0) {
+            dst = ra;
+        } else {
+            dst = jit_take_reg_ex(&c, excl, -1, -1);
+        }
         c.occupant[dst] = i;
         c.loc[i] = dst;
 
@@ -414,17 +486,40 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
         case IR_CONST: j_mov_ri(&c.b, dst, p->imm[i]); break;
         case IR_INV: j_load(&c.b, dst, JR_R13, in_slot[i] * 8); break;
         case IR_INT: j_load(&c.b, dst, JR_R14, in_slot[i] * 8); break;
-        case IR_AND: jit_binop(&c, J_AND, 1, dst, ra, rb); break;
-        case IR_OR:  jit_binop(&c, J_OR,  1, dst, ra, rb); break;
-        case IR_XOR: jit_binop(&c, J_XOR, 1, dst, ra, rb); break;
-        case IR_ADD: jit_binop(&c, J_ADD, 1, dst, ra, rb); break;
-        case IR_SUB: jit_binop(&c, J_SUB, 0, dst, ra, rb); break;
+        case IR_AND:
+            if (b_imm) { j_mov_rr(&c.b, dst, ra); j_alu_ri(&c.b, JI_AND, dst, imm_v); }
+            else jit_binop(&c, J_AND, 1, dst, ra, rb);
+            break;
+        case IR_OR:
+            if (b_imm) { j_mov_rr(&c.b, dst, ra); j_alu_ri(&c.b, JI_OR, dst, imm_v); }
+            else jit_binop(&c, J_OR, 1, dst, ra, rb);
+            break;
+        case IR_XOR:
+            if (b_imm) { j_mov_rr(&c.b, dst, ra); j_alu_ri(&c.b, JI_XOR, dst, imm_v); }
+            else jit_binop(&c, J_XOR, 1, dst, ra, rb);
+            break;
+        case IR_ADD:
+            if (b_imm) { j_mov_rr(&c.b, dst, ra); j_alu_ri(&c.b, JI_ADD, dst, imm_v); }
+            else jit_binop(&c, J_ADD, 1, dst, ra, rb);
+            break;
+        case IR_SUB:
+            if (b_imm) { j_mov_rr(&c.b, dst, ra); j_alu_ri(&c.b, JI_SUB, dst, imm_v); }
+            else jit_binop(&c, J_SUB, 0, dst, ra, rb);
+            break;
         case IR_MUL: jit_imul(&c, dst, ra, rb); break;
         case IR_NOT: j_mov_rr(&c.b, dst, ra); j_unary(&c.b, J_NOT, dst); break;
         case IR_NEG: j_mov_rr(&c.b, dst, ra); j_unary(&c.b, J_NEG, dst); break;
-        case IR_ULT: jit_cmp_set(&c, 0x92, dst, ra, rb); break;   /* setb  */
-        case IR_SLT: jit_cmp_set(&c, 0x9C, dst, ra, rb); break;   /* setl  */
-        case IR_EQ:  jit_cmp_set(&c, 0x94, dst, ra, rb); break;   /* sete  */
+        case IR_ULT: case IR_SLT: case IR_EQ: {
+            uint8_t cc = (op == IR_ULT) ? 0x92 : (op == IR_SLT) ? 0x9C : 0x94;
+            if (b_imm) {
+                j_alu_ri(&c.b, JI_CMP, ra, imm_v);
+                j_setcc(&c.b, cc, dst);
+                j_movzx8(&c.b, dst, dst);
+            } else {
+                jit_cmp_set(&c, cc, dst, ra, rb);
+            }
+            break;
+        }
         case IR_NEZ:
             j_alu(&c.b, J_TEST, ra, ra);
             j_setcc(&c.b, 0x95, dst);                             /* setne */
@@ -446,8 +541,8 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
         case IR_POPCNT: j_popcnt(&c.b, dst, ra); break;
         case IR_SHL: case IR_SHR: case IR_SAR: {
             int kind = (op == IR_SHL) ? J_SHL : (op == IR_SHR) ? J_SHR : J_SAR;
-            if (bn >= 0 && p->op[bn] == IR_CONST) {
-                uint64_t k = p->imm[bn];
+            if (b_imm) {
+                uint64_t k = (uint64_t)imm_v;
                 if (k >= 64) {
                     if (kind == J_SAR) {
                         j_mov_rr(&c.b, dst, ra);
