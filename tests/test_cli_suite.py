@@ -559,8 +559,9 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
-        path = compile_c(self.SOURCE)
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
+        path = compile_c(cls.SOURCE)
         yield path
         os.unlink(path)
 
@@ -668,8 +669,9 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
-        path = compile_c(self.SOURCE)
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
+        path = compile_c(cls.SOURCE)
         yield path
         os.unlink(path)
 
@@ -732,8 +734,9 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
-        path = compile_c(self.SOURCE)
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
+        path = compile_c(cls.SOURCE)
         yield path
         os.unlink(path)
 
@@ -779,8 +782,9 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
-        path = compile_c(self.SOURCE)
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
+        path = compile_c(cls.SOURCE)
         yield path
         os.unlink(path)
 
@@ -820,8 +824,9 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
-        path = compile_c(self.SOURCE)
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
+        path = compile_c(cls.SOURCE)
         yield path
         os.unlink(path)
 
@@ -884,8 +889,9 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def bof_binary(self) -> Generator[str, None, None]:
-        path = compile_c(self.SOURCE_BOF)
+    @classmethod
+    def bof_binary(cls) -> Generator[str, None, None]:
+        path = compile_c(cls.SOURCE_BOF)
         yield path
         os.unlink(path)
 
@@ -955,8 +961,9 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
-        path = compile_c(self.SOURCE)
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
+        path = compile_c(cls.SOURCE)
         yield path
         os.unlink(path)
 
@@ -987,8 +994,9 @@ void _start(void) {
     )
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
-        path = compile_c(self.SOURCE)
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
+        path = compile_c(cls.SOURCE)
         yield path
         os.unlink(path)
 
@@ -1088,8 +1096,9 @@ int main(void) {
 """
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
-        path = compile_c_libc(self.SOURCE)
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
+        path = compile_c_libc(cls.SOURCE)
         yield path
         os.unlink(path)
 
@@ -1156,8 +1165,9 @@ int main(void) {
 """
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
-        path = compile_c_libc(self.SOURCE)
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
+        path = compile_c_libc(cls.SOURCE)
         yield path
         os.unlink(path)
 
@@ -1206,9 +1216,10 @@ int main(void) {
 """
 
     @pytest.fixture(scope='class')
-    def binary(self) -> Generator[str, None, None]:
+    @classmethod
+    def binary(cls) -> Generator[str, None, None]:
         try:
-            path = compile_c_libc(self.SOURCE, extra_flags=['-static'])
+            path = compile_c_libc(cls.SOURCE, extra_flags=['-static'])
         except RuntimeError as e:
             pytest.skip(f'Static linking not available: {e}')
         yield path

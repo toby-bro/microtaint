@@ -115,8 +115,9 @@ class TestCmpAlImmediate:
     IMM = 0x58
 
     @pytest.fixture(scope='class')
-    def circuit(self, amd64_regs: list[Register]) -> LogicCircuit:
-        return generate_static_rule(Architecture.AMD64, self.INSTR, amd64_regs)
+    @classmethod
+    def circuit(cls, amd64_regs: list[Register]) -> LogicCircuit:
+        return generate_static_rule(Architecture.AMD64, cls.INSTR, amd64_regs)
 
     def ctx(self, sim: CellSimulator, v_rax: int, t_rax: int) -> EvalContext:
         return EvalContext(
@@ -232,8 +233,9 @@ class TestCmpRegReg:
     INSTR = bytes.fromhex('39d8')  # cmp eax, ebx
 
     @pytest.fixture(scope='class')
-    def circuit(self, amd64_regs: list[Register]) -> LogicCircuit:
-        return generate_static_rule(Architecture.AMD64, self.INSTR, amd64_regs)
+    @classmethod
+    def circuit(cls, amd64_regs: list[Register]) -> LogicCircuit:
+        return generate_static_rule(Architecture.AMD64, cls.INSTR, amd64_regs)
 
     def ctx(self, sim: CellSimulator, v_rax: int, v_rbx: int, t_rax: int, t_rbx: int) -> EvalContext:
         return EvalContext(
@@ -347,8 +349,9 @@ class TestCmpEaxImm32:
     IMM = 0x12345678
 
     @pytest.fixture(scope='class')
-    def circuit(self, amd64_regs: list[Register]) -> LogicCircuit:
-        return generate_static_rule(Architecture.AMD64, self.INSTR, amd64_regs)
+    @classmethod
+    def circuit(cls, amd64_regs: list[Register]) -> LogicCircuit:
+        return generate_static_rule(Architecture.AMD64, cls.INSTR, amd64_regs)
 
     def ctx(self, sim: CellSimulator, v_rax: int, t_rax: int) -> EvalContext:
         return EvalContext(
@@ -417,8 +420,9 @@ class TestX86CmpRegReg:
     INSTR = bytes.fromhex('39d8')  # cmp eax, ebx
 
     @pytest.fixture(scope='class')
-    def circuit(self, x86_regs: list[Register]) -> LogicCircuit:
-        return generate_static_rule(Architecture.X86, self.INSTR, x86_regs)
+    @classmethod
+    def circuit(cls, x86_regs: list[Register]) -> LogicCircuit:
+        return generate_static_rule(Architecture.X86, cls.INSTR, x86_regs)
 
     def ctx(self, sim: CellSimulator, v_eax: int, v_ebx: int, t_eax: int, t_ebx: int) -> EvalContext:
         return EvalContext(
@@ -462,12 +466,14 @@ class TestCmpEdgeCases:
     """Edge cases: cmp al, 0  and  cmp ax, -1."""
 
     @pytest.fixture(scope='class')
-    def circuit_zero(self, amd64_regs: list[Register]) -> LogicCircuit:
+    @classmethod
+    def circuit_zero(cls, amd64_regs: list[Register]) -> LogicCircuit:
         # cmp al, 0  →  3c 00
         return generate_static_rule(Architecture.AMD64, bytes.fromhex('3c00'), amd64_regs)
 
     @pytest.fixture(scope='class')
-    def circuit_neg(self, amd64_regs: list[Register]) -> LogicCircuit:
+    @classmethod
+    def circuit_neg(cls, amd64_regs: list[Register]) -> LogicCircuit:
         # cmp ax, -1 (0xFFFF)  →  66 83 f8 ff
         return generate_static_rule(Architecture.AMD64, bytes.fromhex('6683f8ff'), amd64_regs)
 

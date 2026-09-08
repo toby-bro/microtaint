@@ -57,28 +57,66 @@ from microtaint.types import Architecture
 
 # (arch, label, hex).  Every entry must be affine: its output taint is a closed
 # form over the INPUT TAINTS alone, independent of the operand values.
-AFFINE_FORMS: list[tuple[Architecture, str, str]] = [
-    # --- AMD64: pure movement ---
-    (Architecture.AMD64, 'mov rax, rbx',        '4889d8'),
-    (Architecture.AMD64, 'mov eax, ebx',        '89d8'),
-    (Architecture.AMD64, 'movzx eax, bl',       '0fb6c3'),
-    (Architecture.AMD64, 'movsx rax, ebx',      '4863c3'),
-    # --- AMD64: bitwise, value-independent ---
-    (Architecture.AMD64, 'xor rax, rbx',        '4831d8'),
-    (Architecture.AMD64, 'not rax',             '48f7d0'),
-    # --- AMD64: constant shift (mask shifts with it) ---
-    (Architecture.AMD64, 'shl rax, 3',          '48c1e003'),
-    (Architecture.AMD64, 'shr rax, 3',          '48c1e803'),
+# (arch, label, hex, routes_today).  Every entry is affine: its output taint is
+# a closed form over the INPUT TAINTS alone, independent of the operand values.
+#
+# `routes_today` records which of them the whole-instruction differential
+# ALREADY routes without a cell, and it splits cleanly along a line worth
+# knowing: BITWISE and CONSTANT-SHIFT forms route, pure MOVEMENT forms do not.
+# The affine classifier recognises an operation whose taint is a linear map of
+# the inputs and computes it by executing the instruction on the taint mask --
+# which is exactly right for `xor` and `shl`, and absurd for `mov`, where the
+# linear map is the identity and executing anything at all is pure waste.
+#
+# The False rows are marked xfail STRICTLY, so a form that starts routing fails
+# this test rather than passing quietly.  That is deliberate: the whole point is
+# to notice progress, and a non-strict marker hid seven of these for months.
+AFFINE_FORMS: list[tuple[Architecture, str, str, bool]] = [
+    # --- AMD64: pure movement (still re-executes) ---
+    (Architecture.AMD64, 'mov rax, rbx',        '4889d8',   False),
+    (Architecture.AMD64, 'mov eax, ebx',        '89d8',     False),
+    (Architecture.AMD64, 'movzx eax, bl',       '0fb6c3',   False),
+    (Architecture.AMD64, 'movsx rax, ebx',      '4863c3',   False),
+    (Architecture.AMD64, 'not rax',             '48f7d0',   False),
+    # --- AMD64: bitwise and constant shift (routes) ---
+    (Architecture.AMD64, 'xor rax, rbx',        '4831d8',   True),
+    (Architecture.AMD64, 'shl rax, 3',          '48c1e003', True),
+    (Architecture.AMD64, 'shr rax, 3',          '48c1e803', True),
     # --- ARM64 ---
-    (Architecture.ARM64, 'mov x0, x1',          'e00301aa'),
-    (Architecture.ARM64, 'eor x0, x0, x1',      '000001ca'),
-    (Architecture.ARM64, 'mvn x0, x1',          'e00321aa'),
-    (Architecture.ARM64, 'lsl x0, x0, #3',      '00f47cd3'),
+    (Architecture.ARM64, 'mov x0, x1',          'e00301aa', False),
+    (Architecture.ARM64, 'mvn x0, x1',          'e00321aa', False),
+    (Architecture.ARM64, 'eor x0, x0, x1',      '000001ca', True),
+    (Architecture.ARM64, 'lsl x0, x0, #3',      '00f47cd3', True),
     # --- RISCV64 ---
-    (Architecture.RISCV64, 'mv a0, a1',         '13850500'),
-    (Architecture.RISCV64, 'xor a0, a0, a1',    '33452500'),
-    (Architecture.RISCV64, 'slli a0, a0, 3',    '13153500'),
+    (Architecture.RISCV64, 'mv a0, a1',         '13850500', False),
+    (Architecture.RISCV64, 'xor a0, a0, a1',    '33452500', True),
+    (Architecture.RISCV64, 'slli a0, a0, 3',    '13153500', True),
 ]
+
+#: Why a form that does not route is expected not to.  One reason, because it is
+#: one cause: the affine classifier halves the differential instead of
+#: eliminating it, so a movement whose linear map is the identity still executes
+#: the instruction once.  The property DOES hold on the compiled path --
+#: microtaint/taint_ir lowers `mov rax, rbx` to two operations and no cell (see
+#: tests/perop_op_ratchet.py, tests/taint_ir_perf.py) -- so this is kept as a
+#: red specification the old path fails to meet, not as a bug to be silenced.
+_STILL_RE_EXECUTES = (
+    'the whole-instruction differential still re-executes this form in SLEIGH; '
+    'the compiled path routes it without a cell'
+)
+
+
+def _affine_params():
+    return [
+        pytest.param(
+            arch, label, hx,
+            marks=() if routes else pytest.mark.xfail(reason=_STILL_RE_EXECUTES,
+                                                      strict=True),
+            id=f'{arch.name}:{label}',
+        )
+        for arch, label, hx, routes in AFFINE_FORMS
+    ]
+
 
 
 def _has_cell(expr: object, depth: int = 0) -> bool:
@@ -133,19 +171,7 @@ def _routes_without_cell(arch: Architecture, hx: str) -> tuple[bool, str]:
     return (not any(_has_cell(a.expression) for a in result)), body
 
 
-@pytest.mark.xfail(reason=(
-    'The whole-instruction differential re-executes the instruction in SLEIGH '
-    'even for a plain move, which is exactly what this asserts it should not. '
-    'The property now holds on the compiled path instead: microtaint/taint_ir '
-    'lowers `mov rax, rbx` to two operations and no cell at all (see '
-    'tests/perop_op_ratchet.py and tests/taint_ir_perf.py). Kept red-as-xfail '
-    'rather than deleted because it is the specification the old path still '
-    'fails to meet.'), strict=False)
-@pytest.mark.parametrize(
-    ('arch', 'label', 'hx'),
-    AFFINE_FORMS,
-    ids=[f'{a.name}:{lbl}' for a, lbl, _ in AFFINE_FORMS],
-)
+@pytest.mark.parametrize(('arch', 'label', 'hx'), _affine_params())
 def test_affine_form_needs_no_cell(arch: Architecture, label: str, hx: str) -> None:
     ok, body = _routes_without_cell(arch, hx)
     assert ok, (
@@ -207,9 +233,9 @@ def _taint_out(arch: Architecture, hx: str) -> dict[str, int]:
 
 
 @pytest.mark.parametrize(
-    'arch,label,hx',
-    AFFINE_FORMS,
-    ids=[f'{a.name}:{lbl}' for a, lbl, _ in AFFINE_FORMS],
+    ('arch', 'label', 'hx'),
+    [(a, lbl, hx) for a, lbl, hx, _routes in AFFINE_FORMS],
+    ids=[f'{a.name}:{lbl}' for a, lbl, _hx, _routes in AFFINE_FORMS],
 )
 def test_affine_taint_matches_the_oracle(arch: Architecture, label: str, hx: str) -> None:
     """Whatever rule shape these forms get, the taint they produce must not move.
