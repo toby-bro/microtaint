@@ -520,7 +520,13 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
      * read, cache probe or evaluation.  Eligibility (register-only, or a
      * store-only memory circuit) is decided by compiled_prefilter, so has_mem
      * is deliberately not tested here. */
-    if (mt_untainted_exit(c, compiled, ent, address)) return MT_FAST_DONE;
+    /* The untainted-input exit exists to avoid an expensive evaluation.  For a
+     * memory instruction it is not cheap itself: proving the loads are clean
+     * means evaluating each address with the circuit's bytecode and querying
+     * the shadow.  When a compiled program exists it computes those addresses
+     * anyway, so the exit is doing the work twice -- run the program instead. */
+    if (!(ent->ir_fn && ent->ir_n_acc > 0)
+            && mt_untainted_exit(c, compiled, ent, address)) return MT_FAST_DONE;
 
     const int can_cache = c->instr_cache_enabled && !has_mem;
     const int value_indep = can_cache && (cflags & MT_CF_VALUE_INDEP) != 0;
