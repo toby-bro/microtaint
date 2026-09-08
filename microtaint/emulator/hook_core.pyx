@@ -395,8 +395,10 @@ cdef class InstructionHook:
     cdef object       cached_gen_rule     # _cached_generate_static_rule
     cdef object       x64_format_key      # tuple
     cdef object       get_decoded         # _get_decoded
-    cdef object       build_offsets_arrs  # _build_offsets_arrays
-    cdef object       eflags_bits         # dict
+    cdef object       build_offsets_arrs  # _RegisterFile.offsets_arrays
+    cdef object       eflags_bits         # dict: flag name -> bit in the parent
+    cdef object       flag_parent         # str, or None where the ISA has none
+    cdef object       pc_reg_name         # str
     cdef object       eval_context_cls    # EvalContext
     cdef object       read_live_memory    # bound method
     cdef object       get_live_registers  # bound method
@@ -445,7 +447,8 @@ cdef class InstructionHook:
                  uc_handle, uc_mem_read, uc_reg_read_batch, mem_buf,
                  arch, cached_gen_rule, x64_format_key,
                  get_decoded, build_offsets_arrs, eflags_bits,
-                 eval_context_cls, uc_reg_read_batch_addr=0):
+                 eval_context_cls, uc_reg_read_batch_addr=0,
+                 flag_parent='EFLAGS', pc_reg_name='RIP'):
         self.wrapper = wrapper
         self.register_taint = wrapper.register_taint
         self.last_tainted_writes = wrapper._last_tainted_writes
@@ -486,6 +489,8 @@ cdef class InstructionHook:
         self.get_decoded = get_decoded
         self.build_offsets_arrs = build_offsets_arrs
         self.eflags_bits = eflags_bits
+        self.flag_parent = flag_parent
+        self.pc_reg_name = pc_reg_name
         self.eval_context_cls = eval_context_cls
         self.read_live_memory = wrapper._live_mem_reader
         self.get_live_registers = wrapper._get_live_registers
@@ -1119,9 +1124,15 @@ cdef class InstructionHook:
         cdef int i
         cdef uint64_t ef
         if self.eflags_slot < 0:
-            self.eflags_slot = self._slot_for('EFLAGS')
-            self.eflags_slot_bits = [
-                (self._slot_for(_f), int(_b)) for _f, _b in self.eflags_bits.items()]
+            if self.flag_parent is None:
+                # MIPS and RISC-V have no packed flags register: compares write
+                # a general register instead, so there is nothing to scatter.
+                self.eflags_slot = 0
+                self.eflags_slot_bits = []
+            else:
+                self.eflags_slot = self._slot_for(self.flag_parent)
+                self.eflags_slot_bits = [
+                    (self._slot_for(_f), int(_b)) for _f, _b in self.eflags_bits.items()]
             self.ef_n = 0
             if self.ef_slots != NULL:
                 free(self.ef_slots); self.ef_slots = NULL
@@ -1166,10 +1177,7 @@ cdef class InstructionHook:
 
     cdef object _pc_name(self):
         """PC register name for this arch (the wrapper owns the mapping)."""
-        try:
-            return self.wrapper._pc_reg_name
-        except AttributeError:
-            return 'RIP'
+        return self.pc_reg_name
 
     cdef inline _evaluate_arr(self, unsigned long long address, int size):
         """Array-native hot path (Phase 1.3c).  Taint and input values live in
@@ -1676,19 +1684,19 @@ cdef class InstructionHook:
                 for i_slot in range(n_slots):
                     pre_regs[names[i_slot]] = vptr[i_slot]
                 if need_ef:
-                    ef = pre_regs.get('EFLAGS', 0)
+                    ef = pre_regs.get(self.flag_parent, 0)
                     for fname, fbit in self.eflags_bits.items():
                         pre_regs[fname] = (ef >> fbit) & 1
             else:
                 self.uc_reg_read_batch(self.uc_handle, ids, ptrs, n_calls)
                 pre_regs = {names[i_slot]: int(vals[i_slot]) for i_slot in range(n_slots)}
                 if need_ef:
-                    ef = pre_regs.get('EFLAGS', 0)
+                    ef = pre_regs.get(self.flag_parent, 0)
                     for fname, fbit in self.eflags_bits.items():
                         pre_regs[fname] = (ef >> fbit) & 1
         except Exception:
             pre_regs = self.get_live_registers(self.uc_handle)
-        pre_regs['RIP'] = address
+        pre_regs[self.pc_reg_name] = address
         return pre_regs
 
     cdef _aiw_check(self, list mem_writes, dict pre_regs, dict pre_taint,

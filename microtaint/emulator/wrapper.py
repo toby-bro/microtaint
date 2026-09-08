@@ -7,11 +7,11 @@ import os
 from typing import TYPE_CHECKING, Any, Callable
 
 import unicorn.unicorn_py3.unicorn as _uu
-import unicorn.x86_const as _uc_x86_const
 from qiling import Qiling
 from qiling.const import QL_ARCH, QL_INTERCEPT
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE_UNMAPPED
 
+from microtaint.emulator import archregs
 from microtaint.emulator.hook_core import (
     InstructionHook,
     LiveMemReader,
@@ -24,47 +24,18 @@ from microtaint.emulator.hook_core import (
 )
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
-from microtaint.instrumentation.ast import EvalContext, Expr
+from microtaint.instrumentation.ast import EvalContext
 from microtaint.instrumentation.cell import _get_decoded
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import _cached_generate_static_rule
-from microtaint.types import Architecture, ImplicitTaintError, ImplicitTaintPolicy, Register
+from microtaint.types import Architecture, ImplicitTaintError, ImplicitTaintPolicy
 
 logger = logging.getLogger(__name__)
 
-X64_FORMAT = [
-    Register('RAX', 64),
-    Register('RBX', 64),
-    Register('RCX', 64),
-    Register('RDX', 64),
-    Register('RSI', 64),
-    Register('RDI', 64),
-    Register('RBP', 64),
-    Register('RSP', 64),
-    Register('R8', 64),
-    Register('R9', 64),
-    Register('R10', 64),
-    Register('R11', 64),
-    Register('R12', 64),
-    Register('R13', 64),
-    Register('R14', 64),
-    Register('R15', 64),
-    Register('RIP', 64),
-    Register('EFLAGS', 32),
-    Register('ZF', 1),
-    Register('CF', 1),
-    Register('SF', 1),
-    Register('OF', 1),
-    Register('PF', 1),
-]
-# x86 vector registers (XMM/YMM/ZMM) are NOT enumerated here.  They are tracked
-# exactly like every other ISA's SIMD file (ARM64 NEON, PPC AltiVec): the
-# sleigh.engine StateMapper synthesises geometry-derived VL_<offset> 8-byte lanes
-# for any wide (>8-byte) register varnode the state_format does not cover.  The
-# wrapper installs XMM values on those same VL_ lanes via _SLEIGH_XMM_OFFSETS
-# below; upper AVX lanes carry taint only (their value-dependent ops avalanche).
-# Pre-computed cache key for X64_FORMAT — avoids rebuilding a tuple
-# via genexpr on every generate_static_rule call (was 2.26s in profiling).
+#: x86-64's register format, kept under its historical name for the tests and
+#: benchmarks that import it.  Every architecture's format now comes from
+#: ``archregs.state_format``; this is what that returns for AMD64.
+X64_FORMAT = archregs.state_format(Architecture.AMD64)
 _X64_FORMAT_KEY: tuple[tuple[str, int], ...] = tuple((r.name, r.bits) for r in X64_FORMAT)
 
 # Tier 3: empty frozenset for cache key when register_taint is empty.
@@ -154,7 +125,7 @@ _HOOK_MEM_INVALID_CFUNC = ctypes.CFUNCTYPE(
 _UC_HOOK_MEM_READ_CONST = 1024  # UC_HOOK_MEM_READ
 _UC_HOOK_MEM_WRITE_CONST = 2048  # UC_HOOK_MEM_WRITE
 
-# Pre-allocated C arrays — defined AFTER _ALL_REG_NAMES below.
+# Pre-allocated C arrays for the memory-operand reads.
 _MEM_BUF_SIZE = 64
 _MEM_BUF = (ctypes.c_uint8 * _MEM_BUF_SIZE)()
 # Pre-cast typed pointers into _MEM_BUF — direct C dereference, ~2.5x faster than struct.
@@ -165,339 +136,212 @@ _MEM_PTRS: dict[int, object] = {
     8: ctypes.cast(_MEM_BUF, ctypes.POINTER(ctypes.c_uint64)),
 }
 
-# Complete name->UC_X86_REG_* mapping for AMD64 (superset of what we need)
-_AMD64_REG_ID: dict[str, int] = {
-    'RAX': _uc_x86_const.UC_X86_REG_RAX,
-    'RBX': _uc_x86_const.UC_X86_REG_RBX,
-    'RCX': _uc_x86_const.UC_X86_REG_RCX,
-    'RDX': _uc_x86_const.UC_X86_REG_RDX,
-    'RSI': _uc_x86_const.UC_X86_REG_RSI,
-    'RDI': _uc_x86_const.UC_X86_REG_RDI,
-    'RBP': _uc_x86_const.UC_X86_REG_RBP,
-    'RSP': _uc_x86_const.UC_X86_REG_RSP,
-    'R8': _uc_x86_const.UC_X86_REG_R8,
-    'R9': _uc_x86_const.UC_X86_REG_R9,
-    'R10': _uc_x86_const.UC_X86_REG_R10,
-    'R11': _uc_x86_const.UC_X86_REG_R11,
-    'R12': _uc_x86_const.UC_X86_REG_R12,
-    'R13': _uc_x86_const.UC_X86_REG_R13,
-    'R14': _uc_x86_const.UC_X86_REG_R14,
-    'R15': _uc_x86_const.UC_X86_REG_R15,
-    'RIP': _uc_x86_const.UC_X86_REG_RIP,
-    'EFLAGS': _uc_x86_const.UC_X86_REG_EFLAGS,
-    # 32-bit halves (used by sub-register addressing)
-    'EAX': _uc_x86_const.UC_X86_REG_EAX,
-    'EBX': _uc_x86_const.UC_X86_REG_EBX,
-    'ECX': _uc_x86_const.UC_X86_REG_ECX,
-    'EDX': _uc_x86_const.UC_X86_REG_EDX,
-    'ESI': _uc_x86_const.UC_X86_REG_ESI,
-    'EDI': _uc_x86_const.UC_X86_REG_EDI,
-    'EBP': _uc_x86_const.UC_X86_REG_EBP,
-    'ESP': _uc_x86_const.UC_X86_REG_ESP,
-    'R8D': _uc_x86_const.UC_X86_REG_R8D,
-    'R9D': _uc_x86_const.UC_X86_REG_R9D,
-    'R10D': _uc_x86_const.UC_X86_REG_R10D,
-    'R11D': _uc_x86_const.UC_X86_REG_R11D,
-    'R12D': _uc_x86_const.UC_X86_REG_R12D,
-    'R13D': _uc_x86_const.UC_X86_REG_R13D,
-    'R14D': _uc_x86_const.UC_X86_REG_R14D,
-    'R15D': _uc_x86_const.UC_X86_REG_R15D,
-}
-
-# Parent register for flag names — we always read EFLAGS and unpack.
-_FLAG_PARENTS = {'ZF', 'CF', 'SF', 'OF', 'PF', 'AF', 'DF', 'IF', 'TF'}
-
-# EFLAGS bit positions
-_EFLAGS_BITS = {
-    'CF': 0,
-    'PF': 2,
-    'AF': 4,
-    'ZF': 6,
-    'SF': 7,
-    'TF': 8,
-    'IF': 9,
-    'DF': 10,
-    'OF': 11,
-}
-
-# Sleigh register-space byte offset -> (uc_reg_name, uc_reg_id, needs_eflags_unpack)
-# Covers all GP registers + RIP + flag offsets for AMD64/x86-64.
-# Used by _read_regs_by_offsets to translate pcode input_reg_offsets to UC reads.
-_SLEIGH_OFFSET_TO_UC: dict[int, tuple[str, int, bool]] = {
-    0: ('RAX', 35, False),
-    8: ('RCX', 38, False),
-    16: ('RDX', 40, False),
-    24: ('RBX', 37, False),
-    32: ('RSP', 44, False),
-    40: ('RBP', 36, False),
-    48: ('RSI', 43, False),
-    56: ('RDI', 39, False),
-    128: ('R8', 106, False),
-    136: ('R9', 107, False),
-    144: ('R10', 108, False),
-    152: ('R11', 109, False),
-    160: ('R12', 110, False),
-    168: ('R13', 111, False),
-    176: ('R14', 112, False),
-    184: ('R15', 113, False),
-    648: ('RIP', 41, False),
-    512: ('EFLAGS', 25, True),  # CF
-    514: ('EFLAGS', 25, True),  # PF
-    516: ('EFLAGS', 25, True),  # AF
-    518: ('EFLAGS', 25, True),  # ZF
-    519: ('EFLAGS', 25, True),  # SF
-    520: ('EFLAGS', 25, True),
-    521: ('EFLAGS', 25, True),
-    522: ('EFLAGS', 25, True),  # DF
-    523: ('EFLAGS', 25, True),  # OF
-}
-
-# Sleigh XMM-register byte offset -> (lo_name, hi_name, uc_reg_id).
-# Pypcode emits XMM<n> at offset 0x1200 + n*0x40, size 16.  We split each
-# 128-bit XMM into two 64-bit halves (XMM<n>_LO at byte 0, XMM<n>_HI at
-# byte 8) and read both with one uc_reg_read per register (16 bytes).
-# The same uc_id reads the full 16 bytes; _build_offsets_arrays splits
-# the result into the two state slots.
-_SLEIGH_XMM_OFFSETS: dict[int, tuple[str, str, int]] = {
-    0x1200 + i * 0x40: (f'VL_{0x1200 + i * 0x40:#x}', f'VL_{0x1200 + i * 0x40 + 8:#x}', 122 + i)
-    for i in range(16)
+# Vector registers reach the state as geometry-derived VL_<offset> lanes, and
+# one Unicorn read of a whole vector fills two of them.  Only x86 is wired that
+# way so far: every other architecture's vector file reaches the state through
+# the scalar map above where its lanes happen to be nameable (AArch64 `D0` is
+# `V0`'s low lane) and through the circuit's own lane synthesis otherwise.
+_VECTOR_LANES: dict[Architecture, dict[int, tuple[str, str, int]]] = {
+    Architecture.AMD64: {
+        0x1200 + i * 0x40: (f'VL_{0x1200 + i * 0x40:#x}',
+                            f'VL_{0x1200 + i * 0x40 + 8:#x}', 122 + i)
+        for i in range(16)
+    },
 }
 
 
-# Cache of pre-built ctypes arrays per unique offset-set.
-# Key: frozenset of Sleigh byte offsets (== DecodedOps.input_reg_offsets).
-# Value tuple: (ids_arr, vals_arr, ptrs_arr, n_slots, uc_names, needs_eflags, n_calls)
-# - n_slots = number of c_uint64 slots in vals_arr (also = len(uc_names));
-#   one per GPR/flag, two per XMM (LO + HI).  Used as the iteration count
-#   for the dict-build step on the hot path.
-# - n_calls = number of uc_reg_read calls (i.e. len(ids_arr)).  For all-GPR
-#   instructions n_calls == n_slots; XMM instructions have n_calls < n_slots
-#   because one XMM read fills two slots.
-# Built once per unique instruction type, reused on every subsequent call.
-_OFFSETS_CACHE: dict[
-    int | frozenset[int],
-    tuple[object, object, object, int, list[str], bool, int] | tuple[None, None, None, int, list[str], bool, int],
-] = {}
+# One architecture's side of the register boundary.
+#
+# Everything below used to be module-level constants for x86-64, which is why a
+# guest of any other architecture read no registers at all: the offset map had
+# no entry for a single one of them, the arrays came out empty, and the frame
+# was seeded with zeros.  It is per-architecture state now, built once on
+# demand from the geometry (see archregs) and held here because the ctypes
+# arrays it hands to Unicorn have to stay alive for as long as their addresses
+# are cached.
+class _RegisterFile:
+    """The ctypes arrays that carry one guest's registers across the boundary.
 
+    Layout of the per-instruction arrays
+    ------------------------------------
+    - A scalar register occupies one ctypes ``c_uint64`` slot in ``vals`` and
+      one entry in ``names``.
+    - A vector register (16 bytes) occupies ONE ``uc_reg_read`` into a 16-byte
+      region and TWO consecutive slots; ``names`` gets both lane names but
+      ``ids``/``ptrs`` get only one entry, because one read fills both halves.
 
-def _build_offsets_arrays(offsets: frozenset[int]) -> tuple[object, object, object, int, list[str], bool, object, int, int, int, int]:
-    """Build and cache ctypes arrays. Uses id() fast-path on the hot path.
-
-    Layout
-    ------
-    - GPR / EFLAGS: one ctypes c_uint64 slot in vals_arr; one entry in uc_names.
-    - XMM (16 bytes each): one uc_reg_read into a 16-byte aligned region;
-      two consecutive c_uint64 slots immediately follow in vals_arr (slot[k]
-      = LO, slot[k+1] = HI).  uc_names gets two entries (XMM<n>_LO, XMM<n>_HI)
-      but ids_arr / ptrs_arr get only ONE entry pointing to the 16-byte
-      region — a single uc_reg_read fills both halves at once.
-
-    The Cython hot path then does ``int(vals[i])`` for every slot in
-    uc_names.  XMM halves come out as the right two consecutive vals[i]
-    values automatically — no special-casing on the read side.
+    The hot path then stores ``vals[i]`` under ``names[i]`` for every slot, so
+    the lanes come out as the right two values with no special case there.
     """
-    oid = id(offsets)
-    cached = _OFFSETS_CACHE.get(oid)
-    if cached is not None:
-        return cached
-    key = frozenset(offsets)
-    cached = _OFFSETS_CACHE.get(key)
-    if cached is not None:
-        _OFFSETS_CACHE[oid] = cached
-        return cached
 
-    # First pass: collect (uc_name, uc_id, is_flag, is_xmm) for every offset.
-    # XMM offsets contribute one (xmm_id, is_xmm=True) entry; the LO/HI
-    # name pair is recorded separately and consumed during slot allocation.
-    uc_names: list[str] = []  # ordered to match vals_arr slots
-    uc_ids: list[int] = []  # one per uc_reg_read call (so XMM is one entry)
-    needs_eflags = False
-    seen_uc_ids: set[int] = set()
-    # Per-call descriptor: (slot_index_in_vals, is_xmm).  slot_index points
-    # into vals_arr for the FIRST 8-byte chunk written by this read (XMM
-    # writes two consecutive chunks).
-    call_slot_indices: list[int] = []
-
-    next_slot = 0
-    for off in offsets:
-        # XMM first — distinct ID space from GPRs.
-        xmm_entry = _SLEIGH_XMM_OFFSETS.get(off)
-        if xmm_entry is not None:
-            lo_name, hi_name, uc_id = xmm_entry
-            if uc_id in seen_uc_ids:
-                continue
-            seen_uc_ids.add(uc_id)
-            uc_ids.append(uc_id)
-            call_slot_indices.append(next_slot)
-            # Two consecutive c_uint64 slots — LO at next_slot, HI at next_slot+1.
-            uc_names.append(lo_name)
-            uc_names.append(hi_name)
-            next_slot += 2
-            continue
-        entry = _SLEIGH_OFFSET_TO_UC.get(off)
-        if entry is None:
-            continue
-        uc_name, uc_id, is_flag = entry
-        if uc_id in seen_uc_ids:
-            continue
-        seen_uc_ids.add(uc_id)
-        uc_ids.append(uc_id)
-        call_slot_indices.append(next_slot)
-        uc_names.append(uc_name)
-        next_slot += 1
-        if is_flag:
-            needs_eflags = True
-
-    n_slots = next_slot  # number of c_uint64 slots in vals_arr
-    n_calls = len(uc_ids)  # number of uc_reg_read calls (i.e. ids_arr length)
-    if n_calls == 0:
-        result: (
-            tuple[object, object, object, int, list[str], bool, object, int, int, int, int]
-            | tuple[None, None, None, int, list[str], bool, object, int, int, int, int]
-        ) = (
-            None,
-            None,
-            None,
-            0,
-            [],
-            False,
-            0,
-            0,  # ids_addr
-            0,  # ptrs_addr
-            0,  # vals_addr
-            0,  # n_calls (plain int)
-        )
-        _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
-        return result
-
-    ids_arr = (ctypes.c_int * n_calls)(*uc_ids)
-    vals_arr = (ctypes.c_uint64 * n_slots)()
-    ptrs_arr = (ctypes.c_void_p * n_calls)(
-        *[ctypes.addressof(vals_arr) + slot * 8 for slot in call_slot_indices],
+    __slots__ = (
+        '_cache',
+        '_ids',
+        '_n_calls',
+        '_n_slots',
+        '_ptrs',
+        '_vals',
+        'all_ids',
+        'all_names',
+        'arch',
+        'regs',
+        'vectors',
     )
 
-    # n in the cached tuple is len(uc_names) — the number of slots the Cython
-    # hot path will iterate over to build pre_regs.  This equals n_slots.
-    # n_calls is pre-wrapped as a ctypes c_int so the per-instruction batch call
-    # (uc_reg_read_batch, argtype c_int) skips c_int.from_param (isinstance +
-    # convert) on every call -- a measured ~2.9% of a taint-heavy trace.  Only
-    # ever consumed as the batch-call count argument (when ids_arr is not None).
-    #
-    # The trailing four fields are raw integer addresses (+ plain n_calls) so the
-    # Cython hook can call uc_reg_read_batch through a C function pointer and read
-    # vals_arr via a uint64* -- skipping the per-call ctypes ffi/ConvParam cost
-    # and the per-slot ctypes indexing.  The arrays are cached (stable lifetime),
-    # so their addresses are stable too.
-    result = (ids_arr, vals_arr, ptrs_arr, len(uc_names), uc_names, needs_eflags,
-              ctypes.c_int(n_calls),
-              ctypes.addressof(ids_arr), ctypes.addressof(ptrs_arr),
-              ctypes.addressof(vals_arr), n_calls)
-    _OFFSETS_CACHE[key] = _OFFSETS_CACHE[oid] = result
-    return result
+    def __init__(self, arch: Architecture) -> None:
+        self.arch = arch
+        self.regs = archregs.for_arch(arch)
+        self.vectors = _VECTOR_LANES.get(arch, {})
+        self._cache: dict = {}
+
+        # The whole-file read, for the snapshot fallbacks.  Vector lanes are
+        # appended after the scalars so a lane pair stays contiguous.
+        names = list(self.regs.all_names)
+        ids = list(self.regs.all_uc_ids)
+        n_scalar = len(names)
+        for _off, (lo, hi, uc_id) in sorted(self.vectors.items()):
+            names.extend((lo, hi))
+            ids.append(uc_id)
+        self.all_names = names
+        self.all_ids = ids
+        self._n_slots = len(names)
+        self._n_calls = len(ids)
+        self._ids = (ctypes.c_int * self._n_calls)(*ids)
+        self._vals = (ctypes.c_uint64 * self._n_slots)()
+        base = ctypes.addressof(self._vals)
+        self._ptrs = (ctypes.c_void_p * self._n_calls)(
+            *[base + i * 8 for i in range(n_scalar)],
+            *[base + (n_scalar + 2 * i) * 8 for i in range(len(self.vectors))],
+        )
+
+    # -- per-instruction ------------------------------------------------
+    def offsets_arrays(self, offsets: frozenset[int]):
+        """Build and cache the arrays for one instruction's input offsets.
+
+        Keyed first on ``id(offsets)``, because the caller hands back the same
+        frozenset object every time and identity is cheaper than hashing it.
+        """
+        oid = id(offsets)
+        cached = self._cache.get(oid)
+        if cached is not None:
+            return cached
+        key = frozenset(offsets)
+        cached = self._cache.get(key)
+        if cached is not None:
+            self._cache[oid] = cached
+            return cached
+        cached = self._cache[key] = self._cache[oid] = self._build(offsets)
+        return cached
+
+    def _build(self, offsets: frozenset[int]):
+        uc_names: list[str] = []      # one per vals slot
+        uc_ids: list[int] = []        # one per uc_reg_read call
+        call_slots: list[int] = []    # first vals slot each call writes
+        needs_flags = False
+        seen: set[int] = set()
+        next_slot = 0
+
+        offset_to_uc = self.regs.offset_to_uc
+        for off in offsets:
+            # Vector first: a distinct id space, and one read fills two slots.
+            lanes = self.vectors.get(off)
+            if lanes is not None:
+                lo, hi, uc_id = lanes
+                if uc_id in seen:
+                    continue
+                seen.add(uc_id)
+                uc_ids.append(uc_id)
+                call_slots.append(next_slot)
+                uc_names.append(lo)
+                uc_names.append(hi)
+                next_slot += 2
+                continue
+            entry = offset_to_uc.get(off)
+            if entry is None:
+                continue
+            name, uc_id, is_flag = entry
+            if uc_id in seen:
+                if is_flag:
+                    needs_flags = True
+                continue
+            seen.add(uc_id)
+            uc_ids.append(uc_id)
+            call_slots.append(next_slot)
+            uc_names.append(name)
+            next_slot += 1
+            if is_flag:
+                needs_flags = True
+
+        n_slots = next_slot
+        n_calls = len(uc_ids)
+        if n_calls == 0:
+            return (None, None, None, 0, [], False, 0, 0, 0, 0, 0)
+
+        ids_arr = (ctypes.c_int * n_calls)(*uc_ids)
+        vals_arr = (ctypes.c_uint64 * n_slots)()
+        ptrs_arr = (ctypes.c_void_p * n_calls)(
+            *[ctypes.addressof(vals_arr) + slot * 8 for slot in call_slots],
+        )
+        # n_calls is pre-wrapped as a ctypes c_int so the per-instruction batch
+        # call skips c_int.from_param on every call -- a measured ~2.9% of a
+        # taint-heavy trace.  The trailing raw addresses let the Cython hook
+        # call uc_reg_read_batch through a C function pointer and read vals_arr
+        # via a uint64*, skipping ctypes entirely.  The arrays are cached, so
+        # their addresses stay valid.
+        return (ids_arr, vals_arr, ptrs_arr, len(uc_names), uc_names, needs_flags,
+                ctypes.c_int(n_calls),
+                ctypes.addressof(ids_arr), ctypes.addressof(ptrs_arr),
+                ctypes.addressof(vals_arr), n_calls)
+
+    # -- whole file -----------------------------------------------------
+    def read_all(self, uch: ctypes.c_void_p) -> dict[str, int]:
+        """Every register this architecture exposes, in one batch call."""
+        try:
+            err = _uc_reg_read_batch(uch, self._ids, self._ptrs, self._n_calls)
+            if err != 0:
+                raise OSError(f'uc_reg_read_batch: {err}')
+            out = {self.all_names[i]: int(self._vals[i]) for i in range(self._n_slots)}
+            self.regs.unpack_flags(out)
+            return out
+        except Exception:
+            return {}
 
 
-# Pre-built: all 18 "full" register names (for the AIW snapshot fallback).
-# XMM<n>_LO / XMM<n>_HI are added separately because each XMM read fills
-# two slots (16 bytes total -> two consecutive c_uint64 slots in _VALS_ARR).
-_ALL_REG_NAMES: list[str] = [
-    'RAX',
-    'RBX',
-    'RCX',
-    'RDX',
-    'RSI',
-    'RDI',
-    'RBP',
-    'RSP',
-    'R8',
-    'R9',
-    'R10',
-    'R11',
-    'R12',
-    'R13',
-    'R14',
-    'R15',
-    'RIP',
-    'EFLAGS',
-]
-_ALL_REG_NAMES.extend(name for i in range(16) for name in (f'XMM{i}_LO', f'XMM{i}_HI'))
-_ALL_REG_IDS: list[int] = [_AMD64_REG_ID[n] for n in _ALL_REG_NAMES if not n.startswith('XMM')]
-# UC ids list: one entry per uc_reg_read call.  GPRs/EFLAGS contribute one
-# id each; each XMM<n> contributes one id (122 + n) but fills two slots.
-_ALL_UC_IDS: list[int] = list(_ALL_REG_IDS) + [122 + i for i in range(16)]
-
-# Pre-allocated C arrays for uc_reg_read_batch — must come after _ALL_REG_NAMES.
-# _N_SLOTS = number of c_uint64 slots in _VALS_ARR (= len(_ALL_REG_NAMES)).
-# _N_CALLS = number of uc_reg_read calls (= 18 GPRs/EFLAGS + 16 XMMs).
-_N_SLOTS = len(_ALL_REG_NAMES)  # 18 + 32 = 50
-_N_CALLS = len(_ALL_UC_IDS)  # 18 + 16 = 34
-_IDS_ARR = (ctypes.c_int * _N_CALLS)(*_ALL_UC_IDS)
-_VALS_ARR = (ctypes.c_uint64 * _N_SLOTS)()
-# Pointers: GPR/EFLAGS calls each point to one 8-byte slot;
-# XMM calls each point to a 16-byte region (two consecutive 8-byte slots).
-# Slot ordering in _ALL_REG_NAMES: 18 GPR/EFLAGS slots followed by 32 XMM
-# slots (XMM0_LO, XMM0_HI, XMM1_LO, XMM1_HI, ...).
-_N_GPR_SLOTS = 18
-_PTRS_ARR = (ctypes.c_void_p * _N_CALLS)(
-    *[ctypes.addressof(_VALS_ARR) + i * 8 for i in range(_N_GPR_SLOTS)],
-    *[ctypes.addressof(_VALS_ARR) + (_N_GPR_SLOTS + 2 * i) * 8 for i in range(16)],
-)
-# Kept for backward-compat with code that referenced _N_REGS as the count:
-_N_REGS = _N_SLOTS
+_REGISTER_FILES: dict[Architecture, _RegisterFile] = {}
 
 
-def _read_regs_ctypes(uch: ctypes.c_void_p, _names_unused: list[str]) -> dict[str, int]:
-    """
-    Read all AMD64 registers in one uc_reg_read_batch C call.
-    Includes 18 GPR/EFLAGS slots and 16 XMM registers (each split into
-    XMM<n>_LO / XMM<n>_HI in the result dict).
-    Falls back gracefully on any error.
-    """
+def register_file(arch: Architecture) -> _RegisterFile:
+    f = _REGISTER_FILES.get(arch)
+    if f is None:
+        f = _REGISTER_FILES[arch] = _RegisterFile(arch)
+    return f
+
+
+#: Qiling's architecture tag -> the architecture the engine lifts for.  A guest
+#: that is not on this list gets a clear failure rather than an x86 lifter
+#: pointed at its instructions, which is what used to happen: every byte was
+#: decoded as x86-64, no register was read, and the run reported nothing at all.
+_QL_ARCH_TO_ARCH: dict[int, Architecture] = {
+    QL_ARCH.X86: Architecture.X86,
+    QL_ARCH.X8664: Architecture.AMD64,
+    QL_ARCH.ARM64: Architecture.ARM64,
+    QL_ARCH.RISCV64: Architecture.RISCV64,
+    QL_ARCH.PPC: Architecture.PPC32BE,
+}
+
+
+def _guest_architecture(ql: Qiling) -> Architecture:
     try:
-        err = _uc_reg_read_batch(uch, _IDS_ARR, _PTRS_ARR, _N_CALLS)
-        if err != 0:
-            raise OSError(f'uc_reg_read_batch: {err}')
-        result: dict[str, int] = {_ALL_REG_NAMES[i]: int(_VALS_ARR[i]) for i in range(_N_SLOTS)}
-        eflags = result.get('EFLAGS', 0)
-        for flag, bit in _EFLAGS_BITS.items():
-            result[flag] = (eflags >> bit) & 1
-        return result
-    except Exception:
-        return {}
-
-
-def _collect_expr_reg_names(expr: Expr, names: set[str]) -> None:
-    """Recursively walk an Expr tree collecting InstructionCellExpr input keys
-    and TaintOperand / ValueOperand names."""
-    type_name = type(expr).__name__
-
-    if type_name == 'InstructionCellExpr':
-        # inputs is dict[str, Expr] — keys are register names needed as values
-        for key in expr.inputs:
-            names.add(key)
-        # Also recurse into the input Exprs (they may be ValueOperand etc.)
-        for sub in expr.inputs.values():
-            _collect_expr_reg_names(sub, names)
-
-    elif type_name == 'TaintOperand':
-        names.add(expr.name)
-
-    elif type_name == 'BinaryExpr':
-        _collect_expr_reg_names(expr.lhs, names)
-        _collect_expr_reg_names(expr.rhs, names)
-
-    elif type_name == 'UnaryExpr':
-        _collect_expr_reg_names(expr.expr, names)
-
-    elif type_name == 'AvalancheExpr':
-        _collect_expr_reg_names(expr.expr, names)
-
-    elif type_name == 'MemoryOperand':
-        _collect_expr_reg_names(expr.address_expr, names)
-
-    elif type_name == 'ValueOperand':
-        names.add(expr.name)
-
-    # ConstExpr / LiteralExpr have no register deps — stop
+        ql_arch = ql.arch.type
+    except AttributeError:
+        return Architecture.AMD64
+    arch = _QL_ARCH_TO_ARCH.get(ql_arch)
+    if arch is None:
+        raise NotImplementedError(
+            f'microtaint has no register geometry for {ql_arch!r}; '
+            f'supported guests are '
+            f'{", ".join(sorted(a.value for a in _QL_ARCH_TO_ARCH.values()))}')
+    return arch
 
 
 class MicrotaintWrapper:
@@ -517,8 +361,15 @@ class MicrotaintWrapper:
         self.check_aiw = check_aiw
         self.reporter = reporter or Reporter()
 
-        self.arch = Architecture.AMD64
-        self._pc_reg_name = 'RIP'  # PC register fed to the circuit for PC-relative memory
+        self.arch = _guest_architecture(ql)
+        self._regfile = register_file(self.arch)
+        self._regs = self._regfile.regs
+        # PC register fed to the circuit, so PC-relative operands resolve
+        # against the runtime program counter rather than the translate base.
+        self._pc_reg_name = self._regs.pc_name
+        self._format = archregs.state_format(self.arch)
+        self._format_key: tuple[tuple[str, int], ...] = tuple(
+            (r.name, r.bits) for r in self._format)
         self.sim = CellSimulator(self.arch, use_unicorn=False)
         self.shadow_mem = BitPreciseShadowMemory()
 
@@ -689,10 +540,12 @@ class MicrotaintWrapper:
                 mem_buf=_MEM_BUF,
                 arch=self.arch,
                 cached_gen_rule=_cached_generate_static_rule,
-                x64_format_key=_X64_FORMAT_KEY,
+                x64_format_key=self._format_key,
                 get_decoded=_get_decoded,
-                build_offsets_arrs=_build_offsets_arrays,
-                eflags_bits=_EFLAGS_BITS,
+                build_offsets_arrs=self._regfile.offsets_arrays,
+                eflags_bits=self._regs.flag_bits,
+                flag_parent=self._regs.flag_parent,
+                pc_reg_name=self._pc_reg_name,
                 eval_context_cls=EvalContext,
             )
         except Exception as exc:
@@ -808,7 +661,7 @@ class MicrotaintWrapper:
                 try:
                     if mapper(num) == want:
                         return num
-                except Exception:  # noqa: BLE001, PERF203 - unmapped id
+                except Exception:
                     continue
         return None
 
@@ -938,7 +791,7 @@ class MicrotaintWrapper:
             try:
                 _mr_addr = ctypes.cast(_uc_mem_read, ctypes.c_void_p).value or 0
                 _buf_addr = ctypes.addressof(_MEM_BUF)
-            except Exception:  # noqa: BLE001 - fall back to the ctypes path
+            except Exception:
                 _mr_addr = 0
                 _buf_addr = 0
         self._live_mem_reader = LiveMemReader(
@@ -1121,28 +974,24 @@ class MicrotaintWrapper:
     # ------------------------------------------------------------------
 
     def _get_live_registers(self, uch: ctypes.c_void_p) -> dict[str, int]:
-        """Read all 18 AMD64 registers via uc_reg_read_batch, fall back to Python."""
-        try:
-            return _read_regs_ctypes(uch, _ALL_REG_NAMES)
-        except Exception:
-            return self._get_live_registers_python()
+        """Every register this guest exposes, in one batch call."""
+        vals = self._regfile.read_all(uch)
+        return vals if vals else self._get_live_registers_python()
 
     def _get_live_registers_python(self) -> dict[str, int]:
         """Python-binding fallback for register reads (slower but always correct)."""
-        reg_ids = [_AMD64_REG_ID[n] for n in _ALL_REG_NAMES]
+        names = self._regfile.all_names
         try:
-            raw = self.ql.uc.reg_read_batch(reg_ids)
-            vals = dict(zip(_ALL_REG_NAMES, raw, strict=False))
+            raw = self.ql.uc.reg_read_batch(list(self._regfile.all_ids))
+            vals = dict(zip(names, raw, strict=False))
         except Exception:
             vals = {}
-            for name in _ALL_REG_NAMES:
+            for name in names:
                 try:
                     vals[name] = self.ql.arch.regs.read(name)
                 except Exception:
                     vals[name] = 0
-        eflags = vals.get('EFLAGS', 0)
-        for flag, bit in _EFLAGS_BITS.items():
-            vals[flag] = (eflags >> bit) & 1
+        self._regs.unpack_flags(vals)
         return vals  # return all — caller uses what it needs
 
     def _get_main_binary_range(self) -> tuple[int, int]:
@@ -1213,7 +1062,7 @@ class MicrotaintWrapper:
         uch = self._uc_handle
         err = _uc_mem_read(uch, address, _MEM_BUF, size)
         instruction_bytes = bytes(_MEM_BUF[:size]) if err == 0 else bytes(self.ql.mem.read(address, size))
-        circuit = _cached_generate_static_rule(self.arch, instruction_bytes, _X64_FORMAT_KEY)
+        circuit = _cached_generate_static_rule(self.arch, instruction_bytes, self._format_key)
 
         # Tier 3 fast path: per-address memoization.
         # Check cache BEFORE the expensive register batch read.  On hit
@@ -1254,7 +1103,7 @@ class MicrotaintWrapper:
             _decoded = _get_decoded(self.arch, instruction_bytes)
             _uc_arrs = _decoded._uc_arrays
             if _uc_arrs is None:
-                _uc_arrs = _build_offsets_arrays(_decoded.input_reg_offsets)
+                _uc_arrs = self._regfile.offsets_arrays(_decoded.input_reg_offsets)
                 _decoded._uc_arrays = _uc_arrs
             # Inlined _exec_regs_from_arrays — eliminates function call overhead.
             # (This Python fallback keeps the ctypes call path; the trailing raw
@@ -1268,8 +1117,7 @@ class MicrotaintWrapper:
                 _uc_reg_read_batch(uch, _ids, _ptrs, _n_calls)
                 self._pre_regs = {_names[_i]: int(_vals[_i]) for _i in range(_n)}
                 if _need_ef:
-                    _ef = self._pre_regs.get('EFLAGS', 0)
-                    self._pre_regs.update({_f: (_ef >> _b) & 1 for _f, _b in _EFLAGS_BITS.items()})
+                    self._regs.unpack_flags(self._pre_regs)
         except Exception:
             self._pre_regs = self._get_live_registers(uch)
         # Feed the REAL program counter so PC-relative memory operands (modelled by
