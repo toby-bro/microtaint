@@ -31,6 +31,10 @@ cdef struct PageMap:
 cdef class BitPreciseShadowMemory:
     cdef PageMap taint_map
     cdef PageMap state_map
+    # Fired once, on the first poison, so the wrapper can arm the UAF read
+    # callback only when a use-after-free has become possible.
+    cdef public object on_first_poison
+    cdef bint _poison_seen
 
     cdef inline uint64_t _page_base(self, uint64_t address) noexcept nogil
     cdef inline int _offset(self, uint64_t address) noexcept nogil
@@ -48,5 +52,6 @@ cdef class BitPreciseShadowMemory:
     cpdef bint is_tainted(self, uint64_t address, int size)
     cpdef void clear(self, uint64_t address, int size)
     cpdef void poison(self, uint64_t address, int size)
+    cdef void _poison(self, uint64_t address, int size)
     cpdef void unpoison(self, uint64_t address, int size)
     cpdef bint is_poisoned(self, uint64_t address, int size)

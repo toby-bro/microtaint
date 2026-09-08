@@ -427,6 +427,8 @@ class MicrotaintWrapper:
         self._live_mem_reader: LiveMemReader | None = None
         self._any_taint: bool = False  # set True on first _taint_bytes call
         self._mem_write_hook_registered: bool = False  # set True when hook registered
+        # Armed lazily, on the first poison; see _arm_uaf_read_hook.
+        self._mem_read_hook = None
         self._instr_hook_registered: bool = False  # set True when instr hook registered
 
         self._setup_hooks()
@@ -830,16 +832,21 @@ class MicrotaintWrapper:
             # hook (Tier 4).  This eliminates the per-callback Python frame
             # overhead from `__hook_mem_access_cb` / `uccallback`.
             self._mem_write_hook = MemWriteClearHook(self)
-            self._mem_read_hook = MemAccessHook(self)
             self._uaf_unmapped_hook = UafUnmappedWriteHook(self)
             self._register_cython_mem_hook(
                 self._mem_write_hook,
                 _UC_HOOK_MEM_WRITE_CONST,
             )
-            self._register_cython_mem_hook(
-                self._mem_read_hook,
-                _UC_HOOK_MEM_READ_CONST,
-            )
+            # The READ callback exists only to catch a read from freed memory,
+            # and nothing is freed yet.  Unicorn calls it on every guest load,
+            # which measured 97 ns per instruction on bench_dense purely to be
+            # registered, so it is armed the first time anything is actually
+            # poisoned instead.  The shadow is the single choke point for that
+            # (four call sites poison; all of them go through poison()), and it
+            # fires this before returning to the guest, so the callback is in
+            # place before any read that could be a use-after-free.
+            self._mem_read_hook = None
+            self.shadow_mem.on_first_poison = self._arm_uaf_read_hook
             self._register_cython_invalid_hook(
                 self._uaf_unmapped_hook,
                 _UC_HOOK_MEM_WRITE_UNMAPPED,

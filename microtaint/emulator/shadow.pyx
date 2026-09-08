@@ -146,6 +146,8 @@ cdef class BitPreciseShadowMemory:
     """
 
     def __init__(self):
+        self.on_first_poison = None
+        self._poison_seen = False
         # Lazily sized; pm_get_or_create initialises on first write.
         self.taint_map.keys = NULL
         self.taint_map.vals = NULL
@@ -302,28 +304,52 @@ cdef class BitPreciseShadowMemory:
         self.clear_c(address, size)
 
     cdef void clear_c(self, uint64_t address, int size) noexcept nogil:
-        """clear() with no Python anywhere, for the GIL-free memory hooks."""
-        cdef int i
-        cdef uint64_t addr, pb
-        cdef uint64_t cur_pb = 0
-        cdef bint have = False
-        cdef unsigned char *page = NULL
+        """clear() with no Python anywhere, for the GIL-free memory hooks.
 
-        for i in range(size):
-            addr = address + <uint64_t>i
-            pb = self._page_base(addr)
-            if not have or pb != cur_pb:
-                page = pm_get(&self.taint_map, pb)
-                cur_pb = pb
-                have = True
+        The write callback calls this for every guest store, so it is written
+        as one memset per page the range touches rather than a byte loop with a
+        page lookup carried across it.  A store is a handful of bytes and
+        almost never crosses a page, so this is usually one lookup and one
+        memset.  Nothing has ever been tainted -> nothing to clear, which is
+        one compare."""
+        if size <= 0 or self.taint_map.n == 0:
+            return
+        cdef uint64_t addr = address
+        cdef uint64_t end = address + <uint64_t>size
+        cdef uint64_t pb, run_end
+        cdef unsigned char *page
+        while addr < end:
+            pb = addr & ~<uint64_t>PAGE_MASK
+            run_end = pb + <uint64_t>PAGE_SIZE
+            if run_end > end:
+                run_end = end
+            page = pm_get(&self.taint_map, pb)
             if page != NULL:
-                page[self._offset(addr)] = 0
+                memset(<void*>(page + <int>(addr & <uint64_t>PAGE_MASK)), 0,
+                       <size_t>(run_end - addr))
+            addr = run_end
 
     # ------------------------------------------------------------------
     # Poison (UAF) API — separate page dict, never interferes with taint
     # ------------------------------------------------------------------
 
     cpdef void poison(self, uint64_t address, int size):
+        # The first poison in a run is the moment use-after-free becomes
+        # possible at all, and the read callback that detects it costs about
+        # 97 ns per guest instruction on a memory-heavy workload just to be
+        # registered.  So the wrapper does not register it up front; it hands
+        # this shadow a callback and we fire it here, once, before returning to
+        # the guest.  Every read before this point provably cannot be a UAF,
+        # because nothing was poisoned yet.
+        if not self._poison_seen:
+            self._poison_seen = True
+            if self.on_first_poison is not None:
+                cb = self.on_first_poison
+                self.on_first_poison = None
+                cb()
+        self._poison(address, size)
+
+    cdef void _poison(self, uint64_t address, int size):
         """Mark size bytes as freed/poisoned (for UAF detection)."""
         cdef int i
         cdef uint64_t addr, pb
@@ -364,22 +390,32 @@ cdef class BitPreciseShadowMemory:
         return self.is_poisoned_c(address, size)
 
     cdef bint is_poisoned_c(self, uint64_t address, int size) noexcept nogil:
-        """is_poisoned() with no Python anywhere, for the GIL-free hooks."""
-        cdef int i
-        cdef uint64_t addr, pb
-        cdef uint64_t cur_pb = 0
-        cdef bint have = False
-        cdef unsigned char *page = NULL
+        """is_poisoned() with no Python anywhere, for the GIL-free hooks.
 
-        for i in range(size):
-            addr = address + <uint64_t>i
-            pb = self._page_base(addr)
-            if not have or pb != cur_pb:
-                page = pm_get(&self.state_map, pb)
-                cur_pb = pb
-                have = True
-            if page != NULL and page[self._offset(addr)]:
-                return True
+        Every guest read asks this while UAF checking is on, and until
+        something has been freed the poison map holds no pages at all, so the
+        answer is a single compare.  Past that it is one page lookup per page
+        the range touches, then a byte scan of that run."""
+        if size <= 0 or self.state_map.n == 0:
+            return False
+        cdef uint64_t addr = address
+        cdef uint64_t end = address + <uint64_t>size
+        cdef uint64_t pb, run_end
+        cdef int off, i, n
+        cdef unsigned char *page
+        while addr < end:
+            pb = addr & ~<uint64_t>PAGE_MASK
+            run_end = pb + <uint64_t>PAGE_SIZE
+            if run_end > end:
+                run_end = end
+            page = pm_get(&self.state_map, pb)
+            if page != NULL:
+                off = <int>(addr & <uint64_t>PAGE_MASK)
+                n = <int>(run_end - addr)
+                for i in range(n):
+                    if page[off + i]:
+                        return True
+            addr = run_end
         return False
 
     # ------------------------------------------------------------------
