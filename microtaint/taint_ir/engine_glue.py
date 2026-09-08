@@ -119,8 +119,17 @@ def program_for(arch, code: bytes, name_to_slot: dict):
         _CACHE[key] = None
         return None
     _PENDING.discard(key)
-    accesses = tuple((0 if a['kind'] == 'load' else 1, a['size'])
-                     for a in prog.accesses)
+    # Whether the program actually READS the word a load brings in.  It
+    # usually does not: a move from memory routes the shadow taint and never
+    # looks at the value, and only 32% of the bank's loads have it live (8-12%
+    # outside x86).  Resolving a load costs a guest memory read, measured at
+    # about 81 ns, so the hot path skips that entirely where the value is dead.
+    live_mem = {k[1] for (kind, k), n in prog.inputs.items()
+                if kind == 'v' and isinstance(k, tuple) and k[0] == 'mem'
+                and prog.live[n]}
+    accesses = tuple((0 if a['kind'] == 'load' else 1, a['size'],
+                      1 if k in live_mem else 0)
+                     for k, a in enumerate(prog.accesses))
     # Whether the program writes the program counter decides whether the hot
     # path has to run it into scratch and apply the implicit-taint policy
     # before committing.

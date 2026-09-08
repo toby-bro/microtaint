@@ -176,6 +176,7 @@ cdef extern from "fastpath.h":
         int ir_writes_pc
         signed char ir_acc_kind[8]
         signed char ir_acc_size[8]
+        signed char ir_acc_needval[8]
         int express
 
     ctypedef struct AddrMap "MtAddrMap":
@@ -1185,6 +1186,7 @@ cdef class InstructionHook:
         for i in range(len(accesses)):
             ent.ir_acc_kind[i] = <signed char>accesses[i][0]
             ent.ir_acc_size[i] = <signed char>accesses[i][1]
+            ent.ir_acc_needval[i] = <signed char>accesses[i][2]
         ent.ir_fn = <void*><size_t>addr_val
 
     cdef int _fill_vals_arr(self, bytes instruction_bytes,

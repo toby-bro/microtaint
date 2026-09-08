@@ -106,9 +106,12 @@ typedef struct {
     int        ir_tried;          /* 0 until Python has had a chance to build it */
     int        ir_n_acc;          /* memory accesses the program makes */
     int        ir_writes_pc;      /* the program targets the program counter */
-    /* kind (0 load, 1 store) and size, per access, in the program's order. */
+    /* kind (0 load, 1 store) and size, per access, in the program's order,
+     * and whether the program actually reads the word a load brings in.  It
+     * usually does not, and resolving one costs a guest memory read. */
     signed char ir_acc_kind[MT_IR_MAX_ACC];
     signed char ir_acc_size[MT_IR_MAX_ACC];
+    signed char ir_acc_needval[MT_IR_MAX_ACC];
     /* ---- the GIL-free express lane (see mt_fast_step_nogil) ------------- */
     /* Which parts of this address's step provably touch no PyObject, so the
      * callback can run them without acquiring the GIL.  Zero means the express
@@ -125,6 +128,14 @@ typedef struct {
      * them by value safe: they are rebuilt only when the string pool changes
      * size, which cannot happen for a circuit that is already compiled. */
     PyObject   *pf_compiled;
+    /* The slots the untainted-input exit actually has to look at: pf.pool_slots
+     * with the unmapped (-1) and out-of-range entries dropped and duplicates
+     * removed.  The pool is every name the circuit mentions, so scanning it
+     * directly re-reads the same slot several times and bounds-checks each
+     * read; this is resolved once, when express is armed, and the lane then
+     * runs a flat OR over it. */
+    int        *pf_check;
+    int         pf_n_check;
 } MtAddrEntry;
 
 /* express bits */
@@ -153,6 +164,7 @@ static int mt_am_init(MtAddrMap *m, Py_ssize_t cap) {
 
 static void mt_ae_free(MtAddrEntry *e) {
     if (!e) return;
+    free(e->pf_check);
     Py_XDECREF(e->pf_compiled);
     Py_XDECREF(e->instr_bytes);
     Py_XDECREF(e->circuit);
@@ -545,9 +557,16 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
         if (ent->ir_acc_kind[k] != 0) continue;          /* stores need no read */
         const uint64_t addr = so[MT_IR_MEM_BASE + 4 * k + 1];
         const int size = ent->ir_acc_size[k];
-        uint64_t val = 0;
-        if (c->mem_fn(c->mem_ctx, addr, size, &val) != 0) return MT_EVAL_DECLINED;
-        sv[MT_IR_MEM_BASE + 4 * k] = val;
+        /* The shadow is always needed -- that is what a load contributes to
+         * the taint.  The VALUE is needed only where the program reads it,
+         * which is the minority of loads, and reading it means going out to
+         * guest memory (~81 ns).  A slot the program never reads may hold
+         * anything, so leaving it zero is exact, not an approximation. */
+        if (ent->ir_acc_needval[k]) {
+            uint64_t val = 0;
+            if (c->mem_fn(c->mem_ctx, addr, size, &val) != 0) return MT_EVAL_DECLINED;
+            sv[MT_IR_MEM_BASE + 4 * k] = val;
+        }
         st[MT_IR_MEM_BASE + 4 * k] = c->shadow_read_mask(c->shadow, addr, size);
         if (can_py && PyErr_Occurred()) { PyErr_Clear(); return MT_EVAL_DECLINED; }
     }
@@ -804,7 +823,25 @@ static void mt_express_arm(MtFastCtx *c, MtAddrEntry *ent, PyObject *compiled,
             Py_XDECREF(ent->pf_compiled);
             ent->pf_compiled = compiled;
         }
-        ent->express |= MT_XP_PF;
+        /* Compact the pool into the distinct slots that exist.  Safe to fix
+         * now because interning a register bumps express_gen, which retires
+         * this whole cache and re-arms it against the new layout. */
+        const int n_slots = *c->n_slots;
+        free(ent->pf_check);
+        ent->pf_n_check = 0;
+        ent->pf_check = (int *)malloc((size_t)(ent->pf.n_pool > 0
+                                               ? ent->pf.n_pool : 1) * sizeof(int));
+        if (ent->pf_check) {
+            for (int i = 0; i < ent->pf.n_pool; i++) {
+                const int slot = ent->pf.pool_slots[i];
+                if (slot < 0 || slot >= n_slots) continue;
+                int seen = 0;
+                for (int j = 0; j < ent->pf_n_check; j++)
+                    if (ent->pf_check[j] == slot) { seen = 1; break; }
+                if (!seen) ent->pf_check[ent->pf_n_check++] = slot;
+            }
+            ent->express |= MT_XP_PF;
+        }
     }
 
     /* The whole instruction's taint as one call into compiled code.  Three
@@ -877,12 +914,12 @@ static int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size)
      * claim nothing, and the memory-write callback clears exactly the bytes
      * this exit leaves to it. */
     if (ent->express & MT_XP_PF) {
-        int clean = 1;
-        for (int i = 0; i < ent->pf.n_pool; i++) {
-            int slot = ent->pf.pool_slots[i];
-            if (slot >= 0 && slot < n_slots && g_taint[slot]) { clean = 0; break; }
-        }
-        if (clean) {
+        /* Accumulated rather than short-circuited: the list is a handful of
+         * slots, and on the path that matters -- everything clean -- every one
+         * of them is read anyway, so a branch per slot only costs. */
+        uint64_t any = 0;
+        for (int i = 0; i < ent->pf_n_check; i++) any |= g_taint[ent->pf_check[i]];
+        if (any == 0) {
             for (int k = 0; k < ent->pf.n_out; k++) {
                 int slot = ent->pf.outs[k].slot;
                 if (slot >= 0 && slot < n_slots)
