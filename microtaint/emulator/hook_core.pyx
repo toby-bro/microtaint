@@ -1886,7 +1886,13 @@ cdef void _c_instruction_hook(void *uc, unsigned long long address,
     if _NULL_HOOK:
         return
     cdef InstructionHook hook = <InstructionHook>user_data
-    hook._evaluate(address, <int>size)
+    # Straight to the array path when it is in use.  `_evaluate` only
+    # dispatches between the two, and a whole Cython call to decide something
+    # fixed at import time is about 3.5% of the run.
+    if _USE_ARR_HOOK:
+        hook._evaluate_arr(address, <int>size)
+    else:
+        hook._evaluate(address, <int>size)
 
 
 def c_instruction_hook_ptr():
