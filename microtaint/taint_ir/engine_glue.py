@@ -48,6 +48,21 @@ def _arch_key(arch):
     return arch.value if hasattr(arch, 'value') else str(arch)
 
 
+def _layout_key(name_to_slot: dict):
+    """The slot layout a program was compiled against.
+
+    A program's slot numbers are compiled INTO its machine code, so two callers
+    with different layouts must never share one.  They did: the cache was keyed
+    on the instruction alone, and the only reason it never showed is that the
+    emulator hook was the sole caller and every hook interns its registers in
+    the same order.  Give one caller `{RAX: 0, RBX: 1}` and another
+    `{RBX: 0, RAX: 1}` and `add rax, rbx` comes back with RBX tainted where only
+    RAX was -- the answer attributed to the wrong register, and under a
+    different permutation that is a DROPPED taint, not a spurious one.
+    """
+    return frozenset(name_to_slot.items())
+
+
 def _lift(key, arch, code: bytes, n_slots: int):
     """This instruction's lowered program, lifting it only when it has to.
 
@@ -82,7 +97,7 @@ def program_for(arch, code: bytes, name_to_slot: dict):
     """
     if not enabled():
         return None
-    key = (_arch_key(arch), bytes(code))
+    key = (_arch_key(arch), bytes(code), _layout_key(name_to_slot))
     hit = _CACHE.get(key)
     if hit is not None:
         return hit
