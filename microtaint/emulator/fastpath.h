@@ -101,6 +101,7 @@ typedef struct {
     void      *ir_fn;             /* MtTaintIRFn; void* so Cython can assign it */
     int        ir_tried;          /* 0 until Python has had a chance to build it */
     int        ir_n_acc;          /* memory accesses the program makes */
+    int        ir_writes_pc;      /* the program targets the program counter */
     /* kind (0 load, 1 store) and size, per access, in the program's order. */
     signed char ir_acc_kind[MT_IR_MAX_ACC];
     signed char ir_acc_size[MT_IR_MAX_ACC];
@@ -423,6 +424,26 @@ static inline int mt_untainted_exit(MtFastCtx *c, PyObject *compiled,
  * instruction untouched for the slow path.  Returns the number of committed
  * writes, or MT_EVAL_DECLINED.
  */
+/* The implicit-taint policy, for a compiled program that writes the program
+ * counter.  Mirrors circuit_c's mt_check_implicit: a tainted counter under WARN
+ * or STOP is a report, which lives in Python, so the caller must hand the whole
+ * instruction over having committed nothing.  KEEP keeps the taint; IGNORE
+ * clears it.
+ *
+ * `taint` is the program's result in scratch, never the live array -- deciding
+ * this after committing would mean reporting a leak that had already been
+ * written down.  Returns 1 when the caller may commit.
+ */
+static inline int mt_ir_policy_ok(MtFastCtx *c, uint64_t *taint, int n_slots) {
+    const int pc_slot = *c->rip_slot;
+    if (pc_slot < 0 || pc_slot >= n_slots) return 0;   /* cannot decide: defer */
+    if (taint[pc_slot] == 0) return 1;
+    if (c->implicit_policy == MT_POLICY_WARN || c->implicit_policy == MT_POLICY_STOP)
+        return 0;
+    if (c->implicit_policy != MT_POLICY_KEEP) taint[pc_slot] = 0;
+    return 1;
+}
+
 static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
                           int out_cap) {
     const int n_slots = *c->n_slots;
@@ -470,6 +491,9 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
      * instruction computes.  The address's own taint is published as an output
      * so a future policy can act on it; widening the answer here instead would
      * change every result involving a tainted stack pointer. */
+
+    if (ent->ir_writes_pc && !mt_ir_policy_ok(c, so, n_slots))
+        return MT_EVAL_DECLINED;
 
     memcpy(*c->g_taint, so, nb);
     int n_w = 0;
@@ -593,8 +617,7 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
      * the circuit evaluator can still handle the instruction exactly as it
      * always did. */
     rc = MT_EVAL_DECLINED;
-    if (has_mem && ent->ir_fn && ent->ir_n_acc > 0
-            && !(cflags & MT_CF_PC_TARGET)) {
+    if (has_mem && ent->ir_fn && ent->ir_n_acc > 0) {
         rc = mt_ir_mem_step(c, ent, mw, MT_MAX_MEM_WRITES);
     }
     if (rc != MT_EVAL_DECLINED) {
@@ -606,7 +629,22 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
                                       c->mem_fn, c->mem_ctx, mw, MT_MAX_MEM_WRITES,
                                       c->implicit_policy);
     } else if (ent->ir_fn && ent->ir_n_acc == 0
-                       && !(cflags & MT_CF_PC_TARGET)) {
+                       && (ent->ir_writes_pc || (cflags & MT_CF_PC_TARGET))) {
+        /* A branch: the program is run into scratch so the implicit-taint
+         * policy can be applied before anything is committed.
+         *
+         * EITHER signal is enough.  The circuit's PC_TARGET flag and the
+         * lowering's own view of what it writes are derived differently and
+         * have already been caught disagreeing once (see the has_mem /
+         * ir_n_acc note below); taking the union means a disagreement costs a
+         * scratch copy rather than an unreported leak. */
+        if (!c->ir_taint || n_slots > MT_IR_MEM_BASE) return MT_FAST_SLOW;
+        memcpy(c->ir_out, g_taint, nbytes);
+        ((MtTaintIRFn)ent->ir_fn)(g_val, g_taint, c->ir_out);
+        if (!mt_ir_policy_ok(c, c->ir_out, n_slots)) return MT_FAST_SLOW;
+        memcpy(g_taint, c->ir_out, nbytes);
+        rc = 0;
+    } else if (ent->ir_fn && ent->ir_n_acc == 0) {
         /* The whole instruction's taint, flags included, as one call into code
          * compiled from its p-code.  Writing through g_taint in place is safe:
          * the emitted program reads every input before it stores any output,

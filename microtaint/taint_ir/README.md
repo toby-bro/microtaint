@@ -32,7 +32,12 @@ eliminated. Three structural guarantees make it compilable:
 - *straight-line* — p-code's intra-instruction control flow becomes
   predication. A write under an unknown predicate is a select; under a
   **tainted** predicate it is implicit flow, and the join carries both sides'
-  taint plus the bits on which they differ, which is exact.
+  taint plus the bits on which they differ, which is exact. A branch that
+  leaves the instruction is not control flow *within* it: it writes the program
+  counter, and the rule is short — a fixed target taints nothing, an indirect
+  branch inherits its operand's taint, a conditional jump makes the counter
+  secret-dependent exactly when its condition is, and a return carries nothing
+  new because the load that fetched the address already wrote the counter.
 - *SSA* — register aliasing (AL inside RAX, a flag byte inside a flag block) is
   resolved at lift time by a symbolic frame; none of it survives into the
   program.
@@ -106,22 +111,25 @@ Whole instruction, all outputs including flags, over the 1569-instruction bank:
 | C interpreter | 184 ns | none |
 
 Per ISA, compiled: AMD64 7.0 ns, ARM64 5.4, PPC32BE 4.3, MIPS64BE 3.3,
-RISCV64 3.9. Coverage is 98.0% of the bank (1538/1569), and the host emitter
-takes 1531 of those; what is left is a CALLOTHER whose result is read
-downstream, a backward branch (a p-code loop), a wide add from `adcx`, and --
-for the emitter alone — division and count-leading-zeros.
+RISCV64 3.9. Coverage is 98.2% of the bank (1540/1569); what is left is a CALLOTHER whose
+result is read downstream or is wider than a word, a p-code loop (a backward
+branch), and the wide add `adcx` lifts to. The host emitter takes all but
+division and count-leading-zeros.
 
 In the engine, with `MICROTAINT_TAINT_IR=1` against the same run without it:
 
 | benchmark | bare Qiling | differential | compiled |
 |---|---|---|---|
-| bench_dense | 8.68 ms | 725.24 ms (×84) | 407.32 ms (×47) |
-| bench_sparse | 2.81 ms | 92.74 ms (×33) | 86.41 ms (×31) |
-| bench_untainted | 2.74 ms | 86.17 ms (×31) | 85.82 ms (×31) |
+| bench_dense | 8.51 ms | 712.31 ms (×84) | 377.32 ms (×44) |
+| bench_sparse | 2.81 ms | 89.24 ms (×32) | 82.10 ms (×29) |
+| bench_untainted | 2.44 ms | 86.17 ms (×35) | 85.82 ms (×35) |
 
-SLEIGH re-executions on the dense workload drop from 131231 to 4664. Read that
-against the untainted row: with taint work at essentially zero the overhead is
-still ×31, so what remains is the per-instruction hook, not taint arithmetic.
+SLEIGH re-executions on the dense workload drop from 131231 to 177 — the
+differential is essentially never reached. Read that against the untainted row:
+with taint work at essentially zero the overhead is still ×35, so what remains
+is the per-instruction hook, not taint arithmetic. `run_overhead.py` splits
+that: of 558 ns per instruction there, about 203 is the cost of being hooked at
+all and the rest is the hook body.
 
 ## How it is checked
 
@@ -141,6 +149,25 @@ same p-code and inherit its undefined-flag gaps.
   backends against each other on many random states.
 - `tests/taint_ir_perf.py` — the per-instruction timing baseline.
 
+## p-code loops, the one structural gap left
+
+A `rep`-prefixed string operation lifts to a loop whose backward branch targets
+the instruction's own IMARK. The trip count is a runtime value, so it cannot be
+unrolled at lift time — but the body is an ordinary straight-line program, so
+the shape of the answer is: lower the body once and let the caller iterate it.
+
+With an **untainted** loop condition the trip count is public, so running the
+body once per iteration is exact — no implicit flow, nothing to
+over-approximate. With a **tainted** one, how many times the body runs is itself
+secret over an unbounded set, which has no cheap sound answer; decline.
+
+Two things have to change for that, and neither is done: the body's *values*
+must survive from one iteration to the next (today only taint is an output, and
+the value computation is eliminated unless a taint rule reads it), and a loop
+that stores has to commit shadow writes per iteration rather than accumulating
+them, which costs the all-or-nothing property the other paths rely on. Until
+then a backward branch declines and the circuit handles it.
+
 ## Using it in the engine
 
 `engine_glue.program_for(arch, code, slot_map)` compiles a program against the
@@ -149,10 +176,12 @@ interned slot (they are interned lazily, so it retries), no offset it touches
 carries two of the caller's names, and the host emitter took it — the
 interpreter is not reachable from the hot path.
 
-The hot path calls it through `MtAddrEntry.ir_fn`, and never for an instruction
-that writes PC: the implicit-taint policy check lives inside the circuit
-evaluator. A memory program runs the two-pass protocol in
-`fastpath.h::mt_ir_mem_step`, which commits nothing until both passes have
+The hot path calls it through `MtAddrEntry.ir_fn`. A memory program runs the
+two-pass protocol in `fastpath.h::mt_ir_mem_step`, and a program that writes the
+program counter runs into scratch so the implicit-taint policy can be applied
+before anything is committed — deciding after committing would mean reporting a
+leak already written down. Under WARN or STOP the instruction goes back to the
+circuit, which owns the reporting. Neither path commits anything until it has
 succeeded, so a refusal simply leaves the instruction to the circuit.
 
 Opt in with `MICROTAINT_TAINT_IR=1`.

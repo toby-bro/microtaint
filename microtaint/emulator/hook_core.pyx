@@ -173,6 +173,7 @@ cdef extern from "fastpath.h":
         void *ir_fn
         int ir_tried
         int ir_n_acc
+        int ir_writes_pc
         signed char ir_acc_kind[8]
         signed char ir_acc_size[8]
 
@@ -1082,12 +1083,13 @@ cdef class InstructionHook:
             return
         if got is None:
             return
-        cap, addr_val, accesses = got
+        cap, addr_val, accesses, writes_pc = got
         if len(accesses) > 8:
             return
         # The capsule owns the emitted code; hold it for the hook's lifetime.
         self.taint_ir_progs[instruction_bytes] = cap
         ent.ir_n_acc = len(accesses)
+        ent.ir_writes_pc = 1 if writes_pc else 0
         for i in range(len(accesses)):
             ent.ir_acc_kind[i] = <signed char>accesses[i][0]
             ent.ir_acc_size[i] = <signed char>accesses[i][1]
@@ -1322,6 +1324,7 @@ cdef class InstructionHook:
                     aent.ir_fn = NULL
                     aent.ir_tried = 0
                     aent.ir_n_acc = 0
+                    aent.ir_writes_pc = 0
                 if address < self.code_lo:
                     self.code_lo = address
                 if address + <unsigned long long>size > self.code_hi:

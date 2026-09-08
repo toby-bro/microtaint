@@ -294,6 +294,15 @@ class Builder:
             covered.update(range(off, off + size))
             declared[off] = (name, size)
             self.name_by_off[off] = name
+        # The architectural program counter, so a branch can say what it makes
+        # secret-dependent.  Ghidra spells it RIP/EIP on x86 and PC everywhere
+        # else, which is the whole of the ISA-specific knowledge needed here.
+        self.pc_off = None
+        self.pc_size = 8
+        for off, (nm, size) in declared.items():
+            if nm in ('RIP', 'EIP', 'PC'):
+                self.pc_off, self.pc_size = off, size
+                break
         self.declared = declared
         self.names = {n for n, _s in declared.values()}
         self.be = be
@@ -340,8 +349,18 @@ class Builder:
                 continue
             if name == 'CBRANCH':
                 target = self._branch_target(op, pc, n)
-                if target is None or target <= pc:
-                    raise Unsupported('backward or unresolved CBRANCH')
+                if target is None:
+                    # A real conditional jump out of the instruction.  Which of
+                    # two addresses the counter takes is decided by the
+                    # condition, so a tainted condition makes the counter
+                    # secret-dependent -- the implicit flow the engine's policy
+                    # exists to report.
+                    _cv, cond_t = self._read_in(op.inputs[1])
+                    self._write_pc(p.op(AND, p.const(_mask_of(self.pc_size)),
+                                        p.splat(p.op(NEZ, cond_t))))
+                    continue
+                if target <= pc:
+                    raise Unsupported('backward CBRANCH (p-code loop)')
                 cv, ct = self._read_in(op.inputs[1])
                 # The branch SKIPS [pc+1, target); the region therefore runs
                 # under `not taken`.
@@ -352,16 +371,39 @@ class Builder:
                 continue
             if name == 'BRANCH':
                 target = self._branch_target(op, pc, n)
-                if target is None or target <= pc:
-                    raise Unsupported('backward or unresolved BRANCH')
+                if target is None:
+                    self._write_pc(p.const(0))   # a fixed target taints nothing
+                    continue
+                if target <= pc:
+                    raise Unsupported('backward BRANCH (p-code loop)')
                 # An unconditional forward branch inside the instruction: the
                 # skipped region simply never runs under this predicate.
                 pred_stack.append((target, self.pred_v, self.pred_t))
                 self.pred_v = p.const(0)
                 self.pred_t = self.pred_t
                 continue
-            if name in ('BRANCHIND', 'CALL', 'CALLIND', 'RETURN'):
-                raise Unsupported(name)
+            if name in ('BRANCHIND', 'CALLIND'):
+                # An indirect branch: the program counter becomes whatever the
+                # operand holds, so it inherits that operand's taint exactly.
+                _v, ind_t = self._read_in(op.inputs[0])
+                self._write_pc(ind_t)
+                continue
+            if name == 'CALL':
+                # A direct call: the target is fixed, so the counter is not
+                # secret-dependent.  The return-address push is an ordinary
+                # STORE and was handled as one.
+                self._write_pc(p.const(0))
+                continue
+            if name == 'RETURN':
+                # The counter takes whatever RETURN was handed.  On x86 that is
+                # the value the preceding LOAD already put there, and on AArch64
+                # it is the link register a COPY already moved into it, so this
+                # is usually idempotent -- but writing it explicitly does not
+                # assume either shape.
+                if op.inputs:
+                    _v, ret_t = self._read_in(op.inputs[0])
+                    self._write_pc(ret_t)
+                continue
             if name == 'CALLOTHER':
                 self._emit_callother(ops, pc, op)
                 continue
@@ -397,6 +439,20 @@ class Builder:
         p.accesses = self.accesses
         self._check_address_independence(p)
         return p.finish()
+
+    def _write_pc(self, tnt):
+        """Set the program counter's taint.
+
+        Only the TAINT frame is written.  The counter's value at this point is a
+        target baked against the lift base, which is not where the instruction
+        actually runs; leaving the value alone means a later read sees the
+        honest input rather than a fabricated one.  Nothing in these shapes
+        reads it -- the branch is the last thing the instruction does.
+        """
+        if self.pc_off is None:
+            raise Unsupported('no program counter in this register file')
+        self.t.write('register', self.pc_off, self.pc_size,
+                     self.p.mask(tnt, self.pc_size * 8))
 
     # -- opaque operations ---------------------------------------------
     def _emit_callother(self, ops, pc, op):
