@@ -13,6 +13,9 @@
  *   code+regs    the callback reads four guest registers through
  *                uc_reg_read_batch, which is what the engine's fast path does
  *                on every instruction whose inputs are not provably clean.
+ *   code+mem     the callback reads eight bytes of guest memory through
+ *                uc_mem_read, which is what the compiled memory path does for
+ *                every load it resolves.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +37,13 @@ static int g_ids[8] = {UC_X86_REG_RAX, UC_X86_REG_RBX, UC_X86_REG_RDX, UC_X86_RE
                        UC_X86_REG_RSI, UC_X86_REG_RDI, UC_X86_REG_R8, UC_X86_REG_R9};
 static uint64_t g_vals[8];
 static void *g_ptrs[8];
+static unsigned char g_mbuf[64];
+static void cb_mem(uc_engine *uc, uint64_t a, uint32_t s, void *d) {
+    (void)a;(void)s;(void)d;
+    uc_mem_read(uc, STACK + 0x1000, g_mbuf, 8);
+    g_calls++;
+}
+
 static void cb_regs(uc_engine *uc, uint64_t a, uint32_t s, void *d) {
     (void)a;(void)s;(void)d;
     uc_reg_read_batch(uc, g_ids, g_ptrs, g_nregs);
@@ -60,7 +70,8 @@ static size_t build(unsigned char *p, int body_n) {
     return n;
 }
 
-typedef enum { M_NONE, M_CODE, M_BLOCK, M_CODE_COUNT, M_CODE_REGS } hmode_t;
+typedef enum { M_NONE, M_CODE, M_BLOCK, M_CODE_COUNT, M_CODE_REGS,
+               M_CODE_MEM } hmode_t;
 
 static double run_one(hmode_t mode, int body_n, uint64_t iters,
                       uint64_t *instrs, uint64_t *calls) {
@@ -81,6 +92,7 @@ static double run_one(hmode_t mode, int body_n, uint64_t iters,
     case M_CODE_COUNT: uc_hook_add(uc, &h, UC_HOOK_CODE,  (void*)cb_count, NULL, 1, 0); break;
     case M_BLOCK:      uc_hook_add(uc, &h, UC_HOOK_BLOCK, (void*)cb_blk,   NULL, 1, 0); break;
     case M_CODE_REGS:  uc_hook_add(uc, &h, UC_HOOK_CODE,  (void*)cb_regs,  NULL, 1, 0); break;
+    case M_CODE_MEM:   uc_hook_add(uc, &h, UC_HOOK_CODE,  (void*)cb_mem,   NULL, 1, 0); break;
     default: break;
     }
     double t0 = now();
@@ -101,9 +113,11 @@ int main(int argc, char **argv) {
     int reps = argc > 3 ? atoi(argv[3]) : 3;
     if (argc > 4) g_nregs = atoi(argv[4]);
     const char *names[] = {"no hook", "code hook", "block hook",
-                          "code hook + counter", "code hook + N reg reads"};
-    hmode_t modes[] = {M_NONE, M_CODE, M_BLOCK, M_CODE_COUNT, M_CODE_REGS};
-    enum { NMODE = 5 };
+                          "code hook + counter", "code hook + N reg reads",
+                          "code hook + 8B mem read"};
+    hmode_t modes[] = {M_NONE, M_CODE, M_BLOCK, M_CODE_COUNT, M_CODE_REGS,
+                       M_CODE_MEM};
+    enum { NMODE = 6 };
     double best[NMODE]; uint64_t ins = 0, calls[NMODE];
     for (int m = 0; m < NMODE; m++) {
         best[m] = 1e30;
