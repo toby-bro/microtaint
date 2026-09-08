@@ -105,7 +105,29 @@ typedef struct {
     /* kind (0 load, 1 store) and size, per access, in the program's order. */
     signed char ir_acc_kind[MT_IR_MAX_ACC];
     signed char ir_acc_size[MT_IR_MAX_ACC];
+    /* ---- the GIL-free express lane (see mt_fast_step_nogil) ------------- */
+    /* Which parts of this address's step provably touch no PyObject, so the
+     * callback can run them without acquiring the GIL.  Zero means the express
+     * lane declines this address outright. */
+    int         express;
+    /* The slot generation `pf` was resolved against.  Interning a register
+     * reallocates the taint array and can change what the clear masks mean, so
+     * a cache from before that is not reusable. */
+    unsigned    express_gen;
+    int         cflags;           /* compiled_flags(), a per-address constant */
+    MtPrefilter pf;               /* valid while (express & MT_XP_PF) */
+    /* A STRONG reference to the compiled circuit `pf` points into.  pf's arrays
+     * are internal to it, and holding the circuit alive is what makes caching
+     * them by value safe: they are rebuilt only when the string pool changes
+     * size, which cannot happen for a circuit that is already compiled. */
+    PyObject   *pf_compiled;
 } MtAddrEntry;
+
+/* express bits */
+#define MT_XP_PF    0x1   /* the untainted-input exit runs from the cached pf */
+#define MT_XP_IR    0x2   /* the whole taint program is one call into native code */
+#define MT_XP_IRPC  0x4   /* ... and it writes the program counter */
+#define MT_XP_IRMEM 0x8   /* ... and it accesses memory (the two-pass protocol) */
 
 typedef struct {
     uint64_t     *keys;
@@ -127,6 +149,7 @@ static int mt_am_init(MtAddrMap *m, Py_ssize_t cap) {
 
 static void mt_ae_free(MtAddrEntry *e) {
     if (!e) return;
+    Py_XDECREF(e->pf_compiled);
     Py_XDECREF(e->instr_bytes);
     Py_XDECREF(e->circuit);
     Py_XDECREF(e->uc_arrs);
@@ -281,6 +304,30 @@ typedef struct {
     unsigned long *fast_done;
     /* Instructions dismissed by the untainted-input exit below. */
     unsigned long *prefilter_hits;
+    /* ---- the GIL-free express lane ------------------------------------- */
+    /* Bumped whenever interning a register invalidates the cached prefilters. */
+    unsigned      *express_gen;
+    /* Instructions finished without acquiring the GIL.  A measurement, not an
+     * assumption: a change that quietly made the lane decline would barely move
+     * the wall clock but would collapse this. */
+    unsigned long *express_done;
+    unsigned long *instr_total;
+    int           *arr_loaded;    /* seeded taint has reached the array */
+    /* The attacker-influenced-write check reads this instruction's committed
+     * stores back in Python, so a store cannot be finished without the GIL
+     * while it is on. */
+    int           *check_aiw;
+    /* The wrapper's set of addresses this instruction claimed as tainted
+     * writes.  The express lane never stores, so it has nothing to add -- but
+     * it must not leave a previous instruction's claims standing either, and
+     * clearing a Python set needs the GIL.  Read-only here: a non-empty set
+     * sends the instruction to the GIL path, which clears it. */
+    PyObject     **ltw_set;
+    /* The hook this context belongs to, borrowed.  The callback's user_data is
+     * this context rather than the hook, because reaching the context must not
+     * cost a PyObject cast -- that is the cost the express lane exists to
+     * avoid.  Only the GIL path ever dereferences this. */
+    PyObject      *owner;
 } MtFastCtx;
 
 /* Scatter the flag bits of the packed flags register into their own value
@@ -444,8 +491,14 @@ static inline int mt_ir_policy_ok(MtFastCtx *c, uint64_t *taint, int n_slots) {
     return 1;
 }
 
+/* `can_py` is 0 when the caller holds no GIL.  The only thing it guards is the
+ * PyErr_Occurred probe below, which is defensive: shadow_read_mask is a
+ * `noexcept` Cython function whose body is an unchecked cast and a `nogil`
+ * method, so it has no way to leave an exception set.  Probing the thread state
+ * without the GIL would nonetheless be reaching into CPython's internals for an
+ * answer that is already known, so the express lane says 0 and skips it. */
 static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
-                          int out_cap) {
+                          int out_cap, int can_py) {
     const int n_slots = *c->n_slots;
     if (n_slots > MT_IR_MEM_BASE || ent->ir_n_acc > out_cap) return MT_EVAL_DECLINED;
     /* The context stores Py_None rather than NULL for an absent shadow -- the
@@ -478,7 +531,7 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
         if (c->mem_fn(c->mem_ctx, addr, size, &val) != 0) return MT_EVAL_DECLINED;
         sv[MT_IR_MEM_BASE + 4 * k] = val;
         st[MT_IR_MEM_BASE + 4 * k] = c->shadow_read_mask(c->shadow, addr, size);
-        if (PyErr_Occurred()) { PyErr_Clear(); return MT_EVAL_DECLINED; }
+        if (can_py && PyErr_Occurred()) { PyErr_Clear(); return MT_EVAL_DECLINED; }
     }
 
     /* Pass 2: the taint, now that the loaded words are known. */
@@ -624,7 +677,7 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
      * always did. */
     rc = MT_EVAL_DECLINED;
     if (has_mem && ent->ir_fn && ent->ir_n_acc > 0) {
-        rc = mt_ir_mem_step(c, ent, mw, MT_MAX_MEM_WRITES);
+        rc = mt_ir_mem_step(c, ent, mw, MT_MAX_MEM_WRITES, 1);
     }
     if (rc != MT_EVAL_DECLINED) {
         /* the compiled program answered */
@@ -684,6 +737,186 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
         ent->have_snap = 1;
     }
     (*c->fast_done)++;
+    return MT_FAST_DONE;
+}
+
+/* ---------------------------------------------------------------------------
+ * The GIL-free express lane.
+ *
+ * Unicorn releases the GIL for the duration of emulation, so a callback
+ * declared `with gil` re-acquires it once per guest instruction.  Measured
+ * against a pure-C Unicorn harness on the same workload, Unicorn's own
+ * per-instruction dispatch costs about 18 ns while the engine's null hook costs
+ * about 200 ns: nearly all of the difference is that acquire, plus the handful
+ * of refcount operations the Cython prologue performs before it can reach the C
+ * path at all.
+ *
+ * None of that work is necessary for the two cases that between them cover most
+ * of a run: an instruction whose inputs are all clean, and one whose whole taint
+ * propagation has been compiled to native code.  Both are pure arithmetic over
+ * C arrays.  What kept them behind the GIL was the bookkeeping around them --
+ * resolving the circuit, asking it for its flags and its prefilter -- and every
+ * one of those answers is a per-address constant.  Cache them on the address
+ * entry and the lane needs no Python at all.
+ *
+ * The lane is strictly optional: it returns MT_FAST_SLOW for anything it is not
+ * certain of, having committed nothing, and the GIL path then runs the
+ * instruction exactly as it always did.
+ * ------------------------------------------------------------------------ */
+
+/* Cache what the express lane needs for this address.  Called from the GIL path
+ * once the full step has succeeded, so everything it depends on is resolved. */
+static void mt_express_arm(MtFastCtx *c, MtAddrEntry *ent, PyObject *compiled,
+                           int cflags) {
+    ent->express = 0;
+    ent->cflags = cflags;
+    ent->express_gen = *c->express_gen;
+    if (!c->capi || !compiled) return;
+
+    const int has_mem = (cflags & MT_CF_HAS_MEM_OPS) != 0;
+
+    /* The untainted-input exit, resolved once.  Only its register-only form:
+     * proving a LOAD's source clean means evaluating the effective address and
+     * querying the shadow, which is not something to do without the GIL. */
+    if (c->capi->compiled_prefilter
+            && c->capi->compiled_prefilter(compiled, c->slot_map, &ent->pf) == 0
+            && !ent->pf.reads_memory) {
+        if (ent->pf_compiled != compiled) {
+            Py_INCREF(compiled);
+            Py_XDECREF(ent->pf_compiled);
+            ent->pf_compiled = compiled;
+        }
+        ent->express |= MT_XP_PF;
+    }
+
+    /* The whole instruction's taint as one call into compiled code.  Three
+     * shapes, in increasing order of what they need around the call:
+     *
+     *   MT_XP_IR     registers only -- the call writes the taint array directly.
+     *   MT_XP_IRPC   the program writes the program counter, so the result goes
+     *                to scratch and the implicit-taint policy decides whether it
+     *                may be committed.  That decision is arithmetic (a slot and
+     *                a policy constant) EXCEPT when it wants to report, and
+     *                reporting is Python -- so the lane runs it and hands the
+     *                instruction over untouched in exactly that case.
+     *   MT_XP_IRMEM  the program accesses memory, which is the two-pass
+     *                protocol: guest reads through mem_fn and shadow reads and
+     *                writes through the shadow's C entry points, all of them
+     *                `nogil` already.
+     *
+     * `ir_n_acc == 0` is not the same test as `!has_mem`; see the note in
+     * mt_fast_step about the two disagreeing.  Both are required.
+     */
+    if (ent->ir_fn && ent->have_regs && ent->have_slots) {
+        const int pc = ent->ir_writes_pc || (cflags & MT_CF_PC_TARGET);
+        if (ent->ir_n_acc == 0 && !has_mem)
+            ent->express |= pc ? MT_XP_IRPC : MT_XP_IR;
+        else if (ent->ir_n_acc > 0 && has_mem && c->shadow_read_mask
+                 && c->shadow_write_mask && c->mem_fn && c->ir_val
+                 && c->shadow && c->shadow != Py_None)
+            ent->express |= MT_XP_IRMEM;
+    }
+}
+
+/*
+ * One instruction, start to finish, touching no PyObject anywhere.
+ *
+ * Returns MT_FAST_DONE when it handled the instruction, MT_FAST_SLOW when the
+ * caller must take the GIL and run the full path.  It cannot fail any other
+ * way: there is nothing here that can raise.
+ *
+ * Atomicity is the same contract as mt_fast_step -- on MT_FAST_SLOW nothing has
+ * been written to the taint array, so the full path starts from an unmodified
+ * state and simply repeats the decision.
+ */
+static int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size) {
+    if (!c->map || !c->arr_loaded || !*c->arr_loaded) return MT_FAST_SLOW;
+    MtAddrEntry *ent = mt_am_get(c->map, address);
+    if (!ent || !ent->express || ent->size != (int)size) return MT_FAST_SLOW;
+    /* A cached prefilter is only meaningful against the slot layout it was
+     * resolved for. */
+    if (ent->express_gen != *c->express_gen) return MT_FAST_SLOW;
+    /* A previous instruction's tainted-write claims are still standing, and
+     * dropping them means clearing a Python set. */
+    if (c->ltw_set && *c->ltw_set && PySet_GET_SIZE(*c->ltw_set) != 0)
+        return MT_FAST_SLOW;
+
+    const int n_slots = *c->n_slots;
+    uint64_t *g_taint = *c->g_taint;
+
+    /* ---- every input clean: the answer is "clear each target's bits" ---- */
+    /* Tried first, even for an instruction that also has a compiled program.
+     * The full path orders these the other way round, because for a memory
+     * instruction its version of this exit is not cheap -- proving a load's
+     * source clean means evaluating the address and querying the shadow, which
+     * the program would do anyway.  Here the exit IS cheap: it runs off a
+     * cached prefilter and never applies to a load (reads_memory keeps those
+     * unarmed).  The two orders agree on the answer.  With every input clean a
+     * store's taint is zero, so the program would write a zero shadow mask and
+     * claim nothing, and the memory-write callback clears exactly the bytes
+     * this exit leaves to it. */
+    if (ent->express & MT_XP_PF) {
+        int clean = 1;
+        for (int i = 0; i < ent->pf.n_pool; i++) {
+            int slot = ent->pf.pool_slots[i];
+            if (slot >= 0 && slot < n_slots && g_taint[slot]) { clean = 0; break; }
+        }
+        if (clean) {
+            for (int k = 0; k < ent->pf.n_out; k++) {
+                int slot = ent->pf.outs[k].slot;
+                if (slot >= 0 && slot < n_slots)
+                    g_taint[slot] &= ~ent->pf.outs[k].clear_mask;
+            }
+            *c->ltw_n = 0;
+            (*c->instr_total)++;
+            (*c->prefilter_hits)++;
+            (*c->fast_done)++;
+            (*c->express_done)++;
+            return MT_FAST_DONE;
+        }
+    }
+
+    /* ---- otherwise the compiled program, if there is one ---------------- */
+    if (!(ent->express & (MT_XP_IR | MT_XP_IRPC | MT_XP_IRMEM)))
+        return MT_FAST_SLOW;
+    if (mt_read_regs(c, ent, address) != 0) return MT_FAST_SLOW;
+    const size_t nbytes = (size_t)n_slots * sizeof(uint64_t);
+    MtMemWrite mw[MT_MAX_MEM_WRITES];
+    int n_w = 0;
+
+    if (ent->express & MT_XP_IR) {
+        /* Writing through g_taint in place is safe: the emitted program reads
+         * every input before it stores any output, for exactly this aliasing.
+         *
+         * The output cache is deliberately skipped.  It exists to avoid an
+         * expensive evaluation, and this is not one -- probing it means a
+         * memcmp over the whole slot array, which costs more than the call it
+         * would save.  Skipping it cannot make an answer stale either: a
+         * snapshot pair records a function of the input taint, and this
+         * computes the same function. */
+        ((MtTaintIRFn)ent->ir_fn)(*c->g_val, g_taint, g_taint);
+    } else if (ent->express & MT_XP_IRPC) {
+        if (!c->ir_out || n_slots > MT_IR_MEM_BASE) return MT_FAST_SLOW;
+        memcpy(c->ir_out, g_taint, nbytes);
+        ((MtTaintIRFn)ent->ir_fn)(*c->g_val, g_taint, c->ir_out);
+        /* Nothing is committed until the policy has spoken: deciding after
+         * committing would mean reporting a leak already written down. */
+        if (!mt_ir_policy_ok(c, c->ir_out, n_slots)) return MT_FAST_SLOW;
+        memcpy(g_taint, c->ir_out, nbytes);
+    } else {
+        /* A store's committed writes are read back in Python by the
+         * attacker-influenced-write check, so that check keeps stores on the
+         * GIL path for as long as it is armed. */
+        if (c->check_aiw && *c->check_aiw) return MT_FAST_SLOW;
+        n_w = mt_ir_mem_step(c, ent, mw, MT_MAX_MEM_WRITES, 0);
+        if (n_w == MT_EVAL_DECLINED || n_w == MT_EVAL_ERROR) return MT_FAST_SLOW;
+    }
+
+    *c->ltw_n = 0;
+    if (n_w > 0) mt_apply_mem_writes(c, mw, n_w);
+    (*c->instr_total)++;
+    (*c->fast_done)++;
+    (*c->express_done)++;
     return MT_FAST_DONE;
 }
 

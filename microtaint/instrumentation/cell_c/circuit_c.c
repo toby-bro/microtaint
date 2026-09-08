@@ -41,7 +41,10 @@ static void *g_mem_ctx = NULL;
  * "_shadow_capi" capsule (a struct of function pointers).  Lets the C taint
  * eval path (evaluate_c_mem) read/write shadow taint at the C level, skipping
  * the PyObject_CallMethod(shadow, "read_mask", ...) attribute-resolution churn.
- * The layout must match _ShadowCAPI in shadow.pyx exactly (field order + sigs).
+ * The layout must match _ShadowCAPI in shadow.pyx: field order and signatures.
+ * Only the prefix this file uses is declared -- entries appended after these
+ * (the GIL-free clear/is_poisoned the memory hooks call) do not change where
+ * these two sit, so declaring the prefix stays correct.
  * Imported lazily (shadow is guaranteed loaded by the first memory instruction,
  * long after both modules' inits), so circuit_c never depends on shadow at its
  * own module init. */

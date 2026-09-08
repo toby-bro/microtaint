@@ -38,6 +38,8 @@ cdef class BitPreciseShadowMemory:
     # Pure-C cores: no Python objects, no exceptions, callable without the GIL.
     cdef uint64_t read_mask_c(self, uint64_t address, int size) noexcept nogil
     cdef void write_mask_c(self, uint64_t address, uint64_t mask, int size) noexcept nogil
+    cdef void clear_c(self, uint64_t address, int size) noexcept nogil
+    cdef bint is_poisoned_c(self, uint64_t address, int size) noexcept nogil
 
     cpdef void write_bytes(self, uint64_t address, object taint)
     cpdef bytearray read_bytes(self, uint64_t address, int count)

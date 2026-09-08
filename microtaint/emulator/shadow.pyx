@@ -299,6 +299,10 @@ cdef class BitPreciseShadowMemory:
 
     cpdef void clear(self, uint64_t address, int size):
         """Explicitly clear taint for size bytes starting at address."""
+        self.clear_c(address, size)
+
+    cdef void clear_c(self, uint64_t address, int size) noexcept nogil:
+        """clear() with no Python anywhere, for the GIL-free memory hooks."""
         cdef int i
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
@@ -357,6 +361,10 @@ cdef class BitPreciseShadowMemory:
 
     cpdef bint is_poisoned(self, uint64_t address, int size):
         """True if any byte in [address, address+size) is poisoned."""
+        return self.is_poisoned_c(address, size)
+
+    cdef bint is_poisoned_c(self, uint64_t address, int size) noexcept nogil:
+        """is_poisoned() with no Python anywhere, for the GIL-free hooks."""
         cdef int i
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
@@ -402,11 +410,20 @@ from cpython.pycapsule cimport PyCapsule_New
 
 ctypedef uint64_t (*read_mask_fn)(object shadow, uint64_t address, int size) noexcept
 ctypedef void (*write_mask_fn)(object shadow, uint64_t address, uint64_t mask, int size) noexcept
+# The memory hooks call these two without the GIL.  That is sound for exactly
+# the same reason the two above are: an unchecked cast and a `nogil` core, so
+# there is no point at which a Python object is touched or an exception can be
+# raised.  Declared `noexcept nogil` so Cython enforces it rather than trusting
+# the comment.
+ctypedef void (*clear_fn)(void *shadow, uint64_t address, int size) noexcept nogil
+ctypedef int (*is_poisoned_fn)(void *shadow, uint64_t address, int size) noexcept nogil
 
 
 cdef struct _ShadowCAPI:
-    read_mask_fn  read_mask
-    write_mask_fn write_mask
+    read_mask_fn   read_mask
+    write_mask_fn  write_mask
+    clear_fn       clear
+    is_poisoned_fn is_poisoned
 
 
 cdef uint64_t _capi_read_mask(object shadow, uint64_t address, int size) noexcept:
@@ -422,9 +439,19 @@ cdef void _capi_write_mask(object shadow, uint64_t address, uint64_t mask, int s
     (<BitPreciseShadowMemory>shadow).write_mask_c(address, mask, size)
 
 
+cdef void _capi_clear(void *shadow, uint64_t address, int size) noexcept nogil:
+    (<BitPreciseShadowMemory>shadow).clear_c(address, size)
+
+
+cdef int _capi_is_poisoned(void *shadow, uint64_t address, int size) noexcept nogil:
+    return 1 if (<BitPreciseShadowMemory>shadow).is_poisoned_c(address, size) else 0
+
+
 cdef _ShadowCAPI _shadow_capi_struct
 _shadow_capi_struct.read_mask = _capi_read_mask
 _shadow_capi_struct.write_mask = _capi_write_mask
+_shadow_capi_struct.clear = _capi_clear
+_shadow_capi_struct.is_poisoned = _capi_is_poisoned
 
 # Module attribute imported by circuit_c via the shadow module + getattr.
 _shadow_capi = PyCapsule_New(<void *>&_shadow_capi_struct,

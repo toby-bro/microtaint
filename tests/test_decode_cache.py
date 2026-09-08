@@ -11,9 +11,13 @@ re-checking bytes, so the decode cache adds no new correctness assumption.
 Two properties are pinned:
 
   * ACTIVE: after a taint-carrying run with a loop, the hook's decode_cache is
-    populated and instruction-cache hits occurred (a silent break -- e.g. the
-    lookup never populating -- would erase the speed win with NO correctness
-    symptom, exactly the failure mode test_cython_hook_active guards for).
+    populated and revisited addresses were served by a fast path (a silent
+    break -- e.g. the lookup never populating -- would erase the speed win with
+    NO correctness symptom, exactly the failure mode test_cython_hook_active
+    guards for).  WHICH fast path depends on the configuration, so both are
+    accepted: the output cache, or the GIL-free express lane, which supersedes
+    it wherever a compiled taint program is attached because running the
+    program costs less than the memcmp that would decide the cache hit.
   * BIT-EXACT: a run with the cache enabled (default) and one with
     MICROTAINT_DISABLE_DECODE_CACHE=1 produce identical findings and identical
     final register taint.  Run in subprocesses because the enable flag is read
@@ -98,9 +102,17 @@ def test_decode_cache_is_active_and_hit() -> None:
             'decode_cache is empty -- the address-keyed decode cache never '
             'populated; the fetch+decode fast path is silently disabled'
         )
-        assert hook.instr_cache_hits > 0, (
-            'no instruction-cache hits -- the loop should revisit addresses; '
-            'without hits the decode cache brings no benefit'
+        # The loop revisits addresses, so something must serve those
+        # revisits cheaply.  Either mechanism satisfies that; requiring the
+        # output cache specifically would fail the moment a faster one takes
+        # its work, which is what the express lane does when a compiled program
+        # is attached.
+        served = hook.instr_cache_hits + hook.express_done
+        assert served > 0, (
+            'revisited addresses were served by neither the output cache nor '
+            'the express lane -- the loop should revisit addresses, and '
+            'without a fast path for them the decode cache brings no benefit '
+            f'(cache hits {hook.instr_cache_hits}, express {hook.express_done})'
         )
         # The wrapper must wire the mem-write hook to this instruction hook, or
         # a self-modifying write would silently replay a stale decode.

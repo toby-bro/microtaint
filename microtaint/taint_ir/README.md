@@ -1,4 +1,4 @@
-# taint_ir — compiling taint propagation
+# taint_ir, compiling taint propagation
 
 One instruction's whole taint propagation, flags included, lowered to a
 branch-free program and then to machine code.
@@ -6,7 +6,7 @@ branch-free program and then to machine code.
 ## Why
 
 The engine's older model evaluates one compiled expression per output *slice*.
-`add rax, rbx` is seven programs — RAX plus six flags — each re-deriving the
+`add rax, rbx` is seven programs (RAX plus six flags), each re-deriving the
 answer from RAX and RBX, and most of them getting there by re-executing the
 instruction in SLEIGH twice to take a differential, at about 776 ns per
 execution. Roughly 4 µs for one `add`.
@@ -22,26 +22,26 @@ decisions can be made once, at lift time, and what is left compiled.
 
 **`frompcode.py`** walks the p-code once, emitting both the value expression
 and the taint expression for every op into one program. Every architectural
-register's taint is whatever its slot holds when the pass ends — result
+register's taint is whatever its slot holds when the pass ends, result
 registers and flags alike, no per-output program, no second traversal.
 
 **`ir.py`** is the IR: a small, machine-shaped instruction set over 64-bit
 words, hash-consed and constant-folded as it is built, then dead-code
 eliminated. Three structural guarantees make it compilable:
 
-- *straight-line* — p-code's intra-instruction control flow becomes
+- *straight-line*. P-code's intra-instruction control flow becomes
   predication. A write under an unknown predicate is a select; under a
   **tainted** predicate it is implicit flow, and the join carries both sides'
   taint plus the bits on which they differ, which is exact. A branch that
   leaves the instruction is not control flow *within* it: it writes the program
-  counter, and the rule is short — a fixed target taints nothing, an indirect
+  counter, and the rule is short: a fixed target taints nothing, an indirect
   branch inherits its operand's taint, a conditional jump makes the counter
   secret-dependent exactly when its condition is, and a return carries nothing
   new because the load that fetched the address already wrote the counter.
-- *SSA* — register aliasing (AL inside RAX, a flag byte inside a flag block) is
+- *SSA*. Register aliasing (AL inside RAX, a flag byte inside a flag block) is
   resolved at lift time by a symbolic frame; none of it survives into the
   program.
-- *64-bit only* — widths are explicit masks, and a known-significant-bits bound
+- *64-bit only*. Widths are explicit masks, and a known-significant-bits bound
   deletes the redundant ones.
 
 **`boolsynth.py`** collapses the one-bit flag algebra a lifter emits. Any
@@ -60,7 +60,7 @@ Three kinds, and only the third costs anything:
 | soundness floor | variable-count shifts, MULT/DIV/REM by a variable, POPCOUNT, CALLOTHER | ~2 |
 
 The differential is `(lo ^ hi) | ta | tb` over the two extremal corners,
-evaluated inline in machine arithmetic. It is exact — not a floor — wherever
+evaluated inline in machine arithmetic. It is exact (not a floor) wherever
 the operation is monotone in every input bit, which covers the whole
 carry-coupled family. The `| ta | tb` term is what repairs the classic
 two-corner under-taint: a bit whose two inputs both flip cancels in the XOR,
@@ -70,7 +70,7 @@ Signed overflow is the one flag a differential cannot answer, because
 `OF = c_{w-1} XOR c_w` is an XOR of two monotone functions and is not monotone
 itself: the corners can agree while OF varies, and differ while OF is pinned.
 It reduces to `(a XNOR b) AND (a XOR c)` over three one-bit inputs, whose taint
-is therefore a 64-entry table — one `uint64` constant, so `(K >> idx) & 1` is
+is therefore a 64-entry table, one `uint64` constant, so `(K >> idx) & 1` is
 exact and branch-free.
 
 ## Memory
@@ -80,8 +80,8 @@ value and its shadow taint as inputs, and the address, that address's taint,
 and the taint to store as outputs. Modelling it this way rather than as a
 callback keeps the program straight-line, so every backend runs it unchanged.
 
-The protocol is two passes — evaluate for the addresses, resolve them against
-guest memory and the shadow, evaluate again for the taint — which is sound
+The protocol is two passes (evaluate for the addresses, resolve them against
+guest memory and the shadow, evaluate again for the taint), which is sound
 exactly while no address depends on a value the same instruction loaded. The
 builder verifies that and declines when it does not hold.
 
@@ -120,44 +120,70 @@ In the engine, with `MICROTAINT_TAINT_IR=1` against the same run without it:
 
 | benchmark | bare Qiling | differential | compiled |
 |---|---|---|---|
-| bench_dense | 8.51 ms | 712.31 ms (×84) | 377.32 ms (×44) |
-| bench_sparse | 2.81 ms | 89.24 ms (×32) | 82.10 ms (×29) |
-| bench_untainted | 2.44 ms | 86.17 ms (×35) | 85.82 ms (×35) |
+| bench_dense | 8.61 ms | 652.05 ms (x76) | 223.83 ms (x26) |
+| bench_sparse | 2.71 ms | 54.72 ms (x20) | 36.64 ms (x14) |
+| bench_untainted | 2.16 ms | 50.85 ms (x24) | 33.98 ms (x16) |
 
-SLEIGH re-executions on the dense workload drop from 131231 to 177 — the
-differential is essentially never reached. Read that against the untainted row:
-with taint work at essentially zero the overhead is still ×35, so what remains
-is the per-instruction hook, not taint arithmetic. `run_overhead.py` splits
-that: of 558 ns per instruction there, about 203 is the cost of being hooked at
-all and the rest is the hook body.
+SLEIGH re-executions on the dense workload drop from 131231 to 182: the
+differential is essentially never reached.
+
+Both columns are lower than they were when this was first measured (dense
+731/286, sparse 92/74, untainted 85/66), and the reason is not the taint
+arithmetic. Reading the untainted row at the time made the point: with taint
+work at essentially zero the overhead was still x29, so what remained was the
+per-instruction hook. `benchmark/taint_density/hookcost.c` then priced that
+against a pure-C Unicorn harness with no Python in the process at all:
+
+| | ns/instruction |
+|---|---|
+| no hook | 0.64 |
+| code hook | 18.29 |
+| block hook | 0.67 |
+
+So Unicorn's own per-instruction dispatch is 18 ns, and the ~200 ns the
+engine's empty callback cost was almost entirely its own: the GIL acquire a
+`with gil` callback makes on every guest instruction, plus the refcounts and
+attribute reads before the C path is reached. The express lane in
+`emulator/fastpath.h` runs the cases that need none of that (the
+untainted-input exit and a compiled program, in its register, program-counter
+and memory shapes) with no GIL at all, from constants cached on the address
+entry; `emulator/memhook.h` does the same for the load and store callbacks.
+86.8% of bench_untainted and 56.0% of bench_dense now finish without the GIL.
+
+Two things follow for anyone picking this up. Block-level hooking is worth the
+18 ns and no more, which is much less than the 15x amortisation a naive reading
+of "18 instructions per basic block" suggests. And `uc_reg_read_batch`, which
+the fast path calls whenever inputs are not provably clean, costs 4.8 ns plus
+11.3 ns *per register*: at the 3.7 register values a compiled program needs on
+average, that is now one of the larger remaining line items.
 
 ## How it is checked
 
 Under-taint is never acceptable, so every claim is measured against Unicorn
-per-bit ground truth rather than against the engine's own answer — the IR is
+per-bit ground truth rather than against the engine's own answer, because the IR is
 deliberately *tighter* than the whole-instruction differential in places, and
 scoring it against that would report precision gains as under-taint. The gate
 is a subset property: `under(IR) ⊆ under(current engine)`, since both read the
 same p-code and inherit its undefined-flag gaps.
 
-- `tests/taint_ir_bank.py` — registers and flags, all ISAs with a Unicorn
+- `tests/taint_ir_bank.py`, registers and flags, all ISAs with a Unicorn
   descriptor.
-- `tests/taint_ir_mem.py` — loads and stores against a real mapped data page,
+- `tests/taint_ir_mem.py`, loads and stores against a real mapped data page,
   including secret-dependent addresses.
-- `tests/taint_ir_simd.py` — vector lanes read and written directly in XMM.
-- `tests/test_taint_ir.py` — the pytest gates, plus a diff-test of all three
+- `tests/taint_ir_simd.py`, vector lanes read and written directly in XMM.
+- `tests/test_taint_ir.py`, the pytest gates, plus a diff-test of all three
   backends against each other on many random states.
-- `tests/taint_ir_perf.py` — the per-instruction timing baseline.
+- `tests/taint_ir_perf.py`, the per-instruction timing baseline.
 
 ## p-code loops, the one structural gap left
 
 A `rep`-prefixed string operation lifts to a loop whose backward branch targets
 the instruction's own IMARK. The trip count is a runtime value, so it cannot be
-unrolled at lift time — but the body is an ordinary straight-line program, so
+unrolled at lift time, but the body is an ordinary straight-line program, so
 the shape of the answer is: lower the body once and let the caller iterate it.
 
 With an **untainted** loop condition the trip count is public, so running the
-body once per iteration is exact — no implicit flow, nothing to
+body once per iteration is exact: no implicit flow, nothing to
 over-approximate. With a **tainted** one, how many times the body runs is itself
 secret over an unbounded set, which has no cheap sound answer; decline.
 
@@ -173,13 +199,13 @@ then a backward branch declines and the circuit handles it.
 `engine_glue.program_for(arch, code, slot_map)` compiles a program against the
 engine's slot layout, refusing unless every input register already has an
 interned slot (they are interned lazily, so it retries), no offset it touches
-carries two of the caller's names, and the host emitter took it — the
+carries two of the caller's names, and the host emitter took it: the
 interpreter is not reachable from the hot path.
 
 The hot path calls it through `MtAddrEntry.ir_fn`. A memory program runs the
 two-pass protocol in `fastpath.h::mt_ir_mem_step`, and a program that writes the
 program counter runs into scratch so the implicit-taint policy can be applied
-before anything is committed — deciding after committing would mean reporting a
+before anything is committed, since deciding after committing would mean reporting a
 leak already written down. Under WARN or STOP the instruction goes back to the
 circuit, which owns the reporting. Neither path commits anything until it has
 succeeded, so a refusal simply leaves the instruction to the circuit.

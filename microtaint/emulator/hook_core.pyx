@@ -176,6 +176,7 @@ cdef extern from "fastpath.h":
         int ir_writes_pc
         signed char ir_acc_kind[8]
         signed char ir_acc_size[8]
+        int express
 
     ctypedef struct AddrMap "MtAddrMap":
         uint64_t *keys
@@ -217,6 +218,13 @@ cdef extern from "fastpath.h":
         unsigned long *misses
         unsigned long *fast_done
         unsigned long *prefilter_hits
+        unsigned *express_gen
+        unsigned long *express_done
+        unsigned long *instr_total
+        int *arr_loaded
+        int *check_aiw
+        PyObject **ltw_set
+        PyObject *owner
 
     uint64_t MT_EMPTY_ADDR
 
@@ -227,6 +235,30 @@ cdef extern from "fastpath.h":
     # Returns MT_FAST_DONE / MT_FAST_SLOW, or MT_FAST_ERROR with an exception set.
     int mt_fast_step(MtFastCtx *c, uint64_t address, AddrEntry *ent,
                      object compiled, int cflags) except? 2
+    # Neither of these can raise: the express lane touches no PyObject, and
+    # arming it only reads per-address constants the full path already resolved.
+    void mt_express_arm(MtFastCtx *c, AddrEntry *ent, object compiled,
+                        int cflags) noexcept
+    int mt_fast_step_nogil(MtFastCtx *c, uint64_t address,
+                           unsigned int size) noexcept nogil
+
+cdef extern from "memhook.h":
+    ctypedef struct MtMemHookUD:
+        void *shadow
+        void (*clear)(void *shadow, uint64_t address, int size) noexcept nogil
+        int (*is_poisoned)(void *shadow, uint64_t address, int size) noexcept nogil
+        PyObject *owner
+        int *check_uaf
+        const MtMemWrite *ltw
+        const int *ltw_n
+        PyObject **lw_set
+        const uint64_t *code_lo
+        const uint64_t *code_hi
+
+    # Both return 0 when they have handled the access and non-zero when the
+    # caller must take the GIL; neither commits anything in the latter case.
+    int mt_mem_read_nogil(MtMemHookUD *u, uint64_t address, int size) noexcept nogil
+    int mt_mem_write_nogil(MtMemHookUD *u, uint64_t address, int size) noexcept nogil
 
 # Mirrors of the header's constants.  Cython needs compile-time literals to size
 # an array and to fold branch tests, so these are duplicated deliberately; the
@@ -275,6 +307,9 @@ _load_circuit_capi()
 cdef struct _MtShadowCAPI:
     uint64_t (*read_mask)(object shadow, uint64_t address, int size) noexcept
     void     (*write_mask)(object shadow, uint64_t address, uint64_t mask, int size) noexcept
+    # The memory callbacks call these two with no GIL held; see shadow.pyx.
+    void     (*clear)(void *shadow, uint64_t address, int size) noexcept nogil
+    int      (*is_poisoned)(void *shadow, uint64_t address, int size) noexcept nogil
 
 cdef _MtShadowCAPI *_shadow_capi = NULL
 
@@ -369,6 +404,13 @@ cdef bint _USE_DECODE_CACHE = _os.environ.get('MICROTAINT_DISABLE_DECODE_CACHE')
 # counts to the dict path) and ~17% faster e2e.  MICROTAINT_ARR_HOOK=0 forces the
 # classic dict path, which stays in place as the fallback and escape hatch.
 cdef bint _USE_ARR_HOOK = _os.environ.get('MICROTAINT_ARR_HOOK') != '0'
+# The GIL-free express lane (fastpath.h).  On by default; MICROTAINT_EXPRESS=0
+# leaves every instruction on the GIL path, which is what the differential test
+# compares against and what to reach for if it is ever suspected.
+cdef bint _EXPRESS = _os.environ.get('MICROTAINT_EXPRESS') != '0'
+# The GIL-free memory callbacks (memhook.h).  Same contract, same off-switch:
+# MICROTAINT_NOGIL_MEM=0 sends every load and store back through the GIL path.
+cdef bint _NOGIL_MEM = _os.environ.get('MICROTAINT_NOGIL_MEM') != '0'
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +510,11 @@ cdef class InstructionHook:
     cdef public unsigned long instr_total
     # Instructions dismissed outright because no input was tainted.
     cdef public unsigned long prefilter_hits
+    # Instructions the GIL-free express lane finished on its own, and the
+    # generation counter that invalidates its cached prefilters.
+    cdef public unsigned long express_done
+    cdef unsigned express_gen
+    cdef PyObject *ltw_set_ptr
     # Why instructions leave the C path, so the biggest reason is a measurement.
     cdef public unsigned long fb_pc
     cdef public unsigned long fb_pyfall
@@ -570,6 +617,9 @@ cdef class InstructionHook:
         self.g_taint = NULL
         self.g_val = NULL
         self.n_slots = 0
+        self.express_done = 0
+        self.express_gen = 1
+        self.ltw_set_ptr = NULL
         self.cap_slots = 0
         self.slot_map = {}
         self.taint_ir_progs = {}
@@ -660,6 +710,24 @@ cdef class InstructionHook:
         self.fctx.misses = &self.instr_cache_misses
         self.fctx.fast_done = &self.fast_done
         self.fctx.prefilter_hits = &self.prefilter_hits
+        # ---- the GIL-free express lane (fastpath.h) --------------------
+        # user_data for the callback is &fctx, so the context carries the owner
+        # rather than the other way round: reaching it must not cost a cast of a
+        # PyObject, which is the very thing the lane exists to avoid.
+        self.fctx.owner = <PyObject*>self
+        self.fctx.express_gen = &self.express_gen
+        self.fctx.express_done = &self.express_done
+        self.fctx.instr_total = &self.instr_total
+        self.fctx.arr_loaded = <int*>&self.arr_loaded
+        self.fctx.check_aiw = <int*>&self.check_aiw
+        # Borrowed, and only when it really is a set: the lane reads its size
+        # through PySet_GET_SIZE, which does not check.  The wrapper clears this
+        # set in place and never rebinds it, so one pointer stays correct.
+        if isinstance(self.last_tainted_writes, set):
+            self.ltw_set_ptr = <PyObject*>self.last_tainted_writes
+            self.fctx.ltw_set = &self.ltw_set_ptr
+        else:
+            self.fctx.ltw_set = NULL
 
     def __dealloc__(self):
         mt_am_free(&self.addr_map)
@@ -724,6 +792,10 @@ cdef class InstructionHook:
     cdef void _drop_snapshots(self):
         """Invalidate cached taint snapshots (they are sized to n_slots) while
         keeping decode + slot data, which stays valid when the arrays grow."""
+        # The express lane's cached prefilters were resolved against the old
+        # layout; bumping the generation retires all of them at once, and the
+        # full path re-arms each address the next time it runs one.
+        self.express_gen += 1
         cdef Py_ssize_t i
         cdef AddrEntry *e
         if self.addr_map.vals == NULL:
@@ -1325,6 +1397,9 @@ cdef class InstructionHook:
                     aent.ir_tried = 0
                     aent.ir_n_acc = 0
                     aent.ir_writes_pc = 0
+                    # The express lane's cache describes the PREVIOUS bytes at
+                    # this address; different bytes make every part of it wrong.
+                    aent.express = 0
                 if address < self.code_lo:
                     self.code_lo = address
                 if address + <unsigned long long>size > self.code_hi:
@@ -1390,6 +1465,11 @@ cdef class InstructionHook:
                     self.last_tainted_writes.clear()
                 if self.check_aiw and self.ltw_n > 0:
                     self._aiw_check_from_ltw(instruction_bytes, address)
+                # This address just completed entirely in C, so everything the
+                # express lane would need is resolved.  Cache it, and the next
+                # visit skips the GIL and this whole prologue.
+                if _EXPRESS:
+                    mt_express_arm(&self.fctx, aent, compiled_circuit, cflags)
                 return
 
         cdef Py_ssize_t nbytes = self.n_slots * sizeof(uint64_t)
@@ -1864,44 +1944,73 @@ cdef class InstructionHook:
 
 # ---------------------------------------------------------------------------
 # Pure-C UC_HOOK_CODE trampoline.  Registered with uc_hook_add as a raw C
-# function pointer so Unicorn calls it with NO per-instruction Python frame.
-# Measured per-instruction callback cost: ctypes CFUNCTYPE(python) ~523ns (the
-# path wrapper.py uses today) vs a pure-C fn ptr ~34ns; this trampoline adds
-# only the GIL acquire (~140ns) and then reuses the existing _evaluate, so the
-# taint logic and results are byte-identical -- it just removes the ctypes
-# marshaling + Python-method dispatch from every instruction.
+# function pointer so Unicorn calls it with NO per-instruction Python frame:
+# measured per-instruction callback cost was ~523 ns for a ctypes
+# CFUNCTYPE(python) against ~34 ns for a raw pointer.
 #
-# user_data carries the InstructionHook instance (its id()); the wrapper keeps
-# it alive.  `with gil` acquires the GIL (Unicorn releases it during emulation)
-# so touching Python objects is safe.  noexcept prints-and-clears any unhandled
-# exception, matching the ctypes-callback behaviour.
+# It holds no GIL.  Unicorn releases the GIL for the duration of emulation, so
+# a `with gil` declaration here re-acquires it once per guest instruction --
+# which, measured against a pure-C Unicorn harness (benchmark/taint_density/
+# hookcost.c), was about 183 ns of the ~200 ns this callback cost when it did
+# nothing at all.  The express lane in fastpath.h answers what it can without
+# Python and _hook_slow takes the GIL for the rest, which is where all the
+# existing logic still lives, unchanged.
+#
+# user_data is the hook's MtFastCtx, not the hook: a nogil callback cannot cast
+# a PyObject, and the context carries a borrowed pointer back.  The wrapper
+# keeps the hook alive.  noexcept prints-and-clears any unhandled exception,
+# matching the ctypes-callback behaviour.
 # ---------------------------------------------------------------------------
-cdef void _c_instruction_hook(void *uc, unsigned long long address,
-                              unsigned int size, void *user_data) noexcept with gil:
-    # MICROTAINT_NULL_HOOK: return before doing any taint work, so the cost of
-    # BEING hooked (Unicorn's dispatch, the trampoline, the GIL acquire this
-    # declaration implies) can be measured apart from the cost of the work
-    # inside.  Purely diagnostic -- the taint state is not updated, so a run
-    # with it set produces no findings.
-    if _NULL_HOOK:
-        return
-    cdef InstructionHook hook = <InstructionHook>user_data
+cdef void _hook_slow(void *owner, unsigned long long address, int size):
+    """Everything the express lane declined, with the GIL held."""
+    cdef InstructionHook hook = <InstructionHook>owner
     # Straight to the array path when it is in use.  `_evaluate` only
     # dispatches between the two, and a whole Cython call to decide something
     # fixed at import time is about 3.5% of the run.
     if _USE_ARR_HOOK:
-        hook._evaluate_arr(address, <int>size)
+        hook._evaluate_arr(address, size)
     else:
-        hook._evaluate(address, <int>size)
+        hook._evaluate(address, size)
+
+
+cdef void _c_instruction_hook(void *uc, unsigned long long address,
+                              unsigned int size, void *user_data) noexcept nogil:
+    # MICROTAINT_NULL_HOOK: return before doing any taint work, so the cost of
+    # BEING hooked (Unicorn's dispatch and the trampoline) can be measured apart
+    # from the cost of the work inside.  Purely diagnostic -- the taint state is
+    # not updated, so a run with it set produces no findings.
+    if _NULL_HOOK:
+        return
+    # Unicorn releases the GIL for the duration of emulation, so `with gil` here
+    # would re-acquire it once per guest instruction.  Measured against a pure-C
+    # Unicorn harness on the same workload, Unicorn's own per-instruction
+    # dispatch is about 18 ns while this callback returning immediately cost
+    # about 200 ns -- nearly all of the difference being that acquire.  The
+    # express lane answers what it can without it and hands over the rest.
+    cdef MtFastCtx *c = <MtFastCtx*>user_data
+    if mt_fast_step_nogil(c, address, size) == MT_FAST_DONE:
+        return
+    with gil:
+        _hook_slow(c.owner, address, size)
 
 
 def c_instruction_hook_ptr():
     """Address (int) of the pure-C UC_HOOK_CODE trampoline, for uc_hook_add.
 
-    Register it with the InstructionHook instance passed as user_data (via
-    id(hook)); the caller MUST keep that instance alive for the hook's lifetime.
+    Register it with c_instruction_hook_ud(hook) as user_data; the caller MUST
+    keep that InstructionHook alive for the hook's lifetime.
     """
     return <unsigned long long>&_c_instruction_hook
+
+
+def c_instruction_hook_ud(InstructionHook hook):
+    """user_data for the trampoline: the hook's C context, not the hook.
+
+    The callback runs without the GIL, so it cannot cast a PyObject to reach
+    the context; the context carries a borrowed pointer back to the hook for
+    the path that does need Python.  Valid for as long as `hook` is alive.
+    """
+    return <unsigned long long>&hook.fctx
 
 
 # ---------------------------------------------------------------------------
@@ -1929,11 +2038,23 @@ cdef class MemWriteClearHook:
     cdef public object reporter
     cdef public object ql
     cdef public bint check_uaf
+    # What the GIL-free trampoline needs, as plain C (memhook.h).  It is the
+    # callback's user_data, so reaching it costs no PyObject cast.
+    cdef MtMemHookUD ud
+    cdef PyObject *lw_set_ptr
+    cdef InstructionHook _instr_hook
+
     # The instruction hook whose decode/output caches this write hook must
     # invalidate on self-modifying code.  None when the Cython hook is not in
     # use (the Python fallback re-reads bytes every instruction, so it needs no
-    # invalidation).  Wired by the wrapper once both hooks exist.
-    cdef public InstructionHook instr_hook
+    # invalidation).  Wired by the wrapper once both hooks exist -- which is
+    # after registration, so assigning it re-resolves the C context.
+    property instr_hook:
+        def __get__(self):
+            return self._instr_hook
+        def __set__(self, value):
+            self._instr_hook = value
+            self._wire_ud()
 
     def __init__(self, wrapper):
         self.wrapper = wrapper
@@ -1942,7 +2063,44 @@ cdef class MemWriteClearHook:
         self.reporter = wrapper.reporter
         self.ql = wrapper.ql
         self.check_uaf = wrapper.check_uaf
-        self.instr_hook = None
+        self._instr_hook = None
+        self.lw_set_ptr = NULL
+        self._wire_ud()
+
+    cdef void _wire_ud(self):
+        """Resolve the C context the GIL-free path reads.
+
+        Everything mutable is taken as the ADDRESS of a field, so this survives
+        the instruction hook filling ltw during a later instruction.  Called
+        again whenever instr_hook is assigned, because registration happens
+        before that wiring exists."""
+        self.ud.owner = <PyObject*>self
+        self.ud.check_uaf = <int*>&self.check_uaf
+        self.ud.shadow = <void*>self.shadow_mem if self.shadow_mem is not None else NULL
+        if _shadow_capi != NULL:
+            self.ud.clear = _shadow_capi.clear
+            self.ud.is_poisoned = _shadow_capi.is_poisoned
+        else:
+            self.ud.clear = NULL
+            self.ud.is_poisoned = NULL
+        if isinstance(self.last_tainted_writes, set):
+            self.lw_set_ptr = <PyObject*>self.last_tainted_writes
+            self.ud.lw_set = &self.lw_set_ptr
+        else:
+            self.ud.lw_set = NULL
+        cdef InstructionHook ih = self._instr_hook
+        if ih is not None:
+            self.ud.ltw = ih.ltw
+            self.ud.ltw_n = &ih.ltw_n
+            # `unsigned long long` on the hook, uint64_t in the struct: the
+            # same 64 bits, but distinct types to the C compiler.
+            self.ud.code_lo = <const uint64_t*>&ih.code_lo
+            self.ud.code_hi = <const uint64_t*>&ih.code_hi
+        else:
+            self.ud.ltw = NULL
+            self.ud.ltw_n = NULL
+            self.ud.code_lo = NULL
+            self.ud.code_hi = NULL
 
     def __call__(self, object _uc, int _access, unsigned long long address,
                  int size, long long _value, object _user_data=None):
@@ -1961,7 +2119,7 @@ cdef class MemWriteClearHook:
         # instruction, drop the address-keyed caches so the rewritten bytes are
         # re-decoded on next execution.  Two C-level integer compares reject the
         # overwhelmingly common data write (stack/heap, outside the code range).
-        cdef InstructionHook ih = self.instr_hook
+        cdef InstructionHook ih = self._instr_hook
         if (ih is not None and ih.code_hi > ih.code_lo
                 and address < ih.code_hi
                 and address + <unsigned long long>size > ih.code_lo):
@@ -2016,6 +2174,7 @@ cdef class MemAccessHook:
     cdef public object reporter
     cdef public object ql
     cdef public bint check_uaf
+    cdef MtMemHookUD ud
 
     def __init__(self, wrapper):
         self.wrapper = wrapper
@@ -2023,6 +2182,16 @@ cdef class MemAccessHook:
         self.reporter = wrapper.reporter
         self.ql = wrapper.ql
         self.check_uaf = wrapper.check_uaf
+        self.ud.owner = <PyObject*>self
+        self.ud.check_uaf = <int*>&self.check_uaf
+        self.ud.shadow = <void*>self.shadow_mem if self.shadow_mem is not None else NULL
+        self.ud.is_poisoned = _shadow_capi.is_poisoned if _shadow_capi != NULL else NULL
+        self.ud.clear = NULL
+        self.ud.lw_set = NULL
+        self.ud.ltw = NULL
+        self.ud.ltw_n = NULL
+        self.ud.code_lo = NULL
+        self.ud.code_hi = NULL
 
     def __call__(self, object _uc, int _access, unsigned long long address,
                  int size, long long _value, object _user_data=None):
@@ -2157,28 +2326,51 @@ cdef class LiveMemReader:
 # attributes to _CallPythonObject/classify_argument/object_recursive_isinstance.
 # Through a raw C function pointer the callback is a direct call into the Cython
 # _dispatch, so only the GIL acquire remains.  Same bodies, same results.
+# Unicorn calls these once per guest load and store, so a `with gil`
+# declaration here means the program acquires the GIL on every memory access it
+# makes.  Their usual answers -- "not poisoned", "clear the shadow bytes this
+# write covered" -- are arithmetic over the shadow's page table, which has
+# `nogil` accessors, so memhook.h answers them directly and only the rare cases
+# (a report, a write onto decoded code, the dict path's Python claim set) come
+# back here.
 cdef void _c_mem_write_hook(void *uc, int access, unsigned long long address,
-                            int size, long long value, void *user_data) noexcept with gil:
-    cdef MemWriteClearHook hook = <MemWriteClearHook>user_data
-    hook._dispatch(address, size)
+                            int size, long long value, void *user_data) noexcept nogil:
+    cdef MtMemHookUD *u = <MtMemHookUD*>user_data
+    if _NOGIL_MEM and mt_mem_write_nogil(u, address, size) == 0:
+        return
+    with gil:
+        (<MemWriteClearHook>u.owner)._dispatch(address, size)
 
 
 cdef void _c_mem_access_hook(void *uc, int access, unsigned long long address,
-                             int size, long long value, void *user_data) noexcept with gil:
-    cdef MemAccessHook hook = <MemAccessHook>user_data
-    hook._dispatch(address, size)
+                             int size, long long value, void *user_data) noexcept nogil:
+    cdef MtMemHookUD *u = <MtMemHookUD*>user_data
+    if _NOGIL_MEM and mt_mem_read_nogil(u, address, size) == 0:
+        return
+    with gil:
+        (<MemAccessHook>u.owner)._dispatch(address, size)
 
 
 def c_mem_write_hook_ptr():
     """Address (int) of the pure-C UC_HOOK_MEM_WRITE trampoline.
 
-    Register with the MemWriteClearHook instance as user_data (id(hook)); the
-    caller MUST keep that instance alive for the hook's lifetime.
+    Register with c_mem_write_hook_ud(hook) as user_data; the caller MUST keep
+    that MemWriteClearHook alive for the hook's lifetime.
     """
     return <unsigned long long>&_c_mem_write_hook
 
 
 def c_mem_access_hook_ptr():
     """Address (int) of the pure-C UC_HOOK_MEM_READ trampoline.  Same contract
-    as c_mem_write_hook_ptr, with a MemAccessHook instance as user_data."""
+    as c_mem_write_hook_ptr, with c_mem_access_hook_ud(hook) as user_data."""
     return <unsigned long long>&_c_mem_access_hook
+
+
+def c_mem_write_hook_ud(MemWriteClearHook hook):
+    """user_data for the write trampoline: its C context, not the hook."""
+    return <unsigned long long>&hook.ud
+
+
+def c_mem_access_hook_ud(MemAccessHook hook):
+    """user_data for the read trampoline: its C context, not the hook."""
+    return <unsigned long long>&hook.ud

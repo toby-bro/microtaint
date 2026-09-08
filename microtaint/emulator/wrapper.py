@@ -19,8 +19,11 @@ from microtaint.emulator.hook_core import (
     MemWriteClearHook,
     UafUnmappedWriteHook,
     c_instruction_hook_ptr,
+    c_instruction_hook_ud,
     c_mem_access_hook_ptr,
+    c_mem_access_hook_ud,
     c_mem_write_hook_ptr,
+    c_mem_write_hook_ud,
 )
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
@@ -592,9 +595,13 @@ class MicrotaintWrapper:
                 cb_ud: ctypes.c_void_p | None
                 if self._use_c_hook and isinstance(instr_hook, InstructionHook):
                     self._instr_cfunc = None  # no CFUNCTYPE needed on the C path
-                    # user_data = the InstructionHook instance (kept alive via
-                    # self._instr_hook_obj); the trampoline casts it back.
-                    self._instr_hook_ud = ctypes.c_void_p(id(instr_hook))
+                    # user_data = the hook's C context, not the hook itself: the
+                    # trampoline runs without the GIL, so it cannot cast a
+                    # PyObject to reach it.  The context carries a pointer back
+                    # to the hook for the path that does need Python.  Either
+                    # way the hook is kept alive via self._instr_hook_obj.
+                    self._instr_hook_ud = ctypes.c_void_p(
+                        c_instruction_hook_ud(instr_hook))
                     cb_ptr = ctypes.c_void_p(c_instruction_hook_ptr())
                     cb_ud = self._instr_hook_ud
                 else:
@@ -719,12 +726,14 @@ class MicrotaintWrapper:
         """
         cb_ud = None
         if self._use_c_hook and isinstance(hook_obj, MemWriteClearHook):
-            self._mem_cfuncs.append(hook_obj)   # keep alive; user_data is its id
-            cb_ud = ctypes.c_void_p(id(hook_obj))
+            # keep alive; user_data points INTO it (its C context, because
+            # the trampoline runs without the GIL and cannot cast a PyObject)
+            self._mem_cfuncs.append(hook_obj)
+            cb_ud = ctypes.c_void_p(c_mem_write_hook_ud(hook_obj))
             cb_ptr = ctypes.c_void_p(c_mem_write_hook_ptr())
         elif self._use_c_hook and isinstance(hook_obj, MemAccessHook):
             self._mem_cfuncs.append(hook_obj)
-            cb_ud = ctypes.c_void_p(id(hook_obj))
+            cb_ud = ctypes.c_void_p(c_mem_access_hook_ud(hook_obj))
             cb_ptr = ctypes.c_void_p(c_mem_access_hook_ptr())
         else:
             cfunc = _HOOK_MEM_ACCESS_CFUNC(hook_obj)
