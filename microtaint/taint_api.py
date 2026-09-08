@@ -38,9 +38,18 @@ a mirror.
 from __future__ import annotations
 
 import os
+import re
 from typing import Literal
 
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
+
+MASK64 = 0xFFFFFFFFFFFFFFFF
+#: Must match MT_IR_MEM_BASE / MEM_SLOTS_PER_ACCESS in fastpath.h and frompcode.
+MEM_SLOT_BASE = 512
+MEM_SLOTS_PER_ACCESS = 4
+
+#: `MEM_<address>_<size>`, the name a resolved store output carries.
+_MEM_OUTPUT = re.compile(r'^MEM_(-?0x[0-9a-fA-F]+)_(\d+)$')
 
 Path = Literal['compiled', 'differential']
 
@@ -53,7 +62,10 @@ def default_path() -> Path:
     """The implementation this process uses when the caller does not say.
 
     `MICROTAINT_TAINT_IR=0` selects the differential; anything else, including
-    unset, selects the compiled path.
+    unset, selects the compiled path.  It sets the DEFAULT, and it is what
+    switches the compiled path off inside the emulator -- it does not overrule a
+    caller who names an implementation, because comparing the two in a run
+    configured for one of them is exactly what the tests need to do.
     """
     return 'differential' if os.environ.get(_ENV) == '0' else 'compiled'
 
@@ -67,6 +79,7 @@ def taint_step(
     path: Path | None = None,
     state_format: list[Register] | None = None,
     implicit_policy: ImplicitTaintPolicy = ImplicitTaintPolicy.IGNORE,
+    memory: object | None = None,
 ) -> dict[str, int]:
     """Taint after executing `code` once, as {register name: mask}.
 
@@ -82,7 +95,7 @@ def taint_step(
     `explain()` if you need to know which one answered.
     """
     return _dispatch(arch, code, in_taint, in_values or {}, path,
-                     state_format, implicit_policy)[0]
+                     state_format, implicit_policy, memory)[0]
 
 
 def explain(
@@ -94,6 +107,7 @@ def explain(
     path: Path | None = None,
     state_format: list[Register] | None = None,
     implicit_policy: ImplicitTaintPolicy = ImplicitTaintPolicy.IGNORE,
+    memory: object | None = None,
 ) -> tuple[dict[str, int], Path]:
     """`taint_step`, plus which implementation actually answered.
 
@@ -101,23 +115,24 @@ def explain(
     for an instruction the compiled path declined.
     """
     return _dispatch(arch, code, in_taint, in_values or {}, path,
-                     state_format, implicit_policy)
+                     state_format, implicit_policy, memory)
 
 
 # ---------------------------------------------------------------------------
 
 
-def _dispatch(arch, code, in_taint, in_values, path, state_format, implicit_policy):
+def _dispatch(arch, code, in_taint, in_values, path, state_format,
+              implicit_policy, memory):
     if state_format is None:
         from microtaint.emulator import archregs
         state_format = archregs.state_format(arch)
     want = path or default_path()
     if want == 'compiled':
-        got = _compiled(arch, code, in_taint, in_values, state_format)
+        got = _compiled(arch, code, in_taint, in_values, state_format, memory)
         if got is not None:
             return got, 'compiled'
     return _differential(arch, code, in_taint, in_values, state_format,
-                         implicit_policy), 'differential'
+                         implicit_policy, memory), 'differential'
 
 
 _LAYOUTS: dict = {}
@@ -146,36 +161,76 @@ def _slot_layout(arch, state_format, in_taint: dict, in_values: dict) -> dict[st
     return layout
 
 
-def _compiled(arch, code, in_taint, in_values, state_format):
+def _compiled(arch, code, in_taint, in_values, state_format, memory):
     """-> the taint dict, or None if the compiled path declined this one."""
     from microtaint.instrumentation.cell_c import taint_ir_c
-    from microtaint.taint_ir.engine_glue import enabled, program_for
+    from microtaint.taint_ir.engine_glue import program_for
 
-    if not enabled():
-        return None
     layout = _slot_layout(arch, state_format, in_taint, in_values)
     if not layout:
         return None
-    got = program_for(arch, code, layout)
+    got = program_for(arch, code, layout, force=True)
     if got is None:
         return None
-    _cap, _addr, accesses, _writes_pc, _live = got
-    if accesses:
-        # A load or a store needs its address resolved and its shadow read,
-        # which is a conversation with a memory the caller has not given us.
-        # The emulator has one; this entry point does not.
+    cap, _addr, accesses, _writes_pc, _live = got
+    if accesses and memory is None:
+        # A load or a store needs its address resolved and its shadow read.
+        # Without a memory to ask, decline and let the differential answer --
+        # which is what the emulator does when its own shadow is missing.
         return None
-    n = len(layout)
+    n = MEM_SLOT_BASE + MEM_SLOTS_PER_ACCESS * len(accesses) if accesses else len(layout)
+    if len(layout) > MEM_SLOT_BASE:
+        return None                       # registers would collide with memory
     values = [0] * n
     taints = [0] * n
     for name, slot in layout.items():
-        values[slot] = in_values.get(name, 0) & 0xFFFFFFFFFFFFFFFF
-        taints[slot] = in_taint.get(name, 0) & 0xFFFFFFFFFFFFFFFF
-    out = taint_ir_c.run(got[0], values, taints)
+        values[slot] = in_values.get(name, 0) & MASK64
+        taints[slot] = in_taint.get(name, 0) & MASK64
+    if not accesses:
+        out = taint_ir_c.run(cap, values, taints)
+        return {name: out[slot] for name, slot in layout.items()}
+    return _compiled_with_memory(cap, accesses, layout, values, taints, memory)
+
+
+def _compiled_with_memory(cap, accesses, layout, values, taints, memory):
+    """The two-pass protocol, the same one `fastpath.h::mt_ir_mem_step` runs.
+
+    A load's address is computed BY the program, so it cannot be known before
+    running it, and the taint the load contributes cannot be known before the
+    address.  So the program runs twice: once to learn the addresses, then again
+    with the loaded words' taint filled in.  The second run is what counts; the
+    first is discarded.
+    """
+    from microtaint.instrumentation.cell_c import taint_ir_c
+
+    # Pass 1: the addresses.
+    out = taint_ir_c.run(cap, values, list(taints))
+    for k, acc in enumerate(accesses):
+        kind, size, needval = acc
+        if kind != 0:                                    # a store reads nothing
+            continue
+        base = MEM_SLOT_BASE + MEM_SLOTS_PER_ACCESS * k
+        address = out[base + 1]
+        if needval:
+            values[base] = memory.read(address, size) & MASK64
+        taints[base] = memory.read_mask(address, size) & MASK64
+
+    # Pass 2: the taint, now that the loaded words are known.
+    out = taint_ir_c.run(cap, values, taints)
+
+    # A store publishes its mask; the caller's memory has to receive it, or a
+    # `push` would leave nothing for the matching `pop` to find.
+    for k, acc in enumerate(accesses):
+        kind, size, _needval = acc
+        if kind != 1:
+            continue
+        base = MEM_SLOT_BASE + MEM_SLOTS_PER_ACCESS * k
+        memory.write_mask(out[base + 1], out[base + 3], size)
     return {name: out[slot] for name, slot in layout.items()}
 
 
-def _differential(arch, code, in_taint, in_values, state_format, implicit_policy):
+def _differential(arch, code, in_taint, in_values, state_format,
+                  implicit_policy, memory):
     from microtaint.instrumentation.ast import EvalContext
     from microtaint.simulator import CellSimulator
     from microtaint.sleigh.engine import generate_static_rule
@@ -186,13 +241,166 @@ def _differential(arch, code, in_taint, in_values, state_format, implicit_policy
         input_values=dict(in_values),
         simulator=CellSimulator(arch),
         implicit_policy=implicit_policy,
+        shadow_memory=memory,
+        mem_reader=memory.read if memory is not None else None,
     )
     # The POST-STATE, not just what the instruction wrote: an untouched
     # register keeps the taint it had.  `circuit.evaluate` reports only its
     # own assignments, so overlaying them on the input is what makes the two
     # paths answer the same question in the same shape -- without which
     # "run the suite against either implementation" is not a thing you can do.
+    out = circuit.evaluate(ctx)
+    # A store arrives as an output named `MEM_<address>_<size>`, with the
+    # address already resolved.  `evaluate` does not commit it -- in the
+    # emulator the hook does that -- so the API has to, or a `push` leaves
+    # nothing for the matching `pop` to read back and the two paths disagree
+    # about memory while agreeing about registers.
+    if memory is not None:
+        for key, mask in out.items():
+            hit = _MEM_OUTPUT.match(key)
+            if hit:
+                memory.write_mask(int(hit.group(1), 16), mask, int(hit.group(2)))
     after = {name: in_taint.get(name, 0)
              for name in _slot_layout(arch, state_format, in_taint, in_values)}
-    after.update(circuit.evaluate(ctx))
+    after.update({k: v for k, v in out.items() if not k.startswith('MEM_')})
     return after
+
+
+class TaintSequence:
+    """Taint through a run of instructions, with the state threaded for you.
+
+    `taint_step` answers about one instruction and leaves the caller to carry
+    the state forward.  For a sequence that is not enough: `push rbx` moves the
+    stack pointer, and a `pop` that does not see the new RSP reads the wrong
+    word.  So this threads three things between steps -- the register taint, the
+    register VALUES, and a `TaintMemory` holding both the stored bytes and their
+    taint -- which is what makes `push`/`pop` and a spill/reload actually work.
+
+    The taint is computed by whichever implementation `path` selects and stays
+    on the fast one.  The concrete values are the expensive half: they come from
+    executing the instruction in the cell, once per register it writes, because
+    nothing else in the engine knows what `push` does to RSP.  That cost is per
+    STEP, not per instruction executed by a program, so a sequence of a few
+    dozen instructions is still immediate -- but it is why this is a separate
+    class and not the default behaviour of `taint_step`.
+    """
+
+    __slots__ = (
+        '_paths_used',
+        '_sim',
+        'arch',
+        'memory',
+        'path',
+        'state_format',
+        'taint',
+        'values',
+    )
+
+    def __init__(self, arch, *, values=None, taint=None, memory=None,
+                 path: Path | None = None, state_format=None) -> None:
+        from microtaint.emulator import archregs
+        from microtaint.simulator import CellSimulator
+        from microtaint.taint_memory import TaintMemory
+
+        self.arch = arch
+        self.state_format = state_format or archregs.state_format(arch)
+        self.values = dict(values or {})
+        self.taint = dict(taint or {})
+        self.memory = memory if memory is not None else TaintMemory()
+        self.path = path
+        self._sim = CellSimulator(arch)
+        self._paths_used: list[Path] = []
+
+    @property
+    def paths_used(self) -> list:
+        """Which implementation answered each step, in order.
+
+        Worth checking before quoting a speed: a step the compiled path
+        declined was answered by the differential.
+        """
+        return list(self._paths_used)
+
+    def step(self, code: bytes) -> dict[str, int]:
+        """Advance one instruction; returns the register taint after it."""
+        after, used = explain(self.arch, code, self.taint, self.values,
+                              path=self.path, state_format=self.state_format,
+                              memory=self.memory)
+        self._paths_used.append(used)
+        self.taint = after
+        self._advance_values(code)
+        return after
+
+    def run(self, *codes: bytes) -> dict[str, int]:
+        """Advance through several instructions; returns the taint after all."""
+        after = self.taint
+        for code in codes:
+            after = self.step(code)
+        return after
+
+    def _advance_values(self, code: bytes) -> None:
+        """Execute the instruction concretely and carry its writes forward.
+
+        Only what the instruction WRITES is re-read.  The lowering already
+        enumerates that, so a `push` costs two concrete executions (RSP and the
+        pushed word) rather than one per register in the state format.
+        """
+        import types as _types
+
+        # The words this instruction loads have to reach the cell as inputs, or
+        # a `pop` executes against an empty memory and returns zero.  The taint
+        # pass has already resolved those addresses, so they are read back here
+        # rather than computed a second time.
+        inputs = dict(self.values)
+        for address, size in self.memory.take_reads():
+            inputs[f'MEM_{address:#x}_{size}'] = self.memory.read(address, size)
+
+        def concrete(out_reg: str, size: int):
+            cell = _types.SimpleNamespace(
+                instruction=code.hex(), out_reg=out_reg,
+                out_bit_start=0, out_bit_end=size * 8 - 1)
+            try:
+                return self._sim._pcode.evaluate_concrete_flat(cell, inputs)
+            except Exception:
+                return None
+
+        for name, size in self._written_registers(code):
+            value = concrete(name, size)
+            if value is not None:
+                self.values[name] = value
+
+        # The stores this step made: the taint pass resolved their addresses and
+        # the memory recorded them, so the concrete word can be asked for by the
+        # name the address gives it, without computing the address twice.
+        for address, size in self.memory.take_writes():
+            value = concrete(f'MEM_{address:#x}_{size}', size)
+            if value is not None:
+                self.memory.write(address, value, size)
+
+    def _written_registers(self, code: bytes):
+        """(name, size) for every register this instruction writes.
+
+        From the lowering, which covers the result and every flag.  If it
+        declines the instruction there is nothing to ask, so fall back to the
+        whole state format -- correct, and slow only for the instructions the
+        compiled path was never going to take anyway.
+        """
+        from microtaint.taint_ir.frompcode import Unsupported, build_ir
+        from microtaint.taint_ir.regmap import name_offset
+
+        sizes = {r.name: (min(r.bits, 64) + 7) // 8 for r in self.state_format}
+        try:
+            prog = build_ir(self.arch, code)
+        except (Unsupported, Exception):
+            return list(sizes.items())
+        by_offset: dict[int, str] = {}
+        for r in self.state_format:
+            off = name_offset(self.arch, r.name)
+            if off is not None:
+                by_offset.setdefault(off, r.name)
+        out = []
+        for key, _node in prog.outputs:
+            if isinstance(key, tuple) and key[0] == 'reg':
+                name = by_offset.get(key[1])
+                if name is not None:
+                    out.append((name, sizes.get(name, 8)))
+        return out

@@ -89,13 +89,19 @@ def _lift(key, arch, code: bytes, n_slots: int):
         return None
 
 
-def program_for(arch, code: bytes, name_to_slot: dict):
+def program_for(arch, code: bytes, name_to_slot: dict, *, force: bool = False):
     """-> (capsule, function address) for the engine's layout, or None.
 
     The capsule owns the emitted code, so the caller must keep it alive for as
     long as it holds the address.
     """
-    if not enabled():
+    # `force` is a caller naming this implementation outright.  The
+    # environment variable chooses the DEFAULT and switches the emulator off;
+    # it is not a reason to refuse someone who asked for the compiled path by
+    # name, and refusing would make it impossible to compare the two
+    # implementations in a run configured for the other one -- which is the
+    # whole point of having two.
+    if not (force or enabled()):
         return None
     key = (_arch_key(arch), bytes(code), _layout_key(name_to_slot))
     hit = _CACHE.get(key)
