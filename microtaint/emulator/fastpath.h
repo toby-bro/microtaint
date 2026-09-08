@@ -438,6 +438,19 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
                 ent->snap_n = (ent->in_snap && ent->out_snap) ? n_slots : 0;
             }
             if (ent->snap_n == n_slots) {
+                /* in_snap is written HERE, before the evaluation, while
+                 * out_snap can only be written after it.  So from this point
+                 * until the store below the entry is a NEW input paired with
+                 * the PREVIOUS output, and have_snap must not claim otherwise:
+                 * an evaluation that commits nothing (PC_REPORT, DECLINED)
+                 * returns without reaching the store and would leave exactly
+                 * that mismatch behind.  The next probe -- including the
+                 * caller's own re-probe on this same instruction, one function
+                 * call later -- then matches the new input and replays the old
+                 * output, which silently substitutes a stale taint state and,
+                 * for a branch, skips the implicit-taint check that was the
+                 * whole reason this evaluation declined to commit. */
+                ent->have_snap = 0;
                 memcpy(ent->in_snap, g_taint, nbytes);
                 if (value_indep) {
                     ent->have_val = 0;

@@ -1336,6 +1336,13 @@ cdef class InstructionHook:
                     aent.out_snap = <uint64_t*>malloc(<size_t>nbytes)
                     aent.snap_n = self.n_slots if (aent.in_snap != NULL and aent.out_snap != NULL) else 0
                 if aent.snap_n == self.n_slots:
+                    # Same rule as fastpath.h: in_snap is written before the
+                    # evaluation and out_snap only after one that commits, so
+                    # the entry is invalid in between.  Leaving have_snap set
+                    # pairs a new input with a stale output, and the next probe
+                    # replays it -- dropping the implicit-taint check for a
+                    # branch whose evaluation deliberately did not commit.
+                    aent.have_snap = 0
                     memcpy(<void*>aent.in_snap, <void*>self.g_taint, nbytes)
                     if value_indep:
                         aent.have_val = 0
