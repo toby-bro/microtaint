@@ -47,6 +47,10 @@
 #define MT_FAST_DONE  0   /* instruction fully handled */
 #define MT_FAST_SLOW  1   /* caller must run the Python path */
 #define MT_FAST_ERROR 2   /* a Python exception is set */
+/* The taint is committed, but the attacker-influenced-write check still has to
+ * see this instruction's tainted stores, and that check is Python.  Only the
+ * GIL-free lane returns this, and only when there ARE tainted stores. */
+#define MT_FAST_DONE_AIW 3
 
 /* ------------------------------------------------------------------------ */
 /* Per-address cache                                                         */
@@ -311,6 +315,20 @@ typedef struct {
      * assumption: a change that quietly made the lane decline would barely move
      * the wall clock but would collapse this. */
     unsigned long *express_done;
+    /* Why the lane declined, indexed by reason, so the share of a run still
+     * taking the GIL is attributable rather than guessed at.  This is how the
+     * attacker-influenced-write refusal was found: it was 98% of the remaining
+     * GIL path on bench_dense, for a check that is a no-op unless the
+     * instruction made tainted stores.
+     *   [0] no entry yet, or the bytes at this address changed
+     *   [1] armed for nothing this lane can do
+     *   [2] inputs were dirty and no compiled shape is armed
+     *   [3] a previous instruction's claims are standing, or no scratch
+     *   [4] the register read was not available
+     *   [5] (unused: the AIW check now defers instead of refusing)
+     *   [6] the compiled memory program declined
+     */
+    unsigned long *express_miss;
     unsigned long *instr_total;
     int           *arr_loaded;    /* seeded taint has reached the array */
     /* The attacker-influenced-write check reads this instruction's committed
@@ -832,14 +850,17 @@ static void mt_express_arm(MtFastCtx *c, MtAddrEntry *ent, PyObject *compiled,
 static int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size) {
     if (!c->map || !c->arr_loaded || !*c->arr_loaded) return MT_FAST_SLOW;
     MtAddrEntry *ent = mt_am_get(c->map, address);
-    if (!ent || !ent->express || ent->size != (int)size) return MT_FAST_SLOW;
+    if (!ent || ent->size != (int)size) { c->express_miss[0]++; return MT_FAST_SLOW; }
+    if (!ent->express) { c->express_miss[1]++; return MT_FAST_SLOW; }
     /* A cached prefilter is only meaningful against the slot layout it was
      * resolved for. */
-    if (ent->express_gen != *c->express_gen) return MT_FAST_SLOW;
+    if (ent->express_gen != *c->express_gen) { c->express_miss[0]++; return MT_FAST_SLOW; }
     /* A previous instruction's tainted-write claims are still standing, and
      * dropping them means clearing a Python set. */
-    if (c->ltw_set && *c->ltw_set && PySet_GET_SIZE(*c->ltw_set) != 0)
+    if (c->ltw_set && *c->ltw_set && PySet_GET_SIZE(*c->ltw_set) != 0) {
+        c->express_miss[3]++;
         return MT_FAST_SLOW;
+    }
 
     const int n_slots = *c->n_slots;
     uint64_t *g_taint = *c->g_taint;
@@ -877,9 +898,11 @@ static int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size)
     }
 
     /* ---- otherwise the compiled program, if there is one ---------------- */
-    if (!(ent->express & (MT_XP_IR | MT_XP_IRPC | MT_XP_IRMEM)))
+    if (!(ent->express & (MT_XP_IR | MT_XP_IRPC | MT_XP_IRMEM))) {
+        c->express_miss[2]++;
         return MT_FAST_SLOW;
-    if (mt_read_regs(c, ent, address) != 0) return MT_FAST_SLOW;
+    }
+    if (mt_read_regs(c, ent, address) != 0) { c->express_miss[4]++; return MT_FAST_SLOW; }
     const size_t nbytes = (size_t)n_slots * sizeof(uint64_t);
     MtMemWrite mw[MT_MAX_MEM_WRITES];
     int n_w = 0;
@@ -896,20 +919,19 @@ static int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size)
          * computes the same function. */
         ((MtTaintIRFn)ent->ir_fn)(*c->g_val, g_taint, g_taint);
     } else if (ent->express & MT_XP_IRPC) {
-        if (!c->ir_out || n_slots > MT_IR_MEM_BASE) return MT_FAST_SLOW;
+        if (!c->ir_out || n_slots > MT_IR_MEM_BASE) { c->express_miss[3]++; return MT_FAST_SLOW; }
         memcpy(c->ir_out, g_taint, nbytes);
         ((MtTaintIRFn)ent->ir_fn)(*c->g_val, g_taint, c->ir_out);
         /* Nothing is committed until the policy has spoken: deciding after
          * committing would mean reporting a leak already written down. */
-        if (!mt_ir_policy_ok(c, c->ir_out, n_slots)) return MT_FAST_SLOW;
+        if (!mt_ir_policy_ok(c, c->ir_out, n_slots)) { c->express_miss[3]++; return MT_FAST_SLOW; }
         memcpy(g_taint, c->ir_out, nbytes);
     } else {
-        /* A store's committed writes are read back in Python by the
-         * attacker-influenced-write check, so that check keeps stores on the
-         * GIL path for as long as it is armed. */
-        if (c->check_aiw && *c->check_aiw) return MT_FAST_SLOW;
         n_w = mt_ir_mem_step(c, ent, mw, MT_MAX_MEM_WRITES, 0);
-        if (n_w == MT_EVAL_DECLINED || n_w == MT_EVAL_ERROR) return MT_FAST_SLOW;
+        if (n_w == MT_EVAL_DECLINED || n_w == MT_EVAL_ERROR) {
+            c->express_miss[6]++;
+            return MT_FAST_SLOW;
+        }
     }
 
     *c->ltw_n = 0;
@@ -917,6 +939,14 @@ static int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size)
     (*c->instr_total)++;
     (*c->fast_done)++;
     (*c->express_done)++;
+    /* The attacker-influenced-write check reads this instruction's committed
+     * stores back in Python.  It is asked about tainted stores only -- an
+     * instruction that claimed none has nothing for it to look at -- so rather
+     * than keeping every store on the GIL path while the check is armed, the
+     * taint is committed here and the caller takes the GIL for the check
+     * alone.  On this workload that is the difference between refusing 98% of
+     * the GIL path's instructions and refusing almost none of it. */
+    if (*c->ltw_n > 0 && c->check_aiw && *c->check_aiw) return MT_FAST_DONE_AIW;
     return MT_FAST_DONE;
 }
 

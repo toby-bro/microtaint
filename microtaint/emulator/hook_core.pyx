@@ -220,6 +220,7 @@ cdef extern from "fastpath.h":
         unsigned long *prefilter_hits
         unsigned *express_gen
         unsigned long *express_done
+        unsigned long *express_miss
         unsigned long *instr_total
         int *arr_loaded
         int *check_aiw
@@ -263,6 +264,7 @@ cdef extern from "memhook.h":
 # Mirrors of the header's constants.  Cython needs compile-time literals to size
 # an array and to fold branch tests, so these are duplicated deliberately; the
 # header is the source of truth and the values must match it.
+DEF MT_FAST_DONE_AIW = 3
 DEF MT_EVAL_DECLINED = -1
 DEF MT_EVAL_ERROR = -2
 # Compiled-program memory state: must match MT_IR_MEM_BASE / MT_IR_MAX_ACC in
@@ -513,6 +515,7 @@ cdef class InstructionHook:
     # Instructions the GIL-free express lane finished on its own, and the
     # generation counter that invalidates its cached prefilters.
     cdef public unsigned long express_done
+    cdef unsigned long express_miss_c[8]
     cdef unsigned express_gen
     cdef PyObject *ltw_set_ptr
     # Why instructions leave the C path, so the biggest reason is a measurement.
@@ -618,6 +621,9 @@ cdef class InstructionHook:
         self.g_val = NULL
         self.n_slots = 0
         self.express_done = 0
+        cdef int _mi
+        for _mi in range(8):
+            self.express_miss_c[_mi] = 0
         self.express_gen = 1
         self.ltw_set_ptr = NULL
         self.cap_slots = 0
@@ -717,6 +723,7 @@ cdef class InstructionHook:
         self.fctx.owner = <PyObject*>self
         self.fctx.express_gen = &self.express_gen
         self.fctx.express_done = &self.express_done
+        self.fctx.express_miss = self.express_miss_c
         self.fctx.instr_total = &self.instr_total
         self.fctx.arr_loaded = <int*>&self.arr_loaded
         self.fctx.check_aiw = <int*>&self.check_aiw
@@ -728,6 +735,19 @@ cdef class InstructionHook:
             self.fctx.ltw_set = &self.ltw_set_ptr
         else:
             self.fctx.ltw_set = NULL
+
+    #: Reason names for express_miss, in index order (see fastpath.h).
+    EXPRESS_MISS_REASONS = ('cold', 'unarmed', 'dirty_no_program',
+                            'claims_standing', 'no_register_read',
+                            'unused', 'memory_declined', 'unused')
+
+    @property
+    def express_miss(self):
+        """Per-reason counts of express-lane declines, in index order.
+
+        Pair with EXPRESS_MISS_REASONS.  Cheap enough to leave on: it counts
+        only on a path that is already leaving for the GIL."""
+        return tuple(self.express_miss_c[i] for i in range(8))
 
     def __dealloc__(self):
         mt_am_free(&self.addr_map)
@@ -1717,6 +1737,19 @@ cdef class InstructionHook:
                 self.g_taint[self._slot_for(key)] = \
                     <uint64_t>(int(val) & 0xFFFFFFFFFFFFFFFFULL)
 
+    cdef void _aiw_after_express(self, unsigned long long address):
+        """The AIW check for an instruction the GIL-free lane already committed.
+
+        The lane cannot run this itself (it builds dicts and reports), so it
+        commits the taint, records the tainted stores in ltw, and asks for the
+        GIL only when there are some.  The instruction bytes come back off the
+        address entry rather than being passed down, so the lane's signature
+        stays free of Python."""
+        cdef AddrEntry *e = mt_am_get(&self.addr_map, address)
+        if e == NULL or e.instr_bytes == NULL or self.ltw_n <= 0:
+            return
+        self._aiw_check_from_ltw(<bytes>(<object>e.instr_bytes), address)
+
     cdef _aiw_check_from_ltw(self, bytes instruction_bytes,
                              unsigned long long address):
         """AIW check for an instruction the C path handled.
@@ -1961,6 +1994,11 @@ cdef class InstructionHook:
 # keeps the hook alive.  noexcept prints-and-clears any unhandled exception,
 # matching the ctypes-callback behaviour.
 # ---------------------------------------------------------------------------
+cdef void _hook_aiw(void *owner, unsigned long long address):
+    """The one piece of an express-lane instruction that needs the GIL."""
+    (<InstructionHook>owner)._aiw_after_express(address)
+
+
 cdef void _hook_slow(void *owner, unsigned long long address, int size):
     """Everything the express lane declined, with the GIL held."""
     cdef InstructionHook hook = <InstructionHook>owner
@@ -1988,7 +2026,14 @@ cdef void _c_instruction_hook(void *uc, unsigned long long address,
     # about 200 ns -- nearly all of the difference being that acquire.  The
     # express lane answers what it can without it and hands over the rest.
     cdef MtFastCtx *c = <MtFastCtx*>user_data
-    if mt_fast_step_nogil(c, address, size) == MT_FAST_DONE:
+    cdef int rc = mt_fast_step_nogil(c, address, size)
+    if rc == MT_FAST_DONE:
+        return
+    if rc == MT_FAST_DONE_AIW:
+        # Handled, but this instruction made tainted stores and the
+        # attacker-influenced-write check has to see them.
+        with gil:
+            _hook_aiw(c.owner, address)
         return
     with gil:
         _hook_slow(c.owner, address, size)
