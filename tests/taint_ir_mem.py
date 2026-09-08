@@ -165,7 +165,8 @@ def _write_mem(mem, addr, size, val, be):
         mem[(addr - DATA_ADDR + i) % DATA_LEN] = (val >> sh) & 0xFF
 
 
-def ir_mem_taint(arch, code, reg_taint, reg_vals, mem_taint, mem_vals, *, be=False):
+def ir_mem_taint(arch, code, reg_taint, reg_vals, mem_taint, mem_vals, *,
+                 be=False, policy='avalanche'):
     """Run one instruction's taint program over registers and memory.
 
     Returns (register taint by name, per-byte memory taint), or raises
@@ -174,7 +175,7 @@ def ir_mem_taint(arch, code, reg_taint, reg_vals, mem_taint, mem_vals, *, be=Fal
     from microtaint.taint_ir.frompcode import build_ir
     from tests.taint_ir_bank import name_offset
 
-    prog = build_ir(arch, code)
+    prog = build_ir(arch, code, pointer_policy=policy)
     # The IR keys registers by byte offset, since one offset carries several
     # names; the caller names them however its own state does.
     vals, tnts = {}, {}
@@ -239,7 +240,7 @@ class MemReport:
                 f'UNDER={self.under} declined={self.declined}')
 
 
-def run_mem_bank(isa='AMD64', n_vec=4, seed=7):
+def run_mem_bank(isa='AMD64', n_vec=4, seed=7, policy='avalanche'):
     from microtaint.taint_ir.frompcode import Unsupported
     from microtaint.types import Architecture
     from tests.perop_c_bank import _engine_names
@@ -258,7 +259,7 @@ def run_mem_bank(isa='AMD64', n_vec=4, seed=7):
             # A few tainted bits: on one non-pointer register and in memory.
             others = [n for n in desc.gp if n != _PTR[isa]]
             reg_taint[rng.choice(others)] = 1 << rng.randint(0, 63)
-            if rng.random() < 0.35:
+            if policy == 'avalanche' and rng.random() < 0.35:
                 # A secret-dependent address: bits 3..5 keep every reachable
                 # address inside the 64-byte window, so the oracle can still
                 # enumerate it.
@@ -277,7 +278,7 @@ def run_mem_bank(isa='AMD64', n_vec=4, seed=7):
             try:
                 got_reg, got_mem = ir_mem_taint(arch, case.code, eng_taint,
                                                 eng_vals, mem_taint, mem_vals,
-                                                be=be)
+                                                be=be, policy=policy)
             except (Unsupported, TaintedStoreAddress):
                 rep.declined += 1
                 continue
@@ -329,9 +330,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument('--isas', nargs='*', default=['AMD64'])
     ap.add_argument('--vectors', type=int, default=4)
+    ap.add_argument('--policy', default='avalanche',
+                    choices=['avalanche', 'concrete'])
     args = ap.parse_args(argv)
     for isa in args.isas:
-        rep = run_mem_bank(isa, n_vec=args.vectors)
+        rep = run_mem_bank(isa, n_vec=args.vectors, policy=args.policy)
         print(f'[{isa}] {rep.summary()}')
         for label, under in rep.under_examples:
             print(f'    UNDER {label}: '

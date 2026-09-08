@@ -80,10 +80,20 @@ guest memory and the shadow, evaluate again for the taint — which is sound
 exactly while no address depends on a value the same instruction loaded. The
 builder verifies that and declines when it does not hold.
 
-A load through a *tainted* address taints the whole loaded word: which bytes
-are read is then itself secret-dependent. A store through one is a much larger
-obligation, so its address taint is reported and the caller hands the
-instruction to the slow path rather than silently writing one location.
+What a *tainted* address implies is a policy, chosen at lowering time and named
+rather than assumed:
+
+- `concrete` (the default, and what the engine runs) reads the shadow at the
+  address the instruction computes. This is what the whole-instruction
+  differential does, so a compiled program is a faithful replacement for it.
+- `avalanche` taints the whole loaded word, because which bytes are read is then
+  itself secret-dependent. This is the sound answer, and the memory oracle
+  checks it with vectors that taint the pointer's low bits.
+
+Either way the address's own taint is published as an output, so the policy can
+change without changing the lowering. Adopting `avalanche` in the engine is a
+decision for the implicit-taint policy: it cascades, since a tainted stack
+pointer would make every local read fully tainted.
 
 ## What it costs
 
@@ -91,13 +101,27 @@ Whole instruction, all outputs including flags, over the 1569-instruction bank:
 
 | backend | mean | compile |
 |---|---|---|
-| clang -O3 | 5.5 ns | 3.5-37 ms per program |
-| host emitter (x86-64) | 10.8 ns | 21-57 µs per program |
-| C interpreter | 187 ns | none |
+| clang -O3 | 5.5 ns | 3.8-29 ms per program |
+| host emitter (x86-64) | 10.8 ns | 21-44 µs per program |
+| C interpreter | 184 ns | none |
 
-Per ISA, compiled: AMD64 7.0 ns, ARM64 5.4, PPC32BE 4.1, MIPS64BE 3.5,
-RISCV64 3.8. Coverage is 96.6%; the rest is a 128-bit multiply, a CALLOTHER
-whose result is read downstream, and backward branches.
+Per ISA, compiled: AMD64 7.0 ns, ARM64 5.4, PPC32BE 4.3, MIPS64BE 3.3,
+RISCV64 3.9. Coverage is 98.0% of the bank (1538/1569), and the host emitter
+takes 1531 of those; what is left is a CALLOTHER whose result is read
+downstream, a backward branch (a p-code loop), a wide add from `adcx`, and --
+for the emitter alone — division and count-leading-zeros.
+
+In the engine, with `MICROTAINT_TAINT_IR=1` against the same run without it:
+
+| benchmark | bare Qiling | differential | compiled |
+|---|---|---|---|
+| bench_dense | 8.68 ms | 725.24 ms (×84) | 407.32 ms (×47) |
+| bench_sparse | 2.81 ms | 92.74 ms (×33) | 86.41 ms (×31) |
+| bench_untainted | 2.74 ms | 86.17 ms (×31) | 85.82 ms (×31) |
+
+SLEIGH re-executions on the dense workload drop from 131231 to 4664. Read that
+against the untainted row: with taint work at essentially zero the overhead is
+still ×31, so what remains is the per-instruction hook, not taint arithmetic.
 
 ## How it is checked
 
@@ -120,6 +144,15 @@ same p-code and inherit its undefined-flag gaps.
 ## Using it in the engine
 
 `engine_glue.program_for(arch, code, slot_map)` compiles a program against the
-engine's slot layout, refusing unless it is register-only, every input register
-already has an interned slot, and the host emitter took it. The hot path calls
-it through `MtAddrEntry.ir_fn`. Opt in with `MICROTAINT_TAINT_IR=1`.
+engine's slot layout, refusing unless every input register already has an
+interned slot (they are interned lazily, so it retries), no offset it touches
+carries two of the caller's names, and the host emitter took it — the
+interpreter is not reachable from the hot path.
+
+The hot path calls it through `MtAddrEntry.ir_fn`, and never for an instruction
+that writes PC: the implicit-taint policy check lives inside the circuit
+evaluator. A memory program runs the two-pass protocol in
+`fastpath.h::mt_ir_mem_step`, which commits nothing until both passes have
+succeeded, so a refusal simply leaves the instruction to the circuit.
+
+Opt in with `MICROTAINT_TAINT_IR=1`.

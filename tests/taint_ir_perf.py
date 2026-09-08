@@ -34,10 +34,10 @@ def _slot_map(spec):
     """
     from microtaint.taint_ir.frompcode import _BUILDERS, Builder
     key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
-    b = _BUILDERS.get(key)
+    b = _BUILDERS.get((key, 'concrete'))
     if b is None:
         b = Builder(spec.arch, key.endswith('BE'))
-        _BUILDERS[key] = b
+        _BUILDERS[(key, 'concrete')] = b
     names = sorted({nm for nm, _sz in b.declared.values()})
     return names, {n: i for i, n in enumerate(names)}
 

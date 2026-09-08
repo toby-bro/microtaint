@@ -464,19 +464,12 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
     memcpy(so, st, nb);
     fn(sv, st, so);
 
-    /* Any access through a secret-dependent address is handed back.
-     *
-     * For a STORE the reason is soundness: the write lands somewhere unknown,
-     * which is a wider obligation than this path can discharge.  For a LOAD it
-     * is deliberate deference: the lowering's rule -- a load through a tainted
-     * address taints the whole loaded word -- is the sound one, but the engine
-     * resolves such a load against the concrete address instead, and quietly
-     * changing that policy here would cascade (a tainted stack pointer would
-     * make every local read fully tainted).  Which of the two is right is a
-     * question for the engine's implicit-taint policy, not for a fast path. */
-    for (int k = 0; k < ent->ir_n_acc; k++) {
-        if (so[MT_IR_MEM_BASE + 4 * k + 2] != 0) return MT_EVAL_DECLINED;
-    }
+    /* A secret-dependent address is NOT handled specially here, deliberately.
+     * The program was lowered under the 'concrete' pointer policy, which is
+     * what the circuit evaluator does: resolve the access at the address the
+     * instruction computes.  The address's own taint is published as an output
+     * so a future policy can act on it; widening the answer here instead would
+     * change every result involving a tainted stack pointer. */
 
     memcpy(*c->g_taint, so, nb);
     int n_w = 0;

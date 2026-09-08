@@ -241,11 +241,28 @@ class SymFrame:
             self.touched.add(off)
 
 
+#: What a load through a secret-dependent address yields.
+#:
+#:   'concrete'  -- read the shadow at the address the instruction computes.
+#:                  This is what the engine's differential does, so it is the
+#:                  default: a replacement evaluator that quietly widened the
+#:                  policy would change every result that involves a tainted
+#:                  stack pointer.
+#:   'avalanche' -- taint the whole loaded word, because which bytes are read is
+#:                  then itself secret-dependent.  This is the SOUND answer and
+#:                  the memory oracle checks it; adopting it is a decision for
+#:                  the implicit-taint policy, not for a lowering.
+POINTER_POLICIES = ('concrete', 'avalanche')
+
+
 class Builder:
     """Lower one instruction to IR.  `prog.outputs` ends up holding the taint of
     every architectural register, written or passed through."""
 
-    def __init__(self, arch, be: bool):
+    def __init__(self, arch, be: bool, pointer_policy: str = 'concrete'):
+        if pointer_policy not in POINTER_POLICIES:
+            raise ValueError(pointer_policy)
+        self.pointer_policy = pointer_policy
         from microtaint.instrumentation.cell import _build_reg_maps
         offsets, sizes = _build_reg_maps(arch)[:2]
         # Keep a NON-OVERLAPPING cover of the register file, widest first.
@@ -432,9 +449,9 @@ class Builder:
         """A load's value and shadow taint enter as INPUTS at a slot the caller
         fills once the address has been computed.
 
-        A tainted address is not a decline: which bytes are read is then itself
-        secret-dependent, so the loaded word is fully tainted -- sound, and it
-        keeps the common clean-pointer case exact.
+        What a tainted address implies is a policy question, not a lowering
+        question -- see POINTER_POLICIES.  Either way the address's own taint is
+        published as an output, so a caller can act on it.
         """
         p = self.p
         size = op.output.size
@@ -444,10 +461,11 @@ class Builder:
         k = self._access_for('load', addr_v, size)
         p.outputs.append((('addrt', k), addr_t))
         val = p.input_value(('mem', k), size * 8)
-        mem_t = p.input_taint(('mem', k), size * 8)
-        tnt = p.op(OR, mem_t,
-                   p.op(AND, p.const(_mask_of(size)),
-                        p.splat(p.op(NEZ, addr_t))))
+        tnt = p.input_taint(('mem', k), size * 8)
+        if self.pointer_policy == 'avalanche':
+            tnt = p.op(OR, tnt,
+                       p.op(AND, p.const(_mask_of(size)),
+                            p.splat(p.op(NEZ, addr_t))))
         self._predicated_write(op.output, val, tnt)
 
     def _emit_store(self, op):
@@ -1013,13 +1031,13 @@ class Builder:
 _BUILDERS: dict = {}
 
 
-def build_ir(arch, code: bytes):
+def build_ir(arch, code: bytes, *, pointer_policy: str = 'concrete'):
     """Lower one instruction to a taint IR program.  Raises Unsupported."""
     from microtaint.sleigh.lifter import get_context
     key = arch.value if hasattr(arch, 'value') else str(arch)
-    b = _BUILDERS.get(key)
+    b = _BUILDERS.get((key, pointer_policy))
     if b is None:
-        b = Builder(arch, key.endswith('BE'))
-        _BUILDERS[key] = b
+        b = Builder(arch, key.endswith('BE'), pointer_policy)
+        _BUILDERS[(key, pointer_policy)] = b
     ops = get_context(key).translate(code, LIFT_BASE).ops
     return b.build(ops, LIFT_BASE + len(code))

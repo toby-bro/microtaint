@@ -116,23 +116,28 @@ def test_ir_never_under_taints_vs_ground_truth(isa):
                     f'current engine does not:\n{detail}')
 
 
+@pytest.mark.parametrize('policy', ['concrete', 'avalanche'])
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64'])
-def test_memory_taint_matches_ground_truth(isa):
+def test_memory_taint_matches_ground_truth(isa, policy):
     """Loads and stores, against Unicorn per-bit truth over a real data page.
 
-    Includes secret-dependent addresses: the pointer's low bits are tainted in
-    part of the corpus, so the rule that a load through a tainted address taints
-    the whole loaded word is exercised rather than assumed.
+    Both pointer policies are checked.  'avalanche' is the sound one and its
+    vectors taint the pointer's low bits, so the rule that a load through a
+    tainted address taints the whole loaded word is exercised rather than
+    assumed.  'concrete' is what the engine does and what the hot path runs; it
+    makes no claim about a tainted address, so those vectors are not generated
+    for it.
     """
     from tests.taint_ir_mem import run_mem_bank
 
-    rep = run_mem_bank(isa, n_vec=3)
-    assert rep.n > 0, f'{isa}: no memory cases evaluated'
+    rep = run_mem_bank(isa, n_vec=3, policy=policy)
+    assert rep.n > 0, f'{isa}/{policy}: no memory cases evaluated'
     if rep.under:
         detail = '\n'.join(
             f'  {label}: {[(k, hex(v)) for k, v in list(u.items())[:6]]}'
             for label, u in rep.under_examples[:5])
-        pytest.fail(f'{isa}: {rep.under} memory case(s) under-taint:\n{detail}')
+        pytest.fail(f'{isa}/{policy}: {rep.under} memory case(s) under-taint:'
+                    f'\n{detail}')
 
 
 def test_vector_lanes_match_ground_truth():
