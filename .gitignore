@@ -164,3 +164,6 @@ bench_kernel.py
 **/external/pin-*/
 **/external/libdft64/
 **/external/taintgrind/
+# Vendored third-party engines for the RQ2 comparison (Pin, libdft64,
+# TaintGrind).  Fetched by the artifact setup script, never committed.
+artifacts/ndss27/*/external/
