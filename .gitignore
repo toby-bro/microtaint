@@ -109,6 +109,9 @@ venv.bak/
 .mypy_cache/
 
 *.json
+# ...and the artifact's committed results, which ARE the evidence a
+# reviewer compares their run against.
+!artifacts/ndss27/**/*.json
 shadow.c
 __init__.c
 categories.c
@@ -132,3 +135,10 @@ paper
 
 *.prof
 *.elf
+
+# Baseline engines are third-party checkouts, not ours to vendor: Pin alone is
+# ~600k lines and needs a licence accepted by hand.  setup_envs.sh fetches
+# them; the repository must not carry them.
+**/external/pin-*/
+**/external/libdft64/
+**/external/taintgrind/

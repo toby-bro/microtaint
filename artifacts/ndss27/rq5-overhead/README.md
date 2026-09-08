@@ -7,7 +7,6 @@ execution, and a stated factor over the same harness without taint.
 ## Run
 
 ```sh
-cd ../../../benchmark/overhead
 uv run python overhead_bench.py --build-bench bench.c --gen-input 256 --runs 100 \
     --only native --only qiling-only --only microtaint-all \
     --native-timeout 5 --qiling-timeout 120 --microtaint-timeout 1800 \

@@ -9,7 +9,6 @@ width.
 ## Run
 
 ```sh
-cd ../../../benchmark/width_scaling
 uv run python bench_width_scaling.py     # ~8 min, writes width_scaling_data.json
 uv run python plot_width_scaling.py      # writes fig_width_scaling.pdf
 ```

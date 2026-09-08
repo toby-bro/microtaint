@@ -50,7 +50,7 @@ Six engines with mutually incompatible dependencies, so each gets its own
 virtualenv. The repository already carries the script that builds them:
 
 ```sh
-cd benchmark/precision_soundess && ./setup_envs.sh
+cd artifacts/ndss27/rq2-soundness && ./setup_envs.sh
 ```
 
 It creates `.venv_master`, `.venv_triton`, `.venv_angr`, `.venv_maat` and the

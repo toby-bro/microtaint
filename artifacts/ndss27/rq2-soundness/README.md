@@ -10,7 +10,6 @@ because it needs all six baselines.
 ## Run
 
 ```sh
-cd ../../../benchmark/precision_soundess
 ./setup_envs.sh                 # once; see INSTALL.md step 4
 uv run python benchmark.py      # ~3 h, dominated by container life-cycle
 ```

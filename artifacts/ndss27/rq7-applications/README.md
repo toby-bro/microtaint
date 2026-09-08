@@ -12,7 +12,7 @@ neighbours, so it either misses the finding or drowns it.
 ## Run
 
 ```sh
-cd ../../../benchmark/crypto/square_and_multiply
+cd crypto/square_and_multiply
 uv run python check_side_channel.py        # ~5 min
 uv run python localise_side_channel.py     # ~5 min, locates the leaking branch
 
@@ -34,7 +34,7 @@ per-field verdict so this is visible directly rather than inferred.
 
 ## Comparing against the other engines
 
-`benchmark/applications_multitool/` holds the same two analyses written against
+`rq7-applications/other-engines/` holds the same two analyses written against
 angr, Maat, Triton and PANDA (`detect_*`, `localise_*`). Those need the baseline
 environments from `INSTALL.md` step 4. Without them, this experiment still
 demonstrates what microtaint reports; it just cannot show the others failing to.
