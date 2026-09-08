@@ -571,19 +571,10 @@
  },
  "AMD64_SIMD": {
   "declined": [
-   "movaps xmm0, xmm1",
    "movdqa xmm0, xmm1",
    "packuswb xmm0, xmm1",
-   "paddb xmm0, xmm1",
-   "paddd xmm0, xmm1",
    "pand xmm0, xmm1",
-   "pcmpeqd xmm0, xmm1",
-   "pmullw xmm0, xmm1",
    "por xmm0, xmm1",
-   "pshufd xmm0, xmm1, 0x1b",
-   "psllq xmm0, 7",
-   "psubd xmm0, xmm1",
-   "punpcklbw xmm0, xmm1",
    "pxor xmm0, xmm1",
    "vmovdqa xmm0, xmm1",
    "vpaddb xmm0, xmm1, xmm2",
@@ -596,7 +587,17 @@
    "vpunpcklbw xmm0, xmm1, xmm2",
    "vpxor xmm0, xmm1, xmm2"
   ],
-  "ops": {}
+  "ops": {
+   "movaps xmm0, xmm1": 4,
+   "paddb xmm0, xmm1": 128,
+   "paddd xmm0, xmm1": 32,
+   "pcmpeqd xmm0, xmm1": 44,
+   "pmullw xmm0, xmm1": 16,
+   "pshufd xmm0, xmm1, 0x1b": 276,
+   "psllq xmm0, 7": 8,
+   "psubd xmm0, xmm1": 32,
+   "punpcklbw xmm0, xmm1": 15
+  }
  },
  "ARM64": {
   "declined": [
@@ -1004,18 +1005,19 @@
  },
  "ARM64_SIMD": {
   "declined": [
-   "add v0.16b, v1.16b, v2.16b",
-   "add v0.4s, v1.4s, v2.4s",
-   "and v0.16b, v1.16b, v2.16b",
-   "eor v0.16b, v1.16b, v2.16b",
    "mov v0.16b, v1.16b",
-   "mul v0.4s, v1.4s, v2.4s",
-   "orr v0.16b, v1.16b, v2.16b",
-   "shl v0.4s, v1.4s, #3",
-   "sub v0.4s, v1.4s, v2.4s",
    "zip1 v0.16b, v1.16b, v2.16b"
   ],
-  "ops": {}
+  "ops": {
+   "add v0.16b, v1.16b, v2.16b": 130,
+   "add v0.4s, v1.4s, v2.4s": 34,
+   "and v0.16b, v1.16b, v2.16b": 98,
+   "eor v0.16b, v1.16b, v2.16b": 34,
+   "mul v0.4s, v1.4s, v2.4s": 10,
+   "orr v0.16b, v1.16b, v2.16b": 114,
+   "shl v0.4s, v1.4s, #3": 19,
+   "sub v0.4s, v1.4s, v2.4s": 34
+  }
  },
  "MIPS64BE": {
   "declined": [
