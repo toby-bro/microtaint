@@ -318,6 +318,8 @@ cdef bint _DIFF_CMEM = _os.environ.get('MICROTAINT_DIFF_CMEM') == '1'
 # The compiled-taint-program path.  Off unless MICROTAINT_TAINT_IR is set: it
 # replaces the evaluator on the hot path, so it stays opt-in until the whole
 # suite has been run with it on.
+cdef bint _NULL_HOOK = _os.environ.get('MICROTAINT_NULL_HOOK', '') not in ('', '0')
+
 _taint_ir_on = _os.environ.get('MICROTAINT_TAINT_IR', '') not in ('', '0')
 _taint_ir_program_for = None
 if _taint_ir_on:
@@ -1873,6 +1875,13 @@ cdef class InstructionHook:
 # ---------------------------------------------------------------------------
 cdef void _c_instruction_hook(void *uc, unsigned long long address,
                               unsigned int size, void *user_data) noexcept with gil:
+    # MICROTAINT_NULL_HOOK: return before doing any taint work, so the cost of
+    # BEING hooked (Unicorn's dispatch, the trampoline, the GIL acquire this
+    # declaration implies) can be measured apart from the cost of the work
+    # inside.  Purely diagnostic -- the taint state is not updated, so a run
+    # with it set produces no findings.
+    if _NULL_HOOK:
+        return
     cdef InstructionHook hook = <InstructionHook>user_data
     hook._evaluate(address, <int>size)
 
