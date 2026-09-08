@@ -670,7 +670,7 @@ class MicrotaintWrapper:
                 try:
                     if mapper(num) == want:
                         return num
-                except Exception:  # noqa: BLE001, PERF203 - unmapped id
+                except Exception:
                     continue
         return None
 
