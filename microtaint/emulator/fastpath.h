@@ -339,6 +339,14 @@ typedef struct {
      *   [4] the register read was not available
      *   [5] (unused: the AIW check now defers instead of refusing)
      *   [6] the compiled memory program declined
+     * and why it declined, which is a different question worth separating:
+     *   [8]  more state than the scratch holds
+     *   [9]  no shadow or no C memory reader
+     *   [10] the guest memory read failed -- the address the program computed
+     *        is one Unicorn will not read.  This is the whole story on an
+     *        AArch64 guest, where it costs the compiled memory path entirely.
+     *   [11] the program writes the program counter and the policy wants to
+     *        report
      */
     unsigned long *express_miss;
     unsigned long *instr_total;
@@ -530,13 +538,15 @@ static inline int mt_ir_policy_ok(MtFastCtx *c, uint64_t *taint, int n_slots) {
 static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
                           int out_cap, int can_py) {
     const int n_slots = *c->n_slots;
-    if (n_slots > MT_IR_MEM_BASE || ent->ir_n_acc > out_cap) return MT_EVAL_DECLINED;
+    if (n_slots > MT_IR_MEM_BASE || ent->ir_n_acc > out_cap) { c->express_miss[8]++; return MT_EVAL_DECLINED; }
     /* The context stores Py_None rather than NULL for an absent shadow -- the
      * circuit evaluator treats None as "not provided" -- so a NULL test alone
      * would hand None to the shadow C-API, which casts without checking. */
     if (!c->ir_val || !c->shadow_read_mask || !c->shadow_write_mask
-            || !c->mem_fn || !c->shadow || c->shadow == Py_None)
+            || !c->mem_fn || !c->shadow || c->shadow == Py_None) {
+        c->express_miss[9]++;
         return MT_EVAL_DECLINED;
+    }
 
     uint64_t *sv = c->ir_val, *st = c->ir_taint, *so = c->ir_out;
     const size_t nb = (size_t)n_slots * sizeof(uint64_t);
@@ -564,7 +574,7 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
          * anything, so leaving it zero is exact, not an approximation. */
         if (ent->ir_acc_needval[k]) {
             uint64_t val = 0;
-            if (c->mem_fn(c->mem_ctx, addr, size, &val) != 0) return MT_EVAL_DECLINED;
+            if (c->mem_fn(c->mem_ctx, addr, size, &val) != 0) { c->express_miss[10]++; return MT_EVAL_DECLINED; }
             sv[MT_IR_MEM_BASE + 4 * k] = val;
         }
         st[MT_IR_MEM_BASE + 4 * k] = c->shadow_read_mask(c->shadow, addr, size);
@@ -582,8 +592,10 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
      * so a future policy can act on it; widening the answer here instead would
      * change every result involving a tainted stack pointer. */
 
-    if (ent->ir_writes_pc && !mt_ir_policy_ok(c, so, n_slots))
+    if (ent->ir_writes_pc && !mt_ir_policy_ok(c, so, n_slots)) {
+        c->express_miss[11]++;
         return MT_EVAL_DECLINED;
+    }
 
     memcpy(*c->g_taint, so, nb);
     int n_w = 0;

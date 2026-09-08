@@ -516,7 +516,7 @@ cdef class InstructionHook:
     # Instructions the GIL-free express lane finished on its own, and the
     # generation counter that invalidates its cached prefilters.
     cdef public unsigned long express_done
-    cdef unsigned long express_miss_c[8]
+    cdef unsigned long express_miss_c[16]
     cdef unsigned express_gen
     cdef PyObject *ltw_set_ptr
     # Why instructions leave the C path, so the biggest reason is a measurement.
@@ -623,7 +623,7 @@ cdef class InstructionHook:
         self.n_slots = 0
         self.express_done = 0
         cdef int _mi
-        for _mi in range(8):
+        for _mi in range(16):
             self.express_miss_c[_mi] = 0
         self.express_gen = 1
         self.ltw_set_ptr = NULL
@@ -740,7 +740,10 @@ cdef class InstructionHook:
     #: Reason names for express_miss, in index order (see fastpath.h).
     EXPRESS_MISS_REASONS = ('cold', 'unarmed', 'dirty_no_program',
                             'claims_standing', 'no_register_read',
-                            'unused', 'memory_declined', 'unused')
+                            'unused', 'memory_declined', 'unused',
+                            'mem_state_too_big', 'mem_no_shadow',
+                            'mem_guest_read_failed', 'mem_pc_policy',
+                            'unused', 'unused', 'unused', 'unused')
 
     @property
     def express_miss(self):
@@ -748,7 +751,7 @@ cdef class InstructionHook:
 
         Pair with EXPRESS_MISS_REASONS.  Cheap enough to leave on: it counts
         only on a path that is already leaving for the GIL."""
-        return tuple(self.express_miss_c[i] for i in range(8))
+        return tuple(self.express_miss_c[i] for i in range(16))
 
     def __dealloc__(self):
         mt_am_free(&self.addr_map)
