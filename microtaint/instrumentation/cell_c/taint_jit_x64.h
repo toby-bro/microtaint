@@ -250,6 +250,11 @@ static int jit_spill_slot(JitCtx *c) {
 static void jit_spill(JitCtx *c, int reg) {
     int n = c->occupant[reg];
     if (n < 0) return;
+    /* A value nothing will read again is dropped rather than stored.  `last`
+     * is -1 exactly when no node takes it as an operand and no output names
+     * it, so there is no reader left to disappoint -- and a dead value is the
+     * best victim there is, since evicting it costs no instruction at all. */
+    if (c->last[n] < 0) { c->loc[n] = -1; c->occupant[reg] = -1; return; }
     int slot = jit_spill_slot(c);
     j_store(&c->b, JR_RSP, slot * 8, reg);
     c->loc[n] = JIT_SPILL_BASE + slot;
@@ -264,17 +269,30 @@ static void jit_spill(JitCtx *c, int reg) {
  * VALUE is still needed until the instruction that consumes it is emitted.
  * Handing that register out as a scratch, or as the destination of an operation
  * that writes before it reads, silently computes with the wrong operand.
+ *
+ * The node being emitted is never a candidate.  Its register is marked occupied
+ * before the operation is emitted so nothing else lands on it, but it holds no
+ * value yet -- spilling it would store garbage and, worse, would move `loc` for
+ * that node to a spill slot the emission is about to contradict by writing the
+ * result into the register.  (That is exactly what `mulhi` did: its scratch
+ * could evict its own destination, and the output then read the slot.)
  */
 static int jit_take_reg_ex(JitCtx *c, int e0, int e1, int e2) {
     for (int i = 0; i < JIT_NPOOL; i++) {
         int r = JIT_POOL[i];
         if (r == e0 || r == e1 || r == e2) continue;
+        if (c->occupant[r] == c->cur) continue;
         if (c->occupant[r] < 0) return r;
     }
-    int best = -1, best_use = -1;
+    /* -2, not -1: a register holding a value with no further use has
+     * `last` == -1, and starting the search at -1 would refuse to pick it --
+     * so a program with a dead node could exhaust the pool and be declined
+     * even though the ideal victim was sitting right there. */
+    int best = -1, best_use = -2;
     for (int i = 0; i < JIT_NPOOL; i++) {
         int r = JIT_POOL[i];
         if (r == e0 || r == e1 || r == e2) continue;
+        if (c->occupant[r] == c->cur) continue;
         int n = c->occupant[r];
         int u = (n >= 0) ? c->last[n] : -1;
         if (u > best_use) { best_use = u; best = r; }

@@ -63,9 +63,15 @@ typedef struct {
     void    (*jit_fn)(const uint64_t *, const uint64_t *, uint64_t *);
 } IRProgC;
 
+/* A backend for the HOST the analysis runs on.  Both consume the same
+ * ISA-general program, so every guest architecture the engine lifts reaches
+ * native taint code on either host.  Anywhere else keeps the interpreter. */
 #if defined(__x86_64__)
 #  define MT_HAVE_JIT 1
 #  include "taint_jit_x64.h"
+#elif defined(__aarch64__)
+#  define MT_HAVE_JIT 1
+#  include "taint_jit_a64.h"
 #endif
 
 static void irprog_free(IRProgC *p) {
