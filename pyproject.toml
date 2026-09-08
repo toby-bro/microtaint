@@ -45,7 +45,9 @@ dev = [
 ]
 
 [tool.uv.sources]
-pypcode = { git = "https://github.com/angr/pypcode.git", branch = "master" }
+# pypcode comes from PyPI.  It was pinned to the angr git master while the
+# lifter fixes we needed were unreleased; 3.3.3 carries them, so the pin is
+# gone and a plain `uv sync` no longer needs network access to a git host.
 
 [tool.setuptools]
 packages = ["microtaint"]
