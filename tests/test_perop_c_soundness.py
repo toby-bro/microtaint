@@ -25,8 +25,12 @@ from tests.perop_c_bank import run_bank_perop_c
 
 
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'RISCV64'])
-def test_no_new_under_taint_vs_ground_truth(isa):
-    rep = run_bank_perop_c(isas=[isa], n_sparse=3, ref='ground_truth')
+def test_no_new_under_taint_vs_ground_truth(isa, request):
+    from tests.conftest import fuzz_budget
+
+    rep = run_bank_perop_c(isas=[isa],
+                           n_sparse=fuzz_budget(3, request.config),
+                           ref='ground_truth')
     assert rep.n_instrs > 0, f'{isa}: no instructions exercised'
     assert rep.n_cases > 0, f'{isa}: no cases evaluated'
     if rep.n_under_new:

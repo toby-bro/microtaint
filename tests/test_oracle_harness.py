@@ -25,6 +25,7 @@ from tests.oracle_harness import (
 )
 
 
+@pytest.mark.slow
 def test_harness_self_consistent() -> None:
     """reference vs itself over the register bank: exact everywhere, no under."""
     rep = run_bank(reference_taint, n_dense=2, n_sparse=2, ref='differential')
@@ -36,6 +37,7 @@ def test_harness_self_consistent() -> None:
     assert rep.skipped_mem > 0, 'memory forms should be detected + skipped'
 
 
+@pytest.mark.slow
 def test_current_c_path_bit_exact_vs_differential() -> None:
     """The C register fast path must reproduce the differential oracle exactly.
     This is the invariant the whole rework preserves; a non-identity engine
@@ -46,6 +48,7 @@ def test_current_c_path_bit_exact_vs_differential() -> None:
     assert rep.n_exact == rep.n_cases, f'{rep.summary()} :: {rep.mismatches[:5]}'
 
 
+@pytest.mark.slow
 def test_array_gather_bit_exact_vs_differential() -> None:
     """The array-gather register path (evaluate_c_arr) must reproduce the
     differential oracle exactly over the register bank -- the de-risked core of
@@ -56,6 +59,7 @@ def test_array_gather_bit_exact_vs_differential() -> None:
     assert rep.n_exact == rep.n_cases, f'{rep.summary()} :: {rep.mismatches[:5]}'
 
 
+@pytest.mark.slow
 def test_array_gather_ptr_bit_exact_vs_differential() -> None:
     """The live-usable pointer form (evaluate_c_arr_ptr) writes target slots of a
     raw uint64 taint array in place; the resulting state must equal the
@@ -67,6 +71,7 @@ def test_array_gather_ptr_bit_exact_vs_differential() -> None:
     assert rep.n_exact == rep.n_cases, f'{rep.summary()} :: {rep.mismatches[:5]}'
 
 
+@pytest.mark.slow
 def test_current_engine_sound_vs_ground_truth_amd64() -> None:
     """The current differential must not UNDER-taint vs Unicorn per-bit truth
     on AMD64 (over-taint is allowed and expected on undefined flags)."""

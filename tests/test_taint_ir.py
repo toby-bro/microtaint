@@ -101,12 +101,13 @@ def test_backends_agree(isa, label, code):
 
 
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'RISCV64'])
-def test_ir_never_under_taints_vs_ground_truth(isa):
+def test_ir_never_under_taints_vs_ground_truth(isa, request):
+    from tests.conftest import fuzz_budget
     from tests.perop_c_bank import run_bank_perop_c
     from tests.taint_ir_bank import ir_step
 
-    rep = run_bank_perop_c(isas=[isa], n_sparse=2, ref='ground_truth',
-                           step=ir_step)
+    rep = run_bank_perop_c(isas=[isa], n_sparse=fuzz_budget(2, request.config),
+                           ref='ground_truth', step=ir_step)
     assert rep.n_cases > 0
     if rep.n_under_new:
         detail = '\n'.join(

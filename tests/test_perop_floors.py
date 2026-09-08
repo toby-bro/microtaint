@@ -31,6 +31,8 @@ import random
 
 import pytest
 
+from tests.conftest import fuzz_budget
+
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
@@ -57,10 +59,9 @@ def _under_bits(got, ref, keys):
 def soundness_report(isa, n_per, seed=7, instr_limit=None):
     """Three-way check: per-op vs ground truth vs engine oracle.  Returns
     (n_cases, n_exact_vs_gt, n_new_under, new_under_examples)."""
-    from tests.oracle_harness import (UC_DESCS, build_circuit, classify,
-                                       ground_truth, reference_taint)
-    from tests.perop_floors import Unsupported, engine_perop_floors
     from benchmark.instruction_bank import load_bank
+    from tests.oracle_harness import UC_DESCS, build_circuit, classify, ground_truth, reference_taint
+    from tests.perop_floors import Unsupported, engine_perop_floors
 
     ud = UC_DESCS[isa]()
     gp = list(ud.gp)
@@ -111,11 +112,9 @@ def slicewise_report(isa, n_per, seed=11):
     """Per-output-slice window (the integration model): trust per-op only on
     outputs whose cone is reconvergence-free.  Returns
     (n_cases, tot_slices, clean_slices, n_new_under_on_clean, examples)."""
-    from tests.oracle_harness import (UC_DESCS, build_circuit, ground_truth,
-                                      reference_taint)
-    from tests.perop_floors import (NeedsMonolithic, Unsupported,
-                                    perop_floors_slicewise)
     from benchmark.instruction_bank import load_bank
+    from tests.oracle_harness import UC_DESCS, build_circuit, ground_truth, reference_taint
+    from tests.perop_floors import NeedsMonolithic, Unsupported, perop_floors_slicewise
 
     ud = UC_DESCS[isa]()
     gp = list(ud.gp)
@@ -159,7 +158,7 @@ def slicewise_report(isa, n_per, seed=11):
     return n_cases, tot_slices, clean_slices, len(new_under), new_under
 
 
-def test_perop_slicewise_sound_and_covers():
+def test_perop_slicewise_sound_and_covers(request):
     """The per-output-slice window is the integration model: a reconvergent flag
     no longer disqualifies a clean result register.  On the CLEAN slices, per-op
     must introduce no under-taint beyond the engine's own differential (vs ground
@@ -167,9 +166,14 @@ def test_perop_slicewise_sound_and_covers():
     flags, so most slices stay on the fast path)."""
     pytest.importorskip('unicorn')
     # min cases per ISA (RISCV bank is small); all must be sound + high coverage.
+    # The floors were written for n_per=2, so they scale with the budget: a
+    # reduced run legitimately produces proportionally fewer cases, and a floor
+    # that did not scale would fail for the one reason that is not a defect.
+    n_per = fuzz_budget(2, request.config)
     for isa, min_cases in (('AMD64', 300), ('ARM64', 300), ('RISCV64', 40)):
-        n_cases, tot, clean, n_new_under, ex = slicewise_report(isa, n_per=2)
-        assert n_cases > min_cases, f'{isa}: too few cases: {n_cases}'
+        n_cases, tot, clean, n_new_under, ex = slicewise_report(isa, n_per=n_per)
+        want = min_cases * n_per // 2
+        assert n_cases > want, f'{isa}: too few cases: {n_cases} (want > {want})'
         assert n_new_under == 0, f'{isa}: NEW under-taints on clean slices: {ex}'
         cov = clean / max(1, tot)
         assert cov > 0.85, f'{isa}: slice coverage too low: {cov:.2f}'

@@ -525,13 +525,20 @@ def _assemble(asm_lines: list[str]) -> bytes:
 
 
 @pytest.mark.parametrize(('asm_lines', 'n_seeds'), _FUZZ_CASES)
-def test_random_soundness(regs, sim, asm_lines, n_seeds):
+def test_random_soundness(regs, sim, asm_lines, n_seeds, request):
     """Random soundness fuzz over BMI / lea / chain patterns.
 
     For each pattern we draw a small number of random concrete states and
     random partial taint masks, and assert microtaint never under-taints.
     """
     import random
+
+    from tests.conftest import fuzz_budget
+
+    # Full budget at release, a deterministic slice otherwise.  The seeds are
+    # `range(n)`, so a reduced run is a PREFIX of the full one: a failure found
+    # in the fast tier reproduces at the same seed under --slow.
+    n_seeds = fuzz_budget(n_seeds, request.config)
 
     rng = random.Random(42)
     code = _assemble(asm_lines)

@@ -11,6 +11,8 @@ real instructions exact.
 
 from __future__ import annotations
 
+from tests.conftest import slow_tier_enabled
+
 import itertools
 
 import microtaint.sleigh.engine as engine
@@ -46,10 +48,14 @@ def _true_taint(pred, a, ta, b, tb):
     return 1 if len(seen) > 1 else 0
 
 
-def test_comparison_taint_expr_exhaustive():
+def test_comparison_taint_expr_exhaustive(request):
     """ComparisonTaintExpr == true non-constancy of [a OP b], all a,b,Ta,Tb, w=2..4,
     every variant (signed x {<, <=})."""
-    for w in (2, 3, 4):
+    # w=4 is most of the cost and no new shape: the widths are independent
+    # exhaustive proofs, so the fast tier does the small ones and release
+    # does all three.
+    widths = (2, 3, 4) if slow_tier_enabled(request.config) else (2, 3)
+    for w in widths:
         mask = (1 << w) - 1
         sb = 1 << (w - 1)
         for is_signed in (False, True):
@@ -71,9 +77,13 @@ def test_comparison_taint_expr_exhaustive():
                                 assert e.evaluate(_ctx()) & 1 == _true_taint(pred, a, ta, b, tb)
 
 
-def test_equality_taint_expr_exhaustive():
+def test_equality_taint_expr_exhaustive(request):
     """EqualityTaintExpr == true non-constancy of [a == b], all a,b,Ta,Tb, w=2..4."""
-    for w in (2, 3, 4):
+    # w=4 is most of the cost and no new shape: the widths are independent
+    # exhaustive proofs, so the fast tier does the small ones and release
+    # does all three.
+    widths = (2, 3, 4) if slow_tier_enabled(request.config) else (2, 3)
+    for w in widths:
         mask = (1 << w) - 1
         for a in range(mask + 1):
             for b in range(mask + 1):

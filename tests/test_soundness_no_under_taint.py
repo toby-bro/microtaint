@@ -44,6 +44,10 @@ definition of "the bits whose values genuinely depend on tainted inputs".
 
 from __future__ import annotations
 
+# Full budget at release, a deterministic prefix otherwise -- so a failure
+# found in the fast tier reproduces at the same seed under --slow.
+from tests.conftest import fuzz_budget
+
 import pytest
 import unicorn
 import unicorn.x86_const as ux
@@ -570,7 +574,7 @@ class TestMovzxSubMovsxChain:
         'inc rax',
     ],
 )
-def test_single_instruction_soundness_fuzz(asm: str) -> None:
+def test_single_instruction_soundness_fuzz(asm: str, request) -> None:
     """Fuzz a single instruction across a variety of taint configurations.
 
     For each of 12 random states and 6 taint patterns, assert that microtaint
@@ -589,7 +593,7 @@ def test_single_instruction_soundness_fuzz(asm: str) -> None:
         dict.fromkeys(REGS, 255),  # low byte only
         dict.fromkeys(REGS, 18446744069414584320),  # high half
     ]
-    for _trial in range(12):
+    for _trial in range(fuzz_budget(12, request.config)):
         state = {r: rng.randint(1, MASK64) for r in REGS}  # avoid 0 (DIV-by-zero etc)
         for taint in taint_patterns:
             _assert_sound([asm], state, taint)
@@ -616,13 +620,13 @@ def test_single_instruction_soundness_fuzz(asm: str) -> None:
         ['rol rax, 13', 'xor rax, rbx', 'rol rax, 7', 'xor rax, rcx', 'add rax, rdx'],
     ],
 )
-def test_chain_soundness_fuzz(seq: list[str]) -> None:
+def test_chain_soundness_fuzz(seq: list[str], request) -> None:
     """Fuzz multi-instruction sequences for soundness across random states."""
     import random
 
     rng = random.Random(hash(tuple(seq)))
 
-    for _trial in range(8):
+    for _trial in range(fuzz_budget(8, request.config)):
         state = {r: rng.randint(1, MASK64) for r in REGS}
         for taint_mask in (MASK64, 0xFF, 0xFFFF0000FFFF0000):
             taint = dict.fromkeys(REGS, taint_mask)
@@ -939,7 +943,7 @@ class TestBenchmarkRegression20260503:
         ['adc rax, rbx', 'adc rax, rbx', 'adc rax, rbx'],
     ],
 )
-def test_worker_style_pattern_fuzz(seq: list[str]) -> None:
+def test_worker_style_pattern_fuzz(seq: list[str], request) -> None:
     """Fuzz the exact patterns the differential benchmark flagged.
 
     Uses the worker's 4-GP-only register list so the test surface matches
@@ -951,7 +955,7 @@ def test_worker_style_pattern_fuzz(seq: list[str]) -> None:
 
     rng = random.Random(hash(tuple(seq)) & 0xFFFF_FFFF)
 
-    for trial in range(20):
+    for trial in range(fuzz_budget(20, request.config)):
         state = {r: rng.randint(1, MASK64) for r in REGS}
         # Mix sparse and full taint patterns — sparse is what GT can verify
         # against (k <= 16), full is the stress-test case.
