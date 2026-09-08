@@ -1,0 +1,6 @@
+The artifact inherits the licence of the microtaint repository it is part of;
+see the LICENSE file at the repository root.
+
+The baseline engines it compares against (angr, Triton, Maat, TaintGrind,
+libdft64, PANDA, TaintInduce) are third-party software under their own licences.
+This artifact installs them but does not redistribute them.
