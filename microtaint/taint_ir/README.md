@@ -120,9 +120,9 @@ In the engine, with `MICROTAINT_TAINT_IR=1` against the same run without it:
 
 | benchmark | bare Qiling | differential | compiled |
 |---|---|---|---|
-| bench_dense | 8.61 ms | 652.05 ms (x76) | 223.83 ms (x26) |
-| bench_sparse | 2.71 ms | 54.72 ms (x20) | 36.64 ms (x14) |
-| bench_untainted | 2.16 ms | 50.85 ms (x24) | 33.98 ms (x16) |
+| bench_dense | 8.39 ms | 652.05 ms (x76) | 108.41 ms (x13) |
+| bench_sparse | 2.52 ms | 54.72 ms (x20) | 21.39 ms (x8) |
+| bench_untainted | 2.26 ms | 50.85 ms (x24) | 20.26 ms (x9) |
 
 SLEIGH re-executions on the dense workload drop from 131231 to 182: the
 differential is essentially never reached.
@@ -148,14 +148,30 @@ attribute reads before the C path is reached. The express lane in
 untainted-input exit and a compiled program, in its register, program-counter
 and memory shapes) with no GIL at all, from constants cached on the address
 entry; `emulator/memhook.h` does the same for the load and store callbacks.
-86.8% of bench_untainted and 56.0% of bench_dense now finish without the GIL.
+Over 99% of both bench_untainted and bench_dense now finish without the GIL,
+once the attacker-influenced-write check learned to defer rather than refuse
+(it was keeping 98% of bench_dense's instructions on the GIL path for a check
+that does nothing unless the instruction made tainted stores), the UAF read
+callback was armed on the first poison rather than for the whole run, and the
+guest read behind a load was skipped where the program never reads the value.
 
-Two things follow for anyone picking this up. Block-level hooking is worth the
-18 ns and no more, which is much less than the 15x amortisation a naive reading
-of "18 instructions per basic block" suggests. And `uc_reg_read_batch`, which
-the fast path calls whenever inputs are not provably clean, costs 4.8 ns plus
-11.3 ns *per register*: at the 3.7 register values a compiled program needs on
-average, that is now one of the larger remaining line items.
+Three things follow for anyone picking this up. Block-level hooking is worth
+the 18 ns and no more, which is much less than the 15x amortisation a naive
+reading of "18 instructions per basic block" suggests. `uc_reg_read_batch`
+costs 4.8 ns plus 11.3 ns *per register* and `uc_mem_read` about 81 ns for
+eight bytes, so what the fast path asks Unicorn for matters more than what it
+computes. And the answer to what it should ask for is in the program itself:
+of 3.69 register values a program mentions only 1.48 survive dead-code
+elimination, and only 32% of loads have their value live at all.
+
+That last point has a sharper consequence than performance. The fast path
+fills its value array from the CIRCUIT's declared inputs, not the program's,
+and on an AArch64 guest the rule generator resolves a memory operand into a
+named MEM_ input without listing the base register: the program then reads a
+slot nobody filled, computes address 0, and the guest read fails. Every
+AArch64 memory instruction falls back to the circuit, at 818 us against 130 ns
+on x86-64. Filling from the program's live inputs fixes that and reads fewer
+registers at the same time.
 
 ## How it is checked
 
