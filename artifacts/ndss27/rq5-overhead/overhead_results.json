@@ -1,0 +1,50 @@
+{
+  "native": {
+    "label": "native",
+    "wall_s": 0.006411030190065503,
+    "user_cpu_s": 0.0007825,
+    "sys_cpu_s": 0.0007019999999999999,
+    "peak_rss_mib": 19.3359375,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 100,
+      "wall_s_min": 0.0061280629597604275,
+      "wall_s_max": 0.006737047806382179,
+      "import_s": null,
+      "init_s": null,
+      "run_s": null
+    }
+  },
+  "qiling-only": {
+    "label": "qiling-only",
+    "wall_s": 0.4787782719358802,
+    "user_cpu_s": 0.39522749999999995,
+    "sys_cpu_s": 0.073096,
+    "peak_rss_mib": 57.830078125,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 100,
+      "wall_s_min": 0.4533567619509995,
+      "wall_s_max": 0.7027274197898805,
+      "import_s": 0.10742466850206256,
+      "init_s": 0.1694686976261437,
+      "run_s": 0.08408943354152143
+    }
+  },
+  "microtaint-all": {
+    "label": "microtaint-all",
+    "wall_s": 2.1243690724950284,
+    "user_cpu_s": 1.95988,
+    "sys_cpu_s": 0.131508,
+    "peak_rss_mib": 116.400390625,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 100,
+      "wall_s_min": 2.073497435078025,
+      "wall_s_max": 2.1980252331122756,
+      "import_s": 0.1454124494921416,
+      "init_s": 0.33057698141783476,
+      "run_s": 1.473947804654017
+    }
+  }
+}
