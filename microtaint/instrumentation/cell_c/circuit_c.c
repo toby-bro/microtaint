@@ -223,6 +223,18 @@ typedef struct {
      * the full parent taint and no normalization is needed. */
     int            *pool_to_slot;
     int             pool_to_slot_n;   /* npool at build time (0 = not built) */
+    /* WHICH name->slot mapping the cache above was built from.  The hook interns
+     * register names LAZILY, so that mapping GROWS while this circuit lives: a
+     * name absent on the first visit maps to -1, and keying the cache on npool
+     * alone (which never changes, string_pool being fixed per circuit) pinned
+     * that -1 for good.  The circuit then read 0 for an input the hook was by
+     * then tracking, and dropped the taint of every output it had not yet
+     * interned -- an UNDER-taint, not a miss.  Holding a strong reference makes
+     * the identity test safe (a freed dict could otherwise be replaced at the
+     * same address by an unrelated one), and the entry count is a sound
+     * generation counter because a slot map only ever grows. */
+    PyObject       *pool_map_src;     /* the name_to_slot it was built from */
+    Py_ssize_t      pool_map_n;       /* len(name_to_slot) at build time */
 } CompiledCircuit;
 
 /* ──────────── string_pool helpers ──────────── */
@@ -906,6 +918,8 @@ static PyObject *CompiledCircuit_new(PyTypeObject *t, PyObject *a, PyObject *k) 
     self->scratch_cap = 0;
     self->pool_to_slot = NULL;
     self->pool_to_slot_n = 0;
+    self->pool_map_src = NULL;
+    self->pool_map_n = -1;
     self->out_slots = NULL;
     self->n_out_slots = 0;
     self->out_built = 0;
@@ -940,6 +954,7 @@ static void CompiledCircuit_dealloc(CompiledCircuit *self) {
     free(self->scratch_v);
     free(self->scratch_o);
     free(self->pool_to_slot);
+    Py_CLEAR(self->pool_map_src);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -2420,6 +2435,8 @@ static PyObject *CompiledCircuit_evaluate_c(CompiledCircuit *self, PyObject *arg
     return outd;
 }
 
+static int ensure_pool_to_slot(CompiledCircuit *self, PyObject *name_to_slot, int npool);
+
 /* evaluate_c_arr(taint_by_slot, values_by_slot, pcode, name_to_slot) -> dict of
  * TARGET register taints, or None to fall back.
  *
@@ -2441,17 +2458,7 @@ static PyObject *CompiledCircuit_evaluate_c_arr(CompiledCircuit *self, PyObject 
 
     int npool = (int)PyList_GET_SIZE(self->string_pool);
     /* Lazily build + cache pool_to_slot (string_pool idx -> global slot). */
-    if (!self->pool_to_slot || self->pool_to_slot_n != npool) {
-        free(self->pool_to_slot);
-        self->pool_to_slot = (int *)malloc((size_t)(npool > 0 ? npool : 1) * sizeof(int));
-        if (!self->pool_to_slot) return PyErr_NoMemory();
-        for (int i = 0; i < npool; i++) {
-            PyObject *nm = PyList_GET_ITEM(self->string_pool, i);
-            PyObject *s = PyDict_GetItem(name_to_slot, nm);  /* borrowed */
-            self->pool_to_slot[i] = (s && PyLong_Check(s)) ? (int)PyLong_AsLong(s) : -1;
-        }
-        self->pool_to_slot_n = npool;
-    }
+    if (ensure_pool_to_slot(self, name_to_slot, npool) != 0) return PyErr_NoMemory();
     if (ensure_scratch(self, npool) != 0) return PyErr_NoMemory();
     uint64_t *in_t = self->scratch_t, *in_v = self->scratch_v, *out_t = self->scratch_o;
     Py_ssize_t nlist = PyList_GET_SIZE(taint_list);
@@ -2506,7 +2513,13 @@ static PyObject *CompiledCircuit_evaluate_c_arr(CompiledCircuit *self, PyObject 
  * changes; an unmapped name stays -1, which every reader treats as "no taint",
  * matching what the evaluator does for a name the hook has not interned. */
 static int ensure_pool_to_slot(CompiledCircuit *self, PyObject *name_to_slot, int npool) {
-    if (self->pool_to_slot && self->pool_to_slot_n == npool) return 0;
+    /* npool alone is NOT a cache key: it is fixed for the life of the circuit,
+     * while name_to_slot grows as the hook interns names lazily.  Rebuild
+     * whenever a different mapping is passed or the one we built from has
+     * gained entries; both tests are O(1). */
+    Py_ssize_t nmap = PyDict_Size(name_to_slot);
+    if (self->pool_to_slot && self->pool_to_slot_n == npool
+        && self->pool_map_src == name_to_slot && self->pool_map_n == nmap) return 0;
     free(self->pool_to_slot);
     self->pool_to_slot = (int *)malloc((size_t)(npool > 0 ? npool : 1) * sizeof(int));
     if (!self->pool_to_slot) return -1;
@@ -2516,6 +2529,9 @@ static int ensure_pool_to_slot(CompiledCircuit *self, PyObject *name_to_slot, in
         self->pool_to_slot[i] = (sv && PyLong_Check(sv)) ? (int)PyLong_AsLong(sv) : -1;
     }
     self->pool_to_slot_n = npool;
+    Py_INCREF(name_to_slot);
+    Py_XSETREF(self->pool_map_src, name_to_slot);
+    self->pool_map_n = nmap;
     self->out_built = 0;   /* target slots came from this mapping */
     return 0;
 }
