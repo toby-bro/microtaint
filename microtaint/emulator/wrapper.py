@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import unicorn.unicorn_py3.unicorn as _uu
 import unicorn.x86_const as _uc_x86_const
 from qiling import Qiling
-from qiling.const import QL_INTERCEPT
+from qiling.const import QL_ARCH, QL_INTERCEPT
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE_UNMAPPED
 
 from microtaint.emulator.hook_core import (
@@ -792,6 +792,56 @@ class MicrotaintWrapper:
                 instr_hook if isinstance(instr_hook, InstructionHook) else None
             )
 
+    def _syscall_number(self, name: str) -> int | None:
+        """The number `name` has on THIS guest architecture, or None.
+
+        Qiling's own id -> name mapper is architecture-specific, so inverting it
+        is what makes a syscall hook portable.  Scanned once at setup; the
+        ranges cover the usual Linux tables including MIPS' 4000/5000 bases.
+        """
+        mapper = getattr(self.ql.os, 'syscall_mapper', None)
+        if mapper is None:
+            return None
+        want = f'ql_syscall_{name}'
+        for lo, hi in ((0, 600), (4000, 4500), (5000, 5500), (6000, 6500)):
+            for num in range(lo, hi):
+                try:
+                    if mapper(num) == want:
+                        return num
+                except Exception:  # noqa: BLE001, PERF203 - unmapped id
+                    continue
+        return None
+
+    def _set_syscall_hook(self, name: str, handler, intercept) -> None:
+        """Hook a syscall by name, registered under its number on this guest.
+
+        Registering the NUMBER rather than the name is deliberate.  Qiling
+        resolves `hooks[name] or hooks[number]`, so a name-keyed hook silently
+        outranks any number-keyed one a caller installed later, and overriding
+        our read hook by number is an established way to drive the engine (the
+        taint-API tests do exactly that).  Looking the number up per
+        architecture keeps that contract and still gets the right syscall.
+
+        The number was previously hard-coded to the x86-64 value, so on every
+        other guest architecture this hooked whatever syscall happened to share
+        the number: read is 0 on x86-64 but 63 on AArch64 and 5000 on MIPS64.
+        The effect was that no taint was ever injected on a non-x86-64 guest and
+        the engine reported nothing, quickly.
+        """
+        num = self._syscall_number(name)
+        self.ql.os.set_syscall(num if num is not None else name, handler, intercept)
+
+    def _arm_uaf_read_hook(self) -> None:
+        """Register the UAF read callback, now that something is poisoned."""
+        if self._mem_read_hook is not None or not self.check_uaf:
+            return
+        self._mem_read_hook = MemAccessHook(self)
+        self._register_cython_mem_hook(
+            self._mem_read_hook,
+            _UC_HOOK_MEM_READ_CONST,
+        )
+        logger.debug('armed the UAF read hook on first poison')
+
     def _register_cython_mem_hook(
         self,
         hook_obj: Callable[..., None],
@@ -900,8 +950,13 @@ class MicrotaintWrapper:
             mem_buf_addr=_buf_addr,
         )
 
-        self.ql.os.set_syscall(0, self._sys_read_hook, QL_INTERCEPT.CALL)
-        self.ql.os.set_syscall(334, self._stub_unimplemented_syscall, QL_INTERCEPT.ENTER)
+        self._set_syscall_hook('read', self._sys_read_hook, QL_INTERCEPT.CALL)
+        # 334 is rseq on x86-64 only; the stub exists for that specific syscall,
+        # and the number means something else elsewhere, so it is registered
+        # only where it is the one meant.
+        if self.ql.arch.type == QL_ARCH.X8664:
+            self.ql.os.set_syscall(334, self._stub_unimplemented_syscall,
+                                   QL_INTERCEPT.ENTER)
 
         if self.check_uaf:
             # UAF detection requires the mem-write hook from the start —
@@ -928,7 +983,7 @@ class MicrotaintWrapper:
                 _UC_HOOK_MEM_WRITE_UNMAPPED,
             )
             self._mem_write_hook_registered = True
-            self.ql.os.set_syscall(11, self._munmap_hook, QL_INTERCEPT.ENTER)
+            self._set_syscall_hook('munmap', self._munmap_hook, QL_INTERCEPT.ENTER)
         else:
             # For non-UAF modes, defer _mem_write_clear_hook until taint exists.
             # This skips 1.5M hook dispatches before the first read() call.
