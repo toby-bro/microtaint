@@ -52,6 +52,6 @@ hookcost: hookcost.c
 		-Wl,-rpath,$(UC)/lib
 
 clean:
-	rm -f $(BINS)
+	rm -f $(BINS) hookcost
 
 .PHONY: all clean
