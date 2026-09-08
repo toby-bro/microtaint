@@ -468,27 +468,91 @@ class Builder:
         A CALLOTHER with no output writes nothing p-code can see, which is what
         the runtime interpreter already assumes; skipping it here keeps the two
         in agreement rather than introducing a new divergence.
+
+        An output WIDER than a word is the same rule written to each of its
+        lanes.  Avalanche is the one wide shape that needs no care about which
+        lane a bit came from or which end the lanes are numbered from -- every
+        lane receives the same all-ones-or-zero mask -- so unlike the exact wide
+        shapes above it works on a big-endian target too.
+
+        Refusing these was costing the eight AVX forms in the bank (`vpand`,
+        `vpaddd`, `vpunpcklbw`, ...) for no precision at all: Ghidra models them
+        as opaque too, so the circuit path answers them with the same avalanche,
+        measured at 513 output bits tainted from a single tainted source bit
+        against 1 to 6 for the SSE encodings of the same operations.  Lowering
+        them changes what they cost, not what they say.
         """
         p = self.p
         if op.output is None:
             return
         osz = op.output.size
-        if osz > 8:
-            raise Unsupported('wide CALLOTHER')
-        lo, hi = op.output.offset, op.output.offset + osz
-        space = op.output.space.name
-        for later in ops[pc + 1:]:
-            for vn in later.inputs:
-                if vn.space.name == space and vn.offset < hi and vn.offset + vn.size > lo:
-                    raise Unsupported('CALLOTHER result is read downstream')
+        if not self._invention_stays_opaque(ops, pc, op.output):
+            raise Unsupported('CALLOTHER result is read downstream')
         any_t = p.const(0)
         for vn in op.inputs[1:]:
             if vn.space.name == 'const':
                 continue
-            _v, tt = self._read_in(vn)
-            any_t = p.op(OR, any_t, tt)
-        tnt = p.op(AND, p.const(_mask_of(osz)), p.splat(p.op(NEZ, any_t)))
-        self._predicated_write(op.output, p.const(0), tnt)
+            if vn.size <= 8:
+                any_t = p.op(OR, any_t, self._read_in(vn)[1])
+                continue
+            for lane in range(0, vn.size, 8):
+                any_t = p.op(OR, any_t,
+                             self._read_lane(vn, lane, min(8, vn.size - lane))[1])
+        avalanche = p.splat(p.op(NEZ, any_t))
+        if osz <= 8:
+            self._predicated_write(op.output, p.const(0),
+                                   p.op(AND, p.const(_mask_of(osz)), avalanche))
+            return
+        for lane in range(0, osz, 8):
+            lsz = min(8, osz - lane)
+            self._write_lane(op.output, lane, lsz, p.const(0),
+                             p.op(AND, p.const(_mask_of(lsz)), avalanche))
+
+    #: Opcodes that MOVE bytes without computing on them: their taint rule
+    #: reads only taint, never a value.  An invented value can pass through one
+    #: of these and stay a lie of exactly the same shape, which is what lets the
+    #: opaque-result check follow it instead of refusing at the first reader.
+    _MOVEMENT_OPS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'PIECE'}
+
+    def _invention_stays_opaque(self, ops, pc, out):
+        """Can this opaque result reach the end of the instruction unread?
+
+        The value written for a CALLOTHER is a fabrication -- p-code does not
+        model the operation, so there is nothing else to write -- and a later op
+        computing with it would turn that fabrication into a taint answer.  The
+        check used to refuse at the first reader of any kind.  But a reader that
+        only MOVES the bytes cannot consume the fabrication: its taint rule
+        reads taint alone, and zero-extending a zero is still the same zero.  So
+        movement propagates the opacity forward instead of ending the analysis,
+        and only a reader that computes refuses.
+
+        Which is what the AVX forms need: `vpand xmm0, xmm1, xmm2` lifts to a
+        CALLOTHER into a 16-byte temporary and an INT_ZEXT of it into ZMM0, so
+        the first reader is always a widening move.
+
+        Nothing here runs under a predicate: a predicated write is value-
+        dependent (it XORs the two sides to find the bits they differ on), so an
+        instruction with any branch in its p-code is refused rather than
+        reasoned about.
+        """
+        for later in ops[pc + 1:]:
+            if later.opcode.name in ('CBRANCH', 'BRANCH', 'BRANCHIND', 'CALLIND'):
+                return False
+        poisoned = [(out.space.name, out.offset, out.offset + out.size)]
+
+        def reads_poison(vn):
+            return any(vn.space.name == sp and vn.offset < hi
+                       and vn.offset + vn.size > lo
+                       for sp, lo, hi in poisoned)
+
+        for later in ops[pc + 1:]:
+            if not any(reads_poison(vn) for vn in later.inputs):
+                continue
+            if later.opcode.name not in self._MOVEMENT_OPS or later.output is None:
+                return False
+            o = later.output
+            poisoned.append((o.space.name, o.offset, o.offset + o.size))
+        return True
 
     # -- memory --------------------------------------------------------
     def _access_for(self, kind, addr_node, size):

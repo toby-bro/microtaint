@@ -150,8 +150,14 @@ def test_vector_lanes_match_ground_truth():
     """
     from tests.taint_ir_simd import run_simd_bank
 
-    n, under = run_simd_bank(n_vec=3)
+    n, under, skipped = run_simd_bank(n_vec=3)
     assert n > 0, 'no SIMD cases evaluated'
+    # A form Unicorn does not honour is not ground truth and is skipped, but a
+    # probe that started skipping everything would pass this test while
+    # measuring nothing, so what it kept is asserted too.
+    assert n > 4 * len(skipped), (
+        f'only {n} cases against {len(skipped)} forms skipped as not ground '
+        f'truth: the encoding probe is refusing too much')
     if under:
         detail = '\n'.join(f'  {lbl}: {items[0]}' for lbl, items in
                            list(under.items())[:5])

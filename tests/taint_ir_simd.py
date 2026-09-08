@@ -8,9 +8,16 @@ XMM lanes are read and written directly, every tainted bit is flipped in turn,
 and every lane that moves is tainted.
 
 One exclusion, and it is the emulator's fault rather than a limitation here:
-Unicorn decodes the two-byte VEX form of `vpxor xmm0, xmm1, xmm2` as the legacy
-`pxor xmm0, xmm2`, ignoring the VEX-encoded second source.  Its answer for that
-instruction is not ground truth, so VEX forms are skipped and named.
+Unicorn decodes several two-byte VEX forms as their legacy two-operand
+equivalents -- `vpxor xmm0, xmm1, xmm2` runs as `pxor xmm0, xmm2`, ignoring the
+VEX-encoded second source -- and its answer for those is not ground truth.
+
+They are DETECTED rather than listed.  A VEX three-operand form never reads its
+destination, so running the same instruction twice with identical sources and
+two different destination values must give the same answer; when it does not,
+Unicorn is executing something else, and the form is skipped and named.  A hand
+written list of prefixes goes stale the moment the bank grows, and it went stale
+here: it named four forms and there were eight.
 """
 # ruff: noqa: PLC0415
 from __future__ import annotations
@@ -26,9 +33,8 @@ LANES = {
     'VL_0x1240': ('XMM1', 0), 'VL_0x1248': ('XMM1', 64),
 }
 
-#: Instructions whose Unicorn semantics are not trustworthy; see the module
-#: docstring.  Matched as a prefix of the bank label.
-UNTRUSTED = ('vpxor', 'vpand', 'vpor', 'vmov')
+#: A destination marker the probe below writes; any distinctive pair will do.
+_PROBE_MARKERS = (0xDEADBEEFCAFEBABE, 0x0123456789ABCDEF)
 
 
 def _uc_regs():
@@ -50,6 +56,38 @@ def _run(code, lane_vals):
     uc.emu_start(CODE_ADDR, CODE_ADDR + len(code))
     return {name: (uc.reg_read(regs[reg]) >> sh) & MASK64
             for name, (reg, sh) in LANES.items()}
+
+
+def _unicorn_honours_the_encoding(code):
+    """Does Unicorn execute the instruction this encoding names?
+
+    A VEX three-operand form never reads its destination, so the same
+    instruction run twice with identical sources and two different destination
+    values has to give the same answer.  When it does not, Unicorn decoded
+    something else -- in practice the legacy two-operand form, where the
+    destination IS a source -- and its answer cannot be ground truth for this
+    encoding.
+
+    Only VEX encodings are probed.  A legacy SSE form is SUPPOSED to read its
+    destination -- `paddb xmm0, xmm1` means `xmm0 += xmm1` -- so the same
+    question asked of one answers "not honoured" about an instruction Unicorn is
+    executing perfectly.  In 64-bit mode a leading C4 or C5 is always VEX.
+
+    Conservative in the right direction: a VEX form that legitimately merges
+    into its destination (`vmovss xmm0, xmm1, xmm2`) fails the probe too and is
+    skipped, which costs coverage rather than correctness.
+    """
+    import unicorn
+    if not code or code[0] not in (0xC4, 0xC5):
+        return True
+    outs = []
+    for marker in _PROBE_MARKERS:
+        try:
+            outs.append(_run(code, {n: (marker if reg_of == 'XMM0' else 0)
+                                    for n, (reg_of, _sh) in LANES.items()}))
+        except unicorn.UcError:
+            return False
+    return outs[0] == outs[1]
 
 
 def ground_truth(code, taint, vals):
@@ -103,9 +141,11 @@ def run_simd_bank(n_vec=5, seed=99):
     spec = load_bank(isas={'AMD64_SIMD'})['AMD64_SIMD']
     rng = random.Random(seed)
     under: dict = {}
+    skipped: list = []
     n = 0
     for ins in spec.instructions:
-        if ins.label.lower().startswith(UNTRUSTED):
+        if not _unicorn_honours_the_encoding(ins.bytes):
+            skipped.append(ins.label)
             continue
         try:
             build_ir(spec.arch, ins.bytes)
@@ -127,12 +167,15 @@ def run_simd_bank(n_vec=5, seed=99):
                 if miss:
                     under.setdefault(ins.label, []).append(
                         (k, hex(miss), {a: hex(b) for a, b in taint.items() if b}))
-    return n, under
+    return n, under, skipped
 
 
 def main(argv=None):
-    n, under = run_simd_bank()
-    print(f'SIMD cases={n} instructions_with_under_taint={len(under)}')
+    n, under, skipped = run_simd_bank()
+    print(f'SIMD cases={n} instructions_with_under_taint={len(under)} '
+          f'not_ground_truth={len(skipped)}')
+    if skipped:
+        print(f'  Unicorn does not honour the encoding of: {", ".join(sorted(skipped))}')
     for label, items in list(under.items())[:10]:
         print(f'  {label}: {items[0]}')
     return 0
