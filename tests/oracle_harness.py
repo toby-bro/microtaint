@@ -23,12 +23,14 @@ This module is import-only (no test_ prefix); tests/test_oracle_harness.py runs 
 bounded gate, and it can be driven standalone for full-bank sweeps:
     .venv/bin/python -m tests.oracle_harness --isas AMD64 --vectors 8
 """
-# ruff: noqa: PLC0415
 # mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,import-untyped,var-annotated"
+# ruff: noqa: PLC0415  (deferred imports: unicorn and the engine are
+# optional at collection time and expensive to import eagerly)
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
@@ -207,19 +209,163 @@ UC_DESCS = {'AMD64': _uc_desc_amd64, 'ARM64': _uc_desc_arm64,
             'RISCV64': _uc_desc_riscv64}
 
 
-def _uc_run(desc: UcDesc, code: bytes, vals: dict) -> dict:
+def _uc_run(desc: UcDesc, code: bytes, vals: dict, *, seed_flags: bool = False) -> dict:
     import unicorn
     uc = unicorn.Uc(desc.uc_arch, desc.uc_mode)
     uc.mem_map(desc.code_addr, 0x2000)
     uc.mem_write(desc.code_addr, code)
     for name, const in desc.gp.items():
         uc.reg_write(const, vals.get(name, 0) & desc.mask)
+    if seed_flags and desc.eflags_reg is not None:
+        # Start the flags where the cell's frame starts them: at zero.  Only
+        # `models_disagree` asks for this, and it has to -- comparing an
+        # unseeded flag against the frame's zero says the two models differ for
+        # every instruction that does not touch the flag, which is most of
+        # AArch64.  `ground_truth` does not need it (it XORs two runs, so a
+        # constant seed cancels) and does not get it, so its numbers do not move.
+        uc.reg_write(desc.eflags_reg, 0)
     uc.emu_start(desc.code_addr, desc.code_addr + len(code))
     out = {name: uc.reg_read(const) & desc.mask for name, const in desc.gp.items()}
     if desc.eflags_reg is not None:
         ef = uc.reg_read(desc.eflags_reg)
         for fname, bit in desc.flags.items():
             out[fname] = (ef >> bit) & 1
+    return out
+
+
+def models_disagree(desc: UcDesc, arch, code: bytes, states) -> set:
+    """Outputs where SLEIGH and Unicorn model this instruction differently.
+
+    Where an ISA leaves a flag ARCHITECTURALLY UNDEFINED -- x86 OF after a
+    rotate or shift by anything other than one, AF after most arithmetic -- the
+    two model it differently, and both are entitled to.  Ghidra computes one
+    thing, QEMU another.  Neither is the specification, because the
+    specification declines to say.
+
+    That matters because the ground-truth oracle IS QEMU.  Asking whether the
+    engine's taint covers a bit QEMU moves, on a flag the manual says has no
+    defined value, measures the disagreement between two vendors rather than
+    anything about the engine.  Measured on `rol rax, 31`: flipping bit 33 of
+    RAX moves QEMU's OF, and the engine's SLEIGH-derived rule does not taint it,
+    which the campaign then reports as an under-taint.
+
+    So they are DETECTED rather than listed.  A hand-written table of undefined
+    flags per instruction goes stale the moment the bank grows and cannot cover
+    a new ISA at all; running both models over the states the campaign is about
+    to use costs one extra concrete execution per state and is exact for
+    whatever the two disagree on, on any architecture.
+
+    Returns (undefined, unmodelled), and the difference is worth keeping:
+
+      undefined  -- the lifter WRITES the flag and the two models disagree
+                    about its value.  x86 OF after `rol rax, 31`.  The manual
+                    declines to say, so neither is wrong and it is not the
+                    engine's question to answer.
+      unmodelled -- the lifter never writes the flag at all.  x86 AF after
+                    `add`, which the ISA DOES define and SLEIGH simply does not
+                    compute.  That is a real gap, and folding it into the first
+                    would hide it behind a name that sounds like somebody
+                    else's problem.
+
+    Both leave the verdict, because the engine cannot answer for either.  Only
+    one of them is nobody's fault.  Report them apart.
+    """
+    from microtaint.simulator import CellSimulator
+
+    if not desc.flags:
+        return set(), set()               # nothing undefined to find
+    sim = CellSimulator(arch)
+    hx = code.hex()
+    written = _flags_the_lifter_writes(arch, code, desc)
+    # And the cell has to be asked by the ENGINE's name too.  Asking it for `N`
+    # when the geometry calls the register `NG` resolves to nothing, the read
+    # comes back zero, and every flag-setting AArch64 instruction looks like a
+    # disagreement -- which is exactly what it looked like.
+    engine_name = _engine_flag_names(arch, desc)
+    disagree: set = set()
+    for vals in states:
+        try:
+            truth = _uc_run(desc, code, vals, seed_flags=True)
+        except Exception:
+            continue
+        for fname in desc.flags:
+            if fname in disagree:
+                continue
+            cell = SimpleNamespace(instruction=hx, out_reg=engine_name.get(fname, fname),
+                                   out_bit_start=0, out_bit_end=0)
+            try:
+                mine = sim._pcode.evaluate_concrete_flat(cell, dict(vals))
+            except Exception:
+                continue
+            if (int(mine) & 1) != (truth.get(fname, 0) & 1):
+                disagree.add(fname)
+    return (disagree & written), (disagree - written)
+
+
+def _engine_flag_names(arch, desc: UcDesc) -> dict:
+    """Descriptor flag name -> the name this architecture's geometry uses."""
+    from microtaint.debug.reg_aliases import RegisterAliases
+    from microtaint.instrumentation.cell import _build_reg_maps
+
+    offsets, _sizes = _build_reg_maps(arch)
+    try:
+        alias = RegisterAliases(arch)
+    except Exception:
+        alias = None
+    out = {}
+    for f in desc.flags:
+        if f.upper() in offsets:
+            out[f] = f.upper()
+            continue
+        if alias is not None:
+            try:
+                for n in alias.to_engine_names(f) or []:
+                    if n.upper() in offsets:
+                        out[f] = n.upper()
+                        break
+            except Exception:
+                pass
+    return out
+
+
+def _flags_the_lifter_writes(arch, code: bytes, desc: UcDesc) -> set:
+    """Which of this architecture's flags the p-code for `code` assigns."""
+    from microtaint.instrumentation.cell import _build_reg_maps
+    from microtaint.sleigh.engine import get_context
+
+    # The descriptor names flags the way a person does (AArch64 N/Z/C/V); the
+    # geometry names them the way SLEIGH does (NG/ZR/CY/OV).  Resolving through
+    # the alias helper rather than assuming they match is the difference between
+    # "adds writes no flags" -- which is what a direct lookup concluded, for
+    # every flag-setting AArch64 instruction in the bank -- and the truth.
+    from microtaint.debug.reg_aliases import RegisterAliases
+
+    offsets, _sizes = _build_reg_maps(arch)
+    try:
+        alias = RegisterAliases(arch)
+    except Exception:
+        alias = None
+    want: dict = {}
+    for f in desc.flags:
+        names = [f]
+        if alias is not None:
+            try:
+                names = alias.to_engine_names(f) or [f]
+            except Exception:
+                names = [f]
+        for n in names:
+            off = offsets.get(n.upper())
+            if off is not None:
+                want[off] = f
+    try:
+        tx = get_context(arch).translate(code, base_address=desc.code_addr)
+    except Exception:
+        return set(desc.flags)            # cannot tell: assume it writes them
+    out = set()
+    for op in tx.ops:
+        o = op.output
+        if o is not None and o.space.name == 'register' and o.offset in want:
+            out.add(want[o.offset])
     return out
 
 
@@ -337,10 +483,10 @@ class Report:
 
     def summary(self) -> str:
         return (
-            f"cases={self.n_cases} instrs={self.n_instrs} "
-            f"exact={self.n_exact} over-only={self.n_over_only} UNDER={self.n_under} "
-            f"over-bits={self.over_bits_total} mem-skipped={self.skipped_mem} "
-            f"errors={len(self.errors)}"
+            f'cases={self.n_cases} instrs={self.n_instrs} '
+            f'exact={self.n_exact} over-only={self.n_over_only} UNDER={self.n_under} '
+            f'over-bits={self.over_bits_total} mem-skipped={self.skipped_mem} '
+            f'errors={len(self.errors)}'
         )
 
 
@@ -355,7 +501,7 @@ def _compile_and_mem(circuit, arch, regs) -> bool:
         ctx = EvalContext(input_taint=zero, input_values=zero, simulator=sim,
                           implicit_policy=ImplicitTaintPolicy.IGNORE)
         circuit.evaluate(ctx)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     c = getattr(circuit, '_compiled', None)
     return bool(c) and getattr(c, 'has_mem_ops', False)
@@ -379,7 +525,7 @@ def run_bank(engine_fn, *, isas=None, n_dense=5, n_sparse=8, seed=1234,
         for ins in spec.instructions:
             try:
                 circuit = build_circuit(spec.arch, ins.bytes, spec.regs)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 rep.errors.append((ins.label, f'build: {e!r}'))
                 continue
             if skip_mem and _compile_and_mem(circuit, spec.arch, spec.regs):
@@ -404,7 +550,7 @@ def run_bank(engine_fn, *, isas=None, n_dense=5, n_sparse=8, seed=1234,
                         keys = reg_names
                         refd = reference_taint(spec.arch, ins.bytes, spec.regs,
                                                in_taint, in_values, circuit=circuit)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     rep.errors.append((ins.label, f'eval: {e!r}'))
                     continue
                 v = classify(got, refd, keys)

@@ -168,6 +168,14 @@ class BankReport:
     under_examples: list = field(default_factory=list)
     over_examples: list = field(default_factory=list)
     errors: list = field(default_factory=list)
+    #: instruction -> the outputs left out of its verdict because the ISA does
+    #: not define them.  Reported, never silently dropped: an exclusion nobody
+    #: sees is indistinguishable from a bug nobody found.
+    undefined_outputs: dict = field(default_factory=dict)
+    #: instruction -> flags the LIFTER never writes, so the engine cannot taint
+    #: them however sound it is.  Excluded for the same reason and reported
+    #: apart, because unlike the above this one IS a gap somebody could close.
+    unmodelled_outputs: dict = field(default_factory=dict)
     stats: OpStats = field(default_factory=OpStats)
     declined_labels: list = field(default_factory=list)
 
@@ -177,6 +185,8 @@ class BankReport:
                 f'declined={self.n_declined} | cases={self.n_cases} '
                 f'exact={self.n_exact} over={self.n_over} '
                 f'under={self.n_under} UNDER-NEW={self.n_under_new} '
+                f'isa-undefined={len(self.undefined_outputs)} '
+                f'lifter-gap={len(self.unmodelled_outputs)} '
                 f'errors={len(self.errors)}')
 
     def vs_oracle(self) -> str:
@@ -346,6 +356,22 @@ def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
                 vectors = list(gt_vectors(desc, reg_names, rng, n_sparse))
             else:
                 vectors = list(oh.fuzz_vectors(reg_names, rng, n_dense, n_sparse))
+
+            # Where the ISA declines to define a flag -- x86 OF after a rotate
+            # by anything but one, AF after most arithmetic -- SLEIGH and QEMU
+            # model it differently and both are entitled to.  Comparing the
+            # engine's taint against QEMU there measures which vendor guessed
+            # what, so those outputs leave the verdict.  Detected from the very
+            # vectors about to be judged, not from a table: a table cannot cover
+            # an ISA nobody has written one for.
+            if ref == 'ground_truth':
+                undefined, unmodelled = oh.models_disagree(
+                    desc, spec.arch, ins.bytes, [v for _t, v in vectors])
+                if undefined:
+                    rep.undefined_outputs[ins.label] = sorted(undefined)
+                if unmodelled:
+                    rep.unmodelled_outputs[ins.label] = sorted(unmodelled)
+                keys = [k for k in keys if k not in undefined | unmodelled]
             answered = False
             for in_taint, in_values in vectors:
                 try:
