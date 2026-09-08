@@ -31,7 +31,9 @@ MEM_SLOT_BASE = 512
 MAX_ACCESSES = 8
 
 _CACHE: dict = {}          # (arch, code) -> program | None   (None = permanent no)
-_PENDING: set = set()      # (arch, code) awaiting a slot that does not exist yet
+_PENDING: dict = {}        # (arch, code) -> (lifted program, slot count when it
+                           # last failed), for one awaiting a slot that does not
+                           # exist yet
 _ENABLED = None
 
 
@@ -44,6 +46,32 @@ def enabled() -> bool:
 
 def _arch_key(arch):
     return arch.value if hasattr(arch, 'value') else str(arch)
+
+
+def _lift(key, arch, code: bytes, n_slots: int):
+    """This instruction's lowered program, lifting it only when it has to.
+
+    A program that is only waiting on a register slot keeps its LIFT.  Rebuilding
+    it on every retry made the retry cost as much as the first attempt, and a
+    program naming a register the engine never interns retries for the whole run:
+    measured on AArch64, fifteen of them re-lifted on every single execution and
+    were the largest Python cost left in a run that was otherwise entirely in C.
+
+    Nothing can have changed between two attempts but the slot map, so a map that
+    has not grown since the last failure has nothing new to offer and the retry
+    is skipped outright.  Returns None when there is no program to try.
+    """
+    from microtaint.taint_ir.frompcode import build_ir
+
+    pending = _PENDING.get(key)
+    if pending is not None:
+        prog, seen_slots = pending
+        return prog if n_slots > seen_slots else None
+    try:
+        return build_ir(arch, code)
+    except Exception:
+        _CACHE[key] = None                # this instruction has no program, ever
+        return None
 
 
 def program_for(arch, code: bytes, name_to_slot: dict):
@@ -63,22 +91,18 @@ def program_for(arch, code: bytes, name_to_slot: dict):
 
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir.exec import compile_program
-    from microtaint.taint_ir.frompcode import Unsupported, build_ir
     from microtaint.taint_ir.regmap import slot_resolver
 
-    try:
-        prog = build_ir(arch, code)
-    except Unsupported:
-        _CACHE[key] = None
-        return None
-    except Exception:  # noqa: BLE001
-        _CACHE[key] = None
+    prog = _lift(key, arch, code, len(name_to_slot))
+    if prog is None:
         return None
     if len(prog.accesses) > MAX_ACCESSES:
         _CACHE[key] = None
+        _PENDING.pop(key, None)
         return None
     if len(name_to_slot) >= MEM_SLOT_BASE:
         _CACHE[key] = None            # registers would collide with memory state
+        _PENDING.pop(key, None)
         return None
 
     from microtaint.taint_ir.regmap import name_offset
@@ -97,28 +121,34 @@ def program_for(arch, code: bytes, name_to_slot: dict):
         if off in touched:
             if off in seen and seen[off] != name_to_slot[nm]:
                 _CACHE[key] = None
+                _PENDING.pop(key, None)
                 return None
             seen[off] = name_to_slot[nm]
     for (_kind, k) in prog.inputs:
         if slot_of(k) is None:
-            _PENDING.add(key)            # a slot may appear later; try again then
+            # A slot may appear later; keep the lift so the retry is a slot
+            # lookup rather than a second lowering.
+            _PENDING[key] = (prog, len(name_to_slot))
             return None
     # An OUTPUT with no slot is a register the engine does not track, so
     # dropping that write is exactly what the circuit path does too
     # (`if (slot >= 0 && slot < n_slots)` in mem_ptr_core's commit loop).
     try:
         cap, _d = compile_program(prog, slot_of)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _CACHE[key] = None
+        _PENDING.pop(key, None)
         return None
     if not taint_ir_c.jit(cap):
         _CACHE[key] = None
+        _PENDING.pop(key, None)
         return None
     addr = taint_ir_c.fn_addr(cap)
     if not addr:
         _CACHE[key] = None
+        _PENDING.pop(key, None)
         return None
-    _PENDING.discard(key)
+    _PENDING.pop(key, None)
     # Whether the program actually READS the word a load brings in.  It
     # usually does not: a move from memory routes the shadow taint and never
     # looks at the value, and only 32% of the bank's loads have it live (8-12%
