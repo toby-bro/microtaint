@@ -164,6 +164,14 @@ cdef extern from "fastpath.h":
         int n_calls_i
         int need_ef
         int have_regs
+        unsigned long long ir_ids_addr
+        unsigned long long ir_ptrs_addr
+        unsigned long long ir_vals_addr
+        int *ir_slots
+        int ir_n_in
+        int ir_n_calls_i
+        int ir_need_ef
+        int have_ir_regs
         uint64_t *in_snap
         uint64_t *out_snap
         uint64_t *val_snap
@@ -227,6 +235,8 @@ cdef extern from "fastpath.h":
         int *check_aiw
         PyObject **ltw_set
         PyObject *owner
+        long long regs_read
+        long long regs_circuit
 
     uint64_t MT_EMPTY_ADDR
 
@@ -500,6 +510,7 @@ cdef class InstructionHook:
     cdef object       flag_parent         # str, or None where the ISA has none
     cdef object       pc_reg_name         # str
     cdef object       eval_context_cls    # EvalContext
+    cdef dict         taint_ir_reg_arrs   # instr bytes -> the reduced read's arrays
     cdef object       read_live_memory    # bound method
     cdef object       get_live_registers  # bound method
     cdef object       disasm              # bound method
@@ -524,6 +535,7 @@ cdef class InstructionHook:
     cdef public unsigned long fb_pyfall
     cdef public unsigned long fb_mem
     cdef public unsigned long fb_other
+    cdef public unsigned long fb_nocircuit
 
     # --- array-native taint state (Phase 1.3c; see _USE_ARR_HOOK note) ---
     cdef uint64_t *g_taint            # slot-indexed taint, authoritative during a run
@@ -630,6 +642,9 @@ cdef class InstructionHook:
         self.cap_slots = 0
         self.slot_map = {}
         self.taint_ir_progs = {}
+        # The ctypes arrays behind each program's reduced register read, held
+        # for as long as the entries cache their addresses.
+        self.taint_ir_reg_arrs = {}
         self.arr_cache = {}
         self.slots_cache = {}
         self.addr_map.keys = NULL
@@ -653,6 +668,7 @@ cdef class InstructionHook:
         self.fb_pyfall = 0
         self.fb_mem = 0
         self.fb_other = 0
+        self.fb_nocircuit = 0
         self._init_fast_ctx()
         # Pre-intern the arch's state-format registers so the slot space is
         # stable for the common case (SIMD VL_ lanes are interned on demand).
@@ -1164,6 +1180,18 @@ cdef class InstructionHook:
         if check_aiw and PyDict_Size(register_taint) and len(mem_writes) > 0:
             self._aiw_check(mem_writes, pre_regs, pre_taint, instruction_bytes, address)
 
+    @property
+    def regs_read(self):
+        """Register values actually fetched from the CPU."""
+        return self.fctx.regs_read
+
+    @property
+    def regs_circuit(self):
+        """What the circuit's input set would have fetched for the same
+        instructions.  `regs_circuit - regs_read` is what the compiled
+        program's live-input set saved, at about 11 ns each."""
+        return self.fctx.regs_circuit
+
     cdef void _attach_taint_ir(self, AddrEntry *ent, object instruction_bytes) noexcept:
         """Compile this instruction's taint program against the live slot map.
 
@@ -1179,7 +1207,7 @@ cdef class InstructionHook:
             return
         if got is None:
             return
-        cap, addr_val, accesses, writes_pc = got
+        cap, addr_val, accesses, writes_pc, live_regs = got
         if len(accesses) > 8:
             return
         # The capsule owns the emitted code; hold it for the hook's lifetime.
@@ -1191,6 +1219,58 @@ cdef class InstructionHook:
             ent.ir_acc_size[i] = <signed char>accesses[i][1]
             ent.ir_acc_needval[i] = <signed char>accesses[i][2]
         ent.ir_fn = <void*><size_t>addr_val
+        self._attach_ir_reg_read(ent, instruction_bytes, live_regs)
+
+    cdef void _attach_ir_reg_read(self, AddrEntry *ent, object instruction_bytes,
+                                  object live_regs) noexcept:
+        """Build the reduced register read for a program that has been attached.
+
+        The circuit reads every register its p-code mentions; the program reads
+        only the ones whose VALUE survived its dead-code pass, which over the
+        bank is 1.48 registers of 3.69.  At about 11 ns a register that is
+        worth having, and it is the whole difference on an architecture whose
+        instructions name three operands rather than two.
+
+        A refusal here is not a refusal of the program: `have_ir_regs` stays 0
+        and the express lane falls back to reading the full set."""
+        cdef object arrs, ids, ptrs, vals, names, n_calls_int, ids_addr
+        cdef object ptrs_addr, vals_addr
+        cdef Py_ssize_t n, i
+        cdef bint need_ef
+        ent.have_ir_regs = 0
+        if ent.ir_slots != NULL:
+            free(ent.ir_slots); ent.ir_slots = NULL
+        ent.ir_n_in = 0
+        try:
+            arrs = self.build_offsets_arrs(frozenset(live_regs))
+            (ids, vals, ptrs, n, names, need_ef, n_calls,
+             ids_addr, ptrs_addr, vals_addr, n_calls_int) = arrs
+        except BaseException:
+            return
+        # Hold the ctypes buffers for as long as their addresses are cached.
+        self.taint_ir_reg_arrs[instruction_bytes] = arrs
+        if ids is None or n == 0:
+            # Nothing to read at all -- a rule that only routes taint.  That is
+            # a valid descriptor, and the best one: no batch call is made.
+            ent.ir_ids_addr = 0
+            ent.ir_ptrs_addr = 0
+            ent.ir_vals_addr = 0
+            ent.ir_n_calls_i = 0
+            ent.ir_need_ef = 1 if need_ef else 0
+            ent.have_ir_regs = 1
+            return
+        ent.ir_slots = <int*>malloc(<size_t>n * sizeof(int))
+        if ent.ir_slots == NULL:
+            return
+        for i in range(n):
+            ent.ir_slots[i] = self._slot_for(names[i])
+        ent.ir_n_in = <int>n
+        ent.ir_ids_addr = <unsigned long long>ids_addr
+        ent.ir_ptrs_addr = <unsigned long long>ptrs_addr
+        ent.ir_vals_addr = <unsigned long long>vals_addr
+        ent.ir_n_calls_i = <int>n_calls_int
+        ent.ir_need_ef = 1 if need_ef else 0
+        ent.have_ir_regs = 1
 
     cdef int _fill_vals_arr(self, bytes instruction_bytes,
                             unsigned long long address) except -1:
@@ -1626,8 +1706,12 @@ cdef class InstructionHook:
                             self.n_slots, self.pcode_obj, self.slot_map)
                         used_arr = result is not None
             if not used_arr:
+                # `fb_other` used to hold two different things: an instruction
+                # with no compiled circuit at all, and one that had a circuit
+                # and still declined for a reason nothing here names.  They ask
+                # for different fixes, so they are counted apart.
                 if not compiled_ok:
-                    self.fb_other += 1
+                    self.fb_nocircuit += 1
                 elif cflags & MT_CF_PC_TARGET:
                     self.fb_pc += 1
                 elif cflags & MT_CF_PY_FALLBACK:

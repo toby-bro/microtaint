@@ -110,6 +110,13 @@ Whole instruction, all outputs including flags, over the 1569-instruction bank:
 | host emitter (x86-64) | 10.8 ns | 21-44 µs per program |
 | C interpreter | 184 ns | none |
 
+There are two host emitters, `taint_jit_x64.h` and `taint_jit_a64.h`, selected
+by `#if defined(__x86_64__)` / `__aarch64__` in `taint_ir_c.c`. They consume the
+same program: the IR comes from p-code and is ISA-general, so a backend is about
+the host the analysis runs on, not the guest it analyses, and every guest
+architecture the engine lifts reaches native taint code on either host. Anywhere
+else keeps the interpreter.
+
 Per ISA, compiled: AMD64 7.0 ns, ARM64 5.4, PPC32BE 4.3, MIPS64BE 3.3,
 RISCV64 3.9. Coverage is 98.2% of the bank (1540/1569); what is left is a CALLOTHER whose
 result is read downstream or is wider than a word, a p-code loop (a backward
@@ -126,6 +133,14 @@ In the engine, against the same run with `MICROTAINT_TAINT_IR=0`:
 
 SLEIGH re-executions on the dense workload drop from 131231 to 182: the
 differential is essentially never reached.
+
+The hot path reads the program's LIVE input registers rather than the circuit's,
+which is a smaller set: a taint rule routes masks around and mostly never looks
+at what a register held. Over the bank that is 1.48 registers of 3.69 (37%
+fewer), and on the benchmarks it removes 31-34% of the register reads an
+instruction makes -- about 1% of wall clock at 11.3 ns per read, and more on the
+architectures whose instructions name three operands (ARM64 39%, MIPS64BE 51%,
+RISCV64 54%).
 
 Both columns are lower than they were when this was first measured (dense
 731/286, sparse 92/74, untainted 85/66), and the reason is not the taint
@@ -216,7 +231,9 @@ then a backward branch declines and the circuit handles it.
 engine's slot layout, refusing unless every input register already has an
 interned slot (they are interned lazily, so it retries), no offset it touches
 carries two of the caller's names, and the host emitter took it: the
-interpreter is not reachable from the hot path.
+interpreter is not reachable from the hot path. It also returns which registers'
+VALUES the program reads, so the hot path can read those instead of the
+circuit's larger set.
 
 The hot path calls it through `MtAddrEntry.ir_fn`. A memory program runs the
 two-pass protocol in `fastpath.h::mt_ir_mem_step`, and a program that writes the

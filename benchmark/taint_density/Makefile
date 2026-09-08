@@ -30,13 +30,29 @@ bench_sparse.elf: bench_sparse.c
 bench_untainted.elf: bench_untainted.c
 	$(CC) -O1 $(BASE) -o $@ $<
 
-# The same workload on a second ISA, so a per-architecture number compares the
-# engine rather than two different programs.  Not in $(BINS): it needs a cross
-# compiler, and everything else here builds with the host one.  Build it with
-# `make bench_untainted_arm64.elf` when a non-x86 measurement is wanted.
+# The same workloads on a second ISA, so a per-architecture number compares the
+# engine rather than two different programs.  Not in $(BINS): they need a cross
+# compiler, and everything else here builds with the host one.  Build them with
+# `make arm64` when a non-x86 measurement is wanted.
+#
+# The *_arm64.c sources are the x86 ones with AArch64 syscall stubs and nothing
+# else changed -- same body, same optimisation level, same instruction counts to
+# within the two ISAs' own difference.  Keep them in step by hand: a divergence
+# would make the per-ISA comparison meaningless without saying so.
+#
+# bench_dense has no AArch64 twin here.  Its deliberate stack overflow expects
+# the return address to live on the stack; on AArch64 it lives in x30 and the
+# corrupted frame loops instead of faulting, so the binary never terminates
+# outside the engine and there is no native control to compare against.
 ARM64_CC ?= aarch64-linux-gnu-gcc
+ARM64_BINS := bench_sparse_arm64.elf bench_untainted_arm64.elf
+
+arm64: $(ARM64_BINS)
 
 bench_untainted_arm64.elf: bench_untainted_arm64.c
+	$(ARM64_CC) -O1 $(BASE) -o $@ $<
+
+bench_sparse_arm64.elf: bench_sparse_arm64.c
 	$(ARM64_CC) -O1 $(BASE) -o $@ $<
 
 # The pure-C control: same emulation, hooks that are genuinely empty C
@@ -52,6 +68,6 @@ hookcost: hookcost.c
 		-Wl,-rpath,$(UC)/lib
 
 clean:
-	rm -f $(BINS) hookcost
+	rm -f $(BINS) $(ARM64_BINS) hookcost
 
-.PHONY: all clean
+.PHONY: all arm64 clean

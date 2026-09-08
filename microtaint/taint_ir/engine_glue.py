@@ -137,7 +137,17 @@ def program_for(arch, code: bytes, name_to_slot: dict):
     pc_off = _BUILDERS[(_arch_key(arch), 'concrete')].pc_off
     writes_pc = any(isinstance(k, tuple) and k[0] == 'reg' and k[1] == pc_off
                     for k, _n in prog.outputs)
-    _CACHE[key] = (cap, addr, accesses, writes_pc)
+    # The registers whose VALUE the program actually reads, by byte offset.
+    # The circuit's input set is every register the p-code mentions, which is
+    # what the engine reads today; this is the subset that survived the
+    # program's dead-code pass, and over the bank it is 1.48 registers of 3.69.
+    # `prog.inputs` is what was emitted and `prog.live` is what remains, so the
+    # distinction is the whole point: reading the emitted set would measure
+    # nothing.
+    live_regs = frozenset(
+        k[1] for (kind, k), n in prog.inputs.items()
+        if kind == 'v' and isinstance(k, tuple) and k[0] == 'reg' and prog.live[n])
+    _CACHE[key] = (cap, addr, accesses, writes_pc, live_regs)
     return _CACHE[key]
 
 

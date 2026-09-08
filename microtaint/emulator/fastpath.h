@@ -92,6 +92,23 @@ typedef struct {
     int        n_calls_i;
     int        need_ef;
     int        have_regs;         /* the three addresses above are valid */
+    /* A SECOND read descriptor, for the compiled program alone.
+     *
+     * The circuit's input set is every register the p-code mentions.  The
+     * program's is every register whose VALUE survived its dead-code pass,
+     * which is far smaller: a taint rule routes masks around and usually never
+     * looks at what the register held.  Measured over the bank, 1.48 of 3.69
+     * input registers, and a register read costs about 11 ns each.  So the
+     * express lane reads this set instead when a program is attached, and
+     * falls back to the full one when it is not. */
+    unsigned long long ir_ids_addr;
+    unsigned long long ir_ptrs_addr;
+    unsigned long long ir_vals_addr;
+    int       *ir_slots;          /* malloc'd, ir_n_in entries */
+    int        ir_n_in;
+    int        ir_n_calls_i;
+    int        ir_need_ef;
+    int        have_ir_regs;      /* the descriptor above is valid */
     uint64_t  *in_snap;           /* pre-state taint snapshot (snap_n entries) */
     uint64_t  *out_snap;          /* post-state taint snapshot */
     uint64_t  *val_snap;          /* operand values for value-dependent circuits */
@@ -170,6 +187,7 @@ static void mt_ae_free(MtAddrEntry *e) {
     Py_XDECREF(e->circuit);
     Py_XDECREF(e->uc_arrs);
     free(e->slots);
+    free(e->ir_slots);
     free(e->in_snap);
     free(e->out_snap);
     free(e->val_snap);
@@ -366,6 +384,13 @@ typedef struct {
      * cost a PyObject cast -- that is the cost the express lane exists to
      * avoid.  Only the GIL path ever dereferences this. */
     PyObject      *owner;
+    /* Registers actually read from the CPU, and how many the circuit's input
+     * set would have asked for.  The gap between them is what the compiled
+     * program's live set saves, and it is counted rather than argued about:
+     * a register read is about 11 ns, so a claim about it is a claim about
+     * measurable time. */
+    long long      regs_read;
+    long long      regs_circuit;
 } MtFastCtx;
 
 /* Scatter the flag bits of the packed flags register into their own value
@@ -380,29 +405,53 @@ static inline void mt_explode_eflags(MtFastCtx *c) {
 /* Read this instruction's live input-register values straight into the
  * slot-indexed value array.  Returns 0 on success, MT_FAST_SLOW when the entry
  * has not been prepared yet (first visit) or the C batch read is unavailable. */
-static inline int mt_read_regs(MtFastCtx *c, MtAddrEntry *e, uint64_t address) {
-    if (!e->have_regs || !c->use_cregs || !c->uc_reg_read_batch) return MT_FAST_SLOW;
-    if (e->n_in > 0 && !e->slots) return MT_FAST_SLOW;
+static inline int mt_read_regs_into(MtFastCtx *c, uint64_t address,
+                                    unsigned long long ids_addr,
+                                    unsigned long long ptrs_addr,
+                                    unsigned long long vals_addr,
+                                    const int *slots, int n_in, int n_calls_i,
+                                    int need_ef) {
+    if (!c->use_cregs || !c->uc_reg_read_batch) return MT_FAST_SLOW;
+    if (n_in > 0 && !slots) return MT_FAST_SLOW;
     if (*c->uc_handle_addr == 0) return MT_FAST_SLOW;   /* handle not resolved yet */
-    if (e->n_in > 0) {
+    if (n_in > 0) {
+        c->regs_read += n_in;
         c->uc_reg_read_batch((void *)(uintptr_t)*c->uc_handle_addr,
-                             (void *)(uintptr_t)e->ids_addr,
-                             (void *)(uintptr_t)e->ptrs_addr,
-                             e->n_calls_i);
-        const uint64_t *vals = (const uint64_t *)(uintptr_t)e->vals_addr;
+                             (void *)(uintptr_t)ids_addr,
+                             (void *)(uintptr_t)ptrs_addr,
+                             n_calls_i);
+        const uint64_t *vals = (const uint64_t *)(uintptr_t)vals_addr;
         uint64_t *g_val = *c->g_val;
-        for (int i = 0; i < e->n_in; i++) g_val[e->slots[i]] = vals[i];
+        for (int i = 0; i < n_in; i++) g_val[slots[i]] = vals[i];
     }
     /* The flag and PC slots are interned lazily on the Python side.  Until they
      * exist this instruction must go slow: skipping the flag explosion would
      * leave stale flag values for the evaluator to read. */
-    if (e->need_ef) {
+    if (need_ef) {
         if (*c->eflags_slot < 0) return MT_FAST_SLOW;
         mt_explode_eflags(c);
     }
     if (*c->rip_slot < 0) return MT_FAST_SLOW;
     (*c->g_val)[*c->rip_slot] = address;
     return 0;
+}
+
+/* The circuit's input set: every register its p-code mentions. */
+static inline int mt_read_regs(MtFastCtx *c, MtAddrEntry *e, uint64_t address) {
+    if (!e->have_regs) return MT_FAST_SLOW;
+    return mt_read_regs_into(c, address, e->ids_addr, e->ptrs_addr, e->vals_addr,
+                             e->slots, e->n_in, e->n_calls_i, e->need_ef);
+}
+
+/* The compiled program's input set: only the registers whose value it reads.
+ * Falls back to the full set when the reduced one was never built, so a
+ * program that arrives before its arrays do still runs. */
+static inline int mt_read_regs_ir(MtFastCtx *c, MtAddrEntry *e, uint64_t address) {
+    c->regs_circuit += e->n_in;
+    if (!e->have_ir_regs) return mt_read_regs(c, e, address);
+    return mt_read_regs_into(c, address, e->ir_ids_addr, e->ir_ptrs_addr,
+                             e->ir_vals_addr, e->ir_slots, e->ir_n_in,
+                             e->ir_n_calls_i, e->ir_need_ef);
 }
 
 /* Record which bytes this instruction legitimately tainted, so the memory-write
@@ -951,7 +1000,7 @@ static int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size)
         c->express_miss[2]++;
         return MT_FAST_SLOW;
     }
-    if (mt_read_regs(c, ent, address) != 0) { c->express_miss[4]++; return MT_FAST_SLOW; }
+    if (mt_read_regs_ir(c, ent, address) != 0) { c->express_miss[4]++; return MT_FAST_SLOW; }
     const size_t nbytes = (size_t)n_slots * sizeof(uint64_t);
     MtMemWrite mw[MT_MAX_MEM_WRITES];
     int n_w = 0;
