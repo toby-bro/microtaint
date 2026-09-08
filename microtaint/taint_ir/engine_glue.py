@@ -17,9 +17,9 @@ are checked rather than assumed:
   * NATIVELY EMITTED.  The interpreter is not reachable from the hot path, so a
     program the host emitter declined is no use there.
 
-Everything is off unless MICROTAINT_TAINT_IR is set: this replaces the
-evaluator on the hot path, so it is opt-in until the full suite has been run
-with it on.
+This is the hot path's default.  MICROTAINT_TAINT_IR=0 turns the whole thing
+off and sends every instruction back through the evaluator, which is what the
+parity tests compare against.
 """
 # ruff: noqa: PLC0415
 from __future__ import annotations
@@ -38,7 +38,7 @@ _ENABLED = None
 def enabled() -> bool:
     global _ENABLED
     if _ENABLED is None:
-        _ENABLED = os.environ.get('MICROTAINT_TAINT_IR', '') not in ('', '0')
+        _ENABLED = os.environ.get('MICROTAINT_TAINT_IR') != '0'
     return _ENABLED
 
 

@@ -116,7 +116,7 @@ result is read downstream or is wider than a word, a p-code loop (a backward
 branch), and the wide add `adcx` lifts to. The host emitter takes all but
 division and count-leading-zeros.
 
-In the engine, with `MICROTAINT_TAINT_IR=1` against the same run without it:
+In the engine, against the same run with `MICROTAINT_TAINT_IR=0`:
 
 | benchmark | bare Qiling | differential | compiled |
 |---|---|---|---|
@@ -226,4 +226,6 @@ leak already written down. Under WARN or STOP the instruction goes back to the
 circuit, which owns the reporting. Neither path commits anything until it has
 succeeded, so a refusal simply leaves the instruction to the circuit.
 
-Opt in with `MICROTAINT_TAINT_IR=1`.
+This is the default path.  `MICROTAINT_TAINT_IR=0` turns it off and sends every
+instruction back through the differential evaluator, which is what the parity
+tests compare against.

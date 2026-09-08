@@ -354,12 +354,12 @@ cdef bint _USE_DEVAL_C = _os.environ.get('MICROTAINT_DISABLE_DO_EVALUATE_C') != 
 cdef bint _USE_CMEM  = _os.environ.get('MICROTAINT_DISABLE_CMEM') != '1'
 cdef bint _DIFF_CMEM = _os.environ.get('MICROTAINT_DIFF_CMEM') == '1'
 
-# The compiled-taint-program path.  Off unless MICROTAINT_TAINT_IR is set: it
-# replaces the evaluator on the hot path, so it stays opt-in until the whole
-# suite has been run with it on.
+# The compiled-taint-program path.  On by default; MICROTAINT_TAINT_IR=0 sends
+# every instruction back through the evaluator.  It replaced the evaluator on
+# the hot path once the whole suite had been run with it on, both ways.
 cdef bint _NULL_HOOK = _os.environ.get('MICROTAINT_NULL_HOOK', '') not in ('', '0')
 
-_taint_ir_on = _os.environ.get('MICROTAINT_TAINT_IR', '') not in ('', '0')
+_taint_ir_on = _os.environ.get('MICROTAINT_TAINT_IR') != '0'
 _taint_ir_program_for = None
 if _taint_ir_on:
     try:

@@ -127,10 +127,7 @@ def _run(binary: str, payload: bytes, *, express: bool, taint_ir: bool,
     env = dict(os.environ)
     env['MICROTAINT_EXPRESS'] = '1' if express else '0'
     env['MICROTAINT_NOGIL_MEM'] = '1' if nogil_mem else '0'
-    if taint_ir:
-        env['MICROTAINT_TAINT_IR'] = '1'
-    else:
-        env.pop('MICROTAINT_TAINT_IR', None)
+    env['MICROTAINT_TAINT_IR'] = '1' if taint_ir else '0'
     out = subprocess.run([sys.executable, '-c', _CHILD, binary, payload.hex()],
                          capture_output=True, text=True, env=env, check=True,
                          cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

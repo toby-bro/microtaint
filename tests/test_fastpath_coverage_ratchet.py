@@ -83,7 +83,7 @@ def _counters(elf: Path):
 
 
 @pytest.mark.skipif(
-    os.environ.get('MICROTAINT_TAINT_IR', '') not in ('', '0'),
+    os.environ.get('MICROTAINT_TAINT_IR') != '0',
     reason=(
         'These limits were recorded for the default evaluator. The compiled '
         'taint path is more faithful in places -- it keeps RSP tainted through '

@@ -126,7 +126,7 @@ def test_decode_cache_is_active_and_hit() -> None:
 
 
 @pytest.mark.skipif(
-    os.environ.get('MICROTAINT_TAINT_IR', '') not in ('', '0'),
+    os.environ.get('MICROTAINT_TAINT_IR') != '0',
     reason=(
         'The compiled-taint path hangs off the decode-cache entry, so turning '
         'the cache off turns it off too and the two runs are no longer the same '
