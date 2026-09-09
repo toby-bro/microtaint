@@ -1,4 +1,4 @@
-# ruff: noqa: PLC0415, S112
+# ruff: noqa: PLC0415
 """A block program must compute what its instructions compute in sequence.
 
 This is the correctness question block-level tainting rests on.  Lowering a
@@ -48,6 +48,83 @@ _SEQUENCES = {
     ],
     'shift_then_add': [
         bytes.fromhex('48c1e004'),    # shl rax, 4
+        bytes.fromhex('4801d8'),      # add rax, rbx
+    ],
+    # A flag PRODUCED by one instruction and CONSUMED by a later one is the
+    # case block lowering has to get right and per-instruction lowering never
+    # meets: the carry has to survive from one instruction's frame to the next.
+    'adc_carry_chain': [
+        bytes.fromhex('4801d8'),      # add rax, rbx
+        bytes.fromhex('4811c8'),      # adc rax, rcx
+        bytes.fromhex('4811d0'),      # adc rax, rdx
+    ],
+    'sbb_borrow_chain': [
+        bytes.fromhex('4829d8'),      # sub rax, rbx
+        bytes.fromhex('4819c8'),      # sbb rax, rcx
+    ],
+    'cmp_then_cmov': [
+        bytes.fromhex('4839d8'),      # cmp rax, rbx
+        bytes.fromhex('480f4cc1'),    # cmovl rax, rcx    (a predicated write)
+    ],
+    'cmp_then_setcc': [
+        bytes.fromhex('4839d8'),      # cmp rax, rbx
+        bytes.fromhex('0f9cc0'),      # setl al           (a flag into a byte)
+    ],
+    'setcc_then_movzx': [
+        bytes.fromhex('0f94c0'),      # sete al
+        bytes.fromhex('480fb6c0'),    # movzx rax, al
+    ],
+    'flag_set_then_adc': [
+        bytes.fromhex('f8'),          # clc
+        bytes.fromhex('f9'),          # stc
+        bytes.fromhex('4811d8'),      # adc rax, rbx
+    ],
+    # Sub-register aliasing ACROSS instructions: the symbolic frame resolves it
+    # inside one instruction, and a block asks it to hold between them.
+    'partial_al_then_ah': [
+        bytes.fromhex('88d8'),        # mov al, bl
+        bytes.fromhex('88cc'),        # mov ah, cl
+        bytes.fromhex('4801d8'),      # add rax, rbx
+    ],
+    'byte_add_then_qword': [
+        bytes.fromhex('00d8'),        # add al, bl
+        bytes.fromhex('4801c8'),      # add rax, rcx
+    ],
+    'word_then_qword': [
+        bytes.fromhex('6689d8'),      # mov ax, bx
+        bytes.fromhex('4801c8'),      # add rax, rcx
+    ],
+    # Implicit multi-register writes (RDX:RAX) and flags the ISA leaves
+    # undefined, which the lowering models and the hardware does not.
+    'mul_then_use_rdx': [
+        bytes.fromhex('48f7e3'),      # mul rbx           (writes RDX:RAX)
+        bytes.fromhex('4831d0'),      # xor rax, rdx
+    ],
+    'cqo_then_add': [
+        bytes.fromhex('4899'),        # cqo               (sign-extends into RDX)
+        bytes.fromhex('4801d0'),      # add rax, rdx
+    ],
+    # `bt` writes only the carry, so the whole dependency between these two is
+    # a flag.  (`bsf` would be the sharper case and is not here on purpose: its
+    # bit scan lifts to a p-code loop, so it declines on its own AND in block
+    # mode, and a permanently skipped parametrisation tests nothing.)
+    'bt_then_adc': [
+        bytes.fromhex('480fa3d8'),    # bt rax, rbx       (writes CF alone)
+        bytes.fromhex('4811c8'),      # adc rax, rcx
+    ],
+    # A write nothing reads: dead-code elimination may delete the computation,
+    # never the taint of what survives it.
+    'dead_write': [
+        bytes.fromhex('4889d8'),      # mov rax, rbx
+        bytes.fromhex('4889c8'),      # mov rax, rcx      (kills the one above)
+        bytes.fromhex('4801d0'),      # add rax, rdx
+    ],
+    'self_xor_then_add': [
+        bytes.fromhex('4831c0'),      # xor rax, rax      (zeroing idiom)
+        bytes.fromhex('4801d8'),      # add rax, rbx
+    ],
+    'shift_by_cl': [
+        bytes.fromhex('48d3e0'),      # shl rax, cl       (runtime count)
         bytes.fromhex('4801d8'),      # add rax, rbx
     ],
 }
@@ -127,7 +204,7 @@ def _unicorn_states(seq: list[bytes], seed: dict, names) -> list[dict] | None:
         states.append(state)
         try:
             uc.emu_start(addr, addr + len(code))
-        except Exception:  # noqa: BLE001 - Unicorn declined this form
+        except Exception:
             return None
         addr += len(code)
     return states
@@ -182,7 +259,7 @@ def test_block_program_matches_the_sequence(kit, name, seed_i, taint_i) -> None:
 def test_a_clean_input_stays_clean_through_a_block(name: str, kit) -> None:
     """The untainted-input exit's premise, at block scale: no block may
     manufacture taint out of nothing."""
-    builder, layout, run = kit
+    builder, _layout, run = kit
     seq = _SEQUENCES[name]
     ops, base = [], frompcode.LIFT_BASE
     for code in seq:
