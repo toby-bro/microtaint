@@ -121,3 +121,62 @@ def test_the_planner_is_isa_general() -> None:
     regions = plan_block(Architecture.ARM64, arm)
     _assert_covers(regions, Architecture.ARM64, arm)
     assert any(r.prog is not None for r in regions), 'nothing lowered on ARM64'
+
+
+@pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'MIPS64BE', 'PPC32BE', 'RISCV64',
+                                 'AMD64_SIMD', 'ARM64_SIMD'])
+def test_the_planner_covers_blocks_on_every_bank_isa(isa: str) -> None:
+    """Coverage and contiguity on every architecture the bank carries.
+
+    The planner splits by SLEIGH's IMARKs and never names an architecture, so
+    the way this stops being true is not a wrong answer on one ISA but a silent
+    decline on all of a big-endian one, or an off-by-one in the boundaries that
+    only a wider register file exposes.  Blocks here are consecutive bank
+    instructions rather than real control flow: not realistic, but it exercises
+    exactly what the planner does.
+    """
+    import sys
+    from pathlib import Path
+
+    bench = Path(__file__).resolve().parent.parent / 'benchmark'
+    if str(bench) not in sys.path:
+        sys.path.insert(0, str(bench))
+    from instruction_bank import load_bank  # type: ignore[import-not-found]
+
+    from microtaint.taint_ir.blocks import _translate
+    from microtaint.taint_ir.frompcode import Builder
+
+    bank = load_bank()
+    if isa not in bank:
+        pytest.skip(f'{isa} is not in the bank')
+    spec = bank[isa]
+    key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
+    builder = Builder(spec.arch, key.endswith('BE'), 'concrete')
+
+    per_block, planned = 5, 0
+    for start in range(0, min(len(spec.instructions), per_block * 12), per_block):
+        chunk = spec.instructions[start:start + per_block]
+        if len(chunk) < 2:
+            break
+        code = b''.join(bytes(i.bytes) for i in chunk)
+        marks = instruction_starts(_translate(spec.arch, code, LIFT_BASE))
+        regions = plan_block(spec.arch, code, builder=builder)
+
+        assert regions, f'{isa}: no regions for a {len(marks)}-instruction block'
+        assert sum(r.count for r in regions) == len(marks), (
+            f'{isa}: regions cover {sum(r.count for r in regions)} of {len(marks)}')
+        pos, addr = 0, LIFT_BASE
+        for r in regions:
+            assert r.first == pos, f'{isa}: gap or overlap at instruction {pos}'
+            assert r.addr == addr, f'{isa}: gap or overlap at address {addr:#x}'
+            pos += r.count
+            addr = r.end
+        assert addr == LIFT_BASE + len(code), (
+            f'{isa}: regions end at {addr:#x}, block ends at '
+            f'{LIFT_BASE + len(code):#x}')
+        assert any(r.prog is not None for r in regions), (
+            f'{isa}: nothing in this block lowered at all, which on a '
+            f'big-endian or vector bank usually means a silent decline rather '
+            f'than a genuinely unlowerable block')
+        planned += 1
+    assert planned >= 2, f'{isa}: only {planned} blocks planned'
