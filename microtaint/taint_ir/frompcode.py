@@ -306,7 +306,8 @@ class Builder:
         self.be = be
         self.arch = arch
 
-    def build(self, ops, end_addr: int, *, emit: str = 'taint') -> IRProg:
+    def build(self, ops, end_addr: int, *, emit: str = 'taint',
+              block: bool = False) -> IRProg:
         """Lower `ops`.  `emit` selects which frame becomes the program's
         outputs: 'taint' (the shipped behaviour) or 'value'.
 
@@ -324,6 +325,7 @@ class Builder:
         if emit not in ('taint', 'value', 'both'):
             raise ValueError(emit)
         self.emit = emit
+        self.block = block
         p = IRProg()
         v = SymFrame(p, self.declared, self.be, 'v')
         t = SymFrame(p, self.declared, self.be, 't')
@@ -353,6 +355,15 @@ class Builder:
         for i, o in enumerate(ops):
             if o.opcode.name == 'IMARK' and o.inputs:
                 self.imark_pc.setdefault(o.inputs[0].offset, i)
+        # Which instruction each op belongs to, as the p-code index of that
+        # instruction's IMARK.  Only block mode needs it: it is how a branch
+        # OUT of the current instruction is told from a branch back into it.
+        self.instr_pc = [0] * n
+        cur = 0
+        for i, o in enumerate(ops):
+            if o.opcode.name == 'IMARK' and o.inputs:
+                cur = i
+            self.instr_pc[i] = cur
         self.n_ops = n
         for pc in range(n):
             while pred_stack and pred_stack[-1][0] == pc:
@@ -674,8 +685,24 @@ class Builder:
             return tgt if 0 <= tgt <= n else None
         if vn.space.name == 'ram':
             if vn.offset == self.end_addr:
-                return n                      # skip to the end of the instruction
-            return self.imark_pc.get(vn.offset)
+                return n                      # skip to the end of the region
+            tgt = self.imark_pc.get(vn.offset)
+            if tgt is None:
+                return None
+            if self.block and self.instr_pc[tgt] != self.instr_pc[pc]:
+                # Lowering a whole basic block, and this branch leaves the
+                # instruction it is in.  Unicorn ends a block at any branch, so
+                # such a branch can only be the block's LAST instruction and its
+                # target is the next block, whatever the address arithmetic says
+                # about direction.  Resolving it to a p-code index inside this
+                # region instead reads the loop edge of a `for` as a p-code loop
+                # and declines the block: measured, that was 95% of the block
+                # executions of bench_untainted and bench_dense.
+                #
+                # A ram target back into the SAME instruction is still a p-code
+                # loop (this is how `rep` lifts) and still declines.
+                return None
+            return tgt
         return None
 
     def _read_in(self, vn):
