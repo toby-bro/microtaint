@@ -167,3 +167,8 @@ bench_kernel.py
 # Vendored third-party engines for the RQ2 comparison (Pin, libdft64,
 # TaintGrind).  Fetched by the artifact setup script, never committed.
 artifacts/ndss27/*/external/
+
+# The performance suite writes these; the baseline lives in the CI cache.
+.bench_current.json
+.bench_baseline.json
+benchmark/taint_density/hookcost

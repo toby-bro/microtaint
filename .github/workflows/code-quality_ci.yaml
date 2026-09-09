@@ -106,21 +106,31 @@ jobs:
         run: uv run pytest -o addopts="" -p no:xdist -q
 
   # ---------------------------------------------------------------------------
-  # Benchmark job: compares against the baseline stored on master.
+  # Performance job.  Runs on EVERY pull request, because the whole suite takes
+  # well under a minute (~41 s locally, all seven ISAs and three workloads).
   #
-  # On pushes to master:   runs benchmarks, saves results as a cache baseline.
-  # On pull requests:      runs benchmarks, loads the master baseline, posts a
-  #                        comment on the PR with a regression/progression table.
+  # Two kinds of number come out of benchmark/bench_suite.py and they are used
+  # differently:
   #
-  # The cache key is keyed to the OS + Python version so baselines don't mix
-  # across runner environments. The benchmark JSON is stored via actions/cache
-  # rather than as a build artifact so it persists across workflow runs.
+  #   gates    deterministic -- counters, coverage, operation counts.  Identical
+  #            on any machine for a given commit, so a regression here FAILS the
+  #            job.  This is what actually guards performance work.
+  #   timings  vary with whatever else the runner is doing, so they are reported
+  #            as RATIOS against a baseline measured in the same run, and are
+  #            advisory only.  A shared CI runner cannot hold an absolute
+  #            nanosecond figure still, and pretending otherwise produces a
+  #            benchmark that cries wolf until everyone ignores it.
+  #
+  # The previous job here timed `generate_static_rule` -- the cost of LIFTING an
+  # instruction.  The decode cache amortises that to nothing and the compiled
+  # taint path barely touches it, so it tracked one of the least relevant
+  # numbers in the engine, in absolute microseconds, on a shared runner.
   # ---------------------------------------------------------------------------
   benchmark:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write # needed to post the comparison comment on PRs
+      pull-requests: write # to post the report on PRs
 
     steps:
       - uses: actions/checkout@v4
@@ -131,151 +141,134 @@ jobs:
       - name: Install the project
         run: uv sync --locked --all-extras --dev
 
-      # Restore the master baseline if it exists
-      - name: Restore benchmark baseline
+      - name: Restore baseline
         id: cache-bench
         uses: actions/cache/restore@v4
         with:
           path: .bench_baseline.json
           key: benchmark-baseline-${{ runner.os }}-py313
 
-      - name: Run benchmarks
-        run: |
-          uv run pytest tests/bench_microtaint.py \
-            --benchmark-only \
-            --benchmark-json=.bench_current.json \
-            --benchmark-disable-gc \
-            --benchmark-warmup=on \
-            --benchmark-min-rounds=10 \
-            -q
+      - name: Run the performance suite
+        run: uv run python benchmark/bench_suite.py --json .bench_current.json
 
-      # On PRs: compare against baseline and post a comment
-      - name: Compare against baseline and post report
-        if: github.event_name == 'pull_request' && steps.cache-bench.outputs.cache-hit == 'true'
+      - name: Gates (deterministic; a regression fails the job)
+        run: |
+          uv run python - <<'EOF'
+          import json, os, sys
+
+          cur = json.load(open('.bench_current.json'))['gates']
+          try:
+              base = json.load(open('.bench_baseline.json'))['gates']
+          except (OSError, KeyError):
+              print('No baseline yet; recording the gates below for next time.')
+              for k, v in sorted(cur.items()):
+                  print(f'  {k:<28} {v}')
+              sys.exit(0)
+
+          # What each gate means, and which direction is bad.  These are
+          # properties of the ENGINE, not of the machine: they do not move
+          # unless the engine's behaviour moved.
+          worse = []
+          for key, now in sorted(cur.items()):
+              was = base.get(key)
+              if was is None:
+                  print(f'  new gate {key} = {now}')
+                  continue
+              if key.endswith('_lowered')  and now < was:
+                  worse.append(f'{key}: {was} -> {now} (fewer forms lower; '
+                               f'the compiled path lost coverage)')
+              elif key.endswith('_declined') and now > was:
+                  worse.append(f'{key}: {was} -> {now} (more forms fall back, '
+                               f'and the fallback is ~30,000x slower per instruction)')
+              elif key.endswith('_total_ops') and now > was:
+                  worse.append(f'{key}: {was} -> {now} (+{100*(now-was)/max(was,1):.1f}% '
+                               f'operations to answer the same instructions)')
+              elif now != was:
+                  print(f'  {key}: {was} -> {now}')
+              else:
+                  print(f'  {key}: {now} (unchanged)')
+
+          if worse:
+              print('\nPERFORMANCE GATES FAILED:', file=sys.stderr)
+              for w in worse:
+                  print(f'  - {w}', file=sys.stderr)
+              sys.exit(1)
+          print('\nAll gates held.')
+          EOF
+
+      - name: Report the timings (advisory)
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
           uv run python - <<'EOF'
-          import json, os, sys
+          import json, os, subprocess
 
-          REGRESSION_THRESHOLD  = 0.10   # 10% slower  → regression  🔴
-          PROGRESSION_THRESHOLD = 0.05   # 5%  faster  → progression 🟢
-
-          with open('.bench_baseline.json') as f:
-              baseline = {b['name']: b for b in json.load(f)['benchmarks']}
-          with open('.bench_current.json') as f:
-              current  = {b['name']: b for b in json.load(f)['benchmarks']}
-
-          regressions  = []
-          progressions = []
-          unchanged    = []
-          new_tests    = []
-
-          all_names = sorted(set(current) | set(baseline))
-
-          for name in all_names:
-              if name not in baseline:
-                  new_tests.append(name)
-                  continue
-
-              base_mean = baseline[name]['stats']['mean']
-              curr_mean = current[name]['stats']['mean']
-              base_std  = baseline[name]['stats']['stddev']
-              curr_std  = current[name]['stats']['stddev']
-              delta     = (curr_mean - base_mean) / base_mean
-
-              entry = (name, base_mean, curr_mean, base_std, curr_std, delta)
-              if delta >  REGRESSION_THRESHOLD:
-                  regressions.append(entry)
-              elif delta < -PROGRESSION_THRESHOLD:
-                  progressions.append(entry)
-              else:
-                  unchanged.append(entry)
-
-          def fmt_us(s):   return f'{s*1e6:,.1f} µs'
-          def fmt_pct(d):  return f'{d:+.1f}%'
-
-          def table(rows):
-              lines = ['| Benchmark | Baseline | Current | Δ |',
-                       '|-----------|----------|---------|---|']
-              for name, bm, cm, bs, cs, d in rows:
-                  lines.append(
-                      f'| `{name}` | {fmt_us(bm)} ±{fmt_us(bs)} '
-                      f'| {fmt_us(cm)} ±{fmt_us(cs)} | {fmt_pct(d*100)} |'
-                  )
-              return '\n'.join(lines)
-
-          parts = []
-
-          if regressions:
-              parts.append('## 🔴 Regressions (> 10% slower)\n\n' + table(regressions))
-          if progressions:
-              parts.append('## 🟢 Progressions (> 5% faster)\n\n' + table(progressions))
-          if new_tests:
-              parts.append('## 🆕 New benchmarks\n\n' +
-                           '\n'.join(f'- `{n}`' for n in new_tests))
-          if not regressions and not progressions and not new_tests:
-              parts.append('## ✅ No significant performance changes')
-
-          summary_lines = [f'- Regressions: {len(regressions)}',
-                           f'- Progressions: {len(progressions)}',
-                           f'- Unchanged: {len(unchanged)}',
-                           f'- New: {len(new_tests)}']
-          parts.insert(0, '## Benchmark report\n\n' + '\n'.join(summary_lines))
-
-          body = '\n\n'.join(parts)
-          print(body)
-
-          # Write to GitHub step summary
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
-              f.write(body + '\n')
-
-          # Post as PR comment
-          import urllib.request, urllib.error
-          token  = os.environ['GH_TOKEN']
-          pr_num = os.environ['PR_NUMBER']
-          repo   = os.environ['REPO']
-          url    = f'https://api.github.com/repos/{repo}/issues/{pr_num}/comments'
-          data   = json.dumps({'body': body}).encode()
-          req    = urllib.request.Request(url, data=data, method='POST', headers={
-              'Authorization': f'Bearer {token}',
-              'Accept': 'application/vnd.github+json',
-              'Content-Type': 'application/json',
-          })
+          cur = json.load(open('.bench_current.json'))
           try:
-              urllib.request.urlopen(req)
-          except urllib.error.HTTPError as e:
-              print(f'Failed to post comment: {e}', file=sys.stderr)
+              base = json.load(open('.bench_baseline.json'))
+          except OSError:
+              base = None
 
-          # Fail the job if there are regressions
-          if regressions:
-              print(f'\n{len(regressions)} regression(s) detected — failing.', file=sys.stderr)
-              sys.exit(1)
+          L = ['## Performance', '',
+               '_Gates are checked separately and fail the job. The figures below are '
+               'advisory: a shared runner cannot hold an absolute nanosecond still, so '
+               'the column that matters is the ratio to bare emulation measured in the '
+               'same run._', '']
+
+          L += ['### End to end', '',
+                '| workload | bare | + hooked | + taint | x bare |',
+                '|---|---|---|---|---|']
+          for name, v in sorted(cur['a_end_to_end'].items()):
+              L.append(f"| `{name}` | {v['bare_ns']:.1f} ns | {v['hooked_ns']:.1f} ns "
+                       f"| {v['full_ns']:.1f} ns | **{v['x_bare']:.2f}x** |")
+
+          b = cur.get('b_throughput') or {}
+          if b:
+              L += ['', '### Throughput', '',
+                    f"- reusing one process: **{b['exec_per_sec_reusing_process']:.1f}** exec/s",
+                    f"- a fresh process each: **{b['exec_per_sec_fresh_process']:.1f}** exec/s",
+                    f"- per-execution setup: {b['setup_cost_seconds']*1000:.0f} ms"]
+
+          if cur.get('c_per_instruction'):
+              L += ['', '### Per instruction (compiled path)', '',
+                    '| ISA | p50 | p100 | fallback p50 |', '|---|---|---|---|']
+              for isa, v in sorted(cur['c_per_instruction'].items()):
+                  t = cur.get('t_fallback_tail', {}).get(isa)
+                  tail = f"{t['p50']/1000:.0f} us" if t else '-'
+                  L.append(f"| {isa} | {v['p50']:.2f} ns | {v['p100']:.2f} ns | {tail} |")
+
+          if cur.get('d_primitives'):
+              L += ['', '### Primitives (pure C)', '',
+                    ' / '.join(f'{k} {v} ns' for k, v in sorted(cur['d_primitives'].items()))]
+
+          if base:
+              L += ['', '### Against the baseline', '']
+              for name, v in sorted(cur['a_end_to_end'].items()):
+                  o = base.get('a_end_to_end', {}).get(name)
+                  if not o:
+                      continue
+                  d = 100 * (v['x_bare'] - o['x_bare']) / o['x_bare']
+                  mark = '🔴' if d > 10 else ('🟢' if d < -5 else '⚪')
+                  L.append(f"- {mark} `{name}`: {o['x_bare']:.2f}x -> {v['x_bare']:.2f}x "
+                           f"({d:+.1f}%)")
+
+          body = '\n'.join(L)
+          print(body)
+          try:
+              subprocess.run(['gh', 'pr', 'comment', os.environ['PR_NUMBER'],
+                              '--repo', os.environ['REPO'], '--body', body], check=False)
+          except Exception as e:
+              print(f'could not post: {e}')
           EOF
 
-      # On PRs without a baseline yet: just print current results
-      - name: Print benchmark results (no baseline available)
-        if: github.event_name == 'pull_request' && steps.cache-bench.outputs.cache-hit != 'true'
-        run: |
-          echo "No baseline found for comparison — results below are informational only."
-          uv run python - <<'EOF'
-          import json
-          with open('.bench_current.json') as f:
-              data = json.load(f)
-          print(f"{'Benchmark':<60} {'Mean (µs)':>12} {'Stddev (µs)':>12}")
-          print('-' * 86)
-          for b in sorted(data['benchmarks'], key=lambda x: x['name']):
-              print(f"{b['name']:<60} {b['stats']['mean']*1e6:>12,.1f} {b['stats']['stddev']*1e6:>12,.1f}")
-          EOF
-
-      # On pushes to master: save the current results as the new baseline
-      - name: Save new baseline (master only)
+      - name: Save the baseline (master only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: cp .bench_current.json .bench_baseline.json
 
-      - name: Store benchmark baseline
+      - name: Store the baseline (master only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/cache/save@v4
         with:
