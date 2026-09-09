@@ -46,7 +46,7 @@ ENGINES = {
 
 def texint(n):
     """Integer with LaTeX thousands separators: 9858 -> '9{,}858'."""
-    return f'{int(round(n)):,}'.replace(',', '{,}')
+    return f'{round(n):,}'.replace(',', '{,}')
 
 
 def pct(rate):
@@ -61,7 +61,7 @@ def jac(x):
 def speedup(mt_tps, other_tps):
     """MicroTaint-relative speedup; integer when >= 10, else one decimal (4.3, 34, 6.3)."""
     r = mt_tps / other_tps
-    return str(int(round(r))) if r >= 10 else f'{r:.1f}'
+    return str(round(r)) if r >= 10 else f'{r:.1f}'
 
 
 def load_structural(benchmark_py):
@@ -129,7 +129,7 @@ def main():
     n_sweep = md['n_sweep']
     v['numTests'] = texint(n_tests)
     v['numGT'] = texint(n_gt)
-    v['pctGT'] = str(int(round(100 * n_gt / n_tests)))
+    v['pctGT'] = str(round(100 * n_gt / n_tests))
     v['numRandom'] = texint(n_random)
     v['numSeq'] = texint(n_seq)
     v['numSweep'] = texint(n_sweep)
@@ -141,7 +141,7 @@ def main():
         bench_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'benchmark.py')
     try:
         v.update({k: texint(x) for k, x in load_structural(bench_py).items()})
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f'% WARNING: could not import {bench_py} for template counts ({e});', file=sys.stderr)
         print('%          numPoolTmpl/numPoolClasses/numSeqTmpl/numSeqClasses left for manual update.', file=sys.stderr)
 
@@ -180,7 +180,7 @@ def main():
         mta = ov['microtaint-all']['wall_s']
         run = ov['microtaint-all']['extra'].get('run_s') or mta
         v['ovhSlow'] = f'{mta / qil:.2f}'
-        v['ovhNativeX'] = str(int(round(mta / nat)))
+        v['ovhNativeX'] = str(round(mta / nat))
         v['ovhAmort'] = f'{run / nat:.1f}'
 
     # ---- Emit, in the same order/grouping as main.tex ----

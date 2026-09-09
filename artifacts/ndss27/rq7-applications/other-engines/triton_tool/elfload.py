@@ -27,22 +27,22 @@ class Segment:
 def load_segments(path: Path) -> tuple[int, list[Segment]]:
     """Return (entry_point, [PT_LOAD segments]) for an ELF64 little-endian file."""
     blob = Path(path).read_bytes()
-    if blob[:4] != b"\x7fELF":
-        raise ValueError(f"{path}: not an ELF file")
+    if blob[:4] != b'\x7fELF':
+        raise ValueError(f'{path}: not an ELF file')
     if blob[4] != 2:  # EI_CLASS == ELFCLASS64
-        raise ValueError(f"{path}: not ELFCLASS64")
+        raise ValueError(f'{path}: not ELFCLASS64')
 
-    e_entry = struct.unpack_from("<Q", blob, 0x18)[0]
-    e_phoff = struct.unpack_from("<Q", blob, 0x20)[0]
-    e_phentsize = struct.unpack_from("<H", blob, 0x36)[0]
-    e_phnum = struct.unpack_from("<H", blob, 0x38)[0]
+    e_entry = struct.unpack_from('<Q', blob, 0x18)[0]
+    e_phoff = struct.unpack_from('<Q', blob, 0x20)[0]
+    e_phentsize = struct.unpack_from('<H', blob, 0x36)[0]
+    e_phnum = struct.unpack_from('<H', blob, 0x38)[0]
 
     segs: list[Segment] = []
     for i in range(e_phnum):
         off = e_phoff + i * e_phentsize
-        p_type, p_flags = struct.unpack_from("<II", blob, off)
+        p_type, p_flags = struct.unpack_from('<II', blob, off)
         p_offset, p_vaddr, _p_paddr, p_filesz, p_memsz = struct.unpack_from(
-            "<QQQQQ", blob, off + 8
+            '<QQQQQ', blob, off + 8,
         )
         if p_type != PT_LOAD:
             continue

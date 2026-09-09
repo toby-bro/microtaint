@@ -17,10 +17,10 @@ from pathlib import Path
 
 os.dup2(2, 1)  # keep Maat's ANSI logger off stdout
 
-from maat import (ARCH, Concat, Cst, Extract, MaatEngine, OS, PERM, Var)
+from maat import ARCH, OS, PERM, Concat, Cst, Extract, MaatEngine, Var
 
-AND_AL_78 = bytes.fromhex("2478")     # and al, 0x78
-SHR_AL_3 = bytes.fromhex("c0e803")    # shr al, 3
+AND_AL_78 = bytes.fromhex('2478')     # and al, 0x78
+SHR_AL_3 = bytes.fromhex('c0e803')    # shr al, 3
 CODE = AND_AL_78 + SHR_AL_3
 BASE = 0x400000
 # Flag byte: QR(bit7)=1, OPCODE(bits6..3)=0b0101=5, low bits 0 -> 0xA8.
@@ -33,7 +33,7 @@ def _build_byte(tainted_bits: set[int], name: str):
     var_names = []
     for bit in range(7, -1, -1):
         if bit in tainted_bits:
-            vn = f"{name}_b{bit}"
+            vn = f'{name}_b{bit}'
             pieces.append(Var(1, vn))
             var_names.append(vn)
         else:
@@ -54,7 +54,7 @@ def run(tainted_bits: set[int], name: str) -> dict:
     # AL is the low byte of RAX; keep the upper 56 bits concrete 0.
     engine.cpu.rax = Concat(Cst(56, 0), byte)
     for vn in var_names:
-        engine.vars.set(vn, (FLAG >> int(vn.split("_b")[1])) & 1)
+        engine.vars.set(vn, (FLAG >> int(vn.split('_b')[1])) & 1)
 
     engine.run(2)  # AND then SHR
 
@@ -70,41 +70,41 @@ def run(tainted_bits: set[int], name: str) -> dict:
     depends = out_zero != out_one
 
     return {
-        "config": name,
-        "tainted_bits": sorted(tainted_bits),
-        "n_tainted_bits": len(var_names),
-        "flag_in": hex(FLAG),
-        "out_al_inputs0": hex(out_zero),
-        "out_al_inputs1": hex(out_one),
-        "output_depends_on_tainted_bits": depends,
+        'config': name,
+        'tainted_bits': sorted(tainted_bits),
+        'n_tainted_bits': len(var_names),
+        'flag_in': hex(FLAG),
+        'out_al_inputs0': hex(out_zero),
+        'out_al_inputs1': hex(out_one),
+        'output_depends_on_tainted_bits': depends,
     }
 
 
 def main() -> int:
-    qr = run({7}, "QR")          # taint only QR bit7 (benign)
-    op = run({6, 5, 4, 3}, "OPCODE")  # taint only OPCODE bits6..3
+    qr = run({7}, 'QR')          # taint only QR bit7 (benign)
+    op = run({6, 5, 4, 3}, 'OPCODE')  # taint only OPCODE bits6..3
 
-    can_taint_single_bit = qr["n_tainted_bits"] == 1
-    qr_reaches = qr["output_depends_on_tainted_bits"]
-    op_reaches = op["output_depends_on_tainted_bits"]
+    can_taint_single_bit = qr['n_tainted_bits'] == 1
+    qr_reaches = qr['output_depends_on_tainted_bits']
+    op_reaches = op['output_depends_on_tainted_bits']
     can_discriminate = qr_reaches != op_reaches
 
-    print(f"[maat DNS] saw: OPCODE taints output={op_reaches}, single-bit taint "
-          f"(discriminates QR/OPCODE={can_discriminate}) | not: QR taints "
-          f"output={qr_reaches} (masked by AND 0x78)")
+    print(f'[maat DNS] saw: OPCODE taints output={op_reaches}, single-bit taint '
+          f'(discriminates QR/OPCODE={can_discriminate}) | not: QR taints '
+          f'output={qr_reaches} (masked by AND 0x78)')
 
     out = {
-        "qr": qr,
-        "opcode": op,
-        "can_taint_single_bit": can_taint_single_bit,
-        "qr_reaches_output": qr_reaches,
-        "opcode_reaches_output": op_reaches,
-        "can_discriminate_qr_vs_opcode": can_discriminate,
+        'qr': qr,
+        'opcode': op,
+        'can_taint_single_bit': can_taint_single_bit,
+        'qr_reaches_output': qr_reaches,
+        'opcode_reaches_output': op_reaches,
+        'can_discriminate_qr_vs_opcode': can_discriminate,
     }
     Path(__file__).resolve().parent.joinpath(
-        "results", "_maat_dns_raw.json").write_text(json.dumps(out, indent=2))
+        'results', '_maat_dns_raw.json').write_text(json.dumps(out, indent=2))
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     sys.exit(main())

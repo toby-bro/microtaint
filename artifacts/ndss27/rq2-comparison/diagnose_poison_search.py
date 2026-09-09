@@ -42,8 +42,7 @@ from pathlib import Path
 
 cwd = Path.cwd()
 worker_path = next(
-    (p for p in [cwd / 'worker_microtaint.py', cwd.parent / 'worker_microtaint.py']
-     if p.is_file()),
+    (p for p in [cwd / 'worker_microtaint.py', cwd.parent / 'worker_microtaint.py'] if p.is_file()),
     None,
 )
 if worker_path is None:
@@ -51,15 +50,16 @@ if worker_path is None:
     sys.exit(1)
 sys.path.insert(0, str(worker_path.parent))
 
-from microtaint.instrumentation.ast import EvalContext
-from microtaint.simulator import CellSimulator
-from microtaint.sleigh.engine import generate_static_rule, _cached_generate_static_rule
-from microtaint.types import Architecture, Register
-
 # Silence the simulator's per-failure error logger — bisection runs many
 # tests, including some that legitimately fail (e.g. instructions Unicorn
 # doesn't support); the resulting log spam buries the diagnostic output.
 import logging
+
+from microtaint.instrumentation.ast import EvalContext
+from microtaint.simulator import CellSimulator
+from microtaint.sleigh.engine import _cached_generate_static_rule, generate_static_rule
+from microtaint.types import Architecture, Register
+
 logging.getLogger('microtaint').setLevel(logging.CRITICAL)
 logging.getLogger('microtaint.simulator').setLevel(logging.CRITICAL)
 logging.getLogger().setLevel(logging.CRITICAL)
@@ -75,8 +75,8 @@ _REGS = (
 )
 _DEFAULT_RSP = 0x80000000
 
-EXPECTED_SOUND  = 0x0202020202021302
-EXPECTED_BROKEN = 0x7706aa7ab587952e
+EXPECTED_SOUND = 0x0202020202021302
+EXPECTED_BROKEN = 0x7706AA7AB587952E
 
 
 # --- Logging ----------------------------------------------------------------
@@ -121,6 +121,7 @@ log(f'Expected broken: 0x{EXPECTED_BROKEN:016x}')
 
 # --- Core replay primitive --------------------------------------------------
 
+
 def replay(indices: list[int], sim_kwargs: dict) -> int:
     """Run the given test indices in order through ONE shared
     CellSimulator built with the given kwargs.  Returns the RAX taint
@@ -156,8 +157,10 @@ def replay(indices: list[int], sim_kwargs: dict) -> int:
 
 
 def verdict(rax: int) -> str:
-    if rax == EXPECTED_SOUND:  return 'SOUND'
-    if rax == EXPECTED_BROKEN: return 'BROKEN'
+    if rax == EXPECTED_SOUND:
+        return 'SOUND'
+    if rax == EXPECTED_BROKEN:
+        return 'BROKEN'
     return f'OTHER(0x{rax:016x})'
 
 
@@ -170,9 +173,9 @@ log('STAGE 1 — Backend reproduction')
 log('=' * 72)
 
 backends = [
-    ('unicorn', dict(use_unicorn=True,  use_c=False)),
-    ('cython',  dict(use_unicorn=False, use_c=False)),
-    ('c',       dict(use_unicorn=False, use_c=True)),
+    ('unicorn', {'use_unicorn': True, 'use_c': False}),
+    ('cython', {'use_unicorn': False, 'use_c': False}),
+    ('c', {'use_unicorn': False, 'use_c': True}),
 ]
 
 # Run all 8009 prior tests + target through each backend.
@@ -229,8 +232,8 @@ if rax_alone == EXPECTED_BROKEN:
     _log_fh.close()
     sys.exit(0)
 
-lo = 0              # known BROKEN
-hi = target_idx     # known SOUND
+lo = 0  # known BROKEN
+hi = target_idx  # known SOUND
 # We search for the largest N (call it threshold) such that
 # replay([N..target_idx]) is BROKEN.  threshold ∈ [lo, hi-1].
 
@@ -246,16 +249,16 @@ while hi - lo > 1:
     v = verdict(rax)
     log(f'    [{iterations:2d}] N={mid:5d}  ({len(indices):5d} tests)  -> {v}')
     if rax == EXPECTED_BROKEN:
-        lo = mid     # still broken — try later start
+        lo = mid  # still broken — try later start
     else:
-        hi = mid     # sound — start must be earlier
+        hi = mid  # sound — start must be earlier
     iterations += 1
 
 threshold = lo
 log(f'\n  Bisection result: largest N producing BROKEN is N = {threshold}')
 log(f'    replay([{threshold}..{target_idx}]) -> BROKEN')
 log(f'    replay([{threshold + 1}..{target_idx}]) -> not BROKEN')
-log(f'\n  Test that FIRST contributes to the poisoning:')
+log('\n  Test that FIRST contributes to the poisoning:')
 log(f'    index = {threshold}  id = {results[threshold]["id"]}')
 log(f'    asm   = {results[threshold]["instruction"]["assembly"][:120]}')
 log(f'    bytes = {results[threshold]["instruction"]["bytes"]}')
@@ -307,7 +310,7 @@ if rax_pair == EXPECTED_BROKEN:
     log(f'\n  >>> Minimal poisoning set found: {{{threshold}, {target_idx}}}')
     log(f'      i.e. running test idx={threshold} (id={results[threshold]["id"]})')
     log(f'      followed by test idx={target_idx} (id={target_id})')
-    log(f'      reproduces the broken value through ONE shared simulator.')
+    log('      reproduces the broken value through ONE shared simulator.')
     log(f'\n  Test idx={threshold} details:')
     inst_p = results[threshold]['instruction']
     log(f'    bytes:    {inst_p["bytes"]}')
@@ -316,11 +319,11 @@ if rax_pair == EXPECTED_BROKEN:
     log(f'    state:    {inst_p["state"]}')
     log(f'    taint:    {inst_p["taint"]}')
 else:
-    log(f'\n  Pair alone does NOT reproduce — but bisection said')
+    log('\n  Pair alone does NOT reproduce — but bisection said')
     log(f'  [{threshold}..{target_idx}] does.  This means MULTIPLE prior')
-    log(f'  tests are needed to set up the polluted state.')
+    log('  tests are needed to set up the polluted state.')
     log(f'\n  Iterative expansion: keep adding indices from ({threshold}, {target_idx})')
-    log(f'  to the necessary set until replay(necessary + [target]) becomes BROKEN.')
+    log('  to the necessary set until replay(necessary + [target]) becomes BROKEN.')
 
     # Greedy walk-forward: necessary = [threshold].  At each step, scan
     # forward through (last(necessary), target_idx) to find the first index
@@ -338,12 +341,11 @@ else:
         found_index = None
         last_progress_log = scan_start
         for i in range(scan_start, target_idx):
-            trial = sorted(set(necessary + [i, target_idx]))
+            trial = sorted({*necessary, i, target_idx})
             rax_i = replay(trial, bisect_kw)
             if rax_i == EXPECTED_BROKEN:
                 inst_i = results[i]['instruction']
-                log(f'    [add idx={i:5d} id={results[i]["id"]:5d} '
-                    f'cat={inst_i.get("category", "?"):12s}] -> BROKEN')
+                log(f'    [add idx={i:5d} id={results[i]["id"]:5d} cat={inst_i.get("category", "?"):12s}] -> BROKEN')
                 necessary.append(i)
                 found_index = i
                 break
@@ -353,40 +355,41 @@ else:
 
         if found_index is None:
             log(f'\n  No single additional index in ({scan_start}, {target_idx})')
-            log(f'  flips replay to BROKEN.  The poisoning is distributed over')
-            log(f'  more than `len(necessary)` tests.  Trying a wider expansion:')
-            log(f'  test "necessary + ALL of (scan_start, target_idx) + target"')
+            log('  flips replay to BROKEN.  The poisoning is distributed over')
+            log('  more than `len(necessary)` tests.  Trying a wider expansion:')
+            log('  test "necessary + ALL of (scan_start, target_idx) + target"')
             indices_full = sorted(set(necessary + list(range(scan_start, target_idx)) + [target_idx]))
             rax_full = replay(indices_full, bisect_kw)
             log(f'    full set replay: {verdict(rax_full)}')
             if rax_full == EXPECTED_BROKEN:
-                log(f'  Full set is BROKEN — every index in (scan_start, target_idx)')
-                log(f'  collectively contributes; no single one alone is enough.')
-                log(f'  Listing the gap as a block (scan_start..target_idx-1):')
-                log(f'    block: indices {scan_start} to {target_idx - 1} '
-                    f'({target_idx - scan_start} tests)')
+                log('  Full set is BROKEN — every index in (scan_start, target_idx)')
+                log('  collectively contributes; no single one alone is enough.')
+                log('  Listing the gap as a block (scan_start..target_idx-1):')
+                log(f'    block: indices {scan_start} to {target_idx - 1} ({target_idx - scan_start} tests)')
             else:
-                log(f'  Full set is also SOUND — necessary set without the gap')
-                log(f'  works only when the OUTER bisection range is intact.')
-                log(f'  This indicates a non-monotonic poisoning behaviour.')
+                log('  Full set is also SOUND — necessary set without the gap')
+                log('  works only when the OUTER bisection range is intact.')
+                log('  This indicates a non-monotonic poisoning behaviour.')
             break
 
         # We added one index; check if necessary alone now reproduces
-        rax_check = replay(necessary + [target_idx], bisect_kw)
+        rax_check = replay([*necessary, target_idx], bisect_kw)
         log(f'    replay(necessary + [target]) -> {verdict(rax_check)}')
         if rax_check == EXPECTED_BROKEN:
-            log(f'\n  >>> Necessary-set search converged.')
+            log('\n  >>> Necessary-set search converged.')
             log(f'      Minimal poisoning set: {necessary} + [{target_idx}]')
             log(f'      Total: {len(necessary) + 1} test cases.\n')
-            for idx in necessary + [target_idx]:
+            for idx in [*necessary, target_idx]:
                 inst_x = results[idx]['instruction']
-                log(f'    idx={idx:5d}  id={results[idx]["id"]:5d}  '
+                log(
+                    f'    idx={idx:5d}  id={results[idx]["id"]:5d}  '
                     f'bytes={inst_x["bytes"][:32]:32s}  '
-                    f'cat={inst_x.get("category", "?")}')
+                    f'cat={inst_x.get("category", "?")}',
+                )
             break
         # Else: continue expanding
         if iteration >= 50:
-            log(f'\n  Iteration limit reached without convergence.')
+            log('\n  Iteration limit reached without convergence.')
             break
 
 log(f'\nLog saved to: {LOG_PATH.resolve()}')

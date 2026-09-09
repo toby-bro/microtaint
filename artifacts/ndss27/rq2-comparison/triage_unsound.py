@@ -12,6 +12,7 @@ import re
 import sys
 from collections import Counter
 
+import worker_microtaint as wm
 from unicorn import UC_ARCH_X86, UC_MODE_64, Uc
 from unicorn.x86_const import (
     UC_X86_REG_RAX,
@@ -20,8 +21,6 @@ from unicorn.x86_const import (
     UC_X86_REG_RDX,
     UC_X86_REG_RSP,
 )
-
-import worker_microtaint as wm
 
 REGS = {'RAX': UC_X86_REG_RAX, 'RBX': UC_X86_REG_RBX, 'RCX': UC_X86_REG_RCX, 'RDX': UC_X86_REG_RDX}
 MASK64 = (1 << 64) - 1
@@ -32,7 +31,7 @@ RSP = wm._DEFAULT_RSP  # 0x80000000
 STK_LO = (RSP - 0x8000) & ~0xFFF
 STK_SPAN = 0x10000
 
-_LINE = re.compile(r"bytes=(\S+) state=(\{[^}]*\}) taint=(\{[^}]*\})")
+_LINE = re.compile(r'bytes=(\S+) state=(\{[^}]*\}) taint=(\{[^}]*\})')
 
 
 def _clean_run(bs: bytes, state: dict[str, int]) -> dict[str, int]:
@@ -50,7 +49,7 @@ def _clean_run(bs: bytes, state: dict[str, int]) -> dict[str, int]:
 def _clean_lb(bs: bytes, state: dict[str, int], taint: dict[str, int]) -> dict[str, int] | None:
     try:
         base = _clean_run(bs, state)
-    except Exception:  # noqa: BLE001 -- baseline trap: no reference, treat as uncovered
+    except Exception:
         return None
     lb = dict.fromkeys(REGS, 0)
     for r in REGS:
@@ -60,7 +59,7 @@ def _clean_lb(bs: bytes, state: dict[str, int], taint: dict[str, int]) -> dict[s
                 s2[r] ^= 1 << b
                 try:
                     o = _clean_run(bs, s2)
-                except Exception:  # noqa: BLE001 -- flipped trap only shrinks the LB
+                except Exception:
                     continue
                 for rr in REGS:
                     lb[rr] |= base[rr] ^ o[rr]

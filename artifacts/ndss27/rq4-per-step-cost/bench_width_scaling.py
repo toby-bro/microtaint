@@ -26,11 +26,12 @@ import os
 import statistics
 import time
 
-from keystone import Ks, KS_ARCH_X86, KS_MODE_64
-from microtaint.types import Architecture, Register
-from microtaint.simulator import CellSimulator
+from keystone import KS_ARCH_X86, KS_MODE_64, Ks
+
 from microtaint.instrumentation.ast import EvalContext
+from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
+from microtaint.types import Architecture, Register
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLOCK = time.CLOCK_PROCESS_CPUTIME_ID
@@ -145,14 +146,14 @@ def main():
         except Exception as e:
             row['status'] = f'ASM_FAIL: {e}'
             results.append(row)
-            print(f"{family:3s} {width:4d}b  {text:26s}  ASM_FAIL {e}")
+            print(f'{family:3s} {width:4d}b  {text:26s}  ASM_FAIL {e}')
             continue
         try:
             circuit = generate_static_rule(arch, bs, sf)
         except Exception as e:
             row['status'] = f'RULE_FAIL: {type(e).__name__}: {e}'
             results.append(row)
-            print(f"{family:3s} {width:4d}b  {text:26s}  RULE_FAIL {e}")
+            print(f'{family:3s} {width:4d}b  {text:26s}  RULE_FAIL {e}')
             continue
 
         n_assign = len(circuit.assignments)
@@ -172,7 +173,7 @@ def main():
             row['status'] = 'EMPTY_RULE (opcode not represented in state format -> unsupported)'
             row['median_us'] = None
             results.append(row)
-            print(f"{family:3s} {width:4d}b  {text:26s}  EMPTY_RULE (unsupported, 0 assignments)")
+            print(f'{family:3s} {width:4d}b  {text:26s}  EMPTY_RULE (unsupported, 0 assignments)')
             continue
 
         timing = time_case(circuit, ctx)
@@ -185,7 +186,7 @@ def main():
               f"(min={timing['min_us']:.4f} max={timing['max_us']:.4f})")
 
     lane_results = []
-    print("\n--- Supplementary: fixed 128-bit width, varying lane count ---")
+    print('\n--- Supplementary: fixed 128-bit width, varying lane count ---')
     for family, width, text, lanes, sf, vals, taint in LANE_CASES:
         row = {'family': family, 'width': width, 'asm': text, 'lanes': lanes}
         bs = asm(text)
@@ -216,7 +217,7 @@ def main():
     out_path = os.path.join(HERE, 'width_scaling_data.json')
     with open(out_path, 'w') as f:
         json.dump({'meta': meta, 'results': results, 'lane_results': lane_results}, f, indent=2)
-    print(f"\nWrote {out_path}")
+    print(f'\nWrote {out_path}')
 
 
 if __name__ == '__main__':

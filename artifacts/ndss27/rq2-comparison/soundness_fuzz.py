@@ -23,9 +23,10 @@ import random
 import sys
 import time
 
-import benchmark
 import bitflip_oracle_scratch as bf
 import worker_microtaint as wm
+
+import benchmark
 
 REGISTERS = ['RAX', 'RBX', 'RCX', 'RDX']
 MASK64 = (1 << 64) - 1
@@ -98,7 +99,7 @@ def main() -> int:
                 )
             else:
                 sound += 1
-        except Exception as e:  # noqa: BLE001 -- a bad case must not kill the fuzzer
+        except Exception as e:
             errors += 1
             if errors <= 25:
                 print(f'[error] n={n}: {type(e).__name__}: {e}', flush=True)

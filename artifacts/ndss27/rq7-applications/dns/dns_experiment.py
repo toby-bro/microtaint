@@ -242,10 +242,10 @@ RUNS = [
 
 
 def execute_run(sim: CellSimulator, run: Run) -> None:
-    taint = {n: 0 for n in REG_NAMES}
+    taint = dict.fromkeys(REG_NAMES, 0)
     taint['RAX'] = run.taint_mask
 
-    values = {n: 0 for n in REG_NAMES}
+    values = dict.fromkeys(REG_NAMES, 0)
     values['RAX'] = run.value & 0xFF
 
     run.gt_out = _true_taint_x86(OPCODE_EXTRACT, REG_NAMES, taint, values)
@@ -277,7 +277,7 @@ def print_run_table() -> None:
     print()
     print(bold('Per-run results (post-AL taint mask):'))
     print(
-        f'  {"Run":<55} {"T_in":>5} {"V_in":>5} {"Exp":>5} {"MT":>5} {"GT":>5}  Verdict'
+        f'  {"Run":<55} {"T_in":>5} {"V_in":>5} {"Exp":>5} {"MT":>5} {"GT":>5}  Verdict',
     )
     print('  ' + dim('-' * 99))
     for r in RUNS:
@@ -285,7 +285,7 @@ def print_run_table() -> None:
         print(
             f'  {r.label:<55} '
             f'{r.taint_mask:#05x} {r.value:#05x} {r.expected_al_taint:#05x} '
-            f'{r.mt_al:#05x} {r.gt_al:#05x}  {verdict}'
+            f'{r.mt_al:#05x} {r.gt_al:#05x}  {verdict}',
         )
 
 
@@ -341,7 +341,7 @@ def print_conclusions() -> None:
     print(bold('2. Soundness and precision on the data register (AL).'))
     al_exact = all(r.mt_al == r.gt_al for r in RUNS)
     if al_exact:
-        print('   In all 4 runs, microtaint\'s predicted AL taint mask is ' + green('bit-exact equal') +
+        print("   In all 4 runs, microtaint's predicted AL taint mask is " + green('bit-exact equal') +
               ' to the')
         print('   per-bit Unicorn ground truth: engine >= GT (no missed deps) AND')
         print('   engine <= GT (no over-tainting).')

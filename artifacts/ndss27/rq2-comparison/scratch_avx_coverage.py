@@ -41,9 +41,6 @@ Run with:  ./.venv_microtaint/bin/python scratch_avx_coverage.py
 
 from __future__ import annotations
 
-import itertools
-
-import keystone
 import unicorn
 import unicorn.x86_const as ux
 from keystone import KS_ARCH_X86, KS_MODE_64, Ks
@@ -166,7 +163,7 @@ def gt_exhaustive(bs: bytes, state: dict[str, int], taint: dict[str, int]):
     positions = [(r, b) for r in GP4 for b in range(64) if (taint.get(r, 0) >> b) & 1]
     k = len(positions)
     if k == 0:
-        return {r: 0 for r in GP4}
+        return dict.fromkeys(GP4, 0)
     if k > GT_BIT_BUDGET:
         return None
     _reset_uc_for_case()
@@ -201,7 +198,7 @@ def gt_single_bit_flip(bs: bytes, state: dict[str, int], taint: dict[str, int]):
     ref = unicorn_run(bs, base)
     if ref is None:
         return None
-    lb = {r: 0 for r in GP4}
+    lb = dict.fromkeys(GP4, 0)
     for (r, b) in positions:
         vals = dict(base)
         vals[r] = (vals[r] | (1 << b)) & MASK64
@@ -368,7 +365,7 @@ def analyse():
         exact = True
         details = []
         mt_ran = True
-        for sname, staint, sdesc in SCENARIOS:
+        for sname, staint, _sdesc in SCENARIOS:
             try:
                 mt, fbdelta = microtaint_eval(bs, base_state, staint)
             except Exception as e:

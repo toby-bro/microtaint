@@ -31,12 +31,13 @@ The Cython hot-path hook and the per-address memo cache are disabled via the
 engine's own env-var switches so that every executed instruction flows through
 the introspectable Python evaluate() path.
 """
+
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
 from collections import defaultdict
 
 # Force the introspectable, non-cached Python evaluation path.  These are the
@@ -55,21 +56,21 @@ from microtaint.sleigh.mapper import determine_category
 # ---------------------------------------------------------------------------
 # Global tallies
 # ---------------------------------------------------------------------------
-CAT_BY_ID: dict[int, str] = {}          # id(TaintAssignment) -> category label
+CAT_BY_ID: dict[int, str] = {}  # id(TaintAssignment) -> category label
 
 # per-category, counted per tainted OUTPUT assignment (one tainted reg/mem write)
 asg_count: dict[str, int] = defaultdict(int)
-asg_out_bits: dict[str, int] = defaultdict(int)      # total tainted output bits
-asg_aval_bits: dict[str, int] = defaultdict(int)     # avalanche-exclusive output bits
+asg_out_bits: dict[str, int] = defaultdict(int)  # total tainted output bits
+asg_aval_bits: dict[str, int] = defaultdict(int)  # avalanche-exclusive output bits
 
 # per-category, counted per executed tainted INSTRUCTION (dominant category)
 insn_count: dict[str, int] = defaultdict(int)
 
 STATS = {
-    'insns_hooked': 0,          # main-binary instructions evaluated (post taint-arm)
-    'insns_tainted': 0,         # instructions producing >=1 tainted output bit
-    'total_out_bits': 0,        # sum over tainted assignments of output-bit popcount
-    'total_aval_bits': 0,       # sum of avalanche-exclusive output bits
+    'insns_hooked': 0,  # main-binary instructions evaluated (post taint-arm)
+    'insns_tainted': 0,  # instructions producing >=1 tainted output bit
+    'total_out_bits': 0,  # sum over tainted assignments of output-bit popcount
+    'total_aval_bits': 0,  # sum of avalanche-exclusive output bits
     # data-register-only view (output width >= 8 bits; excludes 1-bit CPU flags)
     'data_out_bits': 0,
     'data_aval_bits': 0,
@@ -78,8 +79,8 @@ STATS = {
     'budget_hit': False,
 }
 
-_BUDGET = [0]          # max tainted instructions (0 = unlimited)
-_WRAPPER = [None]      # set to the MicrotaintWrapper so we can emu_stop
+_BUDGET = [0]  # max tainted instructions (0 = unlimited)
+_WRAPPER = [None]  # set to the MicrotaintWrapper so we can emu_stop
 
 
 # ---------------------------------------------------------------------------
@@ -88,10 +89,23 @@ _WRAPPER = [None]      # set to the MicrotaintWrapper so we can emu_stop
 _orig_gta = _engine.generate_taint_assignments
 
 
-def _gta_wrapper(arch, bytestring, assignments, slice_ops, dep_set, out_target,
-                 out_name, out_bit_start, out_bit_end, mapper, mapping=None,
-                 has_cbranch=False, cbranch_flag_deps=None, is_bit_count=False,
-                 is_software_loop=False):
+def _gta_wrapper(
+    arch,
+    bytestring,
+    assignments,
+    slice_ops,
+    dep_set,
+    out_target,
+    out_name,
+    out_bit_start,
+    out_bit_end,
+    mapper,
+    mapping=None,
+    has_cbranch=False,
+    cbranch_flag_deps=None,
+    is_bit_count=False,
+    is_software_loop=False,
+):
     old_len = len(assignments)
     width = out_bit_end - out_bit_start + 1
     # Reproduce the classifier verdict exactly as the engine's dispatch does.
@@ -102,14 +116,27 @@ def _gta_wrapper(arch, bytestring, assignments, slice_ops, dep_set, out_target,
     except Exception:
         label = None
     if is_software_loop:
-        label = 'Avalanche'          # engine forces AVALANCHE for BMI2 loops
+        label = 'Avalanche'  # engine forces AVALANCHE for BMI2 loops
     elif label is None:
         label = 'Mapped' if is_store else 'Unknown'
 
-    _orig_gta(arch, bytestring, assignments, slice_ops, dep_set, out_target,
-              out_name, out_bit_start, out_bit_end, mapper, mapping,
-              has_cbranch=has_cbranch, cbranch_flag_deps=cbranch_flag_deps,
-              is_bit_count=is_bit_count, is_software_loop=is_software_loop)
+    _orig_gta(
+        arch,
+        bytestring,
+        assignments,
+        slice_ops,
+        dep_set,
+        out_target,
+        out_name,
+        out_bit_start,
+        out_bit_end,
+        mapper,
+        mapping,
+        has_cbranch=has_cbranch,
+        cbranch_flag_deps=cbranch_flag_deps,
+        is_bit_count=is_bit_count,
+        is_software_loop=is_software_loop,
+    )
 
     for a in assignments[old_len:]:
         CAT_BY_ID[id(a)] = label
@@ -129,6 +156,7 @@ _engine.generate_taint_assignments = _gta_wrapper
 # any avalanche contribution.  full & ~precise == the bits that exist only
 # because of the avalanche fallback.
 
+
 def _eval_precise(e, ctx):
     tn = type(e).__name__
     if tn in ('AvalancheExpr', 'FullMaskAvalancheExpr'):
@@ -136,18 +164,18 @@ def _eval_precise(e, ctx):
     if tn == 'BinaryExpr':
         op = e.op
         opn = op.name if hasattr(op, 'name') else str(op)
-        l = _eval_precise(e.lhs, ctx)
-        r = _eval_precise(e.rhs, ctx)
+        lhs = _eval_precise(e.lhs, ctx)
+        rhs = _eval_precise(e.rhs, ctx)
         if opn == 'AND':
-            return l & r
+            return lhs & rhs
         if opn == 'OR':
-            return l | r
+            return lhs | rhs
         if opn == 'XOR':
-            return l ^ r
+            return lhs ^ rhs
         if opn == 'NOT':
-            return ~l
+            return ~lhs
         if opn == 'LEFT':
-            return (l << r) if r >= 0 else 0
+            return (lhs << rhs) if rhs >= 0 else 0
         if opn in ('ADD', 'SUB'):
             # memory-offset arithmetic, not taint logic; fall back to concrete
             return e.evaluate(ctx)
@@ -164,7 +192,7 @@ def _eval_precise(e, ctx):
 
 
 def _tally(circuit, ctx, _out):
-    insn_cats = []   # (cat, out_bits, aval_bits) for tainted assignments
+    insn_cats = []  # (cat, out_bits, aval_bits) for tainted assignments
     for a in circuit.assignments:
         expr = a.expression
         if expr is None:
@@ -249,6 +277,7 @@ def _cached_proxy(arch, bytestring, state_format_tuple):
 
 # Patch the name the wrapper actually calls (imported into wrapper's namespace)
 import microtaint.emulator.wrapper as _wrap_mod
+
 _wrap_mod._cached_generate_static_rule = _cached_proxy
 # also clear any pre-existing cache so category recording sees every rule
 try:
@@ -293,8 +322,12 @@ class PreloadStdin:
     def readline(self, *a, **k):
         nl = self._buf.find(b'\n')
         if nl < 0:
-            chunk = bytes(self._buf); del self._buf[:]; return chunk
-        chunk = bytes(self._buf[:nl + 1]); del self._buf[:nl + 1]; return chunk
+            chunk = bytes(self._buf)
+            del self._buf[:]
+            return chunk
+        chunk = bytes(self._buf[: nl + 1])
+        del self._buf[: nl + 1]
+        return chunk
 
 
 def run(binary, binary_args, stdin_data, rootfs='/', budget=0, taint_file=None):
@@ -302,8 +335,7 @@ def run(binary, binary_args, stdin_data, rootfs='/', budget=0, taint_file=None):
     reporter = Reporter(json_mode=False, stream=sys.stderr)
     ql = Qiling([binary, *binary_args], rootfs, verbose=QL_VERBOSE.OFF)
     ql.os.stdin = PreloadStdin(stdin_data)
-    wrapper = MicrotaintWrapper(ql, check_bof=True, check_uaf=False,
-                                check_sc=False, check_aiw=False, reporter=reporter)
+    wrapper = MicrotaintWrapper(ql, check_bof=True, check_uaf=False, check_sc=False, check_aiw=False, reporter=reporter)
     _WRAPPER[0] = wrapper
     # sanity: ensure Python path really is in force
     assert wrapper._disable_cython_hook, 'cython hook not disabled!'
@@ -323,46 +355,49 @@ def _print_report(title):
     print('\n' + '=' * 72)
     print(title)
     print('=' * 72)
-    print(f"main-binary instructions evaluated (after taint armed): {STATS['insns_hooked']:,}")
-    print(f"executed TAINTED instructions:                          {STATS['insns_tainted']:,}")
+    print(f'main-binary instructions evaluated (after taint armed): {STATS["insns_hooked"]:,}')
+    print(f'executed TAINTED instructions:                          {STATS["insns_tainted"]:,}')
     if STATS['budget_hit']:
         print('   (stopped early: tainted-instruction budget reached)')
-    print(f"total tainted output bits:                              {STATS['total_out_bits']:,}")
-    print(f"avalanche-exclusive output bits:                        {STATS['total_aval_bits']:,}")
+    print(f'total tainted output bits:                              {STATS["total_out_bits"]:,}')
+    print(f'avalanche-exclusive output bits:                        {STATS["total_aval_bits"]:,}')
     if STATS['total_out_bits']:
         share = 100.0 * STATS['total_aval_bits'] / STATS['total_out_bits']
-        print(f"AVALANCHE share of ALL tainted output bits:             {share:.2f}%")
+        print(f'AVALANCHE share of ALL tainted output bits:             {share:.2f}%')
     if STATS['data_out_bits']:
         ds = 100.0 * STATS['data_aval_bits'] / STATS['data_out_bits']
-        print(f"  data registers only (>=8-bit outputs):  {STATS['data_aval_bits']:,}/{STATS['data_out_bits']:,}  ({ds:.2f}%)")
+        print(
+            f'  data registers only (>=8-bit outputs):  '
+            f'{STATS["data_aval_bits"]:,}/{STATS["data_out_bits"]:,}  ({ds:.2f}%)',
+        )
     if STATS['flag_out_bits']:
         fs = 100.0 * STATS['flag_aval_bits'] / STATS['flag_out_bits']
-        print(f"  CPU flag bits only (1-bit outputs):     {STATS['flag_aval_bits']:,}/{STATS['flag_out_bits']:,}  ({fs:.2f}%)")
+        print(
+            f'  CPU flag bits only (1-bit outputs):     '
+            f'{STATS["flag_aval_bits"]:,}/{STATS["flag_out_bits"]:,}  ({fs:.2f}%)',
+        )
 
     print('\nPer-category DYNAMIC frequency (by executed tainted instruction, dominant category):')
     tot_i = sum(insn_count.values()) or 1
     for cat, n in sorted(insn_count.items(), key=lambda kv: -kv[1]):
-        print(f'   {cat:<30} {n:>10,}  {100.0*n/tot_i:6.2f}%')
+        print(f'   {cat:<30} {n:>10,}  {100.0 * n / tot_i:6.2f}%')
 
     print('\nPer-category (by tainted OUTPUT assignment) + avalanche bit share:')
-    print(f"   {'category':<30} {'assigns':>9} {'freq%':>7} {'outbits':>10} {'avalbits':>9} {'aval%':>7}")
+    print(f'   {"category":<30} {"assigns":>9} {"freq%":>7} {"outbits":>10} {"avalbits":>9} {"aval%":>7}')
     tot_a = sum(asg_count.values()) or 1
     for cat in sorted(asg_count, key=lambda c: -asg_count[c]):
         n = asg_count[cat]
         ob = asg_out_bits[cat]
         ab = asg_aval_bits[cat]
         avp = (100.0 * ab / ob) if ob else 0.0
-        print(f'   {cat:<30} {n:>9,} {100.0*n/tot_a:6.2f}% {ob:>10,} {ab:>9,} {avp:6.2f}%')
+        print(f'   {cat:<30} {n:>9,} {100.0 * n / tot_a:6.2f}% {ob:>10,} {ab:>9,} {avp:6.2f}%')
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--budget', type=int, default=0,
-                    help='stop after N tainted instructions (0=run to completion)')
-    ap.add_argument('--stdin', default='hello world\n',
-                    help='literal stdin string to taint')
-    ap.add_argument('--stdin-bytes', default=None,
-                    help='hex string of stdin bytes to taint (overrides --stdin)')
+    ap.add_argument('--budget', type=int, default=0, help='stop after N tainted instructions (0=run to completion)')
+    ap.add_argument('--stdin', default='hello world\n', help='literal stdin string to taint')
+    ap.add_argument('--stdin-bytes', default=None, help='hex string of stdin bytes to taint (overrides --stdin)')
     ap.add_argument('--rootfs', default='/')
     ap.add_argument('--title', default='RESULT')
     ap.add_argument('--json-out', default=None)

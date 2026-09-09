@@ -28,23 +28,23 @@ os.dup2(2, 1)  # fd 1 now points at stderr (maat logger goes here)
 
 from maat import ARCH, OS, PERM, Concat, Cst, MaatEngine, Var
 
-_out = os.fdopen(_real_stdout_fd, "w", 1)  # use the saved fd directly
+_out = os.fdopen(_real_stdout_fd, 'w', 1)  # use the saved fd directly
 
 
 def _emit(obj: dict) -> None:
-    _out.write(json.dumps(obj) + "\n")
+    _out.write(json.dumps(obj) + '\n')
     _out.flush()
 
 
-_ARCH_MAP = {"x86": ARCH.X86, "x86_64": ARCH.X64}
+_ARCH_MAP = {'x86': ARCH.X86, 'x86_64': ARCH.X64}
 
 
 def _reg_bits(arch: str) -> int:
-    return 32 if arch == "x86" else 64
+    return 32 if arch == 'x86' else 64
 
 
 def _ud_suffix(arch: str) -> bytes:
-    return b"\x0f\x0b" if "x86" in arch else b""
+    return b'\x0f\x0b' if 'x86' in arch else b''
 
 
 def _build_symbolic_value(val_int: int, taint_mask: int, name: str, reg_bits: int):
@@ -56,7 +56,7 @@ def _build_symbolic_value(val_int: int, taint_mask: int, name: str, reg_bits: in
     var_names = {}
     for bit in range(reg_bits - 1, -1, -1):
         if (taint_mask >> bit) & 1:
-            vname = f"{name}_b{bit}"
+            vname = f'{name}_b{bit}'
             piece = Var(1, vname)
             var_names[vname] = 1
         else:
@@ -68,11 +68,11 @@ def _build_symbolic_value(val_int: int, taint_mask: int, name: str, reg_bits: in
 def _setup_registers(engine, tc: dict, reg_bits: int, call_id: int) -> dict[str, dict[str, int]]:
     # Return per-register var maps, not a flat merged dict
     per_reg_vars: dict[str, dict[str, int]] = {}
-    for reg_name, val in tc["state"].items():
+    for reg_name, val in tc['state'].items():
         val_int = int(val, 16) if isinstance(val, str) else int(val)
-        raw_mask = tc["taint"].get(reg_name, 0)
+        raw_mask = tc['taint'].get(reg_name, 0)
         mask = int(raw_mask, 16) if isinstance(raw_mask, str) else int(raw_mask)
-        sym_val, var_names = _build_symbolic_value(val_int, mask, f"taint_{reg_name}_{call_id}", reg_bits)
+        sym_val, var_names = _build_symbolic_value(val_int, mask, f'taint_{reg_name}_{call_id}', reg_bits)
         per_reg_vars[reg_name] = var_names  # isolated per register
         setattr(engine.cpu, reg_name.lower(), sym_val)
     return per_reg_vars
@@ -92,7 +92,7 @@ def _extract_taint_dual(engine, reg_name: str, reg_bits: int, per_reg_vars: dict
         ctx = engine.vars
 
         # Concretize all inputs to 0
-        for vname, vbits in all_vars.items():
+        for vname in all_vars:
             ctx.set(vname, 0)
         try:
             concrete_0 = val.as_uint(ctx)
@@ -129,14 +129,14 @@ _call_id = 0
 def run_one(tc: dict) -> dict:
     global _call_id
     _call_id += 1
-    arch = tc["arch"]
+    arch = tc['arch']
     reg_bits = _reg_bits(arch)
     engine = MaatEngine(_ARCH_MAP[arch], OS.LINUX)
     BASE = 0x400000
     engine.mem.map(BASE, BASE + 0x1000, PERM.RWX)
-    raw = bytes.fromhex(tc["bytes"]) + _ud_suffix(arch)
+    raw = bytes.fromhex(tc['bytes']) + _ud_suffix(arch)
     engine.mem.write(BASE, raw, len(raw))
-    pc = "eip" if arch == "x86" else "rip"
+    pc = 'eip' if arch == 'x86' else 'rip'
     setattr(engine.cpu, pc, BASE)
     per_reg_vars = _setup_registers(engine, tc, reg_bits, _call_id)
     t0 = time.process_time_ns()
@@ -146,25 +146,25 @@ def run_one(tc: dict) -> dict:
         pass
     t1 = time.process_time_ns()
 
-    output_taint = {reg: _extract_taint_dual(engine, reg, reg_bits, per_reg_vars) for reg in tc["state"]}
-    return {"output_taint": output_taint, "time_ns": t1 - t0}
+    output_taint = {reg: _extract_taint_dual(engine, reg, reg_bits, per_reg_vars) for reg in tc['state']}
+    return {'output_taint': output_taint, 'time_ns': t1 - t0}
 
 
 def main():
-    _out.write("READY\n")
+    _out.write('READY\n')
     _out.flush()
 
     for raw_line in sys.stdin:
         line = raw_line.strip()
         if not line:
             continue
-        if line == "QUIT":
+        if line == 'QUIT':
             break
         try:
             tc = json.loads(line)
             result = run_one(tc)
         except Exception:
-            result = {"error": _tb.format_exc()[:400], "time_ns": 0}
+            result = {'error': _tb.format_exc()[:400], 'time_ns': 0}
         # Always emit exactly one JSON line — never let an exception skip this
         try:
             _emit(result)
@@ -172,5 +172,5 @@ def main():
             pass  # if stdout is broken, nothing we can do
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

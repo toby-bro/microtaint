@@ -12,10 +12,10 @@ from pathlib import Path
 
 from triton import ARCH, EXCEPTION, Instruction, MemoryAccess, TritonContext
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "triton_tool"))
-from elfload import load_segments  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'triton_tool'))
+from elfload import load_segments
 
-ELF = Path(__file__).resolve().parent / "bin" / "test_constant_time"
+ELF = Path(__file__).resolve().parent / 'bin' / 'test_constant_time'
 POW_BRANCH = 0x402f75
 POW_CT = 0x402ff8
 RET_SENTINEL = 0x13370000
@@ -27,7 +27,7 @@ EXPONENT = 5    # secret (stdin), == 0b101
 MOD = 101       # public
 
 # x86 conditional-jump mnemonics (everything that starts with 'j' except jmp).
-_UNCOND = {"jmp"}
+_UNCOND = {'jmp'}
 
 
 def _mem_bytes(ctx, addr, size):
@@ -36,7 +36,7 @@ def _mem_bytes(ctx, addr, size):
 
 def _is_cond_branch(inst) -> bool:
     m = inst.getDisassembly().split()[0].lower()
-    return m.startswith("j") and m not in _UNCOND
+    return m.startswith('j') and m not in _UNCOND
 
 
 def run_variant(entry: int, name: str) -> dict:
@@ -65,7 +65,7 @@ def run_variant(entry: int, name: str) -> dict:
     cond_branches = 0
     steps = 0
     reached_ret = False
-    error = ""
+    error = ''
     pc = entry
 
     while steps < INSTR_BUDGET:
@@ -75,7 +75,7 @@ def run_variant(entry: int, name: str) -> dict:
         inst = Instruction(pc, _mem_bytes(ctx, pc, 16))
         fault = ctx.processing(inst)
         if fault != EXCEPTION.NO_FAULT or inst.getSize() == 0:
-            error = f"fault {fault} at {pc:#x} ({inst.getDisassembly()})"
+            error = f'fault {fault} at {pc:#x} ({inst.getDisassembly()})'
             break
         steps += 1
 
@@ -90,42 +90,42 @@ def run_variant(entry: int, name: str) -> dict:
                 n_tainted_execs += 1
                 if len(leaks) < 40:
                     leaks.append({
-                        "pc": hex(inst.getAddress()),
-                        "insn": inst.getDisassembly(),
-                        "tainted_flags": tainted_flags,
+                        'pc': hex(inst.getAddress()),
+                        'insn': inst.getDisassembly(),
+                        'tainted_flags': tainted_flags,
                     })
 
         pc = ctx.getConcreteRegisterValue(ctx.registers.rip)
 
     if steps >= INSTR_BUDGET and not reached_ret:
-        error = error or "instruction budget exhausted"
+        error = error or 'instruction budget exhausted'
 
     return {
-        "name": name,
-        "entry": hex(entry),
-        "cond_branches_executed": cond_branches,
-        "leak_count_static": len(static_leak_pcs),
-        "n_tainted_branch_execs": n_tainted_execs,
-        "leak_pcs": sorted(hex(p) for p in static_leak_pcs),
-        "leaks_sample": leaks[:5],
-        "steps": steps,
-        "reached_ret": reached_ret,
-        "error": error,
+        'name': name,
+        'entry': hex(entry),
+        'cond_branches_executed': cond_branches,
+        'leak_count_static': len(static_leak_pcs),
+        'n_tainted_branch_execs': n_tainted_execs,
+        'leak_pcs': sorted(hex(p) for p in static_leak_pcs),
+        'leaks_sample': leaks[:5],
+        'steps': steps,
+        'reached_ret': reached_ret,
+        'error': error,
     }
 
 
 def main() -> int:
-    vuln = run_variant(POW_BRANCH, "vuln")
-    ct = run_variant(POW_CT, "ct")
+    vuln = run_variant(POW_BRANCH, 'vuln')
+    ct = run_variant(POW_CT, 'ct')
 
     import json
-    Path(__file__).resolve().parent.joinpath("results", "_ct_raw.json").write_text(
-        json.dumps({"vuln": vuln, "ct": ct}, indent=2))
+    Path(__file__).resolve().parent.joinpath('results', '_ct_raw.json').write_text(
+        json.dumps({'vuln': vuln, 'ct': ct}, indent=2))
     print(f"[triton CT] saw: pow_branch {vuln['n_tainted_branch_execs']} secret-dependent "
           f"branches ({vuln['leak_count_static']} sites) | not: pow_ct "
           f"{ct['n_tainted_branch_execs']}")
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     sys.exit(main())

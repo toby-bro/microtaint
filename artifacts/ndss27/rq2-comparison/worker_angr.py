@@ -55,7 +55,7 @@ class _AngrTimeout(Exception):
 
 
 def _sigalrm_handler(signum, frame):
-    raise _AngrTimeout()
+    raise _AngrTimeout
 
 
 def make_tainted_bv(reg_name: str, val: int, taint_mask: int, reg_size: int):
@@ -70,8 +70,8 @@ def make_tainted_bv(reg_name: str, val: int, taint_mask: int, reg_size: int):
     if taint_mask == 0:
         return claripy.BVV(val, reg_size)
     if taint_mask == (1 << reg_size) - 1:
-        return claripy.BVS(f"taint_{reg_name}", reg_size)
-    sym = claripy.BVS(f"taint_{reg_name}", reg_size)
+        return claripy.BVS(f'taint_{reg_name}', reg_size)
+    sym = claripy.BVS(f'taint_{reg_name}', reg_size)
     con = claripy.BVV(val, reg_size)
     bits = []
     for bit in range(reg_size - 1, -1, -1):
@@ -92,7 +92,7 @@ def _bit_mask_of_symbolic(val, reg_size: int) -> int:
     """
     if not val.symbolic:
         return 0
-    if val.depth == 1 and val.op == "BVS":
+    if val.depth == 1 and val.op == 'BVS':
         return (1 << reg_size) - 1
     mask = 0
     for bit in range(reg_size):
@@ -102,9 +102,9 @@ def _bit_mask_of_symbolic(val, reg_size: int) -> int:
 
 
 def run_one(tc: dict) -> dict:
-    arch_map = {"x86": "x86", "x86_64": "amd64"}
+    arch_map = {'x86': 'x86', 'x86_64': 'amd64'}
     angr_arch = arch_map[tc['arch']]
-    reg_size = 32 if tc['arch'] == "x86" else 64
+    reg_size = 32 if tc['arch'] == 'x86' else 64
 
     code = bytes.fromhex(tc['bytes'])
     base_addr = 0x400000
@@ -143,10 +143,10 @@ def run_one(tc: dict) -> dict:
         simgr.explore(find=end_addr)
     except _AngrTimeout:
         aborted = True
-        abort_reason = f"timeout after {ANGR_PER_CASE_TIMEOUT_S}s"
+        abort_reason = f'timeout after {ANGR_PER_CASE_TIMEOUT_S}s'
     except Exception as exc:
         aborted = True
-        abort_reason = f"{type(exc).__name__}: {str(exc)[:200]}"
+        abort_reason = f'{type(exc).__name__}: {str(exc)[:200]}'
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, prev_handler)
@@ -166,7 +166,7 @@ def run_one(tc: dict) -> dict:
     # bytes), then to whatever remains active when we time out.
     final_states = list(found) or list(deadended) or list(active)
 
-    output_taint = {reg: 0 for reg in tc['state']}
+    output_taint = dict.fromkeys(tc['state'], 0)
     if final_states:
         for st in final_states:
             for reg_name in tc['state']:
@@ -174,35 +174,35 @@ def run_one(tc: dict) -> dict:
                 output_taint[reg_name] |= _bit_mask_of_symbolic(val, reg_size)
 
     result = {
-        "output_taint": output_taint,
-        "time_ns": t1 - t0,
-        "n_states": len(final_states),
+        'output_taint': output_taint,
+        'time_ns': t1 - t0,
+        'n_states': len(final_states),
     }
     if aborted:
-        result["aborted"] = True
-        result["abort_reason"] = abort_reason
+        result['aborted'] = True
+        result['abort_reason'] = abort_reason
     return result
 
 
 def main():
-    sys.stdout.write("READY\n")
+    sys.stdout.write('READY\n')
     sys.stdout.flush()
 
     for raw in sys.stdin:
         line = raw.strip()
         if not line:
             continue
-        if line == "QUIT":
+        if line == 'QUIT':
             break
         try:
             tc = json.loads(line)
             result = run_one(tc)
         except Exception:
             import traceback
-            result = {"error": traceback.format_exc(), "time_ns": 0}
-        sys.stdout.write(json.dumps(result) + "\n")
+            result = {'error': traceback.format_exc(), 'time_ns': 0}
+        sys.stdout.write(json.dumps(result) + '\n')
         sys.stdout.flush()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

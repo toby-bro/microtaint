@@ -31,7 +31,7 @@ def run_mt(binary: Path, variant: str, input_bytes: bytes) -> int:
         os.write(fd, input_bytes)
         os.close(fd)
         cmd = ['microtaint', '--check-sc', '--json', '--quiet', '--input', inp, '--', str(binary), variant]
-        r = subprocess.run(cmd, capture_output=True, timeout=60)  # noqa: PLW1510, S603
+        r = subprocess.run(cmd, capture_output=True, timeout=60)
         text = r.stdout.decode('ascii', errors='replace')
         # The target binary may write to stdout before microtaint appends JSON;
         # find the JSON blob by locating the first '{'.
@@ -53,7 +53,7 @@ def main() -> None:
     binary = build / 'test_constant_time'
 
     try:
-        r = subprocess.run([*GCC, '-o', str(binary), str(src)], capture_output=True)  # noqa: PLW1510, S603
+        r = subprocess.run([*GCC, '-o', str(binary), str(src)], capture_output=True)
         if r.returncode != 0:
             die('build failed:\n' + r.stderr.decode())
 

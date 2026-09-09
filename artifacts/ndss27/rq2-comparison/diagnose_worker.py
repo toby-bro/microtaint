@@ -33,7 +33,6 @@ import importlib
 import importlib.util
 import inspect
 import json
-import os
 import subprocess
 import sys
 import time
@@ -107,13 +106,13 @@ required = {'RAX', 'RBX', 'RCX', 'RDX', 'RSI', 'RDI', 'RSP', 'RBP',
 missing = required - set(gp_regs)
 if missing:
     print()
-    print(f'  ** SOUNDNESS FIX MISSING **')
+    print('  ** SOUNDNESS FIX MISSING **')
     print(f'  Missing GP regs: {sorted(missing)}')
-    print(f'  Without these, the engine cannot resolve stack-relative LOAD/STORE')
-    print(f'  pointers, and falls back to garbage Unicorn memory on rep stosb.')
+    print('  Without these, the engine cannot resolve stack-relative LOAD/STORE')
+    print('  pointers, and falls back to garbage Unicorn memory on rep stosb.')
     soundness_fix_present_in_worker = False
 else:
-    print(f'  OK: all 16 GP registers present in _REGS.')
+    print('  OK: all 16 GP registers present in _REGS.')
     soundness_fix_present_in_worker = True
 
 
@@ -123,7 +122,7 @@ else:
 
 banner('3. engine.py temporal-ordering fix')
 
-import microtaint.sleigh.engine as engine_mod  # noqa: E402
+import microtaint.sleigh.engine as engine_mod
 
 print(f'  Path: {engine_mod.__file__}')
 src = inspect.getsource(engine_mod)
@@ -166,7 +165,7 @@ if worker_cmd is None:
     worker_cmd = [sys.executable, str(worker_path)]
 else:
     # Fix relative path — interpret it from cwd.
-    worker_cmd = [str(cwd / worker_cmd[0])] + worker_cmd[1:]
+    worker_cmd = [str(cwd / worker_cmd[0]), *worker_cmd[1:]]
     if worker_cmd[1] == 'worker_microtaint.py':
         worker_cmd[1] = str(worker_path)
 
@@ -213,8 +212,8 @@ except subprocess.TimeoutExpired:
 result = json.loads(result_line)
 mt_rax = result.get('output_taint', {}).get('RAX', 0)
 print(f'  Worker output for id 8009: RAX = 0x{mt_rax:016x}')
-print(f'  Expected (sound):           RAX = 0x0202020202021302')
-print(f'  Un-fixed (broken):          RAX = 0x7706aa7ab587952e')
+print('  Expected (sound):           RAX = 0x0202020202021302')
+print('  Un-fixed (broken):          RAX = 0x7706aa7ab587952e')
 
 is_sound = (mt_rax == 0x0202020202021302)
 is_broken = (mt_rax == 0x7706aa7ab587952e)
@@ -256,7 +255,7 @@ elif is_broken:
         print('  ** The engine.py at the path printed above is missing the fix. **')
         print(f'  The worker imported engine.py from: {engine_mod.__file__}')
         print('  Replace that file with the fixed version.  Note that this is')
-        print('  the path inside the WORKER\'s venv site-packages — different')
+        print("  the path inside the WORKER's venv site-packages — different")
         print('  from your source-tree microtaint/sleigh/engine.py.')
     sys.exit(1)
 else:

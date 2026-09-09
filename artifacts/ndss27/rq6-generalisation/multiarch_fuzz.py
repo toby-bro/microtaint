@@ -120,7 +120,7 @@ def _corpus(spec: O.IsaSpec) -> list[tuple[str, str, list[str]]]:
     return list(spec.prog) + _EXTRA.get(spec.label, [])
 
 
-def _fuzz_arch(  # noqa: C901
+def _fuzz_arch(
     spec: O.IsaSpec,
     seconds: float,
     seed: int,
@@ -152,7 +152,7 @@ def _fuzz_arch(  # noqa: C901
         try:
             lb = O.bitflip_lower_bound(spec, code, state, taint)
             mt = O.microtaint(spec, code, state, taint)
-        except Exception:  # noqa: S112 -- a bad random case must not kill the fuzzer
+        except Exception:
             continue
         n += 1
         missed = 0

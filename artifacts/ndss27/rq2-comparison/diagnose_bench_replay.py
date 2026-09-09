@@ -33,7 +33,8 @@ import sys
 from pathlib import Path
 
 cwd = Path.cwd()
-worker_path = next((p for p in [cwd / 'worker_microtaint.py', cwd.parent / 'worker_microtaint.py'] if p.is_file()), None)
+_candidates = [cwd / 'worker_microtaint.py', cwd.parent / 'worker_microtaint.py']
+worker_path = next((p for p in _candidates if p.is_file()), None)
 if worker_path is None:
     print(f'ERROR: worker_microtaint.py not found in {cwd} or its parent.')
     sys.exit(1)
@@ -41,7 +42,7 @@ sys.path.insert(0, str(worker_path.parent))
 
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
-from microtaint.sleigh.engine import generate_static_rule, _cached_generate_static_rule
+from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, Register
 
 _REGS = (
@@ -127,7 +128,7 @@ for i in range(target_idx + 1):
     if is_target:
         print()
         print('=' * 72)
-        print(f'  TARGET: id=8009 reached')
+        print('  TARGET: id=8009 reached')
         print('=' * 72)
         print(f'    LogicCircuit id:    0x{id(circuit):x}')
         print(f'    Same as first?      {id(circuit) == target_circuit_id}')
@@ -153,7 +154,7 @@ for i in range(target_idx + 1):
         elif rax_out == 0x7706aa7ab587952e:
             print('    >>> Replay reproduces the BROKEN report value')
         else:
-            print(f'    >>> Replay produces UNEXPECTED value')
+            print('    >>> Replay produces UNEXPECTED value')
 
         if rax_out != expected:
             print()

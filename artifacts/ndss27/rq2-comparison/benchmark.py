@@ -1,6 +1,6 @@
 #!/usr/bin/env .venv_master/bin/python
 """
-benchmark.py  –  Taint-engine benchmark orchestrator  (NDSS edition)
+benchmark.py  -  Taint-engine benchmark orchestrator  (NDSS edition)
 =====================================================================
 
 SCOPE
@@ -101,9 +101,9 @@ if hasattr(_sys.stdout, 'reconfigure'):
 try:
     import sys as _sys_tqdm
 
-    from tqdm import tqdm as _tqdm_real  # type: ignore
+    from tqdm import tqdm as _tqdm_real  # type: ignore[import-not-found]
 
-    def tqdm(iterable=None, **kwargs):  # type: ignore
+    def tqdm(iterable=None, **kwargs):  # type: ignore[no-redef]
         kwargs.setdefault('file', _sys_tqdm.stdout)
         kwargs.pop('position', None)  # position= requires a real TTY; drop it
         return _tqdm_real(iterable, **kwargs)
@@ -112,7 +112,7 @@ try:
 except ImportError:
     _HAS_TQDM = False
 
-    def tqdm(iterable=None, **kwargs):  # type: ignore
+    def tqdm(iterable=None, **kwargs):  # type: ignore[no-redef]
         if iterable is None:
 
             class _NoOpBar:
@@ -232,10 +232,10 @@ MASK64 = 0xFFFFFFFFFFFFFFFF
 # The category tag is used for per-category statistics in the report.
 #
 # Design rationale:
-#   – We cover every major encoding class that taint engines treat
+#   - We cover every major encoding class that taint engines treat
 #     differently (ALU with carry, shifts with masks, SIMD byte-granular,
 #     conditional moves that introduce implicit flows, etc.).
-#   – Sequences (see INSTRUCTION_SEQUENCES below) exercise multi-step
+#   - Sequences (see INSTRUCTION_SEQUENCES below) exercise multi-step
 #     propagation that single-instruction tests cannot reveal.
 
 INSTRUCTION_POOL: list[tuple[str, str]] = [
@@ -975,9 +975,21 @@ INSTRUCTION_SEQUENCES: list[tuple[str, list[str], str]] = [
     ('mem_test_flag', ['mov qword ptr [rsp - 16], rbx', 'test rax, qword ptr [rsp - 16]', 'setnz cl'], 'memory'),
     ('mem_cmp_flag', ['mov qword ptr [rsp - 16], rbx', 'cmp rax, qword ptr [rsp - 16]', 'setl cl'], 'memory'),
     # ALU with a memory *destination* operand (read-modify-write, then reload):
-    ('mem_add_dst', ['mov qword ptr [rsp - 16], rax', 'add qword ptr [rsp - 16], rbx', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
-    ('mem_xor_dst', ['mov qword ptr [rsp - 16], rax', 'xor qword ptr [rsp - 16], rbx', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
-    ('mem_and_dst', ['mov qword ptr [rsp - 16], rax', 'and qword ptr [rsp - 16], rbx', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
+    (
+        'mem_add_dst',
+        ['mov qword ptr [rsp - 16], rax', 'add qword ptr [rsp - 16], rbx', 'mov rcx, qword ptr [rsp - 16]'],
+        'memory',
+    ),
+    (
+        'mem_xor_dst',
+        ['mov qword ptr [rsp - 16], rax', 'xor qword ptr [rsp - 16], rbx', 'mov rcx, qword ptr [rsp - 16]'],
+        'memory',
+    ),
+    (
+        'mem_and_dst',
+        ['mov qword ptr [rsp - 16], rax', 'and qword ptr [rsp - 16], rbx', 'mov rcx, qword ptr [rsp - 16]'],
+        'memory',
+    ),
     # Sub-register / narrow memory access — bit-precision discriminators.
     # Register-level engines coalesce these to the whole destination.
     ('mem_byte_load_zx', ['mov qword ptr [rsp - 16], rax', 'movzx rbx, byte ptr [rsp - 16]'], 'memory'),
@@ -987,12 +999,33 @@ INSTRUCTION_SEQUENCES: list[tuple[str, list[str], str]] = [
     ('mem_byte_load_sx', ['mov qword ptr [rsp - 16], rax', 'movsx rbx, byte ptr [rsp - 16]'], 'memory'),
     ('mem_dword_load_sx', ['mov qword ptr [rsp - 16], rax', 'movsxd rbx, dword ptr [rsp - 16]'], 'memory'),
     # Partial memory overwrite: low bytes from one source, high bytes from another.
-    ('mem_byte_store', ['mov qword ptr [rsp - 16], rbx', 'mov byte ptr [rsp - 16], al', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
-    ('mem_high_byte_store', ['mov qword ptr [rsp - 16], rbx', 'mov byte ptr [rsp - 15], ah', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
-    ('mem_dword_partial_overwrite', ['mov qword ptr [rsp - 16], rax', 'mov dword ptr [rsp - 16], ebx', 'mov rcx, qword ptr [rsp - 16]'], 'memory'),
+    (
+        'mem_byte_store',
+        ['mov qword ptr [rsp - 16], rbx', 'mov byte ptr [rsp - 16], al', 'mov rcx, qword ptr [rsp - 16]'],
+        'memory',
+    ),
+    (
+        'mem_high_byte_store',
+        ['mov qword ptr [rsp - 16], rbx', 'mov byte ptr [rsp - 15], ah', 'mov rcx, qword ptr [rsp - 16]'],
+        'memory',
+    ),
+    (
+        'mem_dword_partial_overwrite',
+        ['mov qword ptr [rsp - 16], rax', 'mov dword ptr [rsp - 16], ebx', 'mov rcx, qword ptr [rsp - 16]'],
+        'memory',
+    ),
     # Indexed / base+index+disp addressing through memory.
     ('mem_indexed_rmw', ['mov rsi, rsp', 'mov qword ptr [rsi - 8], rax', 'add rbx, qword ptr [rsi - 8]'], 'memory'),
-    ('mem_base_index_disp', ['mov rsi, rsp', 'mov rdi, 8', 'mov qword ptr [rsi + rdi - 32], rax', 'mov rbx, qword ptr [rsi + rdi - 32]'], 'memory'),
+    (
+        'mem_base_index_disp',
+        [
+            'mov rsi, rsp',
+            'mov rdi, 8',
+            'mov qword ptr [rsi + rdi - 32], rax',
+            'mov rbx, qword ptr [rsi + rdi - 32]',
+        ],
+        'memory',
+    ),
     # ── Function preamble/epilogue (existing) ────────────────────────────
     ('func_preamble', ['push rbx', 'mov rbx, rax', 'imul rbx, rcx', 'mov rax, rbx', 'pop rbx'], 'func_skeleton'),
     # ── MUL 128-bit result (existing, expanded) ──────────────────────────
@@ -2344,8 +2377,8 @@ class BatchedWorkerPool:
                         print(f"  Taint:  {tc.get('taint', {})}")
                     if stderr_tail:
                         print(f'  Stderr ({len(stderr_tail)} lines):')
-                        for l in stderr_tail[-20:]:
-                            print(f'    {l}')
+                        for line in stderr_tail[-20:]:
+                            print(f'    {line}')
                     print('=' * 60, flush=True)
                     for i in range(counts[name], N):
                         results[i][name] = {
@@ -2402,13 +2435,13 @@ class BatchedWorkerPool:
                             print(f"  Note   : {crash_tc['rationale']}", flush=True)
                     if stdout_tail:
                         print('  Partial stdout (last output before crash):', flush=True)
-                        for l in stdout_tail.splitlines()[-5:]:
-                            print(f'    {l}', flush=True)
+                        for line in stdout_tail.splitlines()[-5:]:
+                            print(f'    {line}', flush=True)
                     if stderr_tail:
                         n_shown = min(30, len(stderr_tail))
                         print(f'  Stderr (last {n_shown} lines):', flush=True)
-                        for l in stderr_tail[-n_shown:]:
-                            print(f'    {l}', flush=True)
+                        for line in stderr_tail[-n_shown:]:
+                            print(f'    {line}', flush=True)
                     else:
                         print('  Stderr: (empty)', flush=True)
                     print('=' * 60, flush=True)
@@ -2520,7 +2553,7 @@ class BatchedWorkerPool:
         # by the workers, or the workers are dead).  Give each at most 5 s;
         # a stuck write thread means the worker's stdin pipe is full and the
         # worker itself is dead, which should have been caught above.
-        for name, t in write_threads:
+        for _name, t in write_threads:
             t.join(timeout=5.0)
 
         # Report write errors that were captured by the feeder threads.
@@ -2540,7 +2573,7 @@ class BatchedWorkerPool:
     def _get_stderr_tail(self, name: str) -> list[str]:
         """Return all stderr lines captured so far for a worker."""
         raw = ''.join(self._stderr.get(name, []))
-        return [l for l in raw.splitlines() if l.strip()]
+        return [line for line in raw.splitlines() if line.strip()]
 
     def _emit_crash_report(
         self,
@@ -2567,8 +2600,8 @@ class BatchedWorkerPool:
         stderr_tail = self._get_stderr_tail(name)
         if stderr_tail:
             print('  Stderr:', flush=True)
-            for l in stderr_tail[-10:]:
-                print(f'    {l}', flush=True)
+            for line in stderr_tail[-10:]:
+                print(f'    {line}', flush=True)
         print('=' * 60, flush=True)
 
     # ------------------------------------------------------- crash recovery
@@ -3284,7 +3317,7 @@ _KS = Ks(KS_ARCH_X86, KS_MODE_64)
 def _rand_taint() -> int:
     """Bias toward interesting cases: clean / all-tainted / partial.
 
-    Includes a "sparse" regime that produces low-popcount masks (1–4 bits set
+    Includes a "sparse" regime that produces low-popcount masks (1-4 bits set
     at random positions).  This is what makes the noninterference ground-truth
     simulator viable on randomly-generated cases: if every register were a
     full random 64-bit mask the total k would always be ~128 and the GT would
@@ -3298,7 +3331,7 @@ def _rand_taint() -> int:
     if r < 0.30:
         return 0xFFFFFFFFFFFFFFFF  # fully tainted
     if r < 0.60:
-        # Sparse: 1–4 bits set at random positions across 64.
+        # Sparse: 1-4 bits set at random positions across 64.
         n_bits = random.choice([1, 2, 3, 4])
         bits = random.sample(range(64), n_bits)
         m = 0
@@ -3550,7 +3583,7 @@ def _build_c_source(tc: dict, tool: str) -> str:
 
     The two ``clock_gettime`` calls add a tiny constant overhead per test
     (~50 ns on bare metal, ~200 ns under Valgrind, ~500 ns under Pin).
-    For a test of 1–10 instructions in microtaint that would be massive,
+    For a test of 1-10 instructions in microtaint that would be massive,
     but for libdft64/taintgrind where the per-instruction engine work is
     in the microsecond range, it's <1% of the measurement.
 
@@ -3616,7 +3649,7 @@ def _build_c_source(tc: dict, tool: str) -> str:
         # We use Intel syntax switching around the user instructions.
         return f'        "{line}\\n\\t"'
 
-    asm_body_lines = '\n'.join(asm_str(l) for l in asm_lines)
+    asm_body_lines = '\n'.join(asm_str(line) for line in asm_lines)
 
     state = tc['state']
 
@@ -3881,7 +3914,7 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
 
     out_per_tool = {}
     for tool, d in per_tool.items():
-        tp, fp, fn, tn = d['tp'], d['fp'], d['fn'], d['tn']
+        tp, fp, fn = d['tp'], d['fp'], d['fn']  # true negatives are not reported
         prec = tp / (tp + fp) if (tp + fp) else 0.0
         rec = tp / (tp + fn) if (tp + fn) else 0.0
         lats = d['latencies_ns']
@@ -3889,7 +3922,7 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
 
         # ─── Throughput variants ───────────────────────────────────────
         # The headline `tp/s` number is sensitive to two confounds:
-        #  1. The path-explosion pillar.  Its sequences are 9–49
+        #  1. The path-explosion pillar.  Its sequences are 9-49
         #     instructions long with explicit branches; the slowest pillar
         #     by far.  Including it makes a tool's tp/s depend heavily on
         #     how many path-explosion cases were sampled.
@@ -4370,7 +4403,8 @@ def main():
     parser.add_argument(
         '--all-suites',
         action='store_true',
-        help='Run all test suites (shorthand for --imul-semantic --realworld --bugdetect --path-explosion --arch-failures)',
+        help='Run all test suites: --imul-semantic --realworld --bugdetect '
+        '--path-explosion --arch-failures',
     )
     parser.add_argument(
         '--ground-truth',
@@ -4531,7 +4565,7 @@ def main():
             tc = {
                 'arch': args.arch,
                 'assembly': '; '.join(asm_lines),
-                'asm_lines': [l for l in asm_lines if not l.strip().startswith('j')],  # skip branches
+                'asm_lines': [line for line in asm_lines if not line.strip().startswith('j')],  # skip branches
                 'bytes': bytes(all_bytes).hex(),
                 'state': _safe_state(asm_lines),
                 'taint': taint,
@@ -4619,7 +4653,7 @@ def main():
     persistent_names = pool.worker_names()
     active_tools = persistent_names + list(c_harness_cmds)
     if args.ground_truth:
-        active_tools = list(active_tools) + ['ground_truth']
+        active_tools = [*list(active_tools), 'ground_truth']
 
     # ── Abort early if nothing is running ─────────────────────────────────
     # If every worker failed to start AND no C-harness workers AND GT is the

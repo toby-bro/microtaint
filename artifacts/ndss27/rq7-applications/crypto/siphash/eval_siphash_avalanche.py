@@ -103,10 +103,11 @@ def _run_one(task: tuple) -> dict[str, Any]:
     _sys.stderr = _nul
 
     # ---- microtaint imports (inside worker subprocess) ----
-    from microtaint.emulator.reporter import Reporter
-    from microtaint.emulator.wrapper import MicrotaintWrapper
     from qiling import Qiling
     from qiling.const import QL_INTERCEPT, QL_VERBOSE
+
+    from microtaint.emulator.reporter import Reporter
+    from microtaint.emulator.wrapper import MicrotaintWrapper
 
     # We capture write(fd=1, buf, 8) and read shadow at THAT moment.
     # Reading after ql.run() returns is too late: libc's exit cleanup
@@ -273,12 +274,12 @@ def print_summary(stats: dict, n_messages: int, elapsed: float) -> None:
     print(bold('=== SipHash-2-4 bit-precise avalanche results ==='))
     print(f'  Input bits tested  : {len(stats)} / 128')
     print(f'  Messages per bit   : {n_messages}')
-    print(f'  Total engine runs  : {total_runs}  ' f'({elapsed:.1f}s total, {elapsed/total_runs*1000:.0f}ms/run)')
+    print(f'  Total engine runs  : {total_runs}  ({elapsed:.1f}s total, {elapsed/total_runs*1000:.0f}ms/run)')
     print()
     print(bold('Averages across all (bit, message) pairs:'))
     print(f'  Engine predicted bits   : {_fmt(e_avg)} / 64  {dim("(expected ~32)")}')
     print(f'  Empirical flipped bits  : {_fmt(em_avg)} / 64  {dim("(expected ~32)")}')
-    print(f'  Precision (engine∩empi) : {_fmt(pr_avg)} / 64  ' f'{dim("(should approach empirical)")}')
+    print(f'  Precision (engine∩empi) : {_fmt(pr_avg)} / 64  {dim("(should approach empirical)")}')
     print()
 
     if unsound_runs == 0:
@@ -297,12 +298,12 @@ def print_summary(stats: dict, n_messages: int, elapsed: float) -> None:
             ot_str = yellow(f'{ot_ratio:.1f}%')
         else:
             ot_str = red(f'{ot_ratio:.1f}%')
-        print(f'  Over-tainting ratio     : {ot_str}  ' f'{dim("(engine bits not in empirical / empirical bits)")}')
+        print(f'  Over-tainting ratio     : {ot_str}  {dim("(engine bits not in empirical / empirical bits)")}')
 
     print()
     print(bold('Per-input-byte averages:'))
-    print(f'  {"Byte":>5}  {"Engine":>8}  {"Empirical":>10}  {"Precision":>10}  ' f'{"Unsound":>8}')
-    print(f'  {"-----":>5}  {"--------":>8}  {"----------":>10}  {"----------":>10}  ' f'{"--------":>8}')
+    print(f'  {"Byte":>5}  {"Engine":>8}  {"Empirical":>10}  {"Precision":>10}  {"Unsound":>8}')
+    print(f'  {"-----":>5}  {"--------":>8}  {"----------":>10}  {"----------":>10}  {"--------":>8}')
     for byte_i in range(16):
         bstats = [v for (b, _), v in stats.items() if b == byte_i]
         if not bstats:
@@ -312,7 +313,7 @@ def print_summary(stats: dict, n_messages: int, elapsed: float) -> None:
         bpr = sum(s['precision_mean'] for s in bstats) / len(bstats)
         buns = sum(s['soundness_failures'] for s in bstats)
         uns_str = red(str(buns)) if buns else dim('0')
-        print(f'  {byte_i:>5}  {_fmt(be):>8}  {_fmt(bem):>10}  {_fmt(bpr):>10}  ' f'{uns_str:>8}')
+        print(f'  {byte_i:>5}  {_fmt(be):>8}  {_fmt(bem):>10}  {_fmt(bpr):>10}  {uns_str:>8}')
 
 
 def print_matrix(stats: dict) -> None:
@@ -354,7 +355,7 @@ def save_csv(stats: dict, path: Path) -> None:
                     'empirical_mean': round(s['empirical_mean'], 3),
                     'precision_mean': round(s['precision_mean'], 3),
                     'soundness_failures': s['soundness_failures'],
-                }
+                },
             )
     print(f'\n  Results saved to: {path}')
 
@@ -434,7 +435,7 @@ def main() -> None:
         elapsed = time.perf_counter() - t0
         eta = (elapsed / done) * (total - done) if done else 0
         print(
-            f'\r  [{bar}] {100*pct:5.1f}%  {done}/{total}  ' f'{elapsed:.0f}s elapsed  ETA {eta:.0f}s  ',
+            f'\r  [{bar}] {100*pct:5.1f}%  {done}/{total}  {elapsed:.0f}s elapsed  ETA {eta:.0f}s  ',
             end='',
             flush=True,
         )

@@ -46,26 +46,26 @@ FUNC_HI = int(sys.argv[10], 16)
 INVALID_PA = 0xFFFFFFFFFFFFFFFF
 
 state = {
-    "armed": False,
-    "labeled_bytes": 0,
-    "input_flag": PAYLOAD[0] if PAYLOAD else None,
-    "al_tainted_before_and": None,
-    "al_tainted_after_and": None,
-    "al_tainted_after_shr": None,
-    "out_tainted": None,
-    "out_value": None,
-    "error": "",
-    "serial": "",
-    "serial_timeout": False,
+    'armed': False,
+    'labeled_bytes': 0,
+    'input_flag': PAYLOAD[0] if PAYLOAD else None,
+    'al_tainted_before_and': None,
+    'al_tainted_after_and': None,
+    'al_tainted_after_shr': None,
+    'out_tainted': None,
+    'out_value': None,
+    'error': '',
+    'serial': '',
+    'serial_timeout': False,
 }
 
-panda = Panda(generic="x86_64")
+panda = Panda(generic='x86_64')
 
 
 def _al_tainted():
     # AL is byte 0 of RAX (reg index 0).
     try:
-        return panda.plugins["taint2"].taint2_query_reg(0, 0) > 0
+        return panda.plugins['taint2'].taint2_query_reg(0, 0) > 0
     except Exception:
         return None
 
@@ -86,7 +86,7 @@ def _ram_tainted(cpu, va, size):
 
 @panda.cb_after_machine_init
 def machine_init(cpu):
-    panda.load_plugin("taint2")
+    panda.load_plugin('taint2')
     panda.enable_precise_pc()
 
 
@@ -98,29 +98,29 @@ def should_instrument(cpu, pc):
 @panda.cb_insn_exec
 def on_insn(cpu, pc):
     try:
-        if not state["armed"]:
+        if not state['armed']:
             if pc != ARM_PC:
                 return 0
             if not panda.taint_enabled():
                 panda.taint_enable()
-            rbp = panda.arch.get_reg(cpu, "RBP")
+            rbp = panda.arch.get_reg(cpu, 'RBP')
             va = (rbp + FLAG_DISP) & 0xFFFFFFFFFFFFFFFF
             pa = panda.virt_to_phys(cpu, va)
             if pa not in (INVALID_PA, 0xFFFFFFFF, 0):
                 panda.taint_label_ram(pa, 0)
-                state["labeled_bytes"] = 1
-            state["armed"] = True
+                state['labeled_bytes'] = 1
+            state['armed'] = True
             return 0
 
         if pc == AND_PC:
-            state["al_tainted_before_and"] = _al_tainted()
+            state['al_tainted_before_and'] = _al_tainted()
         elif pc == SHR_PC:
-            state["al_tainted_after_and"] = _al_tainted()
+            state['al_tainted_after_and'] = _al_tainted()
         elif pc == STORE_PC:
-            state["al_tainted_after_shr"] = _al_tainted()
+            state['al_tainted_after_shr'] = _al_tainted()
     except Exception:
-        if not state["error"]:
-            state["error"] = "insn: " + traceback.format_exc()
+        if not state['error']:
+            state['error'] = 'insn: ' + traceback.format_exc()
     return 0
 
 
@@ -128,17 +128,17 @@ def on_insn(cpu, pc):
 def after_block(cpu, tb, exit_code):
     # Once the store to `out` has executed, sample the output byte's taint.
     try:
-        if state["armed"] and state["out_tainted"] is None \
-                and state["al_tainted_after_shr"] is not None:
-            state["out_tainted"] = _ram_tainted(cpu, OUT_ADDR, 1)
+        if state['armed'] and state['out_tainted'] is None \
+                and state['al_tainted_after_shr'] is not None:
+            state['out_tainted'] = _ram_tainted(cpu, OUT_ADDR, 1)
             try:
-                state["out_value"] = panda.virtual_memory_read(
-                    cpu, OUT_ADDR, 1, fmt="int")
+                state['out_value'] = panda.virtual_memory_read(
+                    cpu, OUT_ADDR, 1, fmt='int')
             except Exception:
                 pass
     except Exception:
-        if not state["error"]:
-            state["error"] = "afterblk: " + traceback.format_exc()
+        if not state['error']:
+            state['error'] = 'afterblk: ' + traceback.format_exc()
 
 
 @panda.queue_blocking
@@ -146,28 +146,28 @@ def driver():
     try:
         import os
         import shutil
-        panda.revert_sync("root")
-        share = "/tmp/hshare"
+        panda.revert_sync('root')
+        share = '/tmp/hshare'
         if os.path.isdir(share):
             shutil.rmtree(share)
         os.makedirs(share)
-        shutil.copy("/work/" + HARNESS, share + "/h")
+        shutil.copy('/work/' + HARNESS, share + '/h')
         panda.copy_to_guest(share)
-        panda.run_serial_cmd("chmod +x /root/hshare/h", timeout=60)
+        panda.run_serial_cmd('chmod +x /root/hshare/h', timeout=60)
         panda.run_serial_cmd(
-            "echo " + PAYLOAD_B64 + " | base64 -d > /root/payload", timeout=60)
+            'echo ' + PAYLOAD_B64 + ' | base64 -d > /root/payload', timeout=60)
         try:
             out = panda.run_serial_cmd(
-                "cd /root && ./hshare/h < payload | xxd", timeout=600)
-            state["serial"] = out
+                'cd /root && ./hshare/h < payload | xxd', timeout=600)
+            state['serial'] = out
         except Exception as exc:
-            state["serial"] = "timeout: " + str(exc)
-            state["serial_timeout"] = True
+            state['serial'] = 'timeout: ' + str(exc)
+            state['serial_timeout'] = True
     except Exception:
-        state["error"] = "driver: " + traceback.format_exc()
+        state['error'] = 'driver: ' + traceback.format_exc()
     finally:
         panda.end_analysis()
 
 
 panda.run()
-print("RESULT_JSON: " + json.dumps(state))
+print('RESULT_JSON: ' + json.dumps(state))

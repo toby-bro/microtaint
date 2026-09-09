@@ -88,7 +88,7 @@ def bitflip_lower_bound(sim: "benchmark.GroundTruthSimulator",
     if baseline.get('__trapped__', False):
         return None, False
 
-    lb = {r: 0 for r in REGISTERS}
+    lb = dict.fromkeys(REGISTERS, 0)
     if not positions:                       # k == 0: lower bound is trivially 0
         return lb, True
 
@@ -127,9 +127,9 @@ def main() -> None:
     sim = benchmark.GroundTruthSimulator()
 
     # per-engine tallies
-    undertaint_all = {e: 0 for e in ENGINES}          # unsound cases (covered)
-    undertaint_gt15 = {e: 0 for e in ENGINES}         # unsound among k>15 subset
-    no_output = {e: 0 for e in ENGINES}               # engine had no output_taint
+    undertaint_all = dict.fromkeys(ENGINES, 0)          # unsound cases (covered)
+    undertaint_gt15 = dict.fromkeys(ENGINES, 0)         # unsound among k>15 subset
+    no_output = dict.fromkeys(ENGINES, 0)               # engine had no output_taint
     covered = 0
     uncovered = 0                                     # baseline trapped
     n_gt15 = 0
@@ -141,7 +141,7 @@ def main() -> None:
     # cross-validation: does each engine ALSO under-taint vs the EXHAUSTIVE GT
     # on the 3263 checkable cases?  If a category shows up in both the bit-flip
     # finding and the exhaustive finding, it is a *known* gap, not a new one.
-    undertaint_vs_exhaustive = {e: 0 for e in ENGINES}
+    undertaint_vs_exhaustive = dict.fromkeys(ENGINES, 0)
     # per-engine list of (id, category) for the covered under-taint cases
     undertaint_ids = {e: [] for e in ENGINES}
 
@@ -153,7 +153,6 @@ def main() -> None:
         state = {r: int(ins['state'].get(r, 0)) for r in REGISTERS}
         taint = {r: int(ins['taint'].get(r, 0)) for r in REGISTERS}
         positions = tainted_positions(taint)
-        k = len(positions)
 
         gt = tr.get('ground_truth', {})
         is_gt15 = 'output_taint' not in gt   # GT skipped -> k>15 (or other error)

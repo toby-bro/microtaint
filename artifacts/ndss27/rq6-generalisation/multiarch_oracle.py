@@ -406,7 +406,7 @@ def microtaint(spec: IsaSpec, code: bytes, state: dict[str, int], taint: dict[st
     return rule.evaluate(ctx)
 
 
-def main() -> int:  # noqa: C901
+def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--arch', default='all', choices=[*ISAS.keys(), 'all'])
     ap.add_argument('--verbose', action='store_true')
@@ -426,7 +426,7 @@ def main() -> int:  # noqa: C901
     for key in targets:
         spec = ISAS[key]()
         n = unsound = exact_n = exact_ok = 0
-        for asm, out_reg, srcs in spec.prog:
+        for asm, _out_reg, srcs in spec.prog:
             try:
                 code = bytes(spec.ks.asm(asm, CODE_ADDR)[0])
             except Exception as e:

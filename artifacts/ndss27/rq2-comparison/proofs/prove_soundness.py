@@ -36,11 +36,11 @@ the ones this harness is really for.
 Run:  uv run --with z3-solver python prove_soundness.py
 """
 from __future__ import annotations
-from typing import Callable
 
 import sys
+from typing import Callable
 
-from z3 import BitVec, BitVecVal, If, Solver, unsat, sat
+from z3 import BitVec, BitVecVal, If, Solver, sat, unsat
 
 # Operand widths to discharge.  <=64 is complete for the deployed engine;
 # small widths are included because carry/borrow corner cases show up early.
@@ -59,10 +59,10 @@ def _make_inputs(k: int, w: int) -> tuple[list[BitVec], list[BitVec], list[BitVe
     """k inputs, each split into untainted value U_j and taint mask T_j, plus
     two replicas a, a' that agree on every untainted bit and range freely on
     the tainted bits."""
-    U = [BitVec(f"U{j}", w) for j in range(k)]
-    T = [BitVec(f"T{j}", w) for j in range(k)]
-    sa = [BitVec(f"sa{j}", w) for j in range(k)]
-    sb = [BitVec(f"sb{j}", w) for j in range(k)]
+    U = [BitVec(f'U{j}', w) for j in range(k)]
+    T = [BitVec(f'T{j}', w) for j in range(k)]
+    sa = [BitVec(f'sa{j}', w) for j in range(k)]
+    sb = [BitVec(f'sb{j}', w) for j in range(k)]
     a = [(U[j] & ~T[j]) | (sa[j] & T[j]) for j in range(k)]
     b = [(U[j] & ~T[j]) | (sb[j] & T[j]) for j in range(k)]
     return U, T, a, b
@@ -178,7 +178,23 @@ def op_or(a: list[BitVec]) -> BitVec:          # INT_OR, two dynamic inputs (mon
 # --------------------------------------------------------------------------- #
 # The soundness check.                                                         #
 # --------------------------------------------------------------------------- #
-def check(name: str, f: Callable[[list[BitVec]], BitVec], rule: Callable[[Callable[[list[BitVec]], BitVec], list[BitVec], list[BitVec], int], BitVec], k: int, expect_sound: bool, widths: list[int]=WIDTHS, max_mult_width: int | None=None) -> tuple[bool, str, list[tuple[int, str]]]:
+# `Op` is a P-code operation under test: k symbolic inputs in, one output out.
+# `Rule` is the category's closed-form taint rule as the engine evaluates it:
+# it is handed the operation, the untainted value vector, the taint vector and
+# the operand width, and returns the output taint mask.
+Op = Callable[[list[BitVec]], BitVec]
+Rule = Callable[[Op, list[BitVec], list[BitVec], int], BitVec]
+
+
+def check(
+    name: str,
+    f: Op,
+    rule: Rule,
+    k: int,
+    expect_sound: bool,
+    widths: list[int] = WIDTHS,
+    max_mult_width: int | None = None,
+) -> tuple[bool, str, list[tuple[int, str]]]:
     """Return (ok, detail).  ok = the observed behaviour matches expect_sound."""
     per_width = []
     for w in widths:
@@ -193,62 +209,62 @@ def check(name: str, f: Callable[[list[BitVec]], BitVec], rule: Callable[[Callab
     sound = all(r == unsat for _, r in per_width)
     if expect_sound:
         ok = sound
-        verdict = "SOUND (proved)" if sound else "UNSOUND -- under-taint witness!"
+        verdict = 'SOUND (proved)' if sound else 'UNSOUND -- under-taint witness!'
     else:
         # negative control: we EXPECT an under-taint witness to exist
         found = any(r == sat for _, r in per_width)
         ok = found
         first = next((w for w, r in per_width if r == sat), None)
-        verdict = f"unsound as expected (witness at w={first})" if found else "no witness -- control FAILED"
+        verdict = f'unsound as expected (witness at w={first})' if found else 'no witness -- control FAILED'
     # smallest width proven / witnessed, for the report
     return ok, verdict, per_width
 
 
 # category, display name, f, rule, #inputs, expect_sound
-CHECKS : list[tuple[str, str, Callable[[list[int]], int], Callable[[Callable[[list[int]], int], list[int], list[int], int], int], int, bool]]= [
+CHECKS: list[tuple[str, str, Op, Rule, int, bool]] = [
     # ---- the three NEW software categories ----
-    ("mapped", "AND r, const-mask", op_and_const(0.647), rule_mapped, 1, True),
-    ("mapped", "COPY (mov)", op_copy, rule_mapped, 1, True),
-    ("mapped", "shift-left by const", op_shl_const(3), rule_mapped, 1, True),
-    ("weldable", "XOR", op_xor, rule_weldable, 2, True),
-    ("avalanche", "MULT", op_mult, rule_avalanche, 2, True),
+    ('mapped', 'AND r, const-mask', op_and_const(0.647), rule_mapped, 1, True),
+    ('mapped', 'COPY (mov)', op_copy, rule_mapped, 1, True),
+    ('mapped', 'shift-left by const', op_shl_const(3), rule_mapped, 1, True),
+    ('weldable', 'XOR', op_xor, rule_weldable, 2, True),
+    ('avalanche', 'MULT', op_mult, rule_avalanche, 2, True),
     # ---- inherited (CellIFT) categories, re-checked ----
-    ("monotonic", "AND (2 dynamic)", op_and, rule_monotonic_uniform, 2, True),
-    ("monotonic", "OR (2 dynamic)", op_or, rule_monotonic_uniform, 2, True),
-    ("transportable", "ADD  (D v T)", op_add, rule_transport_add, 2, True),
-    ("transportable", "SUB  (D^+- v T)", op_sub, rule_transport_sub, 2, True),
+    ('monotonic', 'AND (2 dynamic)', op_and, rule_monotonic_uniform, 2, True),
+    ('monotonic', 'OR (2 dynamic)', op_or, rule_monotonic_uniform, 2, True),
+    ('transportable', 'ADD  (D v T)', op_add, rule_transport_add, 2, True),
+    ('transportable', 'SUB  (D^+- v T)', op_sub, rule_transport_sub, 2, True),
     # ---- negative controls: show the floor / gate is load-bearing ----
-    ("NEG-control", "ADD without union floor", op_add, rule_add_no_floor, 2, False),
-    ("NEG-control", "XOR mis-routed as mapped", op_xor, rule_mapped_wrong, 2, False),
+    ('NEG-control', 'ADD without union floor', op_add, rule_add_no_floor, 2, False),
+    ('NEG-control', 'XOR mis-routed as mapped', op_xor, rule_mapped_wrong, 2, False),
 ]
 
 
 def main():
-    print("=" * 78)
-    print("MicroTaint taint-rule soundness -- machine-checked with Z3")
-    print(f"widths swept: {WIDTHS}   (<=64 is complete for the deployed engine)")
-    print("=" * 78)
+    print('=' * 78)
+    print('MicroTaint taint-rule soundness -- machine-checked with Z3')
+    print(f'widths swept: {WIDTHS}   (<=64 is complete for the deployed engine)')
+    print('=' * 78)
     print(f"{'category':14} {'operation':26} {'result'}")
-    print("-" * 78)
+    print('-' * 78)
     all_ok = True
     for cat, opname, f, rule, k, expect_sound in CHECKS:
         # 64-bit bvmul is slow for Z3, and avalanche soundness is width-independent
         # (trivially UNSAT), so cap the multiply check at a small width.
-        cap = 4 if "MULT" in opname else None
+        cap = 4 if 'MULT' in opname else None
         ok, verdict, _ = check(opname, f, rule, k, expect_sound, max_mult_width=cap)
         all_ok = all_ok and ok
-        flag = "ok " if ok else "XX "
-        print(f"{flag}{cat:12} {opname:26} {verdict}")
-    print("-" * 78)
+        flag = 'ok ' if ok else 'XX '
+        print(f'{flag}{cat:12} {opname:26} {verdict}')
+    print('-' * 78)
     if all_ok:
-        print("ALL CHECKS PASS: every category rule is proved sound over w<=64, and")
-        print("both negative controls exhibit the expected under-taint witness")
-        print("(the additive union floor and the routing-opcode gate are necessary).")
+        print('ALL CHECKS PASS: every category rule is proved sound over w<=64, and')
+        print('both negative controls exhibit the expected under-taint witness')
+        print('(the additive union floor and the routing-opcode gate are necessary).')
     else:
-        print("SOME CHECKS FAILED -- see the XX rows above.")
-    print("=" * 78)
+        print('SOME CHECKS FAILED -- see the XX rows above.')
+    print('=' * 78)
     return 0 if all_ok else 1
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     sys.exit(main())

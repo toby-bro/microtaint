@@ -21,7 +21,9 @@ import sys
 from pathlib import Path
 
 cwd = Path.cwd()
-worker_path = next((p for p in [cwd / 'worker_microtaint.py', cwd.parent / 'worker_microtaint.py'] if p.is_file()), None)
+worker_path = next(
+    (p for p in [cwd / 'worker_microtaint.py', cwd.parent / 'worker_microtaint.py'] if p.is_file()), None,
+)
 if worker_path is None:
     print(f'ERROR: worker_microtaint.py not found in {cwd} or its parent.')
     sys.exit(1)
@@ -29,13 +31,10 @@ sys.path.insert(0, str(worker_path.parent))
 
 from microtaint.instrumentation.ast import (
     EvalContext,
-    MemoryDifferentialExpr,
-    LogicCircuit,
 )
 from microtaint.simulator import CellSimulator
-from microtaint.sleigh.engine import generate_static_rule, _cached_generate_static_rule
+from microtaint.sleigh.engine import _cached_generate_static_rule, generate_static_rule
 from microtaint.types import Architecture, Register
-
 
 # ---- Mirror the worker's _REGS ---------------------------------------------
 
@@ -48,18 +47,20 @@ _REGS = (
 )
 
 TEST_8009 = {
-    'state': {'RAX': 10940498380929573403, 'RBX': 1830928842394036844,
-              'RCX': 19, 'RDX': 5767559093351484470},
+    'state': {'RAX': 10940498380929573403, 'RBX': 1830928842394036844, 'RCX': 19, 'RDX': 5767559093351484470},
     'taint': {'RAX': 4352, 'RBX': 2, 'RCX': 0, 'RDX': 8796093022208},
     'bytes': 'fc48894424c0488d7c24c04889d8b908000000f3aa488b4424c0',
 }
 
 EXPECTED_SOUND = 0x0202020202021302
-EXPECTED_BROKEN = 0x7706aa7ab587952e
+EXPECTED_BROKEN = 0x7706AA7AB587952E
 
 
 def banner(s: str) -> None:
-    print(); print('=' * 72); print('  ' + s); print('=' * 72)
+    print()
+    print('=' * 72)
+    print('  ' + s)
+    print('=' * 72)
 
 
 def make_context(sim):
@@ -138,9 +139,9 @@ ctx_b = make_context(sim_a)
 raw_b, verdict_b = evaluate_and_describe(circuit, ctx_b, 'second eval')
 
 if raw_a == raw_b:
-    print(f'  Match: yes — second eval gives identical output to first')
+    print('  Match: yes — second eval gives identical output to first')
 else:
-    print(f'  *** MISMATCH between first and second eval ***')
+    print('  *** MISMATCH between first and second eval ***')
     for k in set(raw_a) | set(raw_b):
         a_v = int(raw_a.get(k, 0)) & ((1 << 64) - 1)
         b_v = int(raw_b.get(k, 0)) & ((1 << 64) - 1)
@@ -160,7 +161,7 @@ raw_c, verdict_c = evaluate_and_describe(circuit_c, ctx_c, 'fresh-cache fresh-si
 banner('EXPERIMENT D — Cached circuit (already _compiled), fresh sim')
 sim_d = CellSimulator(Architecture.AMD64)
 print(f'  circuit._compiled is set: {circuit._compiled is not None and circuit._compiled is not False}')
-print(f'  Reusing the SAME circuit (with possibly stale _compiled) on a NEW sim.')
+print('  Reusing the SAME circuit (with possibly stale _compiled) on a NEW sim.')
 ctx_d = make_context(sim_d)
 raw_d, verdict_d = evaluate_and_describe(circuit, ctx_d, 'cached circuit, new sim')
 

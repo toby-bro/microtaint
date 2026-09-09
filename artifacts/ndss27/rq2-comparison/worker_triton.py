@@ -27,7 +27,7 @@ import time
 
 from triton import ARCH, Instruction, TritonContext
 
-_ARCH_MAP = {"x86": ARCH.X86, "x86_64": ARCH.X86_64}
+_ARCH_MAP = {'x86': ARCH.X86, 'x86_64': ARCH.X86_64}
 BASE_ADDR = 0x400000
 
 
@@ -75,18 +75,18 @@ def run_one(tc: dict) -> dict:
     output_taint = {
         reg_name: (1 if ctx.isRegisterTainted(getattr(ctx.registers, reg_name.lower())) else 0) for reg_name in regs
     }
-    return {"output_taint": output_taint, "time_ns": t1 - t0}
+    return {'output_taint': output_taint, 'time_ns': t1 - t0}
 
 
 def main():
-    sys.stdout.write("READY\n")
+    sys.stdout.write('READY\n')
     sys.stdout.flush()
 
     for raw in sys.stdin:
         line = raw.strip()
         if not line:
             continue
-        if line == "QUIT":
+        if line == 'QUIT':
             break
         try:
             tc = json.loads(line)
@@ -94,10 +94,10 @@ def main():
         except Exception:
             import traceback
 
-            result = {"error": traceback.format_exc(), "time_ns": 0}
-        sys.stdout.write(json.dumps(result) + "\n")
+            result = {'error': traceback.format_exc(), 'time_ns': 0}
+        sys.stdout.write(json.dumps(result) + '\n')
         sys.stdout.flush()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

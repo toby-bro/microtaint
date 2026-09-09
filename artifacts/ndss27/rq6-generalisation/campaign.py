@@ -34,15 +34,14 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import multiarch_oracle as O  # noqa: E402
-from unicorn import Uc, UcError  # noqa: E402
-import unicorn.riscv_const as _rv  # noqa: E402
+import multiarch_oracle as O
+import unicorn.riscv_const as _rv
+from unicorn import UC_ARCH_RISCV, UC_MODE_RISCV64, Uc, UcError
 
-from microtaint.instrumentation.ast import EvalContext  # noqa: E402
-from microtaint.simulator import CellSimulator  # noqa: E402
-from microtaint.sleigh.engine import generate_static_rule  # noqa: E402
-from microtaint.types import Architecture, ImplicitTaintPolicy, Register  # noqa: E402
-from unicorn import UC_ARCH_RISCV, UC_MODE_RISCV64  # noqa: E402
+from microtaint.instrumentation.ast import EvalContext
+from microtaint.simulator import CellSimulator
+from microtaint.sleigh.engine import generate_static_rule
+from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 
 # --------------------------------------------------------------------------- #
@@ -85,7 +84,7 @@ def _from_isaspec(key) -> Bench:
     for asm, out, srcs in s.prog:
         try:
             code = bytes(s.ks.asm(asm, O.CODE_ADDR)[0])
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f'  [{s.label}] SKIP {asm!r}: {e}', flush=True)
             continue
         b.entries.append((asm, code, out, srcs))
@@ -211,14 +210,14 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
         # positives from state leaks; pass 2 remains as an independent double-check.
         try:
             lb = O.bitflip_lower_bound(b, code, state, taint)
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
         # microtaint
         try:
             ctx = EvalContext(input_taint=dict(taint), input_values=dict(state),
                               simulator=sim, implicit_policy=ImplicitTaintPolicy.IGNORE)
             mt = _rule(b, code).evaluate(ctx)
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
         missed = 0
         for r in b.regs:
@@ -258,9 +257,9 @@ def pass2_verify(report):
     b = build(key)
     code = bytes.fromhex(report['bytes'])
     mask = b.mask
-    state = {r: 0 for r in b.regs}
-    state.update({r: v for r, v in report['state'].items()})
-    taint = {r: v for r, v in report['taint'].items()}
+    state = dict.fromkeys(b.regs, 0)
+    state.update(dict(report['state'].items()))
+    taint = dict(report['taint'].items())
     state, taint = b.canonicalize(state, taint)
 
     def fresh_run(st):

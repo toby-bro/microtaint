@@ -69,7 +69,7 @@ except ImportError:  # pragma: no cover
     sys.exit(
         'cannot import taintinduce.\n'
         'Run ./setup_taintinduce.sh first, then use run_rq1.sh, which invokes\n'
-        'this script with the checkout\'s own interpreter.',
+        "this script with the checkout's own interpreter.",
     )
 
 FLAG_REGISTERS = frozenset({'EFLAGS', 'RFLAGS', 'NZCV', 'CPSR'})
@@ -130,7 +130,7 @@ def gen_holdout_observations(arch, bytestring, state_format, n_states, seed):
                 cpu.randomize_regs()
                 seed_before, seed_after = cpu.execute(bytecode)
                 break
-            except Exception:  # noqa: BLE001 - UcError, OutOfRangeException, ...
+            except Exception:
                 continue
         else:
             continue
@@ -149,7 +149,7 @@ def gen_holdout_observations(arch, bytestring, state_format, n_states, seed):
                 cpu.write_reg(reg, seed_in[reg] ^ (1 << bit))
                 try:
                     before, after = cpu.execute(bytecode)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 state_before = regs2bits(before, state_format)
                 # Keep only mutations that really are a single-bit perturbation
@@ -372,7 +372,7 @@ def carry_witnesses(i, j, width):
     ]
 
 
-def carry_witness_check(  # noqa: C901 - one flat sweep over (source, i)
+def carry_witness_check(
     rule,
     arch,
     bytestring,
@@ -430,7 +430,7 @@ def carry_witness_check(  # noqa: C901 - one flat sweep over (source, i)
             before_a, after_a = cpu.execute(code)
             cpu.set_cpu_state(flipped)
             before_b, after_b = cpu.execute(code)
-        except Exception:  # noqa: BLE001 - a faulting state is simply unusable
+        except Exception:
             return None, None, None
         state_a, state_b = regs2bits(before_a, state_format), regs2bits(before_b, state_format)
         delta_in = state_a.diff(state_b)
@@ -743,10 +743,11 @@ def main():
     # experiment: it is the line between "the inference has seen everything" and
     # "the inference is generalising from samples".
     exhaustive = state_bits < 14
-    print(f'state: {state_bits} bits ({layout_desc}) -> seeds are {"EXHAUSTIVE" if exhaustive else "SAMPLED"}', flush=True)
+    seed_regime = 'EXHAUSTIVE' if exhaustive else 'SAMPLED'
+    print(f'state: {state_bits} bits ({layout_desc}) -> seeds are {seed_regime}', flush=True)
 
     if args.rule:
-        from taintinduce.serialization import TaintInduceDecoder  # noqa: PLC0415
+        from taintinduce.serialization import TaintInduceDecoder
 
         with open(args.rule) as fh:
             rule = json.load(fh, cls=TaintInduceDecoder)
@@ -770,7 +771,7 @@ def main():
 
         if args.obs_dir:
             os.makedirs(args.obs_dir, exist_ok=True)
-            from taintinduce.serialization import TaintInduceEncoder  # noqa: PLC0415
+            from taintinduce.serialization import TaintInduceEncoder
 
             with open(os.path.join(args.obs_dir, f'{args.bytes}_{args.arch}_rule.json'), 'w') as fh:
                 json.dump(rule.convert2squirrel(args.arch, args.bytes), fh, cls=TaintInduceEncoder, indent=2)
@@ -853,7 +854,11 @@ def main():
         )
     if counts['flows_flags']:
         print(f'  flag flows: {counts["flows_flags"]}, under-tainted {counts["under_flags"]}', flush=True)
-    print(f'  over-taint lands on: {counts["over_data"]} flows touching data, {counts["over_flags"]} flags only', flush=True)
+    print(
+        f'  over-taint lands on: {counts["over_data"]} flows touching data, '
+        f'{counts["over_flags"]} flags only',
+        flush=True,
+    )
     for ex in examples:
         print(f'    missed  {ex["input"]} -> {", ".join(ex["missing"])}  at state {ex["state"]}', flush=True)
     for ex in over_examples:

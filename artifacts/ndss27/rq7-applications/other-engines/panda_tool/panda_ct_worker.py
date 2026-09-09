@@ -52,46 +52,46 @@ INVALID_PA = 0xFFFFFFFFFFFFFFFF
 # capstone reg-name -> qemu/taint2 register index (env.regs order: A C D B ...)
 _REG2IDX = {}
 for idx, names in enumerate([
-    ("RAX", "EAX", "AX", "AL", "AH"),
-    ("RCX", "ECX", "CX", "CL", "CH"),
-    ("RDX", "EDX", "DX", "DL", "DH"),
-    ("RBX", "EBX", "BX", "BL", "BH"),
-    ("RSP", "ESP", "SP", "SPL"),
-    ("RBP", "EBP", "BP", "BPL"),
-    ("RSI", "ESI", "SI", "SIL"),
-    ("RDI", "EDI", "DI", "DIL"),
-    ("R8", "R8D", "R8W", "R8B"),
-    ("R9", "R9D", "R9W", "R9B"),
-    ("R10", "R10D", "R10W", "R10B"),
-    ("R11", "R11D", "R11W", "R11B"),
-    ("R12", "R12D", "R12W", "R12B"),
-    ("R13", "R13D", "R13W", "R13B"),
-    ("R14", "R14D", "R14W", "R14B"),
-    ("R15", "R15D", "R15W", "R15B"),
+    ('RAX', 'EAX', 'AX', 'AL', 'AH'),
+    ('RCX', 'ECX', 'CX', 'CL', 'CH'),
+    ('RDX', 'EDX', 'DX', 'DL', 'DH'),
+    ('RBX', 'EBX', 'BX', 'BL', 'BH'),
+    ('RSP', 'ESP', 'SP', 'SPL'),
+    ('RBP', 'EBP', 'BP', 'BPL'),
+    ('RSI', 'ESI', 'SI', 'SIL'),
+    ('RDI', 'EDI', 'DI', 'DIL'),
+    ('R8', 'R8D', 'R8W', 'R8B'),
+    ('R9', 'R9D', 'R9W', 'R9B'),
+    ('R10', 'R10D', 'R10W', 'R10B'),
+    ('R11', 'R11D', 'R11W', 'R11B'),
+    ('R12', 'R12D', 'R12W', 'R12B'),
+    ('R13', 'R13D', 'R13W', 'R13B'),
+    ('R14', 'R14D', 'R14W', 'R14B'),
+    ('R15', 'R15D', 'R15W', 'R15B'),
 ]):
     for n in names:
         _REG2IDX[n] = idx
 
 state = {
-    "armed": False,
-    "labeled_bytes": 0,
-    "decoded": 0,
-    "cond_branches_total": 0,          # dynamic executions of any Jcc in range
-    "leak_execs": 0,                   # Jcc executions with tainted latch
-    "leak_sites": {},                  # hex(pc) -> count of tainted executions
-    "site_exec": {},                   # hex(pc) -> total executions
-    "error": "",
-    "serial": "",
-    "serial_timeout": False,
+    'armed': False,
+    'labeled_bytes': 0,
+    'decoded': 0,
+    'cond_branches_total': 0,          # dynamic executions of any Jcc in range
+    'leak_execs': 0,                   # Jcc executions with tainted latch
+    'leak_sites': {},                  # hex(pc) -> count of tainted executions
+    'site_exec': {},                   # hex(pc) -> total executions
+    'error': '',
+    'serial': '',
+    'serial_timeout': False,
 }
 
 # Per-PC decoded metadata, filled lazily on first arm.
-meta = {"cond": {}, "flag": {}}   # cond: pc->True ; flag: pc->(reg_idxs, mems)
+meta = {'cond': {}, 'flag': {}}   # cond: pc->True ; flag: pc->(reg_idxs, mems)
 
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
 md.detail = True
 
-panda = Panda(generic="x86_64")
+panda = Panda(generic='x86_64')
 
 
 def _decode_function(cpu):
@@ -99,19 +99,19 @@ def _decode_function(cpu):
     try:
         code = panda.virtual_memory_read(cpu, FUNC_LO, FUNC_HI - FUNC_LO)
     except Exception:
-        state["error"] = "decode read: " + traceback.format_exc()
+        state['error'] = 'decode read: ' + traceback.format_exc()
         return
     n = 0
     for insn in md.disasm(bytes(code), FUNC_LO):
         n += 1
         mnem = insn.mnemonic
         regs_read, regs_written = insn.regs_access()
-        _fl = ("rflags", "eflags", "flags")
+        _fl = ('rflags', 'eflags', 'flags')
         writes_flags = any(md.reg_name(r) in _fl for r in regs_written)
         reads_flags = any(md.reg_name(r) in _fl for r in regs_read)
-        is_jcc = mnem.startswith("j") and mnem != "jmp" and reads_flags
+        is_jcc = mnem.startswith('j') and mnem != 'jmp' and reads_flags
         if is_jcc:
-            meta["cond"][insn.address] = True
+            meta['cond'][insn.address] = True
             continue
         if writes_flags:
             reg_idxs = []
@@ -130,14 +130,14 @@ def _decode_function(cpu):
                     mems.append((base.upper() if base else None,
                                  index.upper() if index else None,
                                  op.mem.scale, op.mem.disp, op.size))
-            meta["flag"][insn.address] = (reg_idxs, mems)
-    state["decoded"] = n
+            meta['flag'][insn.address] = (reg_idxs, mems)
+    state['decoded'] = n
 
 
 def _reg_tainted(idx):
     try:
         for off in range(8):
-            if panda.plugins["taint2"].taint2_query_reg(idx, off) > 0:
+            if panda.plugins['taint2'].taint2_query_reg(idx, off) > 0:
                 return True
     except Exception:
         pass
@@ -165,7 +165,7 @@ def _mem_tainted(cpu, base, index, scale, disp, size):
 
 @panda.cb_after_machine_init
 def machine_init(cpu):
-    panda.load_plugin("taint2")
+    panda.load_plugin('taint2')
     panda.enable_precise_pc()
 
 
@@ -174,18 +174,18 @@ def should_instrument(cpu, pc):
     return FUNC_LO <= pc < FUNC_HI
 
 
-latch = {"tainted": False}
+latch = {'tainted': False}
 
 
 @panda.cb_insn_exec
 def on_insn(cpu, pc):
     try:
-        if not state["armed"]:
+        if not state['armed']:
             if pc != ARM_PC:
                 return 0
             if not panda.taint_enabled():
                 panda.taint_enable()
-            rbp = panda.arch.get_reg(cpu, "RBP")
+            rbp = panda.arch.get_reg(cpu, 'RBP')
             base = (rbp + E_DISP) & 0xFFFFFFFFFFFFFFFF
             n = 0
             for off in range(4):
@@ -194,21 +194,21 @@ def on_insn(cpu, pc):
                     continue
                 panda.taint_label_ram(pa, off)
                 n += 1
-            state["labeled_bytes"] = n
-            state["armed"] = True
+            state['labeled_bytes'] = n
+            state['armed'] = True
             _decode_function(cpu)
             return 0
 
-        if pc in meta["cond"]:
-            state["cond_branches_total"] += 1
+        if pc in meta['cond']:
+            state['cond_branches_total'] += 1
             k = hex(pc)
-            state["site_exec"][k] = state["site_exec"].get(k, 0) + 1
-            if latch["tainted"]:
-                state["leak_execs"] += 1
-                state["leak_sites"][k] = state["leak_sites"].get(k, 0) + 1
+            state['site_exec'][k] = state['site_exec'].get(k, 0) + 1
+            if latch['tainted']:
+                state['leak_execs'] += 1
+                state['leak_sites'][k] = state['leak_sites'].get(k, 0) + 1
             return 0
 
-        fm = meta["flag"].get(pc)
+        fm = meta['flag'].get(pc)
         if fm is not None:
             reg_idxs, mems = fm
             t = any(_reg_tainted(i) for i in reg_idxs)
@@ -217,10 +217,10 @@ def on_insn(cpu, pc):
                     if _mem_tainted(cpu, b, ix, sc, ds, sz):
                         t = True
                         break
-            latch["tainted"] = t
+            latch['tainted'] = t
     except Exception:
-        if not state["error"]:
-            state["error"] = "insn: " + traceback.format_exc()
+        if not state['error']:
+            state['error'] = 'insn: ' + traceback.format_exc()
     return 0
 
 
@@ -229,29 +229,29 @@ def driver():
     try:
         import os
         import shutil
-        panda.revert_sync("root")
-        share = "/tmp/hshare"
+        panda.revert_sync('root')
+        share = '/tmp/hshare'
         if os.path.isdir(share):
             shutil.rmtree(share)
         os.makedirs(share)
-        shutil.copy("/work/" + HARNESS, share + "/h")
+        shutil.copy('/work/' + HARNESS, share + '/h')
         panda.copy_to_guest(share)
-        panda.run_serial_cmd("chmod +x /root/hshare/h", timeout=60)
+        panda.run_serial_cmd('chmod +x /root/hshare/h', timeout=60)
         panda.run_serial_cmd(
-            "echo " + PAYLOAD_B64 + " | base64 -d > /root/payload", timeout=60)
+            'echo ' + PAYLOAD_B64 + ' | base64 -d > /root/payload', timeout=60)
         try:
             out = panda.run_serial_cmd(
-                "cd /root && ./hshare/h " + ARGV1 + " < payload | xxd",
+                'cd /root && ./hshare/h ' + ARGV1 + ' < payload | xxd',
                 timeout=600)
-            state["serial"] = out
+            state['serial'] = out
         except Exception as exc:
-            state["serial"] = "timeout: " + str(exc)
-            state["serial_timeout"] = True
+            state['serial'] = 'timeout: ' + str(exc)
+            state['serial_timeout'] = True
     except Exception:
-        state["error"] = "driver: " + traceback.format_exc()
+        state['error'] = 'driver: ' + traceback.format_exc()
     finally:
         panda.end_analysis()
 
 
 panda.run()
-print("RESULT_JSON: " + json.dumps(state))
+print('RESULT_JSON: ' + json.dumps(state))

@@ -169,7 +169,13 @@ options = { debug_level = "0" }
 # `artifacts` bypasses the gitignore-derived exclude.
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.sdist]
-exclude = [".gitignore", ".github/", "benchmark/"]
+# benchmark/ and artifacts/ are the paper's measurement harnesses, not part of
+# the library: hundreds of megabytes once their vendored engines, virtualenvs
+# and result JSON land, and of no use to anyone installing microtaint.  The
+# include list below already narrows to /microtaint, so naming them here is
+# belt and braces, and it keeps a later `include` line from quietly dragging
+# them into a release.
+exclude = [".gitignore", ".github/", "benchmark/", "artifacts/"]
 include = [
     "/microtaint",
     "/hatch_build.py",
@@ -193,6 +199,9 @@ artifacts = [
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
 packages = ["microtaint"]
+# Same reasoning as the sdist target: `packages` already limits the wheel to
+# microtaint/, and this says so out loud.
+exclude = ["benchmark/", "artifacts/"]
 include = ["microtaint/instrumentation/cell_c/*.h"]
 artifacts = [
     # Compiled extensions
@@ -215,6 +224,11 @@ format.quote-style = "single"
 
 [tool.ruff.lint]
 ignore = ["UP015", "S311", "S101", "INP001", "S501", "PYI021"]
+# Mathematical notation this project actually means: multiplication signs in
+# "1000x slower" figures, and set-union / logical-or in the comments that spell
+# out a taint formula.  Rewriting them as `x`, `U` and `v` would make those
+# comments worse, not safer.
+allowed-confusables = ["\u00d7", "\u222a", "\u2228"]
 unfixable = ["F841"]
 task-tags = ["TODO"]
 select = [
@@ -255,6 +269,29 @@ select = [
 "*/test/*" = ["INP001"]
 # hatch_build.py is a build-time script, not application code.
 "hatch_build.py" = ["INP001", "ARG002", "S603", "S607"]
+# artifacts/ is the NDSS evaluation harness: one standalone script per
+# experiment, driven by hand or by run-all.sh.  It is not library code, and the
+# rules below are wrong for it rather than merely inconvenient, so they are
+# relaxed here instead of being worked around in fifty files.  Everything else
+# in the lint config still applies.
+"artifacts/**" = [
+    "E402",    # the scripts set sys.path up before importing what it points at
+    "PLC0415", # each baseline engine is imported lazily, so a missing one is
+               # skipped and reported rather than crashing the whole campaign
+    "S110",    # an engine that throws on one test case must not abort the run,
+    "S112",    # ... whether the harness swallows it or continues the loop
+    "S603",    # every subprocess call here is a command line written in-repo
+    "S607",    # ... and docker / gcc / objdump are meant to come from PATH
+    "S108",    # /tmp scratch files, deliberately left for the reviewer to read
+    "S105",    # a fixed key constant in the constant-time experiment
+    "ARG001",  # Unicorn, Qiling and PANDA hook callbacks have fixed signatures
+    "ARG002",
+    "ARG005",
+    "C901",    # an experiment driver is a sequence a reader follows top to
+               # bottom; splitting it to satisfy a complexity budget hides that
+    "PLW0603", # module-level state shared with an emulator callback
+    "PLW1510", # subprocess.run where the caller inspects returncode itself
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
