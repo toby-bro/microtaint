@@ -194,12 +194,20 @@ def _uc_desc_riscv64() -> UcDesc:
     import unicorn
     import unicorn.riscv_const as ur
     # RISC-V has no architectural condition-flag register (compares write GP
-    # registers), so flags is empty.  Track the argument registers a0-a5.
+    # registers), so flags is empty.
+    #
+    # Track the temporaries and saved registers as well as the arguments.  a0-a5
+    # alone looked like enough and is not: the RISCV64 instruction bank assembles
+    # its forms around t0/t1/t2, so a ground truth that watched only a0-a5 could
+    # not see the destination of a single one of them and agreed with anything.
+    names = ('T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6',
+             'S0', 'S1', 'S2', 'S3', 'S4', 'S5',
+             'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7',
+             'RA', 'SP', 'GP', 'TP')
     return UcDesc(
         uc_arch=unicorn.UC_ARCH_RISCV, uc_mode=unicorn.UC_MODE_RISCV64, code_addr=0x1000,
-        gp={'A0': ur.UC_RISCV_REG_A0, 'A1': ur.UC_RISCV_REG_A1,
-            'A2': ur.UC_RISCV_REG_A2, 'A3': ur.UC_RISCV_REG_A3,
-            'A4': ur.UC_RISCV_REG_A4, 'A5': ur.UC_RISCV_REG_A5},
+        gp={n: getattr(ur, f'UC_RISCV_REG_{n}') for n in names
+            if hasattr(ur, f'UC_RISCV_REG_{n}')},
         flags={},
         eflags_reg=None,
     )
@@ -330,15 +338,14 @@ def _engine_flag_names(arch, desc: UcDesc) -> dict:
 
 def _flags_the_lifter_writes(arch, code: bytes, desc: UcDesc) -> set:
     """Which of this architecture's flags the p-code for `code` assigns."""
-    from microtaint.instrumentation.cell import _build_reg_maps
-    from microtaint.sleigh.engine import get_context
-
     # The descriptor names flags the way a person does (AArch64 N/Z/C/V); the
     # geometry names them the way SLEIGH does (NG/ZR/CY/OV).  Resolving through
     # the alias helper rather than assuming they match is the difference between
     # "adds writes no flags" -- which is what a direct lookup concluded, for
     # every flag-setting AArch64 instruction in the bank -- and the truth.
     from microtaint.debug.reg_aliases import RegisterAliases
+    from microtaint.instrumentation.cell import _build_reg_maps
+    from microtaint.sleigh.engine import get_context
 
     offsets, _sizes = _build_reg_maps(arch)
     try:
@@ -375,7 +382,7 @@ def ground_truth(desc: UcDesc, code: bytes, in_taint: dict, in_values: dict) -> 
     Returns a per-output taint mask (GP regs + flags)."""
     base_vals = {n: (in_values.get(n, 0) & ~in_taint.get(n, 0) & desc.mask) for n in desc.gp}
     base_out = _uc_run(desc, code, base_vals)
-    result: dict = {n: 0 for n in base_out}
+    result: dict = dict.fromkeys(base_out, 0)
     for src in desc.gp:
         tm = in_taint.get(src, 0) & desc.mask
         bit = 0
@@ -444,11 +451,11 @@ def fuzz_vectors(reg_names, rng: random.Random, n_dense: int, n_sparse: int):
 
     # edge taint patterns (dense)
     edges = [
-        {r: MASK64 for r in reg_names},
+        dict.fromkeys(reg_names, MASK64),
         {reg_names[0]: MASK64} if reg_names else {},
-        {r: 0xFF for r in reg_names},
-        {r: 0xFFFFFFFF00000000 for r in reg_names},
-        {r: 0xAAAAAAAAAAAAAAAA for r in reg_names},
+        dict.fromkeys(reg_names, 255),
+        dict.fromkeys(reg_names, 18446744069414584320),
+        dict.fromkeys(reg_names, 12297829382473034410),
     ]
     for t in edges[:n_dense]:
         yield dict(t), rand_vals()
