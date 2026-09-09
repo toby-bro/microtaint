@@ -430,6 +430,13 @@ class MicrotaintWrapper:
         # Armed lazily, on the first poison; see _arm_uaf_read_hook.
         self._mem_read_hook = None
         self._instr_hook_registered: bool = False  # set True when instr hook registered
+        #: Experimental: compute taint a basic block at a time instead of an
+        #: instruction at a time (MICROTAINT_BLOCK=1).  Off by default, and the
+        #: per-instruction path is untouched when it is off.
+        self._block_mode = None
+        from microtaint.emulator import blockmode as _blockmode  # noqa: PLC0415
+        if _blockmode.enabled():
+            self._block_mode = _blockmode.BlockMode(self)
 
         self._setup_hooks()
 
@@ -567,6 +574,13 @@ class MicrotaintWrapper:
         if self._any_taint:
             return
         self._any_taint = True
+        if self._block_mode is not None:
+            # Block mode OWNS the taint: it computes a whole basic block at a
+            # time, so the per-instruction hook must not also run.  Leaving both
+            # armed is not merely wasteful -- they write the same state and
+            # clobber each other, and the result measures whichever ran last.
+            self._block_mode.install()
+            self._instr_hook_registered = True
         if not self._instr_hook_registered:
             # Build the Cython hot-path hook callable. Falls back to the
             # Python method if Cython hook construction fails.
@@ -650,9 +664,19 @@ class MicrotaintWrapper:
         # Only the Cython InstructionHook has those caches; the Python fallback
         # re-reads bytes every instruction, so it needs no invalidation.
         if isinstance(self._mem_write_hook, MemWriteClearHook):
+            # `self._instr_hook_obj`, not the local: the local is only bound
+            # when the instruction hook was actually built, and block mode
+            # skips that branch entirely.
+            hook_obj = self._instr_hook_obj
             self._mem_write_hook.instr_hook = (
-                instr_hook if isinstance(instr_hook, InstructionHook) else None
+                hook_obj if isinstance(hook_obj, InstructionHook) else None
             )
+        # NOTE: block mode caches a PLAN per block, which goes stale the same
+        # way a decode cache does when a write lands on cached code.  It is NOT
+        # wired to the invalidation yet -- MemWriteClearHook is a cdef class
+        # with no __dict__, so it cannot simply carry a reference -- which is
+        # one of the reasons block mode is opt-in and not yet trusted on
+        # self-modifying code.
 
     def _syscall_number(self, name: str) -> int | None:
         """The number `name` has on THIS guest architecture, or None.
