@@ -77,19 +77,25 @@ def plan_block(arch: Any, code: bytes, base: int = LIFT_BASE, *,
     n = len(marks)
     end_of = [marks[i + 1][1] if i + 1 < n else base + len(code) for i in range(n)]
 
-    def lower(i: int, j: int) -> Any:
-        """Instructions [i, j) as one program, or None if it declines."""
+    def lower(i: int, j: int) -> tuple[Any, int | None]:
+        """Instructions [i, j) as one program.
+
+        Returns (program, None) on success and (None, cut) on a decline, where
+        `cut` is how many of those instructions CAN be taken -- the ordinal the
+        decline reported, relative to `i`.  None means the decline named no
+        position and the caller has to search.
+        """
         lo = marks[i][0]
         hi = marks[j][0] if j < n else len(ops)
         try:
             return builder.build(ops[lo:hi], end_of[j - 1], emit=emit,
-                                 block=(j - i > 1))
-        except Unsupported:
-            return None
+                                 block=(j - i > 1)), None
+        except Unsupported as exc:
+            return None, getattr(exc, 'cut_at', None)
         except Exception:            # a lifter surprise is a decline, not a crash
-            return None
+            return None, None
 
-    whole = lower(0, n)
+    whole, _cut = lower(0, n)
     if whole is not None:
         return [Region(0, n, marks[0][1], end_of[n - 1], whole)]
     return _greedy(n, marks, end_of, lower)
@@ -97,17 +103,39 @@ def plan_block(arch: Any, code: bytes, base: int = LIFT_BASE, *,
 
 def _greedy(n: int, marks: list[tuple[int, int, int]], end_of: list[int],
             lower: Any) -> list[Region]:
-    """Longest-first from each cut, so every region is maximal."""
+    """Longest-first from each cut, so every region is maximal.
+
+    A decline usually says WHICH instruction caused it, and then the boundary is
+    known without searching for it: take the instructions before that one and
+    start again there.  Searching costs a full lowering per candidate length, and
+    a lowering is a SLEIGH translation plus an IR build -- measured at up to
+    201 ms for one block.  The search remains as the fallback for a decline that
+    names no position (an unliftable instruction, say).
+    """
     regions: list[Region] = []
     i = 0
     while i < n:
         taken = 0
         prog = None
-        for j in range(n, i, -1):
-            prog = lower(i, j)
-            if prog is not None:
-                taken = j - i
-                break
+        prog, cut = lower(i, n)
+        if prog is not None:
+            taken = n - i
+        else:
+            while cut is not None and cut > 0:
+                # The decline named a position: everything before it is a
+                # candidate, and if THAT declines it names another, so this
+                # walks strictly downwards and terminates.
+                prog, cut2 = lower(i, i + cut)
+                if prog is not None:
+                    taken = cut
+                    break
+                cut = cut2 if cut2 is not None and cut2 < cut else None
+            if not taken and prog is None:
+                for j in range(n, i, -1):       # no position named: search
+                    prog, _c = lower(i, j)
+                    if prog is not None:
+                        taken = j - i
+                        break
         if not taken:
             # This one instruction lowers nowhere.  Emit it as a region with no
             # program so the caller still sees complete coverage of the block

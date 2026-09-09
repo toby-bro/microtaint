@@ -182,3 +182,41 @@ def test_a_single_instruction_that_stores_and_loads_is_unaffected() -> None:
         plain = builder.build(ops, end, emit='both')
         as_block = builder.build(ops, end, emit='both', block=True)
         assert [k for k, _ in plain.outputs] == [k for k, _ in as_block.outputs], code.hex()
+
+
+def test_the_decline_says_which_instruction_caused_it() -> None:
+    """A decline carries the position, so the planner cuts instead of searching.
+
+    Without it, splitting a block means lowering candidate lengths until one
+    works, and a lowering is a SLEIGH translation plus an IR build: measured at
+    up to 201 ms for a single block, which is paid on that block's first
+    execution.  With it, the boundary is read off the exception.
+    """
+    builder = frompcode.Builder(_ARCH, False, 'concrete')
+    seq = [bytes.fromhex('4883c001'),      # add rax, 1
+           bytes.fromhex('48894508'),      # mov [rbp+8], rax      <- the store
+           bytes.fromhex('488b4508'),      # mov rax, [rbp+8]      <- the load
+           bytes.fromhex('4801d8')]        # add rax, rbx
+    ops, base = [], frompcode.LIFT_BASE
+    for code in seq:
+        ops.extend(_pcode(code, base))
+        base += len(code)
+    with pytest.raises(Unsupported) as caught:
+        builder.build(ops, base, emit='both', block=True)
+    assert caught.value.cut_at == 2, (
+        f'the load is the third instruction (ordinal 2) and the decline '
+        f'reported {caught.value.cut_at}; the planner would cut in the wrong '
+        f'place, or fall back to searching')
+
+
+def test_the_planner_cuts_where_the_decline_said() -> None:
+    """And the cut it reports is a boundary that actually lowers."""
+    builder = frompcode.Builder(_ARCH, False, 'concrete')
+    code = (bytes.fromhex('4883c001') + bytes.fromhex('48894508')
+            + bytes.fromhex('488b4508') + bytes.fromhex('4801d8'))
+    regions = plan_block(_ARCH, code, builder=builder)
+    assert sum(r.count for r in regions) == 4, 'the block was not fully covered'
+    assert regions[0].count == 2, (
+        f'the first region should hold the two instructions before the load, '
+        f'got {regions[0].count}')
+    assert all(r.prog is not None for r in regions), 'a region did not lower'

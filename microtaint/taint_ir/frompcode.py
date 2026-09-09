@@ -67,7 +67,17 @@ def access_slot(n_reg_slots: int, k: int, what: str) -> int:
 
 
 class Unsupported(Exception):
-    """This p-code shape is outside the lowering; the caller falls back."""
+    """This p-code shape is outside the lowering; the caller falls back.
+
+    `cut_at`, when set, is the ordinal (within the lowered region) of the
+    instruction that made the shape unlowerable.  A caller splitting a block into
+    regions can then take the instructions before it and start a new region
+    there, instead of searching for the boundary by lowering repeatedly.
+    """
+
+    def __init__(self, *args, cut_at: int | None = None) -> None:
+        super().__init__(*args)
+        self.cut_at = cut_at
 
 
 def _mask_of(size: int) -> int:
@@ -359,16 +369,25 @@ class Builder:
         # instruction's IMARK.  Only block mode needs it: it is how a branch
         # OUT of the current instruction is told from a branch back into it.
         self.instr_pc = [0] * n
+        #: Ordinal of the instruction each op belongs to, counting IMARKs.  A
+        #: decline reports this so a caller can cut a region at the instruction
+        #: that caused it rather than searching for the boundary.
+        self.instr_ord = [0] * n
         cur = 0
+        ordinal = -1
         for i, o in enumerate(ops):
             if o.opcode.name == 'IMARK' and o.inputs:
                 cur = i
+                ordinal += 1
             self.instr_pc[i] = cur
+            self.instr_ord[i] = max(ordinal, 0)
+        self.cur_instr = 0
         self.n_ops = n
         for pc in range(n):
             while pred_stack and pred_stack[-1][0] == pc:
                 _u, self.pred_v, self.pred_t = pred_stack.pop()
             op = ops[pc]
+            self.cur_instr = self.instr_ord[pc]
             name = op.opcode.name
             if name in ('IMARK', 'INDIRECT', 'MULTIEQUAL', 'CAST', 'CPOOLREF',
                         'NEW', 'SEGMENTOP'):
@@ -599,7 +618,8 @@ class Builder:
         if k is None:
             k = len(self.accesses)
             self.access_map[key] = k
-            self.accesses.append({'kind': kind, 'size': size, 'addr': addr_node})
+            self.accesses.append({'kind': kind, 'size': size, 'addr': addr_node,
+                                  'instr': self.cur_instr})
             self.p.outputs.append((('addr', k), addr_node))
         return k
 
@@ -669,7 +689,8 @@ class Builder:
                     continue
                 seen.add(n)
                 if n in mem_nodes:
-                    raise Unsupported('address depends on a loaded value')
+                    raise Unsupported('address depends on a loaded value',
+                                      cut_at=acc.get('instr'))
                 _o, a, b, c, _imm = p.nodes[n]
                 for x in (a, b, c):
                     if x >= 0:
@@ -703,7 +724,8 @@ class Builder:
         stored = False
         for acc in self.accesses:
             if acc['kind'] == 'load' and stored:
-                raise Unsupported('load after store (no store-to-load forwarding)')
+                raise Unsupported('load after store (no store-to-load forwarding)',
+                                  cut_at=acc.get('instr'))
             if acc['kind'] != 'load':
                 stored = True
 
