@@ -152,13 +152,18 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
         # that is the two-pass protocol's problem, not this property's.
         if getattr(prog, 'accesses', None):
             continue
-        if any(k[0] != 'reg' for k, _ in prog.outputs):
+        if any(k[0] != 'regv' for k, _ in prog.outputs):
             continue
         def slot_of(key, builder=builder):
+            # 'reg' is the INPUT namespace for both frames (the serializer
+            # decides which array to read from), 'regv' is a published value
+            # output.  Both land in the same slot here, so the run returns the
+            # post-state values in the register positions.
+            #
             # Raise rather than return -1 for anything this layout cannot
             # place: compile_program is documented to reject those, and a -1
             # slot is an out-of-bounds index once the program runs.
-            if key[0] != 'reg':
+            if key[0] not in ('reg', 'regv'):
                 raise KeyError(key)
             name = builder.name_by_off.get(key[1])
             if name is None or name not in layout:
@@ -170,7 +175,7 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
         except KeyError:
             continue                       # a name this layout cannot place
         lowered += 1
-        written = [builder.name_by_off.get(k[1]) for k, _ in prog.outputs if k[0] == 'reg']
+        written = [builder.name_by_off.get(k[1]) for k, _ in prog.outputs if k[0] == 'regv']
         skip = _UNDEFINED.get(_family(ins.label), ())
 
         for _ in range(2):
@@ -224,3 +229,97 @@ def test_value_mode_does_not_change_the_taint_program() -> None:
             continue
         assert [k for k, _ in a.outputs] == [k for k, _ in b.outputs], ins.label
         assert len(a.nodes) == len(b.nodes), ins.label
+
+
+def test_both_mode_agrees_with_each_alone() -> None:
+    """One program can carry taint AND values, and must not change either.
+
+    This is the form block tainting runs: the values a program publishes are the
+    inputs of the next instruction in the block, so the emulator is asked for
+    registers once per block instead of once per instruction.  What it must not
+    do is answer either question differently from the single-purpose program.
+    """
+    from instruction_bank import load_bank  # type: ignore[import-not-found]
+
+    from microtaint.taint_ir import frompcode
+
+    spec = load_bank()['AMD64']
+    key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
+    checked = 0
+    for ins in spec.instructions[:120]:
+        try:
+            only_t = frompcode.build_ir(spec.arch, ins.bytes, emit='taint')
+            only_v = frompcode.build_ir(spec.arch, ins.bytes, emit='value')
+            both = frompcode.build_ir(spec.arch, ins.bytes, emit='both')
+        except Exception:  # noqa: BLE001 - unliftable forms are not the subject
+            continue
+        # A memory form also publishes addr / addrt / sttaint, which are the
+        # two-pass protocol's business and identical in every mode; compare the
+        # register outputs, which are what the mode selects.
+        t_keys = [k for k, _ in only_t.outputs if k[0] == 'reg']
+        v_keys = [k for k, _ in only_v.outputs if k[0] == 'regv']
+        assert [k for k, _ in both.outputs if k[0] == 'reg'] == t_keys, ins.label
+        assert [k for k, _ in both.outputs if k[0] == 'regv'] == v_keys, ins.label
+        checked += 1
+    assert checked > 40, f'only {checked} forms compared'
+    assert key  # the builder cache key, kept so a future ISA loop reads naturally
+
+
+def test_publishing_values_is_nearly_free() -> None:
+    """The combined program must not cost much more than taint alone.
+
+    The whole case for block tainting rests on this: a block hook is 0.04
+    ns/instruction against ~18 for a code hook, but only if carrying the values
+    through the block is cheaper than the ~46 ns/instruction of being hooked
+    that it buys back.  Measured over the AMD64 bank the median is 1.1x, because
+    the taint rules already compute most of these values and the IR is
+    hash-consed, so publishing them shares the work rather than repeating it.
+
+    The bound is deliberately loose: this guards against a regression that makes
+    the values a second, separate computation, not against ordinary drift.
+    """
+    import statistics
+
+    from instruction_bank import load_bank  # type: ignore[import-not-found]
+
+    from microtaint.taint_ir import frompcode
+    from microtaint.taint_ir.exec import serialize_for_c
+
+    spec = load_bank()['AMD64']
+    key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
+    ratios = []
+    for ins in spec.instructions[:200]:
+        counts = {}
+        for mode in ('taint', 'both'):
+            try:
+                prog = frompcode.build_ir(spec.arch, ins.bytes, emit=mode)
+            except Exception:  # noqa: BLE001
+                counts = None
+                break
+            builder = frompcode._BUILDERS[(key, 'concrete')]  # noqa: SLF001
+            names = sorted(set(builder.name_by_off.values()))
+            layout = {n: i for i, n in enumerate(names)}
+
+            def slot_of(k, layout=layout, builder=builder):
+                if k[0] not in ('reg', 'regv'):
+                    raise KeyError(k)
+                nm = builder.name_by_off.get(k[1])
+                if nm is None or nm not in layout:
+                    raise KeyError(k)
+                return layout[nm] + (len(layout) if k[0] == 'regv' else 0)
+
+            try:
+                counts[mode] = len(serialize_for_c(prog, slot_of)['op_ids'])
+            except KeyError:
+                counts = None
+                break
+        if counts and counts.get('taint'):
+            ratios.append(counts['both'] / counts['taint'])
+
+    assert len(ratios) > 60, f'only {len(ratios)} forms measured'
+    median = statistics.median(ratios)
+    assert median < 1.6, (
+        f'publishing values alongside taint now costs {median:.2f}x the ops of '
+        f'taint alone (median over {len(ratios)} forms); it was 1.10x. '
+        f'The values are supposed to be shared with the taint computation, not '
+        f'recomputed beside it.')

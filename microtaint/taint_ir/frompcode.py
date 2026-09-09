@@ -321,7 +321,7 @@ class Builder:
         Nothing on the per-instruction path passes `emit`, so that path is
         bit-identical and no slower.
         """
-        if emit not in ('taint', 'value'):
+        if emit not in ('taint', 'value', 'both'):
             raise ValueError(emit)
         self.emit = emit
         p = IRProg()
@@ -440,17 +440,26 @@ class Builder:
         # untouched register's taint is its input taint by definition; making
         # the program restate that would cost an operation per architectural
         # register and swamp the instruction's real work.
-        frame = t if self.emit == 'taint' else v
-        dirty_bytes = set()
-        for off in frame.touched:
-            cell = frame.reg.get(off)
-            width = cell[1] if cell else 1
-            dirty_bytes.update(range(off, off + width))
-        for off in sorted(self.declared):
-            _nm, size = self.declared[off]
-            if not dirty_bytes.intersection(range(off, off + size)):
-                continue
-            p.outputs.append((('reg', off, size), frame.read('register', off, size)))
+        # 'both' emits the taint of every register the instruction touched AND
+        # its value, under distinct keys, so one program feeds a block: the
+        # values it publishes are the inputs of the next instruction in the
+        # block, and the emulator is asked for registers once per block rather
+        # than once per instruction.  The two frames are hash-consed into one
+        # IRProg, so shared subexpressions are computed once.
+        want = (('reg', t),) if self.emit == 'taint' else \
+               (('regv', v),) if self.emit == 'value' else \
+               (('reg', t), ('regv', v))
+        for tag, frame in want:
+            dirty_bytes = set()
+            for off in frame.touched:
+                cell = frame.reg.get(off)
+                width = cell[1] if cell else 1
+                dirty_bytes.update(range(off, off + width))
+            for off in sorted(self.declared):
+                _nm, size = self.declared[off]
+                if not dirty_bytes.intersection(range(off, off + size)):
+                    continue
+                p.outputs.append(((tag, off, size), frame.read('register', off, size)))
         p.spans = self.spans
         p.accesses = self.accesses
         self._check_address_independence(p)
