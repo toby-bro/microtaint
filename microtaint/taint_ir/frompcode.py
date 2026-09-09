@@ -670,6 +670,16 @@ class Builder:
         which is a different and much larger obligation than tainting a known
         location -- the address taint is reported so the caller can hand those
         instructions to the slow path rather than silently writing one place.
+
+        Under `emit='both'` (block lowering) the stored VALUE is published too.
+        A block that stores to an address and then loads it back has to see its
+        own store, and the caller can only resolve a load against guest memory
+        as it was before the block ran.  Publishing the taint alone gives the
+        later load the right taint and a stale value, which silently sends any
+        address derived from it somewhere else: measured on bench_dense, the
+        swap loop's `idx` came back one iteration old and `state[idx] = tmp`
+        wrote to the previous iteration's index throughout.  Nothing on the
+        per-instruction path asks for values, so its slot layout is unchanged.
         """
         p = self.p
         size = op.inputs[2].size
@@ -678,10 +688,12 @@ class Builder:
         if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
             raise Unsupported('predicated store')
         addr_v, addr_t = self._read_in(op.inputs[1])
-        _val_v, val_t = self._read_in(op.inputs[2])
+        val_v, val_t = self._read_in(op.inputs[2])
         k = self._access_for('store', addr_v, size)
         p.outputs.append((('addrt', k), addr_t))
         p.outputs.append((('sttaint', k), p.mask(val_t, size * 8)))
+        if self.emit in ('value', 'both'):
+            p.outputs.append((('stval', k), p.mask(val_v, size * 8)))
 
     def _check_address_independence(self, p):
         """An address may not depend on a value this instruction itself loaded.

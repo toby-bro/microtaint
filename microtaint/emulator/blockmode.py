@@ -1,19 +1,19 @@
 """Compute a basic block's taint in one go, instead of one instruction at a time.
 
-EXPERIMENTAL AND NOT CORRECT YET.  Opt-in with ``MICROTAINT_BLOCK=1``; off by
-default, and the per-instruction path is untouched when it is off.  Measured
-against that path on the taint-density workloads, it reaches the same final
-state on bench_untainted and LOSES taint on the other two:
+EXPERIMENTAL and INCOMPLETE, though no longer wrong on what it does handle.
+Opt-in with ``MICROTAINT_BLOCK=1``; off by default, and the per-instruction path
+is untouched when it is off.  Measured against that path on the taint-density
+workloads, final taint state:
 
     bench_untainted   10,540 blocks, 0 unhandled   identical
     bench_sparse      10,701 blocks, 2 unhandled   2 registers and 2 words lost
-    bench_dense       20,710 blocks, 0 unhandled   2 words lost, unexplained
+    bench_dense       20,710 blocks, 0 unhandled   identical
 
-bench_sparse is explained by the missing fallback (see below); bench_dense is
-not, and finding it is the next thing to do.  Two further gaps: there is no
-fallback for a block that cannot be fully handled -- such a block is silently
-SKIPPED, which is unanalysed code -- and the plan cache is not invalidated on
-self-modifying code.  Do not rely on this for anything yet.
+The bench_sparse loss is entirely the missing fallback: two blocks cannot be
+fully handled and are SKIPPED, which is unanalysed code, not a mis-analysis.
+Building that fallback (a code hook registered for just those address ranges)
+is the next thing to do.  The other open gap is that the plan cache is not
+invalidated on self-modifying code.
 
 It is also not fast: reading registers through ctypes once per block and
 carrying dicts costs more than the per-instruction path saves.  This form exists
@@ -56,9 +56,13 @@ from microtaint.taint_ir.blocks import plan_block
 
 __all__ = ['BlockMode', 'enabled']
 
-#: Per memory access, the four state slots the two-pass protocol uses; the same
-#: layout fastpath.h::mt_ir_mem_step works with.
-_ACC = {'mem': 0, 'addr': 1, 'addrt': 2, 'sttaint': 3}
+#: Per memory access, the state slots the two-pass protocol uses.  The first
+#: four are the layout fastpath.h::mt_ir_mem_step works with; `stval` is extra
+#: and exists only here, because only a BLOCK can load back what it just stored
+#: and so only a block needs the stored value.  The per-instruction path's
+#: four-slot layout is untouched.
+_ACC = {'mem': 0, 'addr': 1, 'addrt': 2, 'sttaint': 3, 'stval': 4}
+_SLOTS_PER_ACC = 5
 _MAX_ACC = 8
 _MASK64 = (1 << 64) - 1
 
@@ -86,12 +90,12 @@ class BlockMode:
         self.arch = wrapper.arch
         self.regs = archregs.for_arch(self.arch)
         key = self.arch.value if hasattr(self.arch, 'value') else str(self.arch)
-        self.builder = frompcode.Builder(self.arch, key.endswith('BE'), 'concrete')
+        self.builder = frompcode.Builder(self.arch, key.endswith('BE'))
         names = sorted(set(self.builder.name_by_off.values()))
         self.layout = {n: i for i, n in enumerate(names)}
         self.n_reg = len(self.layout)
         self.mem_base = 2 * self.n_reg
-        self.width = self.mem_base + 4 * _MAX_ACC
+        self.width = self.mem_base + _SLOTS_PER_ACC * _MAX_ACC
         self._plans: dict[tuple[int, int], _Plan] = {}
         self.runner = BlockRunner(compute=self._compute, apply=self._apply)
         #: Blocks that cannot be handled here.  Counted rather than silently
@@ -123,7 +127,7 @@ class BlockMode:
                 raise KeyError(key)
             return self.layout[name] + (self.n_reg if kind == 'regv' else 0)
         if kind in _ACC:
-            return self.mem_base + 4 * key[1] + _ACC[kind]
+            return self.mem_base + _SLOTS_PER_ACC * key[1] + _ACC[kind]
         raise KeyError(key)
 
     # -- planning ------------------------------------------------------
@@ -133,7 +137,16 @@ class BlockMode:
             return hit
         try:
             code = bytes(self.ql.mem.read(address, size))
-            regions = plan_block(self.arch, code, builder=self.builder)
+            # Lift at the block's REAL address, not the default lift base.  A
+            # PC-relative operand is baked into the lowering as a constant, and
+            # this path publishes VALUES as well as taint, so a block lifted at
+            # the wrong base computes the wrong address for every RIP-relative
+            # access.  Measured: `lea 0xecd(%rip),%rcx` for an S-box table then
+            # loaded from a nonsense address, so the load read a clean shadow
+            # and the whole substitution stored clean.  The per-instruction path
+            # does not have this problem because it publishes taint only and
+            # takes its values from the emulator.
+            regions = plan_block(self.arch, code, address, builder=self.builder)
         except Exception:            # noqa: BLE001 - an unreadable block is unhandleable
             regions, code = [], b''
         handleable = bool(regions) and all(r.prog is not None for r in regions)
@@ -180,6 +193,16 @@ class BlockMode:
         #: the first half's store.  Measured: without this, bench_dense loses
         #: two tainted words.
         overlay: dict[int, int] = {}
+        #: The same thing for VALUES, and needed for the same reason.  The taint
+        #: overlay alone gives a load that reads back the block's own store the
+        #: right taint and a STALE value, and any address derived from that
+        #: value then points somewhere else.  Measured on bench_dense: the swap
+        #: loop stores `idx`, reloads it two instructions later, and indexes
+        #: `state` with it, so `state[idx] = tmp` wrote to the PREVIOUS
+        #: iteration's index for the whole run.  It mostly self-heals -- the
+        #: wrong byte is usually tainted anyway -- which is what made it show up
+        #: as a single lost byte rather than as chaos.
+        val_overlay: dict[int, int] = {}
 
         for region in plan.regions:
             prog = region.prog
@@ -193,6 +216,17 @@ class BlockMode:
             for name, slot in self.layout.items():
                 sv[slot] = values.get(name, 0) & _MASK64
                 st[slot] = taint.get(name, 0)
+                # The program's output array IS its taint input array, so a
+                # slot the program does not write comes back holding whatever
+                # was seeded there.  Seeding the VALUE slot with the register's
+                # current value is what makes "not written" and "written zero"
+                # distinguishable: without it the only way to tell them apart
+                # is to treat an output of 0 as "not written", and then a
+                # register the block legitimately zeroes (`xor %eax,%eax`,
+                # every loop counter reset) keeps its stale value and any
+                # address computed from it in a later region is wrong.
+                # Nothing reads this slot as an input, so seeding it is free.
+                st[self.n_reg + slot] = sv[slot]
             accesses = getattr(prog, 'accesses', None) or []
             if len(accesses) > _MAX_ACC:
                 self.unhandled += 1
@@ -202,33 +236,52 @@ class BlockMode:
                 for k, acc in enumerate(accesses):
                     if acc['kind'] != 'load':
                         continue
-                    addr = first[self.mem_base + 4 * k + _ACC['addr']]
+                    base = self.mem_base + _SLOTS_PER_ACC * k
+                    addr = first[base + _ACC['addr']]
                     n = acc['size']
-                    try:
-                        word = int.from_bytes(bytes(self.ql.mem.read(addr, n)), 'little')
-                    except Exception:  # noqa: BLE001 - an unreadable load reads zero
-                        word = 0
-                    sv[self.mem_base + 4 * k] = word
-                    st[self.mem_base + 4 * k] = self._shadow_read(overlay, addr, n)
+                    sv[base] = self._mem_read(val_overlay, addr, n)
+                    st[base] = self._shadow_read(overlay, addr, n)
             out = taint_ir_c.run(capsule, sv, st)           # pass 2: the taint
             for k, acc in enumerate(accesses):
                 if acc['kind'] == 'load':
                     continue
-                addr = out[self.mem_base + 4 * k + _ACC['addr']]
-                mask = out[self.mem_base + 4 * k + _ACC['sttaint']]
+                base = self.mem_base + _SLOTS_PER_ACC * k
+                addr = out[base + _ACC['addr']]
+                mask = out[base + _ACC['sttaint']]
+                value = out[base + _ACC['stval']]
                 writes.append((addr, mask, acc['size']))
                 for i in range(acc['size']):
                     overlay[addr + i] = (mask >> (8 * i)) & 0xFF
+                    val_overlay[addr + i] = (value >> (8 * i)) & 0xFF
             # The region's own answer, and the values the next region reads.
             for name, slot in self.layout.items():
                 taint[name] = out[slot]
-                values[name] = out[self.n_reg + slot] or values.get(name, 0)
+                values[name] = out[self.n_reg + slot]
             pc_taint = taint.get(self.regs.pc_name, 0)
             if pc_taint:
                 reports.append(('implicit', region.addr, pc_taint))
                 taint[self.regs.pc_name] = 0
 
         return Pending(address, {k: v for k, v in taint.items() if v}, writes, reports)
+
+    def _mem_read(self, val_overlay: dict[int, int], addr: int, size: int) -> int:
+        """Guest memory, as this block has left it so far.
+
+        Byte order follows the same convention as the shadow: byte `addr + i`
+        occupies bits `8*i`.  That matches how the committed read below
+        assembles a word, so overlay and memory agree.
+        """
+        try:
+            word = int.from_bytes(bytes(self.ql.mem.read(addr, size)), 'little')
+        except Exception:            # noqa: BLE001 - an unreadable load reads zero
+            word = 0
+        if not val_overlay:
+            return word
+        for i in range(size):
+            byte = val_overlay.get(addr + i)
+            if byte is not None:
+                word = (word & ~(0xFF << (8 * i))) | ((byte & 0xFF) << (8 * i))
+        return word
 
     def _shadow_read(self, overlay: dict[int, int], addr: int, size: int) -> int:
         """The shadow, as this block has left it so far.
