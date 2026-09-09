@@ -1,0 +1,4 @@
+# The TaintInduce checkout setup_taintinduce.sh creates, and its venv.
+external/
+# Per-run output: rules, logs, summaries.
+results/

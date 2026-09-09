@@ -3,7 +3,7 @@
 #
 #   ./run-all.sh                 everything, about five hours
 #   ./run-all.sh --no-baselines  RQ4-RQ7 only, about 100 minutes, needs only
-#                                microtaint
+#                                microtaint (RQ1 and RQ2 need the other engines)
 #
 # Each experiment writes its raw output under results/<rq>/ and appends a line
 # to results/SUMMARY.md.  Nothing here deletes a previous run: results are
@@ -34,6 +34,10 @@ echo "# microtaint NDSS 2027 artifact — run $STAMP" > "$OUT/SUMMARY.md"
 echo "engine version: $(git -C "$REPO" describe --tags 2>/dev/null)" >> "$OUT/SUMMARY.md"
 
 if [ "$BASELINES" = 1 ]; then
+  # RQ1 needs the TaintInduce checkout that
+  # rq1-synthesis_vs_inference/setup_taintinduce.sh creates.  If it is not there,
+  # run_rq1.sh says so and exits; the rest of this script carries on.
+  run rq1-synthesis  rq1-synthesis_vs_inference ./run_rq1.sh --quick
   run rq2-soundness rq2-soundness uv run python benchmark.py
   echo 'rq3-precision: scored in the same pass as rq2' >> "$OUT/SUMMARY.md"
 fi
