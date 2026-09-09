@@ -11,10 +11,14 @@ And that is an UNDER-taint, not a safe over-approximation.  `mov rax, rbx` with 
 clean rbx clears RAX's taint, while RAX still holds its old tainted value because
 the instruction never ran.  A detector reading RAX afterwards sees clean.
 
-`BlockRunner` holds a block's taint pending and commits it when the NEXT block
-arrives, because reaching a new block is the proof that the previous one
-finished.  Abandonment then costs nothing: the pending state is simply dropped,
-and there is nothing to undo.
+The rule lives in `blockpath.h`: a block's taint is held pending and committed
+when the NEXT block arrives, because reaching a new block is the proof that the
+previous one finished.  Abandonment then costs nothing -- the pending state is
+dropped and there is nothing to undo -- and it needs no fault hook.
+
+These drive the C runtime through `blockpath_c`, because that is where the rule
+is.  A Python re-statement of it would be a second implementation to keep in
+step with the one that actually runs.
 """
 from __future__ import annotations
 
@@ -22,55 +26,128 @@ import os
 import platform
 import subprocess
 import tempfile
+from typing import Any
 
 import pytest
 
-from microtaint.taint_ir.blockrun import BlockRunner, Pending
+from microtaint.emulator import blockpath_c as B
+from microtaint.taint_ir import frompcode
+from microtaint.taint_ir.blockcompile import compile_block
+from microtaint.types import Architecture
 
 pytestmark = pytest.mark.skipif(
     platform.system() != 'Linux', reason='emulator tests require Linux',
 )
 
-
-def _runner(applied: list):
-    return BlockRunner(
-        compute=lambda a, s: Pending(a, {'RAX': a}),
-        apply=lambda p: applied.append(p.address),
-    )
-
-
-def test_a_block_is_not_committed_until_the_next_one_arrives() -> None:
-    applied: list[int] = []
-    runner = _runner(applied)
-    runner.on_block(0x100, 4)
-    assert applied == [], 'the first block was committed before anything proved it ran'
-    runner.on_block(0x200, 4)
-    assert applied == [0x100], 'reaching a second block should have committed the first'
-    runner.on_block(0x300, 4)
-    assert applied == [0x100, 0x200]
+_ARCH = Architecture.AMD64
+_ARENA, _ARENA_LEN = 0x7000, 0x1000
+#: `mov rax, rbx` -- the instruction from the docstring above.  With a clean
+#: RBX it CLEARS RAX's taint, so a block committed early under-taints.
+_MOV_RAX_RBX = bytes.fromhex('4889d8')
+#: A later block that touches neither RAX nor memory.
+_INC_RCX = bytes.fromhex('48ffc1')
 
 
-def test_an_abandoned_block_leaves_nothing_behind() -> None:
+@pytest.fixture(scope='module')
+def kit() -> dict[str, int]:
+    builder = frompcode.builder_for(_ARCH)
+    names = sorted(set(builder.name_by_off.values()))
+    return {n: i for i, n in enumerate(names)}
+
+
+def _fresh(layout: dict[str, int], *, rax_tainted: bool = True) -> tuple[Any, Any, list[int]]:
+    """A runner whose RAX is tainted, and a plan for `mov rax, rbx`."""
+    mem = B.mem_new(_ARENA, _ARENA_LEN)
+    runner = B.runner_new(len(layout), -1, mem)
+    seed = [0] * len(layout)
+    if rax_tainted:
+        seed[layout['RAX']] = (1 << 64) - 1
+    B.runner_seed(runner, seed)
+    got = compile_block(_ARCH, _MOV_RAX_RBX, 0x401000, layout)
+    assert got is not None, 'mov rax, rbx did not compile'
+    return runner, got[0], [0] * len(layout)
+
+
+def _rax(runner: Any, layout: dict[str, int]) -> int:
+    return B.runner_taint(runner)[layout['RAX']]
+
+
+def test_a_block_is_not_committed_until_the_next_one_arrives(kit: dict[str, int]) -> None:
+    layout = kit
+    runner, plan, regs = _fresh(layout)
+    B.runner_on_block(runner, plan, 0x401000, regs)
+    assert _rax(runner, layout) == (1 << 64) - 1, (
+        'the block was committed before anything proved it ran')
+    assert B.runner_stats(runner)['committed'] == 0
+
+    B.runner_on_block(runner, plan, 0x401010, regs)
+    assert _rax(runner, layout) == 0, (
+        'reaching a second block should have committed the first, which clears '
+        'RAX by moving a clean RBX into it')
+    assert B.runner_stats(runner)['committed'] == 1
+
+
+def test_an_abandoned_block_leaves_nothing_behind(kit: dict[str, int]) -> None:
     """The point of holding it: a block that does not finish applies nothing,
-    so there is no state to roll back and no fault hook to get right."""
-    applied: list[int] = []
-    runner = _runner(applied)
-    runner.on_block(0x100, 4)
-    runner.on_block(0x200, 4)          # commits 0x100
-    runner.abandon()                   # 0x200 faulted
-    assert applied == [0x100], 'the abandoned block was applied anyway'
-    assert runner.dropped == 1
-    assert runner.pending_address is None
+    so there is no state to roll back and no fault hook to get right.
+
+    Checking the state straight after abandoning is not enough -- nothing has
+    committed yet either way.  What has to hold is that the abandoned block is
+    GONE: a later block must not carry it into effect.  (Measured: without that
+    second half, an `abandon` that merely forgot to clear the pending flag
+    passed this test.)
+    """
+    layout = kit
+    runner, plan, regs = _fresh(layout)
+    B.runner_on_block(runner, plan, 0x401000, regs)
+    B.runner_abandon(runner)
+    assert _rax(runner, layout) == (1 << 64) - 1, (
+        'the abandoned block was applied anyway, clearing taint for an '
+        'instruction that never ran')
+
+    # A later block, which must commit ITSELF and nothing else.
+    got = compile_block(_ARCH, _INC_RCX, 0x402000, layout)
+    assert got is not None, 'inc rcx did not compile'
+    B.runner_on_block(runner, got[0], 0x402000, regs)
+    B.runner_finish(runner, True)
+    assert _rax(runner, layout) == (1 << 64) - 1, (
+        'a later block dragged the abandoned one into effect: RAX lost taint '
+        'to `mov rax, rbx` from a block that never ran')
+    stats = B.runner_stats(runner)
+    assert stats['dropped'] == 1
+    assert stats['committed'] == 1, (
+        f'expected only the later block to commit, got {stats}')
 
 
-def test_the_last_block_is_committed_only_if_the_run_finished() -> None:
-    for completed, expect in ((True, [0x100]), (False, [])):
-        applied: list[int] = []
-        runner = _runner(applied)
-        runner.on_block(0x100, 4)
-        runner.finish(completed=completed)
-        assert applied == expect, (
-            f'finish(completed={completed}) should have applied {expect}')
+def test_the_last_block_is_committed_only_if_the_run_finished(kit: dict[str, int]) -> None:
+    layout = kit
+    for completed, expect in ((True, 0), (False, (1 << 64) - 1)):
+        runner, plan, regs = _fresh(layout)
+        B.runner_on_block(runner, plan, 0x401000, regs)
+        B.runner_finish(runner, completed)
+        assert _rax(runner, layout) == expect, (
+            f'finish(completed={completed}) left RAX {_rax(runner, layout):#x}')
+
+
+def test_the_runtime_carries_no_python() -> None:
+    """`blockpath.h` must compile with no Python headers reachable at all.
+
+    Stated as a compile rather than as a comment, because a comment does not
+    fail when someone reaches for a PyObject on the hot path.  Everything in
+    that header runs per BLOCK EXECUTION, where touching CPython costs more
+    than the work being wrapped.
+    """
+    import shutil
+    cc = shutil.which('cc') or shutil.which('gcc')
+    if cc is None:
+        pytest.skip('no C compiler')
+    header = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          'microtaint', 'emulator', 'blockpath.h')
+    proc = subprocess.run([cc, '-fsyntax-only', header],
+                          capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, (
+        'blockpath.h no longer compiles without Python.  Something on the '
+        f'block hot path reached for CPython:\n{proc.stderr[:2000]}')
 
 
 #: A block whose load faults part way, so several instructions after it never
@@ -115,7 +192,7 @@ def test_a_real_block_really_is_abandoned_part_way() -> None:
         built = subprocess.run(
             ['gcc', '-nostdlib', '-static', '-no-pie', '-O1',
              '-fno-stack-protector', '-o', binary, '-x', 'c', '-'],
-            input=_FAULTING.encode(), capture_output=True)
+            input=_FAULTING.encode(), capture_output=True, check=False)
         if built.returncode != 0:
             pytest.skip(f'cannot build the guest: {built.stderr.decode()[:300]}')
 
@@ -145,22 +222,3 @@ def test_a_real_block_really_is_abandoned_part_way() -> None:
             f'deferring the commit no longer holds and it should be revisited')
     finally:
         os.unlink(binary)
-
-
-def test_the_deferred_commit_would_have_prevented_the_under_taint() -> None:
-    """The failure the rule exists to stop, in miniature.
-
-    A block that would clear RAX's taint is computed, then abandoned.  Committing
-    eagerly loses the taint RAX legitimately still has; holding it does not.
-    """
-    state = {'RAX': 0xFF}          # RAX is tainted before the block
-
-    def apply(p: Pending) -> None:
-        state.update(p.taint)
-
-    runner = BlockRunner(compute=lambda a, s: Pending(a, {'RAX': 0}), apply=apply)
-    runner.on_block(0x100, 16)     # the block would clear RAX
-    runner.abandon()               # ... but it faults before that instruction
-    assert state['RAX'] == 0xFF, (
-        'RAX lost its taint to a block that never ran the instruction which '
-        'would have cleared it: exactly the under-taint the deferral prevents')

@@ -61,6 +61,7 @@ C_EXTENSIONS: list[tuple[str, str]] = [
     ('microtaint/instrumentation/cell_c/cell_c.c', 'cell_c'),
     ('microtaint/instrumentation/cell_c/circuit_c.c', 'circuit_c'),
     ('microtaint/instrumentation/cell_c/taint_ir_c.c', 'taint_ir_c'),
+    ('microtaint/emulator/blockpath_c.c', 'blockpath_c'),
 ]
 
 

@@ -790,6 +790,32 @@ cdef class InstructionHook:
     # ------------------------------------------------------------------
     # Array-native taint state helpers (Phase 1.3c)
     # ------------------------------------------------------------------
+    def prepare_block_mode(self, names):
+        """Everything the per-instruction path would have done lazily.
+
+        SETUP, not the hot path.  Two things are resolved on first use by the
+        instruction path, and block mode never runs it:
+
+          * a slot for every register.  Without this the slot map is empty and
+            every block program is compiled against nothing.
+          * the Unicorn engine handle, which the batch register read needs.
+            Measured: without it, `blk_read_regs` failed for all 10,540 blocks
+            of bench_untainted and not one was handled.
+          * the C guest-memory read context.  Measured the same way: with the
+            handle resolved but this still zeroed, 10,240 of those blocks
+            declined on the memory read alone.
+
+        Called once, before the run.
+        """
+        cdef int last = -1
+        if self.uc_handle is not None and self.uc_handle.value:
+            self.uc_handle_addr = <unsigned long long>self.uc_handle.value
+        if not self.mem_ctx_ready:
+            self._init_mem_ctx()
+        for name in names:
+            last = self._slot_for(name)
+        return last
+
     cdef int _slot_for(self, object name) except -1:
         """Intern a register name to a slot, growing the arrays as needed.
 

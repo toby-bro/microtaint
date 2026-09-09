@@ -430,13 +430,10 @@ class MicrotaintWrapper:
         # Armed lazily, on the first poison; see _arm_uaf_read_hook.
         self._mem_read_hook = None
         self._instr_hook_registered: bool = False  # set True when instr hook registered
-        #: Experimental: compute taint a basic block at a time instead of an
-        #: instruction at a time (MICROTAINT_BLOCK=1).  Off by default, and the
-        #: per-instruction path is untouched when it is off.
-        self._block_mode = None
-        from microtaint.emulator import blockmode as _blockmode  # noqa: PLC0415
-        if _blockmode.enabled():
-            self._block_mode = _blockmode.BlockMode(self)
+        #: Block-at-a-time taint (MICROTAINT_BLOCK=1).  Opt-in; the
+        #: per-instruction path is untouched when it is off.  The runtime is
+        #: pure C (emulator/blockpath.h); this holds the C context alive.
+        self._block_ctx: Any = None
 
         self._setup_hooks()
 
@@ -564,6 +561,87 @@ class MicrotaintWrapper:
             logger.debug(f'Cython hook construction failed: {exc}')
             return None
 
+    # ------------------------------------------------------------------
+    # Block-at-a-time taint
+    # ------------------------------------------------------------------
+    def _block_mode_enabled(self) -> bool:
+        return os.environ.get('MICROTAINT_BLOCK', '') not in ('', '0')
+
+    def _install_block_hook(self, hook: InstructionHook) -> bool:
+        """Register the pure-C UC_HOOK_BLOCK trampoline.  -> did it install?
+
+        Block mode OWNS the taint: it computes a whole basic block at a time, so
+        the per-instruction hook must NOT also be armed.  Both write the same
+        state and would clobber each other, and the result would measure
+        whichever ran last.
+        """
+        from unicorn import UC_HOOK_BLOCK  # noqa: PLC0415
+
+        from microtaint.emulator import blockpath_c  # noqa: PLC0415
+        from microtaint.taint_ir.blockcompile import compile_block  # noqa: PLC0415
+
+        regfile = self._regfile
+        # Every register needs a slot before the first block compiles: the
+        # per-instruction path interns them as instructions mention them, and
+        # that path never runs here.
+        hook.prepare_block_mode(regfile.all_names)
+        slot_map = dict(hook.slot_map)
+        reg_slots = [slot_map.get(n, -1) for n in regfile.all_names]
+
+        def compiler(address: int, size: int) -> Any:
+            """Plan one block.  Called once per DISTINCT block, with the GIL,
+            from the C hook: this is the compiler, not the runtime."""
+            try:
+                code = bytes(self.ql.mem.read(address, size))
+            except Exception:  # an unreadable block is unhandleable
+                return None
+            got = compile_block(self.arch, code, address, slot_map)
+            return None if got is None else got[0]
+
+        # `_vals` has one slot per NAME and `_ids`/`_ptrs` one per uc_reg_read
+        # call: a vector register is one call that fills two lanes.  So the
+        # slot list is per name and the call count is separate.
+        ctx = blockpath_c.hook_new(
+            c_instruction_hook_ud(hook), compiler,
+            ctypes.addressof(regfile._ids), ctypes.addressof(regfile._ptrs),
+            ctypes.addressof(regfile._vals), regfile._n_calls, reg_slots)
+        self._block_ctx = ctx
+        h = ctypes.c_size_t()
+        err = _uc_hook_add(self._uc_handle, ctypes.byref(h), UC_HOOK_BLOCK,
+                           ctypes.c_void_p(blockpath_c.hook_ptr()),
+                           ctypes.c_void_p(blockpath_c.hook_ud(ctx)), 1, 0)
+        if err != 0:
+            logger.warning(f'block hook registration failed: {err}')
+            self._block_ctx = None
+            return False
+        return True
+
+    def block_mode_finish(self, completed: bool = True) -> None:
+        """End of the run: commit the last block, or drop it.
+
+        The caller knows whether the run finished.  A block's taint is held
+        until the NEXT block proves it completed, so the last one has nobody to
+        prove it and has to be told.
+        """
+        if self._block_ctx is None:
+            return
+        from microtaint.emulator import blockpath_c  # noqa: PLC0415
+
+        blockpath_c.hook_finish(self._block_ctx, completed)
+
+    def block_mode_stats(self) -> dict[str, int] | None:
+        """Blocks seen, handled, and NOT handled.
+
+        `unhandled` is unanalysed code, so it is counted rather than ignored: a
+        block this path cannot lower is skipped, and the only honest thing is
+        to say how often that happened.
+        """
+        if self._block_ctx is None:
+            return None
+        from microtaint.emulator import blockpath_c  # noqa: PLC0415
+
+        return dict(blockpath_c.hook_stats(self._block_ctx))
+
     def _arm_deferred_hooks(self) -> None:
         """
         Arm the instruction hook and mem-write hook if not already registered.
@@ -574,13 +652,11 @@ class MicrotaintWrapper:
         if self._any_taint:
             return
         self._any_taint = True
-        if self._block_mode is not None:
-            # Block mode OWNS the taint: it computes a whole basic block at a
-            # time, so the per-instruction hook must not also run.  Leaving both
-            # armed is not merely wasteful -- they write the same state and
-            # clobber each other, and the result measures whichever ran last.
-            self._block_mode.install()
-            self._instr_hook_registered = True
+        if self._block_ctx is None and self._block_mode_enabled():
+            block_hook = self._make_cython_hook()
+            if block_hook is not None and self._install_block_hook(block_hook):
+                self._instr_hook_obj = block_hook          # keep it alive
+                self._instr_hook_registered = True         # and do NOT arm it
         if not self._instr_hook_registered:
             # Build the Cython hot-path hook callable. Falls back to the
             # Python method if Cython hook construction fails.
