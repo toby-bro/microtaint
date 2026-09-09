@@ -124,10 +124,10 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
     # counter, or any register the bank leaves out, is otherwise unplaceable and
     # gets skipped -- which on RISCV64 is all of them.
     frompcode.build_ir(spec.arch, spec.instructions[0].bytes, emit='value')
-    # Keyed, not `next(iter(...))`: the cache holds one builder per ISA and the
-    # first one in it belongs to whichever ISA ran first in this process.
-    key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
-    builder = frompcode._BUILDERS[(key, 'concrete')]
+    # Asked for by ISA, not `next(iter(...))`: the cache holds one builder per
+    # ISA and the first one in it belongs to whichever ISA ran first in this
+    # process.
+    builder = frompcode.builder_for(spec.arch)
     names = sorted(set(builder.name_by_off.values()))
     layout = {n: i for i, n in enumerate(names)}
     rnd = random.Random(20260909)
@@ -286,7 +286,6 @@ def test_publishing_values_is_nearly_free() -> None:
     from microtaint.taint_ir.exec import serialize_for_c
 
     spec = load_bank()['AMD64']
-    key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
     ratios = []
     for ins in spec.instructions[:200]:
         counts = {}
@@ -296,7 +295,7 @@ def test_publishing_values_is_nearly_free() -> None:
             except Exception:  # noqa: BLE001
                 counts = None
                 break
-            builder = frompcode._BUILDERS[(key, 'concrete')]  # noqa: SLF001
+            builder = frompcode.builder_for(spec.arch)
             names = sorted(set(builder.name_by_off.values()))
             layout = {n: i for i, n in enumerate(names)}
 

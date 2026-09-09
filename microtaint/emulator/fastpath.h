@@ -634,12 +634,17 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
     memcpy(so, st, nb);
     fn(sv, st, so);
 
-    /* A secret-dependent address is NOT handled specially here, deliberately.
-     * The program was lowered under the 'concrete' pointer policy, which is
-     * what the circuit evaluator does: resolve the access at the address the
-     * instruction computes.  The address's own taint is published as an output
-     * so a future policy can act on it; widening the answer here instead would
-     * change every result involving a tainted stack pointer. */
+    /* A secret-dependent address needs no handling HERE because the lowering
+     * already did it: the default pointer policy is 'avalanche', so a load
+     * whose address is tainted publishes a fully tainted word.
+     *
+     * This comment used to say the opposite -- that 'concrete' was correct
+     * because it is "what the circuit evaluator does".  It is not.  Measured,
+     * `movzbl (%rax,%rcx,1),%eax` with a tainted RAX and a clean public table
+     * gives 0xffffffffffffffff from the differential and 0x0 from the compiled
+     * path, so the hot path was losing the secret at the first table lookup.
+     * See taint_ir/frompcode.py::POINTER_POLICIES and
+     * tests/test_tainted_pointer_load.py. */
 
     if (ent->ir_writes_pc && !mt_ir_policy_ok(c, so, n_slots)) {
         c->express_miss[11]++;

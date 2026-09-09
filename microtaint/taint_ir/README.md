@@ -88,17 +88,30 @@ builder verifies that and declines when it does not hold.
 What a *tainted* address implies is a policy, chosen at lowering time and named
 rather than assumed:
 
-- `concrete` (the default, and what the engine runs) reads the shadow at the
-  address the instruction computes. This is what the whole-instruction
-  differential does, so a compiled program is a faithful replacement for it.
-- `avalanche` taints the whole loaded word, because which bytes are read is then
-  itself secret-dependent. This is the sound answer, and the memory oracle
-  checks it with vectors that taint the pointer's low bits.
+- `avalanche` (the default, and what the engine runs) taints the whole loaded
+  word, because which bytes are read is then itself secret-dependent. This is
+  the sound answer, and the memory oracle checks it with vectors that taint the
+  pointer's low bits.
+- `concrete` reads the shadow at the address the instruction computes and makes
+  no claim about the address's own taint. Tighter, and unsound unless the caller
+  has established that the address is not attacker-controlled.
 
-Either way the address's own taint is published as an output, so the policy can
-change without changing the lowering. Adopting `avalanche` in the engine is a
-decision for the implicit-taint policy: it cascades, since a tainted stack
-pointer would make every local read fully tainted.
+`concrete` used to be the default, described here as "what the whole-instruction
+differential does, so a compiled program is a faithful replacement for it".
+That was false. Measured:
+
+    movzbl (%rax,%rcx,1),%eax   RAX tainted, table clean and public
+        differential  RAX = 0xffffffffffffffff
+        compiled      RAX = 0x0
+
+so the compiled path lost the secret at the first table lookup, and on
+bench_dense the whole 256-byte state buffer went clean at the first S-box round.
+The switch costs at most 1.7% more operations on any ISA in the bank (+0.32%
+AMD64, +0.37% ARM64, +1.70% MIPS64BE, +0.29% PPC32BE, nothing on RISCV64 or
+either SIMD bank) and changes neither what lowers nor what declines.
+
+Either way the address's own taint is published as an output, so a caller that
+wants the tighter answer can ask for `concrete` by name.
 
 ## What it costs
 

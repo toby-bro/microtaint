@@ -251,23 +251,39 @@ class SymFrame:
 
 #: What a load through a secret-dependent address yields.
 #:
-#:   'concrete'  -- read the shadow at the address the instruction computes.
-#:                  This is what the engine's differential does, so it is the
-#:                  default: a replacement evaluator that quietly widened the
-#:                  policy would change every result that involves a tainted
-#:                  stack pointer.
-#:   'avalanche' -- taint the whole loaded word, because which bytes are read is
-#:                  then itself secret-dependent.  This is the SOUND answer and
-#:                  the memory oracle checks it; adopting it is a decision for
-#:                  the implicit-taint policy, not for a lowering.
-POINTER_POLICIES = ('concrete', 'avalanche')
+#:   'avalanche' -- taint the whole loaded word, because WHICH bytes are read is
+#:                  then itself secret-dependent.  The sound answer, the one the
+#:                  whole-instruction differential gives, and the default.
+#:   'concrete'  -- read the shadow at the address the instruction computes and
+#:                  make no claim about the address's own taint.  Tighter, and
+#:                  UNSOUND unless the caller knows the address is not
+#:                  attacker-controlled.  Kept because it is the right answer for
+#:                  a caller that has established that, and because the two are
+#:                  worth comparing.
+#:
+#: The default used to be 'concrete', on the stated grounds that it was "what
+#: the engine's differential does".  That was wrong, and measurably so:
+#:
+#:     movzbl (%rax,%rcx,1),%eax   RAX tainted, table clean and public
+#:         differential  RAX = 0xffffffffffffffff
+#:         compiled      RAX = 0x0
+#:
+#: so the shipped hot path lost the secret at the first table lookup.  On
+#: bench_dense the entire 256-byte state buffer went clean at the first S-box
+#: round.  A load through a tainted address is exactly the shape a taint engine
+#: exists to follow, so the sound policy is the one that runs.
+POINTER_POLICIES = ('avalanche', 'concrete')
+
+#: What every caller gets unless it names something else.  Soundness is not an
+#: opt-in.
+DEFAULT_POINTER_POLICY = 'avalanche'
 
 
 class Builder:
     """Lower one instruction to IR.  `prog.outputs` ends up holding the taint of
     every architectural register, written or passed through."""
 
-    def __init__(self, arch, be: bool, pointer_policy: str = 'concrete'):
+    def __init__(self, arch, be: bool, pointer_policy: str = DEFAULT_POINTER_POLICY):
         if pointer_policy not in POINTER_POLICIES:
             raise ValueError(pointer_policy)
         self.pointer_policy = pointer_policy
@@ -1259,14 +1275,27 @@ class Builder:
 _BUILDERS: dict = {}
 
 
-def build_ir(arch, code: bytes, *, pointer_policy: str = 'concrete',
-             emit: str = 'taint'):
-    """Lower one instruction to a taint IR program.  Raises Unsupported."""
-    from microtaint.sleigh.lifter import get_context
+def builder_for(arch, pointer_policy: str = DEFAULT_POINTER_POLICY) -> Builder:
+    """The shared Builder for `arch` under `pointer_policy`, made once.
+
+    A Builder costs a register-map build, so callers share one; several of them
+    used to reach into `_BUILDERS` with the policy spelled out, which meant that
+    changing the default policy raised KeyError in four separate places rather
+    than doing the one thing it was supposed to do.  Ask here instead.
+    """
     key = arch.value if hasattr(arch, 'value') else str(arch)
     b = _BUILDERS.get((key, pointer_policy))
     if b is None:
         b = Builder(arch, key.endswith('BE'), pointer_policy)
         _BUILDERS[(key, pointer_policy)] = b
+    return b
+
+
+def build_ir(arch, code: bytes, *, pointer_policy: str = DEFAULT_POINTER_POLICY,
+             emit: str = 'taint'):
+    """Lower one instruction to a taint IR program.  Raises Unsupported."""
+    from microtaint.sleigh.lifter import get_context
+    key = arch.value if hasattr(arch, 'value') else str(arch)
+    b = builder_for(arch, pointer_policy)
     ops = get_context(key).translate(code, LIFT_BASE).ops
     return b.build(ops, LIFT_BASE + len(code), emit=emit)

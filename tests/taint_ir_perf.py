@@ -32,12 +32,8 @@ def _slot_map(spec):
     bank lists: a lifted instruction routinely reads a register outside the
     bank's set, and a program with an unplaceable input cannot be run at all.
     """
-    from microtaint.taint_ir.frompcode import _BUILDERS, Builder
-    key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
-    b = _BUILDERS.get((key, 'concrete'))
-    if b is None:
-        b = Builder(spec.arch, key.endswith('BE'))
-        _BUILDERS[(key, 'concrete')] = b
+    from microtaint.taint_ir.frompcode import builder_for
+    b = builder_for(spec.arch)
     names = sorted({nm for nm, _sz in b.declared.values()})
     return names, {n: i for i, n in enumerate(names)}
 

@@ -122,12 +122,16 @@ def test_ir_never_under_taints_vs_ground_truth(isa, request):
 def test_memory_taint_matches_ground_truth(isa, policy):
     """Loads and stores, against Unicorn per-bit truth over a real data page.
 
-    Both pointer policies are checked.  'avalanche' is the sound one and its
-    vectors taint the pointer's low bits, so the rule that a load through a
-    tainted address taints the whole loaded word is exercised rather than
-    assumed.  'concrete' is what the engine does and what the hot path runs; it
-    makes no claim about a tainted address, so those vectors are not generated
-    for it.
+    Both pointer policies are checked.  'avalanche' is the sound one and what
+    the engine now runs: its vectors taint the pointer's low bits, so the rule
+    that a load through a tainted address taints the whole loaded word is
+    exercised rather than assumed.  'concrete' makes no claim about a tainted
+    address, so those vectors are not generated for it.
+
+    That exclusion is why this bank did not catch the under-taint fixed in
+    tests/test_tainted_pointer_load.py: the hot path ran 'concrete', and the
+    only policy checked against tainted pointers was the one it did not run.
+    Keep the shipped default and the vector generation in step.
     """
     from tests.taint_ir_mem import run_mem_bank
 

@@ -176,36 +176,27 @@ def _compare(guest: str, label: str) -> None:
               f'on the array path, which is the harmless direction)')
 
 
-#: bench_dense currently FAILS, and the xfail is strict so it turns back into a
-#: failure the day it is fixed rather than going quiet.  What it catches: the
-#: array path ends the run holding three fewer tainted words than the dict path
-#: and no extra ones, so it is a pure loss.  The first divergence is at
-#: instruction 5716, the store at 0x401137 (`mov %al,(%rdx)`) writing the result
-#: of the S-box load at 0x401133 (`movzbl (%rax,%rcx,1),%eax`, a CLEAN table at a
-#: TAINTED index): the dict path stores a tainted byte, the array path a clean
-#: one.  It is not the tainted-address policy on its own -- that same load in
-#: isolation is tainted on both paths.  Three knobs each make it go away
-#: (MICROTAINT_DISABLE_CREGS=1, MICROTAINT_DISABLE_DECODE_CACHE=1,
-#: MICROTAINT_TAINT_IR=0) and the cache, express lane and cmem knobs do not,
-#: which points at the register VALUES the fast path fills in for a compiled
-#: memory program rather than at any taint rule.
-_KNOWN_UNDER_TAINT = {'bench_dense'}
+#: bench_dense used to fail here under a strict xfail, and that marker is what
+#: reported the fix: it XPASSed the moment the cause was removed.
+#:
+#: The cause was NOT the array path.  It was the compiled taint path lowering
+#: every load under the 'concrete' pointer policy, so the S-box load at 0x401133
+#: (`movzbl (%rax,%rcx,1),%eax`, a CLEAN public table at a TAINTED index) came
+#: back clean and the store at 0x401137 wrote a clean byte.  The array path was
+#: only where it happened to show, because the dict path reached the differential
+#: for those instructions more often.  Fixed by making 'avalanche' the default
+#: policy; see tests/test_tainted_pointer_load.py.
+#:
+#: The note that stood here said "it is not the tainted-address policy on its
+#: own -- that same load in isolation is tainted on both paths".  That was
+#: wrong: in isolation the compiled path answered 0x0 for it.
 
 
 @pytest.mark.parametrize('name', _BENCHES)
-def test_benchmarks_do_not_under_taint(name: str, request: pytest.FixtureRequest) -> None:
+def test_benchmarks_do_not_under_taint(name: str) -> None:
     guest = _BENCH_DIR / f'{name}.elf'
     if not guest.exists():
         pytest.skip(f'{guest} is not built')
-    # Only with the compiled taint path on.  MICROTAINT_TAINT_IR=0 sends every
-    # instruction back through the differential and the loss disappears, which
-    # is itself part of the diagnosis, so the xfail has to say so -- otherwise a
-    # run with the compiled path off reports an unexpected PASS and fails.
-    if name in _KNOWN_UNDER_TAINT and os.environ.get('MICROTAINT_TAINT_IR') != '0':
-        request.node.add_marker(pytest.mark.xfail(
-            strict=True,
-            reason='known open under-taint in the compiled array path; '
-                   'see _KNOWN_UNDER_TAINT'))
     _compare(str(guest), name)
 
 

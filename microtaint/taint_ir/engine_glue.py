@@ -184,8 +184,8 @@ def program_for(arch, code: bytes, name_to_slot: dict, *, force: bool = False):
     # Whether the program writes the program counter decides whether the hot
     # path has to run it into scratch and apply the implicit-taint policy
     # before committing.
-    from microtaint.taint_ir.frompcode import _BUILDERS
-    pc_off = _BUILDERS[(_arch_key(arch), 'concrete')].pc_off
+    from microtaint.taint_ir.frompcode import builder_for
+    pc_off = builder_for(arch).pc_off
     writes_pc = any(isinstance(k, tuple) and k[0] == 'reg' and k[1] == pc_off
                     for k, _n in prog.outputs)
     # The registers whose VALUE the program actually reads, by byte offset.

@@ -69,7 +69,7 @@ def plan_block(arch: Any, code: bytes, base: int = LIFT_BASE, *,
     """
     if builder is None:
         be = str(getattr(arch, 'value', arch)).endswith('BE')
-        builder = Builder(arch, be, 'concrete')
+        builder = Builder(arch, be)
     ops = _translate(arch, code, base)
     marks = instruction_starts(ops)
     if not marks:

@@ -52,9 +52,8 @@ def ir_step(arch, code: bytes, regs, in_taint, in_values):
     prog = _prog(arch, code)
     if isinstance(prog, tuple):
         raise Declined(prog[1])
-    from microtaint.taint_ir.frompcode import _BUILDERS
-    key = arch.value if hasattr(arch, 'value') else str(arch)
-    declared = _BUILDERS[(key, 'concrete')].declared
+    from microtaint.taint_ir.frompcode import builder_for
+    declared = builder_for(arch).declared
     size_of = {nm: sz for nm, sz in declared.values()}
     from microtaint.instrumentation.cell import _build_reg_maps
     size_of.update(_build_reg_maps(arch)[1])
