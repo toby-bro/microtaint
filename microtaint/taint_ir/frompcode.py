@@ -474,6 +474,8 @@ class Builder:
         p.spans = self.spans
         p.accesses = self.accesses
         self._check_address_independence(p)
+        if self.block:
+            self._check_no_load_after_store()
         return p.finish()
 
     def _write_pc(self, tnt):
@@ -672,6 +674,38 @@ class Builder:
                 for x in (a, b, c):
                     if x >= 0:
                         stack.append(x)
+
+    def _check_no_load_after_store(self):
+        """A load may not follow a store in the same program.
+
+        The two-pass protocol resolves EVERY load against guest memory and the
+        shadow before the program runs, and commits every store after it.
+        Within one instruction that ordering is exact, because an instruction
+        that both stores and then loads the same place does not exist in the
+        lifters we handle.  Across a REGION it is not: `mov [rbp+8], rax`
+        followed by `mov rax, [rbp+8]` resolves the load against the shadow as
+        it was BEFORE the store, so a tainted value stored and read straight
+        back comes out clean.  Measured, that is exactly what happened: RAX
+        0xff by instruction, 0x00 as one region.  An under-taint, and the worst
+        kind, because storing and reloading is what every compiler does across
+        a spill.
+
+        The rule is deliberately blunt: any load after any store declines,
+        without asking whether the addresses can alias.  Proving they cannot
+        needs the addresses, and the addresses are not known until the program
+        has run, which is the same circularity `_check_address_independence`
+        refuses.  A caller that wants the region anyway can cut it here and
+        lower the two halves, which is what the block planner does.
+
+        Single-instruction programs are unaffected: this only fires on an
+        ordering that takes more than one instruction to create.
+        """
+        stored = False
+        for acc in self.accesses:
+            if acc['kind'] == 'load' and stored:
+                raise Unsupported('load after store (no store-to-load forwarding)')
+            if acc['kind'] != 'load':
+                stored = True
 
     # -- helpers -------------------------------------------------------
     def _branch_target(self, op, pc, n):
