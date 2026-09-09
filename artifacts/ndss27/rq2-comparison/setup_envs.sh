@@ -34,7 +34,7 @@ uv pip install --python .venv_maat pymaat
 # 5. Microtaint (Assuming local path, adjust if necessary)
 echo "[*] Building Microtaint Env..."
 uv venv .venv_microtaint
-uv pip install --python .venv_microtaint microtaint
+uv pip install --python .venv_microtaint 'microtaint==0.6.15'
 
 echo '[+] Making libdft64...'
 mkdir -p external
