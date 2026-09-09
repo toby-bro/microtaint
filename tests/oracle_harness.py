@@ -213,7 +213,59 @@ def _uc_desc_riscv64() -> UcDesc:
     )
 
 
+def _uc_desc_mips64be() -> UcDesc:
+    import unicorn
+    import unicorn.mips_const as um
+    # No architectural condition-flag register: MIPS comparisons write a GP
+    # register, so flags is empty.  Track the temporaries, arguments, saved and
+    # value registers, which is what the bank assembles its forms around.
+    names = ('AT', 'V0', 'V1', 'A0', 'A1', 'A2', 'A3',
+             'T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9',
+             'S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7',
+             'GP', 'SP', 'FP', 'RA')
+    return UcDesc(
+        uc_arch=unicorn.UC_ARCH_MIPS,
+        uc_mode=unicorn.UC_MODE_MIPS64 | unicorn.UC_MODE_BIG_ENDIAN,
+        code_addr=0x1000,
+        gp={n: getattr(um, f'UC_MIPS_REG_{n}') for n in names
+            if hasattr(um, f'UC_MIPS_REG_{n}')},
+        flags={},
+        eflags_reg=None,
+    )
+
+
+def _uc_desc_ppc32be() -> UcDesc:
+    import unicorn
+    import unicorn.ppc_const as up
+
+    def const(name: str):
+        """Unicorn spells the general registers UC_PPC_REG_0..31; the engine's
+        geometry spells them R0..R31.  Matching on the literal name finds only
+        CTR, LR, MSR, PC and XER, and a ground truth that watches five special
+        registers agrees with anything -- which is exactly what the first run of
+        this reported before the mapping was added."""
+        c = getattr(up, f'UC_PPC_REG_{name}', None)
+        if c is not None:
+            return c
+        if len(name) > 1 and name[0] == 'R' and name[1:].isdigit():
+            return getattr(up, f'UC_PPC_REG_{name[1:]}', None)
+        return None
+
+    names = [f'R{i}' for i in range(32)] + ['LR', 'CTR', 'XER']
+    gp = {n: const(n) for n in names}
+    return UcDesc(
+        uc_arch=unicorn.UC_ARCH_PPC,
+        uc_mode=unicorn.UC_MODE_PPC32 | unicorn.UC_MODE_BIG_ENDIAN,
+        code_addr=0x1000,
+        gp={n: c for n, c in gp.items() if c is not None},
+        flags={},                 # CR fields are not modelled here
+        eflags_reg=None,
+        mask=0xFFFFFFFF,          # 32-bit registers
+    )
+
+
 UC_DESCS = {'AMD64': _uc_desc_amd64, 'ARM64': _uc_desc_arm64,
+            'MIPS64BE': _uc_desc_mips64be, 'PPC32BE': _uc_desc_ppc32be,
             'RISCV64': _uc_desc_riscv64}
 
 
