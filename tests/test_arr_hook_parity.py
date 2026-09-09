@@ -1,4 +1,4 @@
-# ruff: noqa: S603, S607, PLC0415
+# ruff: noqa: S603, S607, PLW1510
 """The array-native taint path must not under-taint against the dict path.
 
 Register taint lives in slot-indexed C arrays (MICROTAINT_ARR_HOOK=1, the

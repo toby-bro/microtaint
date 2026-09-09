@@ -30,7 +30,6 @@ from microtaint.taint_ir.ir import (
     MASK64,
     MUL,
     MULHI,
-    NEG,
     NEZ,
     NOT,
     OR,
@@ -40,7 +39,6 @@ from microtaint.taint_ir.ir import (
     SEL,
     SHL,
     SHR,
-    SLT,
     SREM,
     SUB,
     UDIV,
@@ -308,7 +306,24 @@ class Builder:
         self.be = be
         self.arch = arch
 
-    def build(self, ops, end_addr: int) -> IRProg:
+    def build(self, ops, end_addr: int, *, emit: str = 'taint') -> IRProg:
+        """Lower `ops`.  `emit` selects which frame becomes the program's
+        outputs: 'taint' (the shipped behaviour) or 'value'.
+
+        The two frames are built side by side and alias identically, so a value
+        program is the same lowering read off the other one.  It exists because
+        block-level tainting needs the register values BETWEEN the instructions
+        of a block, and asking the emulator for them per instruction is the cost
+        block tainting is trying to remove.  Publishing them makes them survive
+        dead-code elimination, which otherwise deletes every value no taint rule
+        reads.
+
+        Nothing on the per-instruction path passes `emit`, so that path is
+        bit-identical and no slower.
+        """
+        if emit not in ('taint', 'value'):
+            raise ValueError(emit)
+        self.emit = emit
         p = IRProg()
         v = SymFrame(p, self.declared, self.be, 'v')
         t = SymFrame(p, self.declared, self.be, 't')
@@ -425,16 +440,17 @@ class Builder:
         # untouched register's taint is its input taint by definition; making
         # the program restate that would cost an operation per architectural
         # register and swamp the instruction's real work.
+        frame = t if self.emit == 'taint' else v
         dirty_bytes = set()
-        for off in t.touched:
-            cell = t.reg.get(off)
+        for off in frame.touched:
+            cell = frame.reg.get(off)
             width = cell[1] if cell else 1
             dirty_bytes.update(range(off, off + width))
         for off in sorted(self.declared):
             _nm, size = self.declared[off]
             if not dirty_bytes.intersection(range(off, off + size)):
                 continue
-            p.outputs.append((('reg', off, size), t.read('register', off, size)))
+            p.outputs.append((('reg', off, size), frame.read('register', off, size)))
         p.spans = self.spans
         p.accesses = self.accesses
         self._check_address_independence(p)
@@ -1151,7 +1167,8 @@ class Builder:
 _BUILDERS: dict = {}
 
 
-def build_ir(arch, code: bytes, *, pointer_policy: str = 'concrete'):
+def build_ir(arch, code: bytes, *, pointer_policy: str = 'concrete',
+             emit: str = 'taint'):
     """Lower one instruction to a taint IR program.  Raises Unsupported."""
     from microtaint.sleigh.lifter import get_context
     key = arch.value if hasattr(arch, 'value') else str(arch)
@@ -1160,4 +1177,4 @@ def build_ir(arch, code: bytes, *, pointer_policy: str = 'concrete'):
         b = Builder(arch, key.endswith('BE'), pointer_policy)
         _BUILDERS[(key, pointer_policy)] = b
     ops = get_context(key).translate(code, LIFT_BASE).ops
-    return b.build(ops, LIFT_BASE + len(code))
+    return b.build(ops, LIFT_BASE + len(code), emit=emit)
