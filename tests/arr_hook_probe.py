@@ -40,7 +40,7 @@ def main() -> int:
     os.dup2(devnull, 1)
     try:
         ql.run()
-    except Exception:  # noqa: BLE001 - guests exit via a syscall
+    except Exception:      # guests exit via a syscall, which Qiling raises on
         pass
     os.dup2(saved, 1)
 
