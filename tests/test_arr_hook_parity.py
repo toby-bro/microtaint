@@ -1,0 +1,239 @@
+# ruff: noqa: S603, S607, PLC0415
+"""The array-native taint path must not under-taint against the dict path.
+
+Register taint lives in slot-indexed C arrays (MICROTAINT_ARR_HOOK=1, the
+default) or in a Python dict (=0).  They are two implementations of one
+specification, and the dict path is the older of the two: it is what v0.6.10
+ran, before the hot path moved into C.  So the dict path is the reference and
+the array path is the thing under test.
+
+Nothing compared them.  The release gate varies MICROTAINT_TAINT_IR, which
+selects between the compiled taint program and the differential, and leaves this
+axis alone -- so the DEFAULT path had no parity gate against the reference at
+all, and a divergence in it could only be found by noticing a wrong answer
+downstream.  One was: on a store through a tainted index the array path ends a
+run holding LESS taint than the dict path.
+
+What is asserted is the soundness direction, not equality.  Over-taint is a
+precision cost the engine is allowed to pay and the two paths do reach it
+differently; taint that the reference holds and the array path does not is an
+under-taint, and there is no acceptable amount of that.  Precision differences
+are reported in the failure message when a test fails for the real reason, so a
+run that trades soundness for precision is still legible.
+
+The guests are small and end in a syscall.  Each is run twice, in two
+subprocesses, because MICROTAINT_ARR_HOOK is read once at import.
+"""
+from __future__ import annotations
+
+import json
+import os
+import platform
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    platform.system() != 'Linux', reason='emulator tests require Linux',
+)
+
+_ROOT = Path(__file__).resolve().parent.parent
+
+_SYSCALLS = r"""
+long sys_read(int fd, void *buf, unsigned long count){long r;
+  __asm__ volatile("syscall":"=a"(r):"0"(0),"D"(fd),"S"(buf),"d"(count):"rcx","r11","memory");return r;}
+long sys_write(int fd, const void *buf, unsigned long count){long r;
+  __asm__ volatile("syscall":"=a"(r):"0"(1),"D"(fd),"S"(buf),"d"(count):"rcx","r11","memory");return r;}
+long sys_exit(int status){long r;
+  __asm__ volatile("syscall":"=a"(r):"0"(60),"D"(status):"rcx","r11","memory");return r;}
+"""
+
+#: Each guest is one taint shape.  `scatter` is the one that found the
+#: divergence: it both loads and stores through an index derived from the
+#: secret, which is where the two paths resolve an address differently.
+_GUESTS = {
+    'arith': _SYSCALLS + r"""
+void _start(void){
+  unsigned char b[8]; sys_read(0, b, 8);
+  unsigned long a = 0;
+  for (int i = 0; i < 8; i++) { a = (a << 7) ^ (a + b[i]); a ^= a >> 11; }
+  sys_write(1, &a, 8);
+  sys_exit((int)(a & 1));
+}
+""",
+    'load_store': _SYSCALLS + r"""
+unsigned char table[64];
+void _start(void){
+  unsigned char b[8]; sys_read(0, b, 8);
+  for (int i = 0; i < 64; i++) { table[i] = b[i & 7] ^ (unsigned char)i; }
+  unsigned long a = 0;
+  for (int i = 0; i < 64; i++) { a += table[i]; }
+  sys_write(1, &a, 8);
+  sys_exit((int)(a & 1));
+}
+""",
+    'scatter': _SYSCALLS + r"""
+unsigned char state[64];
+void _start(void){
+  unsigned char b[8]; sys_read(0, b, 8);
+  for (int i = 0; i < 64; i++) { state[i] = b[i & 7] + (unsigned char)i; }
+  /* index derived from the secret: tainted LOAD and tainted STORE addresses */
+  for (int i = 0; i < 64; i++) {
+      unsigned char idx = (unsigned char)(state[i] & 63);
+      unsigned char tmp = state[i];
+      state[i]   = state[idx];
+      state[idx] = tmp;
+  }
+  unsigned long a = 0;
+  for (int i = 0; i < 64; i++) { a = a * 31 + state[i]; }
+  sys_write(1, &a, 8);
+  sys_exit((int)(a & 1));
+}
+""",
+    'flags_and_branch': _SYSCALLS + r"""
+void _start(void){
+  unsigned char b[4]; sys_read(0, b, 4);
+  unsigned int e = b[0] | (b[1] << 8);
+  int acc = 0;
+  for (int i = 0; i < 12; i++) { acc += (e & 1) ? 3 : 5; e >>= 1; }
+  sys_write(1, &acc, 4);
+  sys_exit(acc & 1);
+}
+""",
+}
+
+_STDIN = bytes(range(1, 17))
+
+
+def _build(source: str) -> str:
+    fd, path = tempfile.mkstemp(suffix='.elf')
+    os.close(fd)
+    built = subprocess.run(
+        ['gcc', '-nostdlib', '-static', '-no-pie', '-O1', '-fno-stack-protector',
+         '-o', path, '-x', 'c', '-'],
+        input=source.encode(), capture_output=True)
+    if built.returncode != 0:
+        os.unlink(path)
+        pytest.skip(f'cannot build the guest: {built.stderr.decode()[:400]}')
+    return path
+
+
+def _probe(guest: str, arr_hook: str) -> dict:
+    env = {**os.environ, 'MICROTAINT_ARR_HOOK': arr_hook}
+    run = subprocess.run(
+        [sys.executable, '-m', 'tests.arr_hook_probe', guest, _STDIN.hex()],
+        capture_output=True, cwd=str(_ROOT), env=env, timeout=900)
+    if run.returncode != 0:
+        pytest.fail(f'the probe failed with ARR_HOOK={arr_hook}: '
+                    f'{run.stderr.decode()[-2000:]}')
+    return json.loads(run.stdout.decode())
+
+
+def _under_taint(reference: dict, candidate: dict) -> dict:
+    """Bits the reference holds that the candidate does not, per key."""
+    lost = {}
+    for key, ref in reference.items():
+        got = candidate.get(key, 0)
+        if ref & ~got:
+            lost[key] = (ref, got)
+    return lost
+
+
+#: The taint-density benchmarks, prebuilt and checked in.  They are the reason
+#: this file exists: the divergence was found on bench_dense, whose scatter loop
+#: stores through an index derived from a 64-bit tainted accumulator, and none of
+#: the small guests above reproduce it.  A gate that only ran shapes it already
+#: passes would prove nothing.
+_BENCH_DIR = _ROOT / 'benchmark' / 'taint_density'
+_BENCHES = ('bench_untainted', 'bench_sparse', 'bench_dense')
+
+
+def _compare(guest: str, label: str) -> None:
+    dict_path = _probe(guest, '0')
+    array_path = _probe(guest, '1')
+
+    assert dict_path['findings'] == array_path['findings'], (
+        f'{label}: the two paths reported different findings\n'
+        f'  dict  : {dict_path["findings"]}\n'
+        f'  array : {array_path["findings"]}')
+
+    lost_regs = _under_taint(dict_path['regs'], array_path['regs'])
+    lost_mem = _under_taint(dict_path['mem'], array_path['mem'])
+    if lost_regs or lost_mem:
+        gained_mem = _under_taint(array_path['mem'], dict_path['mem'])
+        pytest.fail(
+            f'{label}: the array path lost taint the dict path holds.\n'
+            f'  registers: '
+            + ', '.join(f'{k} {ref:#x} -> {got:#x}' for k, (ref, got) in
+                        sorted(lost_regs.items()))
+            + f'\n  memory ({len(lost_mem)} words): '
+            + ', '.join(f'{int(k):#x} {ref:#018x} -> {got:#018x}'
+                        for k, (ref, got) in sorted(lost_mem.items())[:6])
+            + f'\n  (for context, {len(gained_mem)} memory words are tainted only '
+              f'on the array path, which is the harmless direction)')
+
+
+#: bench_dense currently FAILS, and the xfail is strict so it turns back into a
+#: failure the day it is fixed rather than going quiet.  What it catches: the
+#: array path ends the run holding three fewer tainted words than the dict path
+#: and no extra ones, so it is a pure loss.  The first divergence is at
+#: instruction 5716, the store at 0x401137 (`mov %al,(%rdx)`) writing the result
+#: of the S-box load at 0x401133 (`movzbl (%rax,%rcx,1),%eax`, a CLEAN table at a
+#: TAINTED index): the dict path stores a tainted byte, the array path a clean
+#: one.  It is not the tainted-address policy on its own -- that same load in
+#: isolation is tainted on both paths.  Three knobs each make it go away
+#: (MICROTAINT_DISABLE_CREGS=1, MICROTAINT_DISABLE_DECODE_CACHE=1,
+#: MICROTAINT_TAINT_IR=0) and the cache, express lane and cmem knobs do not,
+#: which points at the register VALUES the fast path fills in for a compiled
+#: memory program rather than at any taint rule.
+_KNOWN_UNDER_TAINT = {'bench_dense'}
+
+
+@pytest.mark.parametrize('name', _BENCHES)
+def test_benchmarks_do_not_under_taint(name: str, request: pytest.FixtureRequest) -> None:
+    guest = _BENCH_DIR / f'{name}.elf'
+    if not guest.exists():
+        pytest.skip(f'{guest} is not built')
+    # Only with the compiled taint path on.  MICROTAINT_TAINT_IR=0 sends every
+    # instruction back through the differential and the loss disappears, which
+    # is itself part of the diagnosis, so the xfail has to say so -- otherwise a
+    # run with the compiled path off reports an unexpected PASS and fails.
+    if name in _KNOWN_UNDER_TAINT and os.environ.get('MICROTAINT_TAINT_IR') != '0':
+        request.node.add_marker(pytest.mark.xfail(
+            strict=True,
+            reason='known open under-taint in the compiled array path; '
+                   'see _KNOWN_UNDER_TAINT'))
+    _compare(str(guest), name)
+
+
+@pytest.mark.parametrize('name', sorted(_GUESTS))
+def test_array_path_does_not_under_taint(name: str) -> None:
+    guest = _build(_GUESTS[name])
+    try:
+        dict_path = _probe(guest, '0')
+        array_path = _probe(guest, '1')
+    finally:
+        os.unlink(guest)
+
+    assert dict_path['findings'] == array_path['findings'], (
+        f'{name}: the two paths reported different findings\n'
+        f'  dict  : {dict_path["findings"]}\n'
+        f'  array : {array_path["findings"]}')
+
+    lost_regs = _under_taint(dict_path['regs'], array_path['regs'])
+    lost_mem = _under_taint(dict_path['mem'], array_path['mem'])
+    if lost_regs or lost_mem:
+        gained_mem = _under_taint(array_path['mem'], dict_path['mem'])
+        pytest.fail(
+            f'{name}: the array path lost taint the dict path holds.\n'
+            f'  registers: '
+            + ', '.join(f'{k} {ref:#x} -> {got:#x}' for k, (ref, got) in
+                        sorted(lost_regs.items()))
+            + f'\n  memory ({len(lost_mem)} words): '
+            + ', '.join(f'{int(k):#x} {ref:#018x} -> {got:#018x}'
+                        for k, (ref, got) in sorted(lost_mem.items())[:6])
+            + f'\n  (for context, {len(gained_mem)} memory words are tainted only '
+              f'on the array path, which is the harmless direction)')
