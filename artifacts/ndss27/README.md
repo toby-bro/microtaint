@@ -79,4 +79,11 @@ The detailed directory of this experiment are unsurprisignly in [rq6-generalisat
 
 The last part of our evaluation shows two programs in which bit-level granularity enables security analyses that were not achievable before.
 The two examples are a DNS header parser, and a square and multiply implementation.
+We also include three vulnerable binaries to show that microtaint finds use-after-free, buffer overflows, and side channels in classical binaries.
 in the [rq7-applications](./rq7-applications/) you will find the dedicated [README](./rq7-applications/README.md)
+
+### Avalanche's cost
+
+At the behest of our gracious reviewers we also added an experiment to caracterise where and when an avalanche was triggered, and the amount of bits which are consequence of avalanche.
+
+All related experiments and [README](./avalanche/README.md) can be found in the [avalanche](./avalanche) directory.
