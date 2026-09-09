@@ -1,4 +1,4 @@
-# ruff: noqa: PLC0415, S112
+# ruff: noqa: PLC0415, C901
 """Block equivalence on the big-endian architectures, on the ANSWER.
 
 `test_block_equivalence` proves a block program computes what its instructions
@@ -78,9 +78,8 @@ def _pcode(isa: str, code: bytes, base: int):
 
 @pytest.mark.parametrize('isa', sorted(_ARCHES))
 def test_block_equivalence_big_endian(isa: str) -> None:
-    import unicorn
-
     import oracle_harness as OH  # type: ignore[import-not-found]
+    import unicorn
     from instruction_bank import load_bank  # type: ignore[import-not-found]
 
     bank = load_bank()
