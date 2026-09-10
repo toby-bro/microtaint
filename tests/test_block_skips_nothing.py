@@ -8,8 +8,8 @@ only trace is a counter nobody reads.
 
 The hand-written `-nostdlib` guests in benchmark/taint_density refuse nothing at
 all, so none of this shows there.  A static-glibc binary does: the trace covers
-the vectorised string and memory routines, thread-local storage, and the `rep`
-string operations, which is where every refusal has been found so far.
+the vectorised string and memory routines, thread-local storage, and the bit
+scans, which is where every refusal has been found so far.
 
 Marked `slow` because it compiles a real binary and emulates it; it is the kind
 of check that belongs on a release rather than on every edit.
@@ -119,14 +119,16 @@ def test_the_guest_exercises_real_library_code(stats: dict[str, int]) -> None:
 
 
 @pytest.mark.xfail(strict=True, reason=(
-    'The `rep`-prefixed string operations are the last shape the block '
-    'lowering refuses.  Their p-code is a real LOOP -- a backward BRANCH to '
-    'the instruction`s own IMARK -- and the IR is straight-line by '
-    'construction, so the loop cannot be expressed as one program.  Handling '
-    'it needs the runtime to iterate a region, with the trip count read from '
-    'the slot the loop counts down; three distinct blocks, and every other '
-    'cause has been removed.  Strict, so that finishing it fails here and says '
-    'to delete this marker.'))
+    'A p-code LOOP is the last shape the block lowering refuses, and on this '
+    'guest every instance is `bsf` inside glibc"s memchr and strlen: SLEIGH '
+    'models a bit scan as a loop over bit positions, not as an opcode.  The '
+    'taint IR is straight-line by construction, so a backward BRANCH cannot '
+    'be expressed as one program.  The fix is to UNROLL such a loop to the '
+    'operand width -- the predication machinery already turns each exit test '
+    'into a select, so the unrolled form is exact -- with a runtime-guarded '
+    'floor for the case the unrolling does not provably finish.  Three '
+    'distinct blocks; every other cause has been removed.  Strict, so that '
+    'finishing it fails here and says to delete this marker.'))
 def test_block_mode_skips_nothing(stats: dict[str, int]) -> None:
     """The property.  Not "few blocks are skipped": none are.
 
