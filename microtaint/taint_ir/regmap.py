@@ -9,9 +9,7 @@ having to know the other's spelling.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
+from microtaint.taint_ir.ir import IRKey, SlotOf
 from microtaint.types import ArchLike
 
 _OFFSETS: dict[str, dict[str, int]] = {}
@@ -46,7 +44,7 @@ def name_offset(arch: ArchLike, name: str) -> int | None:
 
 
 def slot_resolver(arch: ArchLike, name_to_slot: dict[str, int], *,
-                  n_reg_slots: int | None = None) -> Callable[[Any], int | None]:
+                  n_reg_slots: int | None = None) -> SlotOf:
     """A `slot_of` for IR keys, given the caller's register-name slot map."""
     by_off: dict[int, int] = {}
     for name, slot in name_to_slot.items():
@@ -57,7 +55,7 @@ def slot_resolver(arch: ArchLike, name_to_slot: dict[str, int], *,
     if base is None:
         base = (max(name_to_slot.values()) + 1) if name_to_slot else 0
 
-    def slot_of(key: Any) -> int | None:
+    def slot_of(key: IRKey) -> int | None:
         if isinstance(key, tuple):
             kind = key[0]
             if kind == 'reg':

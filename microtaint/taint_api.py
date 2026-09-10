@@ -40,9 +40,16 @@ from __future__ import annotations
 import os
 import re
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING
 
+from microtaint.taint_ir.engine_glue import CAccess
+from microtaint.taint_memory import TaintMemory
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
+
+if TYPE_CHECKING:                    # stub-only: an opaque PyCapsule handle
+    from microtaint.instrumentation.cell_c.taint_ir_c import (
+        _Capsule as CompiledProgram,
+    )
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 #: Must match MT_IR_MEM_BASE / MEM_SLOTS_PER_ACCESS in fastpath.h and frompcode.
@@ -92,7 +99,7 @@ def taint_step(
     path: Path | None = None,
     state_format: list[Register] | None = None,
     implicit_policy: ImplicitTaintPolicy = ImplicitTaintPolicy.IGNORE,
-    memory: object | None = None,
+    memory: TaintMemory | None = None,
 ) -> dict[str, int]:
     """Taint after executing `code` once, as {register name: mask}.
 
@@ -120,7 +127,7 @@ def explain(
     path: Path | None = None,
     state_format: list[Register] | None = None,
     implicit_policy: ImplicitTaintPolicy = ImplicitTaintPolicy.IGNORE,
-    memory: object | None = None,
+    memory: TaintMemory | None = None,
 ) -> tuple[dict[str, int], Path]:
     """`taint_step`, plus which implementation actually answered.
 
@@ -138,7 +145,7 @@ def _dispatch(arch: Architecture, code: bytes, in_taint: dict[str, int],
               in_values: dict[str, int], path: Path | None,
               state_format: list[Register] | None,
               implicit_policy: ImplicitTaintPolicy,
-              memory: Any) -> tuple[dict[str, int], Path]:
+              memory: TaintMemory | None) -> tuple[dict[str, int], Path]:
     if state_format is None:
         from microtaint.emulator import archregs
         state_format = archregs.state_format(arch)
@@ -151,7 +158,9 @@ def _dispatch(arch: Architecture, code: bytes, in_taint: dict[str, int],
                          implicit_policy, memory), Path.DIFFERENTIAL
 
 
-_LAYOUTS: dict[Any, dict[str, int]] = {}
+#: (arch, register names, flag names) -> the slot each name takes.
+_LAYOUTS: dict[tuple[Architecture, tuple[str, ...], tuple[str, ...]],
+               dict[str, int]] = {}
 
 
 def _slot_layout(arch: Architecture, state_format: list[Register],
@@ -181,7 +190,7 @@ def _slot_layout(arch: Architecture, state_format: list[Register],
 
 def _compiled(arch: Architecture, code: bytes, in_taint: dict[str, int],
               in_values: dict[str, int], state_format: list[Register],
-              memory: Any) -> dict[str, int] | None:
+              memory: TaintMemory | None) -> dict[str, int] | None:
     """-> the taint dict, or None if the compiled path declined this one."""
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir.engine_glue import program_for
@@ -209,12 +218,17 @@ def _compiled(arch: Architecture, code: bytes, in_taint: dict[str, int],
     if not accesses:
         out = taint_ir_c.run(cap, values, taints)
         return {name: out[slot] for name, slot in layout.items()}
+    # `_compiled` returns None above when there are accesses and no memory,
+    # so reaching here with accesses means there is one.
+    assert memory is not None
     return _compiled_with_memory(cap, accesses, layout, values, taints, memory)
 
 
-def _compiled_with_memory(cap: Any, accesses: Any, layout: dict[str, int],
+def _compiled_with_memory(cap: CompiledProgram,
+                          accesses: tuple[CAccess, ...],
+                          layout: dict[str, int],
                           values: list[int], taints: list[int],
-                          memory: Any) -> dict[str, int]:
+                          memory: TaintMemory) -> dict[str, int]:
     """The two-pass protocol, the same one `fastpath.h::mt_ir_mem_step` runs.
 
     A load's address is computed BY the program, so it cannot be known before
@@ -254,7 +268,7 @@ def _compiled_with_memory(cap: Any, accesses: Any, layout: dict[str, int],
 def _differential(arch: Architecture, code: bytes, in_taint: dict[str, int],
                   in_values: dict[str, int], state_format: list[Register],
                   implicit_policy: ImplicitTaintPolicy,
-                  memory: Any) -> dict[str, int]:
+                  memory: TaintMemory | None) -> dict[str, int]:
     from microtaint.instrumentation.ast import EvalContext
     from microtaint.simulator import CellSimulator
     from microtaint.sleigh.engine import generate_static_rule
@@ -323,7 +337,7 @@ class TaintSequence:
     def __init__(self, arch: Architecture, *,
                  values: dict[str, int] | None = None,
                  taint: dict[str, int] | None = None,
-                 memory: Any = None,
+                 memory: TaintMemory | None = None,
                  path: Path | None = None,
                  state_format: list[Register] | None = None) -> None:
         from microtaint.emulator import archregs

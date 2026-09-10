@@ -6,11 +6,11 @@ arrays.  Four modules import it -- the engine glue, the block compiler, the
 public taint API and the tests -- and none of them had a declaration to check
 against.
 """
-from typing import Any
+from microtaint.taint_ir.exec import SerializedForC
 
 class _Capsule: ...
 
-def compile(program: dict[str, Any]) -> _Capsule:
+def compile(program: SerializedForC) -> _Capsule:
     """Compile a serialized IR program.  The capsule owns the emitted code."""
 
 def jit(program: _Capsule) -> bool:

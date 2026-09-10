@@ -17,8 +17,11 @@ from collections.abc import Callable
 from types import ModuleType
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:                    # stub-only: an opaque PyCapsule handle
-    from microtaint.emulator.blockpath_c import _Capsule
+if TYPE_CHECKING:                    # stub-only: opaque PyCapsule handles
+    from microtaint.emulator.blockpath_c import _Capsule as BlockPlan
+    from microtaint.instrumentation.cell_c.taint_ir_c import (
+        _Capsule as CompiledProgram,
+    )
 
 from microtaint.taint_ir.blocks import Region
 from microtaint.taint_ir.frompcode import Builder
@@ -91,7 +94,7 @@ def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str
                   *, builder: Builder | None = None,
                   descriptor: Descriptor | None = None,
                   publish_all_values: bool = False,
-                  ) -> tuple[_Capsule, list[Region], set[int]] | None:
+                  ) -> tuple[BlockPlan, list[Region], set[int]] | None:
     """-> (plan capsule, [Region], register offsets read), or None.
 
     None means the caller must send this block down the per-instruction path.
@@ -241,7 +244,8 @@ def _keep_only_needed_values(prog: IRProg, needed: set[int]) -> None:
 
 
 def _address_slice(prog: IRProg, slot_of: SlotOf,
-                   taint_ir_c: ModuleType) -> tuple[_Capsule, int] | None:
+                   taint_ir_c: ModuleType,
+                   ) -> tuple[CompiledProgram, int] | None:
     """The part of `prog` that computes its load addresses, compiled.
 
     Returns (capsule, function address) or None if it will not compile, in

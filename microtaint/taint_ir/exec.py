@@ -11,16 +11,25 @@ interpreter here doubles as the reference a compiled version must match.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from microtaint.taint_ir.ir import IRProg
-
-#: Places an IR key in the caller's slot arrays; None means unplaceable.
-SlotOf = Callable[[Any], 'int | None']
+from typing import TYPE_CHECKING
 
 from microtaint.taint_ir import ir as _ir
+from microtaint.taint_ir.ir import IRProg, Serialized
+from microtaint.taint_ir.ir import SlotOf as SlotOf  # re-exported: the IR
+
+                                                      # defines what a key is
+
+if TYPE_CHECKING:                    # stub-only: an opaque PyCapsule handle
+    from microtaint.instrumentation.cell_c.taint_ir_c import _Capsule
+
+
+class SerializedForC(Serialized):
+    """`Serialized` plus the numeric opcodes the C evaluator dispatches on.
+
+    The names in `ops` are for people; `op_ids` is what the switch reads.
+    """
+
+    op_ids: list[int]
 
 #: Must match the enum in cell_c/taint_ir_c.c.
 _OP_ID = {
@@ -34,13 +43,13 @@ _OP_ID = {
 }
 
 
-def serialize_for_c(prog: IRProg, slot_of: SlotOf) -> dict[str, Any]:
+def serialize_for_c(prog: IRProg, slot_of: SlotOf) -> SerializedForC:
     d = prog.serialize(slot_of)
-    d['op_ids'] = [_OP_ID[o] for o in d['ops']]
-    return d
+    return {**d, 'op_ids': [_OP_ID[o] for o in d['ops']]}
 
 
-def compile_program(prog: IRProg, slot_of: SlotOf) -> tuple[Any, dict[str, Any]]:
+def compile_program(prog: IRProg,
+                    slot_of: SlotOf) -> tuple[_Capsule, SerializedForC]:
     """-> (capsule, serialized dict).  Raises KeyError for an unplaceable name."""
     from microtaint.instrumentation.cell_c import taint_ir_c
     d = serialize_for_c(prog, slot_of)

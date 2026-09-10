@@ -18,11 +18,16 @@ expressions, so the first expression found for a truth table is a cheapest one.
 """
 from __future__ import annotations
 
-from typing import Any
+#: A synthesised one-bit expression.  Recursive, so a `type` statement:
+#:   ('const', 0|1) and ('leaf', i)  -- the two nullary forms
+#:   ('not', expr)                   -- negation
+#:   (op, lhs, rhs)                  -- and / or / xor
+type BoolExpr = (tuple[str, int]
+                 | tuple[str, BoolExpr]
+                 | tuple[str, BoolExpr, BoolExpr])
 
-#: A synthesised one-bit expression: ('const', v), ('leaf', i),
-#: ('not', expr) or (op, lhs, rhs).
-BoolExpr = tuple[Any, ...]
+#: A cone's leaves, identified by the caller's own node indices.
+Leaves = tuple[int, ...]
 
 # Truth tables are 8-bit: bit i holds f(v0, v1, v2) for i = v0 | v1<<1 | v2<<2.
 LEAF_TT = (0b10101010, 0b11001100, 0b11110000)
@@ -80,7 +85,7 @@ def expr_cost(tt: int) -> int:
     return hit[0] if hit else 99
 
 
-def remap(tt: int, old_leaves: tuple[Any, ...], new_leaves: tuple[Any, ...]) -> int:
+def remap(tt: int, old_leaves: Leaves, new_leaves: Leaves) -> int:
     """Re-index a truth table from one leaf ordering into a larger one."""
     pos = [new_leaves.index(x) for x in old_leaves]
     out = 0
@@ -94,8 +99,8 @@ def remap(tt: int, old_leaves: tuple[Any, ...], new_leaves: tuple[Any, ...]) -> 
     return out
 
 
-def combine(op: str, la: tuple[Any, ...], ta: int, lb: tuple[Any, ...], tb: int,
-            limit: int = 3) -> tuple[tuple[Any, ...], int] | None:
+def combine(op: str, la: Leaves, ta: int, lb: Leaves, tb: int,
+            limit: int = 3) -> tuple[Leaves, int] | None:
     """Merge two (leaves, truth table) pairs under a boolean op.
 
     Returns (leaves, tt) or None when the union needs more leaves than a
@@ -117,13 +122,13 @@ def combine(op: str, la: tuple[Any, ...], ta: int, lb: tuple[Any, ...], tb: int,
     return leaves, tt & _ALL
 
 
-def negate(leaves: tuple[Any, ...], tt: int) -> tuple[tuple[Any, ...], int]:
+def negate(leaves: Leaves, tt: int) -> tuple[Leaves, int]:
     return leaves, (_ALL ^ tt) & _ALL
 
 
-def select(lc: tuple[Any, ...], tc: int, la: tuple[Any, ...], ta: int,
-           lb: tuple[Any, ...], tb: int,
-           limit: int = 3) -> tuple[tuple[Any, ...], int] | None:
+def select(lc: Leaves, tc: int, la: Leaves, ta: int,
+           lb: Leaves, tb: int,
+           limit: int = 3) -> tuple[Leaves, int] | None:
     """c ? a : b over one-bit values, as (c & a) | (~c & b)."""
     leaves = tuple(sorted(set(lc) | set(la) | set(lb)))
     if len(leaves) > limit:

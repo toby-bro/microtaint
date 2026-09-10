@@ -25,9 +25,30 @@ parity tests compare against.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING
 
+from microtaint.taint_ir.ir import IRProg
 from microtaint.types import ArchLike
+
+if TYPE_CHECKING:                    # stub-only: an opaque PyCapsule handle
+    from microtaint.instrumentation.cell_c.taint_ir_c import (
+        _Capsule as CompiledProgram,
+    )
+
+#: What a program is cached under: the architecture, the instruction bytes,
+#: and the caller's slot layout, because a program bakes the slots in.
+ProgramKey = tuple[str, bytes, frozenset[tuple[str, int]]]
+
+#: One access as the C runtime wants it: (0 for a load / 1 for a store,
+#: size in bytes, whether the program READS the word the load brings in).
+#: Not the IR's `Access` record -- this is the flattened form.
+CAccess = tuple[int, int, int]
+
+#: What the cache holds for a program that compiled: the capsule, the
+#: emitted function's address (0 if not emitted), its memory accesses,
+#: whether it writes the PC, and the register offsets it reads live.
+Compiled = tuple['CompiledProgram', int, tuple[CAccess, ...],
+                 bool, frozenset[int]]
 
 #: Must match MT_IR_MEM_BASE / MT_IR_MAX_ACC in emulator/fastpath.h.
 MEM_SLOT_BASE = 512
@@ -35,10 +56,12 @@ MAX_ACCESSES = 8
 
 #: (arch, code, layout) -> (capsule, fn address, accesses, writes_pc, live),
 #: or None meaning this instruction has no program and never will.
-_CACHE: dict[Any, Any] = {}
+_CACHE: dict[ProgramKey, Compiled | None] = {}
 #: (arch, code, layout) -> (lifted program, slot count when it last failed).
 #: A program only waiting on a register slot keeps its LIFT.
-_PENDING: dict[Any, Any] = {}
+#: A LIFTED program still waiting on a register slot, with the slot count
+#: it last saw; a map that has not grown has nothing new to offer.
+_PENDING: dict[ProgramKey, tuple[IRProg, int]] = {}
                            # last failed), for one awaiting a slot that does not
                            # exist yet
 _ENABLED = None
@@ -70,7 +93,8 @@ def _layout_key(name_to_slot: dict[str, int]) -> frozenset[tuple[str, int]]:
     return frozenset(name_to_slot.items())
 
 
-def _lift(key: Any, arch: ArchLike, code: bytes, n_slots: int) -> Any:
+def _lift(key: ProgramKey, arch: ArchLike, code: bytes,
+          n_slots: int) -> IRProg | None:
     """This instruction's lowered program, lifting it only when it has to.
 
     A program that is only waiting on a register slot keeps its LIFT.  Rebuilding
@@ -97,7 +121,7 @@ def _lift(key: Any, arch: ArchLike, code: bytes, n_slots: int) -> Any:
 
 
 def program_for(arch: ArchLike, code: bytes, name_to_slot: dict[str, int], *,
-                force: bool = False) -> Any:
+                force: bool = False) -> Compiled | None:
     """-> (capsule, function address) for the engine's layout, or None.
 
     The capsule owns the emitted code, so the caller must keep it alive for as
