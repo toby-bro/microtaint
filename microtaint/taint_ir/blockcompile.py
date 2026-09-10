@@ -43,7 +43,7 @@ def block_slot_resolver(arch: Any, name_to_slot: dict[str, int]) -> SlotOf:
                'sttaint': lay['a_sttaint'], 'stval': lay['a_stval']}
     by_off: dict[int, int] = {}
     for name, slot in name_to_slot.items():
-        off = name_offset(arch, name)  # type: ignore[no-untyped-call]
+        off = name_offset(arch, name)
         if off is not None:
             by_off.setdefault(off, slot)
 
@@ -113,7 +113,7 @@ def _compile_regions(regions: list[Any], slot_of: SlotOf, lay: dict[str, int],
                      publish_all_values: bool,
                      ) -> tuple[list[RegionSpec], list[Any], set[int]] | None:
     """Emit each region, and collect what the block reads."""
-    from microtaint.instrumentation.cell_c import taint_ir_c  # type: ignore[attr-defined]  # noqa: PLC0415
+    from microtaint.instrumentation.cell_c import taint_ir_c  # noqa: PLC0415
     from microtaint.taint_ir.exec import compile_program  # noqa: PLC0415
 
     specs: list[RegionSpec] = []
@@ -144,7 +144,7 @@ def _compile_regions(regions: list[Any], slot_of: SlotOf, lay: dict[str, int],
         if len(accesses) > lay['max_acc']:
             return None
         try:
-            cap, _ser = compile_program(prog, slot_of)  # type: ignore[no-untyped-call]
+            cap, _ser = compile_program(prog, slot_of)
         except Exception:                # an unplaceable slot is a refusal
             return None
         if not taint_ir_c.jit(cap):
@@ -241,7 +241,7 @@ def _address_slice(prog: Any, slot_of: SlotOf, taint_ir_c: Any) -> Any:
     try:
         prog.outputs = addr_outputs
         prog.live = []
-        cap, _ser = compile_program(prog, slot_of)  # type: ignore[no-untyped-call]
+        cap, _ser = compile_program(prog, slot_of)
         if not taint_ir_c.jit(cap):
             return None
         fn = taint_ir_c.fn_addr(cap)

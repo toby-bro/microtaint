@@ -22,6 +22,8 @@ instruction in one basic block: see `_predicated_write`.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
+from typing import Any
+
 from microtaint.taint_ir.ir import (
     ADD,
     AND,
@@ -75,7 +77,7 @@ class Unsupported(Exception):
     there, instead of searching for the boundary by lowering repeatedly.
     """
 
-    def __init__(self, *args, cut_at: int | None = None) -> None:
+    def __init__(self, *args: Any, cut_at: int | None = None) -> None:
         super().__init__(*args)
         self.cut_at = cut_at
 
@@ -130,27 +132,29 @@ class SymFrame:
     the bits of AL's taint sit in the low byte of RAX's taint.
     """
 
-    def __init__(self, prog: IRProg, declared: dict, be: bool, kind: str):
+    def __init__(self, prog: IRProg, declared: dict[int, tuple[str, int]],
+                 be: bool, kind: str) -> None:
         self.p = prog
         self.be = be
         self.kind = kind                 # 'v' or 't', for input node naming
         self.declared = declared         # offset -> (name, size)
-        self.reg: dict = {}              # offset -> (node, size)
-        self.uniq: dict = {}
-        self.touched: set = set()        # register offsets this program wrote
+        self.reg: dict[int, tuple[int, int]] = {}   # offset -> (node, size)
+        self.uniq: dict[int, tuple[int, int]] = {}
+        #: register offsets this program wrote
+        self.touched: set[int] = set()
         #: Offsets a wider write has subsumed.  Their declared input node is
         #: stale from that point on -- writing RAX must be visible through AH --
         #: so a read has to resolve them through the parent instead.
-        self.killed: set = set()
+        self.killed: set[tuple[str, int]] = set()
 
-    def _space(self, sp):
+    def _space(self, sp: Any) -> dict[int, tuple[int, int]]:
         if sp == 'register':
             return self.reg
         if sp == 'unique':
             return self.uniq
         raise Unsupported(f'space {sp}')
 
-    def _cell(self, sp, off):
+    def _cell(self, sp: Any, off: int) -> tuple[int, int] | None:
         """The (node, size) at `off`, materialising a declared register's input
         node the first time it is read."""
         d = self._space(sp)
@@ -175,7 +179,7 @@ class SymFrame:
                 return c
         return None
 
-    def read(self, sp, off, size):
+    def read(self, sp: Any, off: int, size: int) -> int:
         p = self.p
         if size > 8:
             raise Unsupported('wide varnode')
@@ -217,7 +221,7 @@ class SymFrame:
                 k += 1
         return p.mask(base, size * 8)
 
-    def write(self, sp, off, size, node):
+    def write(self, sp: Any, off: int, size: int, node: int) -> None:
         p = self.p
         if size > 8:
             raise Unsupported('wide varnode')
@@ -283,7 +287,8 @@ class Builder:
     """Lower one instruction to IR.  `prog.outputs` ends up holding the taint of
     every architectural register, written or passed through."""
 
-    def __init__(self, arch, be: bool, pointer_policy: str = DEFAULT_POINTER_POLICY):
+    def __init__(self, arch: Any, be: bool,
+                 pointer_policy: str = DEFAULT_POINTER_POLICY) -> None:
         if pointer_policy not in POINTER_POLICIES:
             raise ValueError(pointer_policy)
         self.pointer_policy = pointer_policy
@@ -300,7 +305,7 @@ class Builder:
         # resolves reads and writes inside a wider slot, exactly as the runtime
         # frame does.
         candidates = []
-        self.offset_of: dict = {}
+        self.offset_of: dict[str, int] = {}
         for name, off in offsets.items():
             size = sizes.get(name, 8)
             self.offset_of.setdefault(name, off)
@@ -308,9 +313,9 @@ class Builder:
                 continue
             candidates.append((off, -size, name))
         candidates.sort()
-        declared: dict = {}
-        self.name_by_off: dict = {}
-        covered: set = set()
+        declared: dict[int, tuple[str, int]] = {}
+        self.name_by_off: dict[int, str] = {}
+        covered: set[int] = set()
         for off, negsz, name in candidates:
             size = -negsz
             if any(b in covered for b in range(off, off + size)):
@@ -332,7 +337,7 @@ class Builder:
         self.be = be
         self.arch = arch
 
-    def build(self, ops, end_addr: int, *, emit: str = 'taint',
+    def build(self, ops: list[Any], end_addr: int, *, emit: str = 'taint',
               block: bool = False) -> IRProg:
         """Lower `ops`.  `emit` selects which frame becomes the program's
         outputs: 'taint' (the shipped behaviour) or 'value'.
@@ -360,24 +365,24 @@ class Builder:
         #: can be attributed back to the lifter construct that caused it.
         #: Approximate by construction: a hash-consed node is credited to
         #: whichever op created it first.
-        self.spans: list = []
+        self.spans: list[tuple[str, int, int]] = []
         #: One entry per distinct (address, size) the instruction touches.
         #: SLEIGH re-emits the same LOAD once per flag that reads it, so
         #: de-duplicating here turns `add rax, [rbx+16]`'s three identical
         #: loads into one access.
-        self.accesses: list = []
-        self.access_map: dict = {}
+        self.accesses: list[dict[str, Any]] = []
+        self.access_map: dict[tuple[str, int, int], int] = {}
         # Predicate stack: (until_pc, saved_pred_value, saved_pred_taint).
         self.pred_v = p.const(1)
         self.pred_t = p.const(0)
-        pred_stack: list = []
+        pred_stack: list[tuple[int, int, int]] = []
 
         n = len(ops)
         # SLEIGH names an intra-instruction branch target by ADDRESS, not by
         # p-code index: the end of the instruction for a skip, an IMARK for a
         # jump back into the sequence.  Resolve both to indices up front.
         self.end_addr = end_addr
-        self.imark_pc = {}
+        self.imark_pc: dict[int, int] = {}
         for i, o in enumerate(ops):
             if o.opcode.name == 'IMARK' and o.inputs:
                 self.imark_pc.setdefault(o.inputs[0].offset, i)
@@ -496,7 +501,7 @@ class Builder:
                (('regv', v),) if self.emit == 'value' else \
                (('reg', t), ('regv', v))
         for tag, frame in want:
-            dirty_bytes = set()
+            dirty_bytes: set[int] = set()
             for off in frame.touched:
                 cell = frame.reg.get(off)
                 width = cell[1] if cell else 1
@@ -513,7 +518,7 @@ class Builder:
             self._check_no_load_after_store()
         return p.finish()
 
-    def _write_pc(self, tnt):
+    def _write_pc(self, tnt: int) -> None:
         """Set the program counter's taint.
 
         Only the TAINT frame is written.  The counter's value at this point is a
@@ -528,7 +533,7 @@ class Builder:
                      self.p.mask(tnt, self.pc_size * 8))
 
     # -- opaque operations ---------------------------------------------
-    def _emit_callother(self, ops, pc, op):
+    def _emit_callother(self, ops: list[Any], pc: int, op: Any) -> None:
         """An operation p-code does not model (crc32, aes, a fence).
 
         Its VALUE is unknowable here, so the only safe thing is to make sure
@@ -587,7 +592,7 @@ class Builder:
     #: opaque-result check follow it instead of refusing at the first reader.
     _MOVEMENT_OPS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'PIECE'}
 
-    def _invention_stays_opaque(self, ops, pc, out):
+    def _invention_stays_opaque(self, ops: list[Any], pc: int, out: Any) -> bool:
         """Can this opaque result reach the end of the instruction unread?
 
         The value written for a CALLOTHER is a fabrication -- p-code does not
@@ -613,7 +618,7 @@ class Builder:
                 return False
         poisoned = [(out.space.name, out.offset, out.offset + out.size)]
 
-        def reads_poison(vn):
+        def reads_poison(vn: Any) -> bool:
             return any(vn.space.name == sp and vn.offset < hi
                        and vn.offset + vn.size > lo
                        for sp, lo, hi in poisoned)
@@ -628,7 +633,7 @@ class Builder:
         return True
 
     # -- memory --------------------------------------------------------
-    def _access_for(self, kind, addr_node, size):
+    def _access_for(self, kind: str, addr_node: int, size: int) -> int:
         key = (kind, addr_node, size)
         k = self.access_map.get(key)
         if k is None:
@@ -639,7 +644,7 @@ class Builder:
             self.p.outputs.append((('addr', k), addr_node))
         return k
 
-    def _emit_load(self, op):
+    def _emit_load(self, op: Any) -> None:
         """A load's value and shadow taint enter as INPUTS at a slot the caller
         fills once the address has been computed.
 
@@ -662,7 +667,7 @@ class Builder:
                             p.splat(p.op(NEZ, addr_t))))
         self._predicated_write(op.output, val, tnt)
 
-    def _emit_store(self, op):
+    def _emit_store(self, op: Any) -> None:
         """A store contributes the taint to write and the address to write it
         at, both as outputs; committing them is the caller's job.
 
@@ -695,7 +700,7 @@ class Builder:
         if self.emit in ('value', 'both'):
             p.outputs.append((('stval', k), p.mask(val_v, size * 8)))
 
-    def _check_address_independence(self, p):
+    def _check_address_independence(self, p: IRProg) -> None:
         """An address may not depend on a value this instruction itself loaded.
 
         The caller runs the program once to obtain the addresses, fills the
@@ -724,7 +729,7 @@ class Builder:
                     if x >= 0:
                         stack.append(x)
 
-    def _check_no_load_after_store(self):
+    def _check_no_load_after_store(self) -> None:
         """A load may not follow a store in the same program.
 
         The two-pass protocol resolves EVERY load against guest memory and the
@@ -758,7 +763,7 @@ class Builder:
                 stored = True
 
     # -- helpers -------------------------------------------------------
-    def _branch_target(self, op, pc, n):
+    def _branch_target(self, op: Any, pc: int, n: int) -> int | None:
         vn = op.inputs[0]
         if vn.space.name == 'const':
             rel = vn.offset
@@ -789,7 +794,7 @@ class Builder:
             return tgt
         return None
 
-    def _read_in(self, vn):
+    def _read_in(self, vn: Any) -> tuple[int, int]:
         p = self.p
         sp = vn.space.name
         if sp == 'const':
@@ -799,7 +804,7 @@ class Builder:
                     self.t.read(sp, vn.offset, vn.size))
         raise Unsupported(f'input space {sp}')
 
-    def _predicated_write(self, vn, val, tnt):
+    def _predicated_write(self, vn: Any, val: int, tnt: int) -> None:
         """Commit one output under the current predicate.
 
         With a KNOWN predicate this folds to a plain write (the constant SEL
@@ -839,7 +844,7 @@ class Builder:
     _LANE_OPS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'INT_NEGATE',
                  'INT_AND', 'INT_OR', 'INT_XOR'}
 
-    def _read_lane(self, vn, lane, lsz):
+    def _read_lane(self, vn: Any, lane: int, lsz: int) -> tuple[int, int]:
         """One 8-byte lane of a varnode, as (value, taint)."""
         p = self.p
         sp = vn.space.name
@@ -850,7 +855,7 @@ class Builder:
                     self.t.read(sp, vn.offset + lane, lsz))
         raise Unsupported(f'wide input space {sp}')
 
-    def _emit_wide_special(self, name, op):
+    def _emit_wide_special(self, name: str, op: Any) -> bool:
         """Wide shapes that are not bit-parallel but are still exact.
 
         These are what a widening multiply lifts to.  `imul r64, r64` builds a
@@ -917,7 +922,7 @@ class Builder:
 
         return False
 
-    def _write_lane(self, vn, lane, lsz, val, tnt):
+    def _write_lane(self, vn: Any, lane: int, lsz: int, val: int, tnt: int) -> None:
         p = self.p
         sp = vn.space.name
         if sp not in ('register', 'unique'):
@@ -927,7 +932,7 @@ class Builder:
         self.v.write(sp, vn.offset + lane, lsz, val)
         self.t.write(sp, vn.offset + lane, lsz, tnt)
 
-    def _emit_wide(self, name, op):
+    def _emit_wide(self, name: str, op: Any) -> None:
         """Lane-by-lane emission for a bit-parallel op on a wide varnode.
 
         Vector movement and vector logic are most of what a SIMD lifter emits
@@ -956,8 +961,15 @@ class Builder:
         for lane in range(0, osz, 8):
             lsz = min(8, osz - lane)
             if name in ('INT_ZEXT', 'INT_SEXT') and lane >= isz:
-                v, tnt = ((p.const(0), p.const(0)) if name == 'INT_ZEXT'
-                          else (fill_v, fill_t))
+                if name == 'INT_ZEXT':
+                    v, tnt = p.const(0), p.const(0)
+                else:
+                    # INT_SEXT, and only that branch above sets the fill, so
+                    # reaching here without one would be a lowering bug rather
+                    # than an input the caller can produce.
+                    assert fill_v is not None
+                    assert fill_t is not None
+                    v, tnt = fill_v, fill_t
             else:
                 av, at = self._read_lane(op.inputs[0], lane, lsz)
                 if name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
@@ -983,7 +995,7 @@ class Builder:
                              p.mask(v, lsz * 8), p.mask(tnt, lsz * 8))
 
     # -- the per-opcode lowering ---------------------------------------
-    def _emit_op(self, name, op):
+    def _emit_op(self, name: str, op: Any) -> None:
         p = self.p
         if any(s > 8 for s in
                [x.size for x in op.inputs] + [op.output.size]):
@@ -1005,14 +1017,16 @@ class Builder:
         val, tnt = self._rule(name, op, av, at, bv, bt, osz, isz, obits, ibits, om)
         self._predicated_write(op.output, val, tnt)
 
-    def _sext(self, node, bits):
+    def _sext(self, node: int, bits: int) -> int:
         p = self.p
         if bits >= 64:
             return node
         sh = p.const(64 - bits)
         return p.op(SAR, p.op(SHL, node, sh), sh)
 
-    def _rule(self, name, op, av, at, bv, bt, osz, isz, obits, ibits, om):
+    def _rule(self, name: str, op: Any, av: int, at: int, bv: int, bt: int,
+              osz: int, isz: int, obits: int, ibits: int,
+              om: int) -> tuple[int, int]:
         p = self.p
         M = p.const(om)
 
@@ -1119,7 +1133,8 @@ class Builder:
 
         raise Unsupported(name)
 
-    def _corners(self, name, av, at, bv, bt, om):
+    def _corners(self, name: str, av: int, at: int, bv: int, bt: int,
+                 om: int) -> tuple[int, int]:
         """The two extremal evaluations, masked to the operand width.
 
         Monotonicity is what makes them sufficient: a ripple carry is monotone
@@ -1139,13 +1154,14 @@ class Builder:
         return (p.op(AND, p.op(SUB, a_lo, b_hi), M),
                 p.op(AND, p.op(SUB, a_hi, b_lo), M))
 
-    def _shift(self, name, av, at, bv, bt, obits, ibits, om):
+    def _shift(self, name: str, av: int, at: int, bv: int, bt: int,
+               obits: int, ibits: int, om: int) -> tuple[int, int]:
         p = self.p
         M = p.const(om)
         amt = bv
         wide = p.op(ULT, amt, p.const(64))
 
-        def do(node, arith):
+        def do(node: int, arith: bool) -> int:
             if arith:
                 sh = self._sext(node, ibits)
                 r = p.op(SAR, sh, amt)
@@ -1169,7 +1185,8 @@ class Builder:
         whole = p.op(AND, M, p.splat(p.op(NEZ, p.op(OR, at, av))))
         return v, p.op(SEL, whole, t_routed, p.op(NEZ, bt))
 
-    def _compare(self, name, av, at, bv, bt, ibits):
+    def _compare(self, name: str, av: int, at: int, bv: int, bt: int,
+                 ibits: int) -> tuple[int, int]:
         """`a < b` is monotone -- decreasing in a, increasing in b -- so it can
         be true iff min(a) < max(b) and false iff max(a) >= min(b), and it is
         tainted iff both.  Signed order becomes unsigned by flipping the sign
@@ -1199,7 +1216,8 @@ class Builder:
             can_false = p.op(XOR, p.op(ULT, a_max, b_min), p.const(1))
         return v, p.op(AND, can_true, can_false)
 
-    def _overflow(self, name, av, at, bv, bt, ibits):
+    def _overflow(self, name: str, av: int, at: int, bv: int, bt: int,
+                  ibits: int) -> tuple[int, int]:
         """Signed overflow, exactly, through the six-bit table.
 
         The three inputs are the two operand sign bits and the carry into the
@@ -1265,13 +1283,13 @@ class Builder:
         t = p.op(AND, p.op(SHR, p.const(OF_TAINT_TABLE), idx), one)
         return of, t
 
-    def _carry_in_msb(self, s, a, b, sh):
+    def _carry_in_msb(self, s: int, a: int, b: int, sh: int) -> int:
         """sum_i = a_i ^ b_i ^ carry_i, so the carry into any position is
         recoverable from the sum without a second ripple."""
         p = self.p
         return p.mask(p.op(SHR, p.op(XOR, p.op(XOR, s, a), b), sh), 1)
 
-    def _divide(self, name, av, bv, ibits, obits):
+    def _divide(self, name: str, av: int, bv: int, ibits: int, obits: int) -> int:
         p = self.p
         if name in ('INT_DIV', 'INT_REM'):
             a = p.mask(av, ibits)
@@ -1284,10 +1302,10 @@ class Builder:
         return p.mask(r, obits)
 
 
-_BUILDERS: dict = {}
+_BUILDERS: dict[tuple[str, str], Builder] = {}
 
 
-def builder_for(arch, pointer_policy: str = DEFAULT_POINTER_POLICY) -> Builder:
+def builder_for(arch: Any, pointer_policy: str = DEFAULT_POINTER_POLICY) -> Builder:
     """The shared Builder for `arch` under `pointer_policy`, made once.
 
     A Builder costs a register-map build, so callers share one; several of them
@@ -1303,8 +1321,9 @@ def builder_for(arch, pointer_policy: str = DEFAULT_POINTER_POLICY) -> Builder:
     return b
 
 
-def build_ir(arch, code: bytes, *, pointer_policy: str = DEFAULT_POINTER_POLICY,
-             emit: str = 'taint'):
+def build_ir(arch: Any, code: bytes, *,
+             pointer_policy: str = DEFAULT_POINTER_POLICY,
+             emit: str = 'taint') -> IRProg:
     """Lower one instruction to a taint IR program.  Raises Unsupported."""
     from microtaint.sleigh.lifter import get_context
     key = arch.value if hasattr(arch, 'value') else str(arch)

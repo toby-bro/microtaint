@@ -24,14 +24,20 @@ parity tests compare against.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
+from typing import Any
+
 import os
 
 #: Must match MT_IR_MEM_BASE / MT_IR_MAX_ACC in emulator/fastpath.h.
 MEM_SLOT_BASE = 512
 MAX_ACCESSES = 8
 
-_CACHE: dict = {}          # (arch, code) -> program | None   (None = permanent no)
-_PENDING: dict = {}        # (arch, code) -> (lifted program, slot count when it
+#: (arch, code, layout) -> (capsule, fn address, accesses, writes_pc, live),
+#: or None meaning this instruction has no program and never will.
+_CACHE: dict[Any, Any] = {}
+#: (arch, code, layout) -> (lifted program, slot count when it last failed).
+#: A program only waiting on a register slot keeps its LIFT.
+_PENDING: dict[Any, Any] = {}
                            # last failed), for one awaiting a slot that does not
                            # exist yet
 _ENABLED = None
@@ -44,11 +50,11 @@ def enabled() -> bool:
     return _ENABLED
 
 
-def _arch_key(arch):
+def _arch_key(arch: Any) -> str:
     return arch.value if hasattr(arch, 'value') else str(arch)
 
 
-def _layout_key(name_to_slot: dict):
+def _layout_key(name_to_slot: dict[str, int]) -> frozenset[tuple[str, int]]:
     """The slot layout a program was compiled against.
 
     A program's slot numbers are compiled INTO its machine code, so two callers
@@ -63,7 +69,7 @@ def _layout_key(name_to_slot: dict):
     return frozenset(name_to_slot.items())
 
 
-def _lift(key, arch, code: bytes, n_slots: int):
+def _lift(key: Any, arch: Any, code: bytes, n_slots: int) -> Any:
     """This instruction's lowered program, lifting it only when it has to.
 
     A program that is only waiting on a register slot keeps its LIFT.  Rebuilding
@@ -89,7 +95,8 @@ def _lift(key, arch, code: bytes, n_slots: int):
         return None
 
 
-def program_for(arch, code: bytes, name_to_slot: dict, *, force: bool = False):
+def program_for(arch: Any, code: bytes, name_to_slot: dict[str, int], *,
+                force: bool = False) -> Any:
     """-> (capsule, function address) for the engine's layout, or None.
 
     The capsule owns the emitted code, so the caller must keep it alive for as
@@ -136,10 +143,10 @@ def program_for(arch, code: bytes, name_to_slot: dict, *, force: bool = False):
     touched |= {k[1] for k, _n in prog.outputs if isinstance(k, tuple)}
     # Two caller names at one offset would make the write ambiguous: the IR
     # names registers by offset, so only one of them could receive it.
-    seen: dict = {}
+    seen: dict[int, int] = {}
     for nm in name_to_slot:
         off = name_offset(arch, nm)
-        if off in touched:
+        if off is not None and off in touched:
             if off in seen and seen[off] != name_to_slot[nm]:
                 _CACHE[key] = None
                 _PENDING.pop(key, None)
@@ -202,7 +209,7 @@ def program_for(arch, code: bytes, name_to_slot: dict, *, force: bool = False):
     return _CACHE[key]
 
 
-def stats() -> dict:
+def stats() -> dict[str, int]:
     compiled = sum(1 for v in _CACHE.values() if v is not None)
     return {'compiled': compiled,
             'declined': len(_CACHE) - compiled,

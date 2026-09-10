@@ -11,6 +11,15 @@ interpreter here doubles as the reference a compiled version must match.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from microtaint.taint_ir.ir import IRProg
+
+#: Places an IR key in the caller's slot arrays; None means unplaceable.
+SlotOf = Callable[[Any], 'int | None']
+
 from microtaint.taint_ir import ir as _ir
 
 #: Must match the enum in cell_c/taint_ir_c.c.
@@ -25,13 +34,13 @@ _OP_ID = {
 }
 
 
-def serialize_for_c(prog, slot_of):
+def serialize_for_c(prog: IRProg, slot_of: SlotOf) -> dict[str, Any]:
     d = prog.serialize(slot_of)
     d['op_ids'] = [_OP_ID[o] for o in d['ops']]
     return d
 
 
-def compile_program(prog, slot_of):
+def compile_program(prog: IRProg, slot_of: SlotOf) -> tuple[Any, dict[str, Any]]:
     """-> (capsule, serialized dict).  Raises KeyError for an unplaceable name."""
     from microtaint.instrumentation.cell_c import taint_ir_c
     d = serialize_for_c(prog, slot_of)

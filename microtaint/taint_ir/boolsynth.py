@@ -18,25 +18,32 @@ expressions, so the first expression found for a truth table is a cheapest one.
 """
 from __future__ import annotations
 
+from typing import Any
+
+#: A synthesised one-bit expression: ('const', v), ('leaf', i),
+#: ('not', expr) or (op, lhs, rhs).
+BoolExpr = tuple[Any, ...]
+
 # Truth tables are 8-bit: bit i holds f(v0, v1, v2) for i = v0 | v1<<1 | v2<<2.
 LEAF_TT = (0b10101010, 0b11001100, 0b11110000)
 _ALL = 0xFF
 
 
-def _search(max_cost: int = 5) -> dict:
+def _search(max_cost: int = 5) -> dict[int, tuple[int, BoolExpr]]:
     """truth table -> (cost, expression tree), cheapest first.
 
     Expressions are ('leaf', i), ('const', 0|1), or (op, lhs, rhs) with op in
     and/or/xor, plus ('not', e).  Cost counts emitted machine operations.
     """
-    best: dict = {0: (0, ('const', 0)), _ALL: (0, ('const', 1))}
+    best: dict[int, tuple[int, BoolExpr]] = {0: (0, ('const', 0)),
+                                             _ALL: (0, ('const', 1))}
     for i, tt in enumerate(LEAF_TT):
         best[tt] = (0, ('leaf', i))
     frontier = dict(best)
     for cost in range(1, max_cost + 1):
-        new: dict = {}
+        new: dict[int, tuple[int, BoolExpr]] = {}
 
-        def offer(tt, expr):
+        def offer(tt: int, expr: BoolExpr) -> None:
             tt &= _ALL
             if tt in best or tt in new:
                 return
@@ -62,7 +69,7 @@ def _search(max_cost: int = 5) -> dict:
 BEST = _search()
 
 
-def expr_for(tt: int):
+def expr_for(tt: int) -> BoolExpr | None:
     """Cheapest known expression tree for a truth table, or None."""
     hit = BEST.get(tt & _ALL)
     return hit[1] if hit else None
@@ -73,7 +80,7 @@ def expr_cost(tt: int) -> int:
     return hit[0] if hit else 99
 
 
-def remap(tt: int, old_leaves: tuple, new_leaves: tuple) -> int:
+def remap(tt: int, old_leaves: tuple[Any, ...], new_leaves: tuple[Any, ...]) -> int:
     """Re-index a truth table from one leaf ordering into a larger one."""
     pos = [new_leaves.index(x) for x in old_leaves]
     out = 0
@@ -87,7 +94,8 @@ def remap(tt: int, old_leaves: tuple, new_leaves: tuple) -> int:
     return out
 
 
-def combine(op: str, la: tuple, ta: int, lb: tuple, tb: int, limit: int = 3):
+def combine(op: str, la: tuple[Any, ...], ta: int, lb: tuple[Any, ...], tb: int,
+            limit: int = 3) -> tuple[tuple[Any, ...], int] | None:
     """Merge two (leaves, truth table) pairs under a boolean op.
 
     Returns (leaves, tt) or None when the union needs more leaves than a
@@ -109,12 +117,13 @@ def combine(op: str, la: tuple, ta: int, lb: tuple, tb: int, limit: int = 3):
     return leaves, tt & _ALL
 
 
-def negate(leaves: tuple, tt: int):
+def negate(leaves: tuple[Any, ...], tt: int) -> tuple[tuple[Any, ...], int]:
     return leaves, (_ALL ^ tt) & _ALL
 
 
-def select(lc: tuple, tc: int, la: tuple, ta: int, lb: tuple, tb: int,
-           limit: int = 3):
+def select(lc: tuple[Any, ...], tc: int, la: tuple[Any, ...], ta: int,
+           lb: tuple[Any, ...], tb: int,
+           limit: int = 3) -> tuple[tuple[Any, ...], int] | None:
     """c ? a : b over one-bit values, as (c & a) | (~c & b)."""
     leaves = tuple(sorted(set(lc) | set(la) | set(lb)))
     if len(leaves) > limit:

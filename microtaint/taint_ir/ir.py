@@ -34,6 +34,9 @@ compilable:
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from typing import Any
+
 from microtaint.taint_ir import boolsynth as bs
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
@@ -170,31 +173,35 @@ class IRProg:
     __slots__ = ('nodes', '_hc', 'inputs', 'outputs', 'live', 'kbits',
                  'spans', 'uses', 'no_bool', 'accesses')
 
-    def __init__(self):
-        self.nodes: list[tuple] = []        # (op, a, b, c, imm)
-        self._hc: dict = {}
-        self.inputs: dict = {}              # (kind, key) -> node
-        self.outputs: list = []             # (key, node) for taint results
-        self.live: list = []                # populated by finish()
+    def __init__(self) -> None:
+        #: (op, a, b, c, imm) per node; a/b/c are node indices or -1.
+        self.nodes: list[tuple[str, int, int, int, Any]] = []
+        self._hc: dict[tuple[str, int, int, int, Any], int] = {}
+        #: (kind, key) -> node, where kind is 'v' (value) or 't' (taint).
+        self.inputs: dict[tuple[str, Any], int] = {}
+        #: (key, node) for every result the program publishes.
+        self.outputs: list[tuple[Any, int]] = []
+        self.live: list[bool] = []          # populated by finish()
         #: Upper bound on a node's significant bits.  Tracking it lets a
         #: redundant truncation disappear -- a lifter emits one after almost
         #: every op, and on a value that is already narrow they are pure cost.
-        self.kbits: dict = {}
-        self.spans: list = []
+        self.kbits: dict[int, int] = {}
+        self.spans: list[tuple[str, int, int]] = []
         #: How many consumers have been wired to each node so far.  Used to
         #: decide whether folding a one-bit cone actually retires its
         #: operands or merely duplicates work they still owe elsewhere.
-        self.uses: dict = {}
+        self.uses: dict[int, int] = {}
         #: Set on the program `finalize` produces: one-bit cones have already
         #: been expanded into a cheapest expression there, and re-forming them
         #: would put BOOLSYM back into a program whose whole purpose is to
         #: contain only machine-shaped opcodes.
         self.no_bool = False
         #: Memory accesses this instruction makes; see frompcode.
-        self.accesses: list = []
+        self.accesses: list[dict[str, Any]] = []
 
     # -- construction --------------------------------------------------
-    def _emit(self, op, a=-1, b=-1, c=-1, imm=0) -> int:
+    def _emit(self, op: str, a: int = -1, b: int = -1, c: int = -1,
+              imm: Any = 0) -> int:
         for x in (a, b, c):
             if x >= 0:
                 self.uses[x] = self.uses.get(x, 0) + 1
@@ -251,9 +258,10 @@ class IRProg:
         return self.nodes[n][0] == CONST
 
     def const_val(self, n: int) -> int:
-        return self.nodes[n][4]
+        imm: int = self.nodes[n][4]
+        return imm
 
-    def input_value(self, key, bits: int = 64) -> int:
+    def input_value(self, key: Any, bits: int = 64) -> int:
         n = self.inputs.get(('v', key))
         if n is None:
             n = self._emit(INV, imm=len(self.inputs))
@@ -261,7 +269,7 @@ class IRProg:
             self.kbits[n] = bits
         return n
 
-    def input_taint(self, key, bits: int = 64) -> int:
+    def input_taint(self, key: Any, bits: int = 64) -> int:
         n = self.inputs.get(('t', key))
         if n is None:
             n = self._emit(INT, imm=len(self.inputs))
@@ -311,7 +319,8 @@ class IRProg:
             return n
         raise ValueError(f'unknown IR op {op}')
 
-    def _simplify_binary(self, op, a, b, ca, cb):
+    def _simplify_binary(self, op: str, a: int, b: int,
+                         ca: int | None, cb: int | None) -> int | None:
         """Identities worth having: masks and shifts by lift-time constants are
         everywhere in flag macros, and folding them is most of the win."""
         nodes = self.nodes
@@ -376,14 +385,14 @@ class IRProg:
         elif op == ULT:
             if a == b or bv == 0:
                 return self.const(0)
-            if cb and self.known_bits(a) < bv.bit_length():
+            if cb is not None and bv is not None and self.known_bits(a) < bv.bit_length():
                 return self.const(1)          # a is provably below the bound
         elif op == SLT and a == b:
             return self.const(0)
         return None
 
     # -- the one-bit boolean layer -------------------------------------
-    def _sym(self, n: int):
+    def _sym(self, n: int) -> Any:
         """(leaves, truth table) for a one-bit node, or None."""
         op, a, b, c, imm = self.nodes[n]
         if op == BOOLSYM:
@@ -399,7 +408,7 @@ class IRProg:
             return (n,), bs.LEAF_TT[0]
         return None
 
-    def _mk_bool(self, leaves, tt):
+    def _mk_bool(self, leaves: Sequence[int], tt: int) -> int:
         """Materialise a one-bit cone as (leaves, truth table).
 
         Leaves the function does not actually depend on are dropped first: a
@@ -428,7 +437,7 @@ class IRProg:
             return leaves[0]
         return self._emit_bool(leaves, tt)
 
-    def _emit_bool(self, leaves, tt):
+    def _emit_bool(self, leaves: Sequence[int], tt: int) -> int:
         a = leaves[0] if len(leaves) > 0 else -1
         b = leaves[1] if len(leaves) > 1 else -1
         c = leaves[2] if len(leaves) > 2 else -1
@@ -436,7 +445,7 @@ class IRProg:
         self.kbits[n] = 1
         return n
 
-    def _try_bool(self, op, a, b):
+    def _try_bool(self, op: str, a: int, b: int) -> int | None:
         if self.no_bool:
             return None
         if self.known_bits(a) > 1 or self.known_bits(b) > 1:
@@ -449,7 +458,7 @@ class IRProg:
             return None
         return self._mk_bool(r[0], r[1])
 
-    def _try_bool_sel(self, a, b, c):
+    def _try_bool_sel(self, a: int, b: int, c: int) -> int | None:
         if self.no_bool:
             return None
         if max(self.known_bits(a), self.known_bits(b), self.known_bits(c)) > 1:
@@ -462,7 +471,7 @@ class IRProg:
             return None
         return self._mk_bool(r[0], r[1])
 
-    def _bool_pays(self, tt: int, operands) -> bool:
+    def _bool_pays(self, tt: int, operands: Sequence[int]) -> bool:
         """Is folding this cone cheaper than emitting the operation directly?
 
         Re-synthesising from leaves is only a win when it also retires the
@@ -492,7 +501,7 @@ class IRProg:
         return self.op(NEG, flag)
 
     # -- finishing -----------------------------------------------------
-    def finish(self):
+    def finish(self) -> IRProg:
         """Mark the nodes some output actually depends on.
 
         Everything else is dead: a value computed only because the p-code
@@ -529,11 +538,11 @@ class IRProg:
                       else _COST.get(op, 1))
         return total
 
-    def cost_by_opcode(self) -> dict:
+    def cost_by_opcode(self) -> dict[str, int]:
         """Live machine-op cost credited to the p-code opcode that emitted it."""
         if not self.live:
             self.finish()
-        out: dict = {}
+        out: dict[str, int] = {}
         for name, lo, hi in self.spans:
             c = 0
             for n in range(lo, hi):
@@ -551,7 +560,7 @@ class IRProg:
                    if self.live[n] and op not in (CONST, INV, INT))
 
     # -- finalisation --------------------------------------------------
-    def finalize(self):
+    def finalize(self) -> IRProg:
         """A compact, contiguous program with every one-bit cone expanded.
 
         Two things happen here that the backends should not have to know about:
@@ -565,12 +574,13 @@ class IRProg:
             self.finish()
         out = IRProg()
         out.no_bool = True
-        m: dict = {}
+        m: dict[int, int] = {}
 
-        def expand(tree, leaves):
+        def expand(tree: Any, leaves: Sequence[int]) -> int:
             kind = tree[0]
             if kind == 'leaf':
-                return m[leaves[tree[1]]]
+                node: int = m[leaves[tree[1]]]
+                return node
             if kind == 'const':
                 return out.const(tree[1])
             if kind == 'not':
@@ -602,7 +612,7 @@ class IRProg:
         out.accesses = self.accesses
         return out.finish()
 
-    def serialize(self, slot_of):
+    def serialize(self, slot_of: Callable[[Any], int | None]) -> dict[str, Any]:
         """Flat arrays for a C evaluator or a code generator.
 
         `slot_of(name) -> int` places each register in the caller's value/taint
@@ -633,7 +643,8 @@ class IRProg:
                 'n_nodes': len(prog.nodes), 'cost': prog.cost()}
 
     # -- reference evaluation ------------------------------------------
-    def run(self, values: dict, taints: dict) -> dict:
+    def run(self, values: dict[Any, int],
+            taints: dict[Any, int]) -> dict[Any, int]:
         """Reference interpreter: evaluate the live program for one input state.
 
         `values`/`taints` are keyed the way the builder keyed its inputs.  Slow

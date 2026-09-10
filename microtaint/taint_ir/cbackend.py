@@ -21,6 +21,12 @@ are interchangeable and can be diff-tested against each other.
 # ruff: noqa: PLC0415, S603, S607
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from microtaint.taint_ir.exec import SlotOf
+    from microtaint.taint_ir.ir import IRProg
+
 import ctypes
 import os
 import subprocess
@@ -34,14 +40,14 @@ _BIN = {
 }
 
 
-def _slot(slot_of, key):
+def _slot(slot_of: SlotOf, key: Any) -> int:
     s = slot_of(key)
     if s is None:
         raise KeyError(f'no state slot for register {key!r}')
     return s
 
 
-def emit_c(prog, slot_of, name: str) -> str:
+def emit_c(prog: IRProg, slot_of: SlotOf, name: str) -> str:
     """C source for one finalized program."""
     p = prog.finalize() if any(op == _ir.BOOLSYM for op, *_r in prog.nodes) else prog
     inv = {n: k for (kind, k), n in p.inputs.items() if kind == 'v'}
@@ -109,7 +115,7 @@ def emit_c(prog, slot_of, name: str) -> str:
 PROLOGUE = '#include <stdint.h>\n#include <time.h>\n'
 
 
-def emit_driver(names) -> str:
+def emit_driver(names: list[str]) -> str:
     """A C-side timing loop over the generated functions.
 
     Timing them from Python would measure the FFI, which costs several times
@@ -139,7 +145,8 @@ void mt_call(int idx, const uint64_t *v, const uint64_t *t, uint64_t *o) {{
 """
 
 
-def compile_batch(sources, *, opt='-O3', cc=None, workdir=None):
+def compile_batch(sources: list[str], *, opt: str = '-O3', cc: str | None = None,
+                  workdir: str | None = None) -> tuple[Any, float]:
     """Compile many generated functions into one shared object and dlopen it.
 
     Returns (ctypes.CDLL, compile_seconds).  Batching matters: the compiler's
@@ -167,7 +174,7 @@ _FN = ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint64),
                        ctypes.POINTER(ctypes.c_uint64))
 
 
-def bind_driver(lib):
+def bind_driver(lib: Any) -> tuple[Any, Any]:
     """(bench, call) bound to the compiled batch."""
     lib.mt_bench.restype = ctypes.c_double
     lib.mt_bench.argtypes = [ctypes.c_int] + [ctypes.POINTER(ctypes.c_uint64)] * 3 \
@@ -177,7 +184,7 @@ def bind_driver(lib):
     return lib.mt_bench, lib.mt_call
 
 
-def bind(lib, name):
+def bind(lib: Any, name: str) -> Any:
     fn = getattr(lib, name)
     fn.restype = None
     fn.argtypes = [ctypes.POINTER(ctypes.c_uint64)] * 3
