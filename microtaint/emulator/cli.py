@@ -25,6 +25,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import atexit
 import logging
 import os
 import platform
@@ -36,6 +37,7 @@ from qiling.const import QL_VERBOSE
 from microtaint.emulator.heap import HeapTracker
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.wrapper import MicrotaintWrapper
+from microtaint.sleigh.lifter import clear_contexts
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -249,6 +251,19 @@ def _configure_logging(quiet: bool, _json_mode: bool) -> None:
 
 
 def main() -> None:  # noqa: C901
+    # This process is ours, so emptying the SLEIGH context cache before it
+    # exits is our call to make.  Left alone, nanobind reports the cache as
+    # leaked instances at shutdown -- 1441 for x86-64 alone -- which is
+    # indistinguishable from a real refcount bug and would bury one.
+    #
+    # Registered here rather than at import, and not in the library at all: the
+    # destructors cost ~16 ms for one architecture and ~57 ms for all seven,
+    # which a process about to exit would otherwise get for free from the
+    # kernel.  Anything that embeds the engine owns its own process and calls
+    # `clear_contexts` if it wants to; `main` exits through `sys.exit` from
+    # several places, so `atexit` covers them all where a call at the end
+    # would not.
+    atexit.register(clear_contexts)
     our_argv, target_argv = _split_argv(sys.argv[1:])
 
     parser = _build_parser()

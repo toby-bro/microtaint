@@ -3,6 +3,7 @@ instances to use the pure-C evaluator. This validates the C module as a
 drop-in replacement for the Cython evaluator.
 """
 
+import atexit
 import os
 import sys
 
@@ -11,6 +12,7 @@ import pytest
 from microtaint.instrumentation.cell import PCodeCellEvaluator
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
 from microtaint.simulator import CellSimulator
+from microtaint.sleigh.lifter import clear_contexts
 
 # Make cell_c importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'microtaint', 'instrumentation', 'cell_c'))
@@ -29,6 +31,19 @@ if os.environ.get('MICROTAINT_USE_C') == '1':
 
     # Deliberate: this conftest exists to force the C evaluator for a run.
     sim_mod.CellSimulator.__init__ = _patched_init  # type: ignore[method-assign]
+
+
+# A SLEIGH context holds a lot of nanobind-managed state -- 1441 instances for
+# x86-64 alone -- and nanobind reports it at shutdown as leaked.  It is a cache
+# that was never emptied rather than a leak, but the message is
+# indistinguishable from a real refcount bug and buries one, so the test run
+# empties it.  Three block-mode end-to-end files are what trip it today.
+#
+# Registered HERE and not in the library: the destructors cost ~16 ms for one
+# architecture and ~57 ms for all seven, which a process about to exit would
+# otherwise get for free from the kernel.  Paying that once per test session is
+# nothing; paying it once per execution of a fuzzing target is not.
+atexit.register(clear_contexts)
 
 
 # ---------------------------------------------------------------------------
