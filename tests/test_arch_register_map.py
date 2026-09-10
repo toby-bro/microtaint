@@ -49,9 +49,9 @@ def test_flags_unpack_from_their_parent(arch: Architecture) -> None:
     assert all(values[n] == 0 for n in regs.flag_bits)
 
 
-def _bank_offsets() -> dict[str, collections.Counter]:
+def _bank_offsets() -> dict[str, collections.Counter[int]]:
     """Every register offset the instruction bank's forms actually read."""
-    per: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    per: dict[str, collections.Counter[int]] = collections.defaultdict(collections.Counter)
     for rec in all_instructions():
         if rec.isa.endswith('_SIMD'):
             continue                      # vector lanes take the vector path

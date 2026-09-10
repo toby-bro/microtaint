@@ -93,7 +93,7 @@ def test_block_equivalence_big_endian(isa: str) -> None:
     uc.mem_map(_CODE, 0x2000)
     uc.mem_map(_DATA, 0x10000)          # so a load or store has somewhere to go
 
-    def step(code: bytes, values: dict) -> dict:
+    def step(code: bytes, values: dict[str, int]) -> dict[str, int]:
         for name, const in desc.gp.items():
             uc.reg_write(const, values.get(name, 0) & desc.mask)
         uc.mem_write(_CODE, code)

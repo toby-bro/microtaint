@@ -155,8 +155,8 @@ class UcDesc:
     uc_arch: int
     uc_mode: int
     code_addr: int
-    gp: dict            # reg-name -> unicorn reg const (GP regs to track)
-    flags: dict = field(default_factory=dict)  # flag-name -> bit index within eflags_reg
+    gp: dict[str, int]  # reg-name -> unicorn reg const (GP regs to track)
+    flags: dict[str, int] = field(default_factory=dict)  # flag-name -> bit index within eflags_reg
     eflags_reg: int | None = None              # unicorn const for the flags register
     mask: int = MASK64
 
@@ -269,7 +269,8 @@ UC_DESCS = {'AMD64': _uc_desc_amd64, 'ARM64': _uc_desc_arm64,
             'RISCV64': _uc_desc_riscv64}
 
 
-def _uc_run(desc: UcDesc, code: bytes, vals: dict, *, seed_flags: bool = False) -> dict:
+def _uc_run(desc: UcDesc, code: bytes, vals: dict[str, int], *,
+            seed_flags: bool = False) -> dict[str, int]:
     import unicorn
     uc = unicorn.Uc(desc.uc_arch, desc.uc_mode)
     uc.mem_map(desc.code_addr, 0x2000)
@@ -293,7 +294,7 @@ def _uc_run(desc: UcDesc, code: bytes, vals: dict, *, seed_flags: bool = False) 
     return out
 
 
-def models_disagree(desc: UcDesc, arch, code: bytes, states) -> set:
+def models_disagree(desc: UcDesc, arch, code: bytes, states) -> set[str]:
     """Outputs where SLEIGH and Unicorn model this instruction differently.
 
     Where an ISA leaves a flag ARCHITECTURALLY UNDEFINED -- x86 OF after a
@@ -342,7 +343,7 @@ def models_disagree(desc: UcDesc, arch, code: bytes, states) -> set:
     # comes back zero, and every flag-setting AArch64 instruction looks like a
     # disagreement -- which is exactly what it looked like.
     engine_name = _engine_flag_names(arch, desc)
-    disagree: set = set()
+    disagree: set[str] = set()
     for vals in states:
         try:
             truth = _uc_run(desc, code, vals, seed_flags=True)
@@ -362,7 +363,7 @@ def models_disagree(desc: UcDesc, arch, code: bytes, states) -> set:
     return (disagree & written), (disagree - written)
 
 
-def _engine_flag_names(arch, desc: UcDesc) -> dict:
+def _engine_flag_names(arch, desc: UcDesc) -> dict[str, str]:
     """Descriptor flag name -> the name this architecture's geometry uses."""
     from microtaint.debug.reg_aliases import RegisterAliases
     from microtaint.instrumentation.cell import _build_reg_maps
@@ -388,7 +389,7 @@ def _engine_flag_names(arch, desc: UcDesc) -> dict:
     return out
 
 
-def _flags_the_lifter_writes(arch, code: bytes, desc: UcDesc) -> set:
+def _flags_the_lifter_writes(arch, code: bytes, desc: UcDesc) -> set[str]:
     """Which of this architecture's flags the p-code for `code` assigns."""
     # The descriptor names flags the way a person does (AArch64 N/Z/C/V); the
     # geometry names them the way SLEIGH does (NG/ZR/CY/OV).  Resolving through
@@ -404,7 +405,7 @@ def _flags_the_lifter_writes(arch, code: bytes, desc: UcDesc) -> set:
         alias = RegisterAliases(arch)
     except Exception:
         alias = None
-    want: dict = {}
+    want: dict[int, str] = {}
     for f in desc.flags:
         names = [f]
         if alias is not None:
@@ -428,13 +429,14 @@ def _flags_the_lifter_writes(arch, code: bytes, desc: UcDesc) -> set:
     return out
 
 
-def ground_truth(desc: UcDesc, code: bytes, in_taint: dict, in_values: dict) -> dict:
+def ground_truth(desc: UcDesc, code: bytes, in_taint: dict[str, int],
+                 in_values: dict[str, int]) -> dict[str, int]:
     """Oracle 2: per-bit sensitivity via Unicorn.  For every tainted input bit,
     flip it (from the clean base) and OR the output XOR into the result mask.
     Returns a per-output taint mask (GP regs + flags)."""
     base_vals = {n: (in_values.get(n, 0) & ~in_taint.get(n, 0) & desc.mask) for n in desc.gp}
     base_out = _uc_run(desc, code, base_vals)
-    result: dict = dict.fromkeys(base_out, 0)
+    result: dict[str, int] = dict.fromkeys(base_out, 0)
     for src in desc.gp:
         tm = in_taint.get(src, 0) & desc.mask
         bit = 0
@@ -457,8 +459,8 @@ def ground_truth(desc: UcDesc, code: bytes, in_taint: dict, in_values: dict) -> 
 @dataclass
 class Verdict:
     exact: bool
-    under: dict = field(default_factory=dict)   # reg -> bits present in ref/truth, missing in got
-    over: dict = field(default_factory=dict)    # reg -> bits in got not in ref/truth
+    under: dict[str, int] = field(default_factory=dict)   # reg -> bits present in ref/truth, missing in got
+    over: dict[str, int] = field(default_factory=dict)    # reg -> bits in got not in ref/truth
 
     @property
     def sound(self) -> bool:
@@ -473,11 +475,11 @@ class Verdict:
         return sum(bin(v).count('1') for v in self.under.values())
 
 
-def classify(got: dict, ref: dict, keys) -> Verdict:
+def classify(got: dict[str, int], ref: dict[str, int], keys) -> Verdict:
     """Compare an engine's output mask `got` against a reference `ref` over
     `keys` (register/flag names).  under = ref & ~got, over = got & ~ref."""
-    under: dict = {}
-    over: dict = {}
+    under: dict[str, int] = {}
+    over: dict[str, int] = {}
     for k in keys:
         g = int(got.get(k, 0) or 0)
         r = int(ref.get(k, 0) or 0)
@@ -536,9 +538,9 @@ class Report:
     n_over_only: int = 0
     n_under: int = 0
     over_bits_total: int = 0
-    mismatches: list = field(default_factory=list)   # (label, kind, verdict)
+    mismatches: list[tuple[str, str, Verdict]] = field(default_factory=list)
     skipped_mem: int = 0
-    errors: list = field(default_factory=list)
+    errors: list[tuple[str, str]] = field(default_factory=list)
 
     def summary(self) -> str:
         return (

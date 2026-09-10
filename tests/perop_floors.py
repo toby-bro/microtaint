@@ -148,7 +148,11 @@ def _is_const(vn) -> bool:
     return vn.space.name == 'const'
 
 
-def _vid(vn):
+#: A varnode's identity: (space name, offset, size).
+VId = tuple[str, int, int]
+
+
+def _vid(vn) -> VId:
     return (vn.space.name, vn.offset, vn.size)
 
 
@@ -165,8 +169,8 @@ def _reconv_contaminated(ops):
 
     Returns the set of contaminated varnode ids.  (Control flow is handled
     separately: an intra-instruction CBRANCH contaminates everything.)"""
-    reg_anc: dict = {}
-    contaminated: set = set()
+    reg_anc: dict[VId, frozenset[VId]] = {}
+    contaminated: set[VId] = set()
     for o in ops:
         in_ancs = []
         in_contam = False
@@ -196,7 +200,7 @@ def _reconv_contaminated(ops):
                     break
         if o.output is not None:
             ovid = _vid(o.output)
-            union: set = set()
+            union: set[VId] = set()
             for ia in in_ancs:
                 union |= ia
             reg_anc[ovid] = frozenset(union)
@@ -224,7 +228,7 @@ def _is_reconvergent(ops) -> bool:
     # earlier definition is its own leaf.  (A naive global producer map is wrong:
     # an instruction often writes a register mid-stream while earlier ops read its
     # original value -- e.g. add writes RAX after INT_CARRY/INT_SCARRY read it.)
-    reg_anc: dict = {}   # vid -> frozenset of register-leaf source ancestors
+    reg_anc: dict[VId, frozenset[VId]] = {}   # vid -> register-leaf ancestors
     for o in ops:
         in_ancs = []
         for i in o.inputs:
@@ -247,7 +251,7 @@ def _is_reconvergent(ops) -> bool:
                 if in_ancs[dyn[a]] & in_ancs[dyn[b]]:
                     return True  # two inputs share a register source
         if o.output is not None:
-            union: set = set()
+            union: set[VId] = set()
             for ia in in_ancs:
                 union |= ia
             reg_anc[_vid(o.output)] = frozenset(union)
@@ -289,8 +293,8 @@ class PerOpFloors:
     def __init__(self, ctx, little_endian: bool):
         self.ctx = ctx
         self.le = little_endian
-        self.val: dict = {}    # (space, offset) -> concrete byte 0..255
-        self.taint: dict = {}  # (space, offset) -> taint byte 0..255
+        self.val: dict[tuple[str, int], int] = {}    # (space, offset) -> byte
+        self.taint: dict[tuple[str, int], int] = {}  # (space, offset) -> taint byte
 
     # -- byte-wise varnode access (mirrors perop_prototype for aliasing) --
     def _rd_val(self, vn) -> int:

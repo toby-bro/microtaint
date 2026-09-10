@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -121,7 +122,7 @@ def _build(source: str) -> str:
     return path
 
 
-def _probe(guest: str, arr_hook: str) -> dict:
+def _probe(guest: str, arr_hook: str) -> dict[str, Any]:
     env = {**os.environ, 'MICROTAINT_ARR_HOOK': arr_hook}
     run = subprocess.run(
         [sys.executable, '-m', 'tests.arr_hook_probe', guest, _STDIN.hex()],
@@ -132,7 +133,8 @@ def _probe(guest: str, arr_hook: str) -> dict:
     return json.loads(run.stdout.decode())
 
 
-def _under_taint(reference: dict, candidate: dict) -> dict:
+def _under_taint(reference: dict[str, Any],
+                 candidate: dict[str, Any]) -> dict[str, Any]:
     """Bits the reference holds that the candidate does not, per key."""
     lost = {}
     for key, ref in reference.items():

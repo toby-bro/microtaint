@@ -123,7 +123,7 @@ def _compile(src: str) -> str:
 
 
 def _run(binary: str, payload: bytes, *, express: bool, taint_ir: bool,
-         nogil_mem: bool = True) -> dict:
+         nogil_mem: bool = True) -> dict[str, int]:
     env = dict(os.environ)
     env['MICROTAINT_EXPRESS'] = '1' if express else '0'
     env['MICROTAINT_NOGIL_MEM'] = '1' if nogil_mem else '0'

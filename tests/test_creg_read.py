@@ -20,6 +20,7 @@ import json
 import platform
 import subprocess
 import sys
+from typing import Any
 
 import pytest
 
@@ -30,7 +31,7 @@ pytestmark = pytest.mark.skipif(
 FULL = 0xFFFFFFFFFFFFFFFF
 
 
-def _run(disable_cregs: bool) -> dict:
+def _run(disable_cregs: bool) -> dict[str, Any]:
     import os
     env = dict(os.environ)
     env['MICROTAINT_DISABLE_CREGS'] = '1' if disable_cregs else '0'

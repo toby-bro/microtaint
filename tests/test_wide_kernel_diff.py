@@ -149,7 +149,8 @@ def _oracle_taint(op: str, operands: list[tuple[int, int]], nbytes: int) -> set[
     return _tainted_bytes_from_mask(diff, nbytes)
 
 
-def _lanes_from_wide(value: int, taint: int, base: int, nbytes: int) -> tuple[dict, dict]:
+def _lanes_from_wide(value: int, taint: int, base: int,
+                     nbytes: int) -> tuple[dict[str, int], dict[str, int]]:
     """Split a wide (value, taint) into per-8-byte VL_ input dicts (value, taint)."""
     values: dict[str, int] = {}
     taints: dict[str, int] = {}
@@ -222,7 +223,8 @@ def _cell_wide_taint(
     return tainted
 
 
-def _mk_diff_inputs(in_values: dict[str, int], in_taints: dict[str, int]) -> tuple[dict, dict]:
+def _mk_diff_inputs(in_values: dict[str, int], in_taints: dict[str, int],
+                    ) -> tuple[dict[str, int], dict[str, int]]:
     or_in = {k: (in_values.get(k, 0) | t) & _FULL for k, t in in_taints.items()}
     and_in = {k: (in_values.get(k, 0) & ~t) & _FULL for k, t in in_taints.items()}
     for k, v in in_values.items():

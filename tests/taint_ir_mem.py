@@ -233,7 +233,7 @@ class MemReport:
     over: int = 0
     under: int = 0
     declined: int = 0
-    under_examples: list = field(default_factory=list)
+    under_examples: list[tuple[str, dict[str, int]]] = field(default_factory=list)
 
     def summary(self):
         return (f'cases={self.n} exact={self.exact} over={self.over} '

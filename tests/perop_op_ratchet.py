@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
+from typing import Any
 
 from tests.perop_c_bank import Declined, perop_c_step
 
@@ -56,11 +57,11 @@ def measure(isas=None):
     """-> {isa: {'ops': {label: n}, 'declined': [label, ...]}}"""
     from benchmark.instruction_bank import load_bank
 
-    out: dict = {}
+    out: dict[str, dict[str, Any]] = {}
     specs = load_bank(isas=set(isas) if isas else None)
     for isa, spec in sorted(specs.items()):
-        ops: dict = {}
-        declined: list = []
+        ops: dict[str, int] = {}
+        declined: list[str] = []
         reg_names = [r.name for r in spec.regs]
         for ins in spec.instructions:
             taint, values = _vector(reg_names, ins.label)

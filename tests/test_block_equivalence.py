@@ -179,7 +179,8 @@ def kit():
     return builder, layout, run
 
 
-def _unicorn_states(seq: list[bytes], seed: dict, names) -> list[dict] | None:
+def _unicorn_states(seq: list[bytes], seed: dict[str, int],
+                    names) -> list[dict[str, int]] | None:
     """Register state before each instruction, from a real execution."""
     import unicorn
     import unicorn.x86_const as ux

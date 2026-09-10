@@ -108,7 +108,7 @@ def test_c_mem_matches_do_evaluate(label: str, hx: str, rax_taint: int, mem_tain
     )
 
 
-def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int, mem_taint_bytes: dict):
+def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int, mem_taint_bytes: dict[int, int]):
     """Mirror of _run_case for evaluate_c_mem_ptr: register taint/values live in
     raw uint64 C arrays (ctypes) indexed by slot; the eval writes reg targets to
     the taint array and mem targets to the shadow, returning the mem writes.

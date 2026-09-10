@@ -62,7 +62,7 @@ def _state_for(names, spec, seed, alias):
     return vals, tnts
 
 
-_SIZE_CACHE: dict = {}
+_SIZE_CACHE: dict[str, dict[str, int]] = {}
 
 
 def _sizes(arch):

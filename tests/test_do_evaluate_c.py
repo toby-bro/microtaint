@@ -22,7 +22,7 @@ from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 
 
-def _check_isa(isa: str) -> tuple[int, int, list]:
+def _check_isa(isa: str) -> tuple[int, int, list[tuple[str, str, str, str]]]:
     spec = load_bank(isas=[isa])[isa]
     sim = CellSimulator(spec.arch)
     rn = [r.name for r in spec.regs]

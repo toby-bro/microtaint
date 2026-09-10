@@ -48,7 +48,7 @@ def _run(code, lane_vals):
     uc = unicorn.Uc(unicorn.UC_ARCH_X86, unicorn.UC_MODE_64)
     uc.mem_map(CODE_ADDR, 0x1000)
     uc.mem_write(CODE_ADDR, code)
-    packed: dict = {}
+    packed: dict[str, int] = {}
     for name, (reg, sh) in LANES.items():
         packed[reg] = packed.get(reg, 0) | ((lane_vals[name] & MASK64) << sh)
     for reg, v in packed.items():
@@ -140,8 +140,8 @@ def run_simd_bank(n_vec=5, seed=99):
 
     spec = load_bank(isas={'AMD64_SIMD'})['AMD64_SIMD']
     rng = random.Random(seed)
-    under: dict = {}
-    skipped: list = []
+    under: dict[str, list[tuple[str, str, dict[str, str]]]] = {}
+    skipped: list[str] = []
     n = 0
     for ins in spec.instructions:
         if not _unicorn_honours_the_encoding(ins.bytes):

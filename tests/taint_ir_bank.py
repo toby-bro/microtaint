@@ -15,10 +15,12 @@ honest total a compiled taint circuit would have to execute.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
+from typing import Any
+
 from microtaint.taint_ir.frompcode import Unsupported, build_ir
 from tests.perop_c_bank import Declined, _engine_names
 
-_CACHE: dict = {}
+_CACHE: dict[tuple[str, bytes], Any] = {}
 from microtaint.taint_ir.regmap import name_offset, slot_resolver  # noqa: E402,F401
 
 

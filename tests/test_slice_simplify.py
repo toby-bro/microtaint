@@ -10,11 +10,12 @@ count==0 select branch must fold away).
 from __future__ import annotations
 
 import random
+from typing import Any
 
 import pypcode
 import pytest
 
-from microtaint.sleigh.constfold import _eval, _key
+from microtaint.sleigh.constfold import VNKey, _eval, _key
 from microtaint.sleigh.slice_simplify import simplify_slice
 from microtaint.sleigh.slicer import slice_backward
 
@@ -35,10 +36,10 @@ _CASES = [
 ]
 
 
-def _eval_slice(ops: list, env: dict[tuple, int]) -> dict[tuple, int]:
+def _eval_slice(ops: list[Any], env: dict[VNKey, int]) -> dict[VNKey, int]:
     """Concretely evaluate a slice; unknown reads come from `env`. Returns the
     value map (VNKey -> value). Ops constfold._eval cannot model raise."""
-    vals: dict[tuple, int] = {}
+    vals: dict[VNKey, int] = {}
 
     def read(vn: object) -> int:
         if vn.space.name == 'const':
@@ -60,10 +61,10 @@ def _eval_slice(ops: list, env: dict[tuple, int]) -> dict[tuple, int]:
     return vals
 
 
-def _input_keys(ops: list) -> set[tuple]:
+def _input_keys(ops: list[Any]) -> set[VNKey]:
     """Varnodes read but never defined in the slice (the free inputs)."""
     defined = {_key(o.output) for o in ops if o.output is not None}
-    reads: set[tuple] = set()
+    reads: set[VNKey] = set()
     for o in ops:
         for i in o.inputs:
             if i.space.name != 'const':
@@ -91,7 +92,7 @@ def test_simplify_collapses_constant_shift_flag() -> None:
     """A constant-count shift's flag select must shrink (dead branch removed)."""
     ops = _CTX.translate(bytes.fromhex('c1e007'), 0x1000).ops  # shl eax,7
     from microtaint.sleigh.slice_simplify import _Vn  # noqa: PLC0415
-    def real(ops: list) -> int:
+    def real(ops: list[Any]) -> int:
         # COPY is pure routing (determine_category ignores it); count real work.
         return sum(1 for o in ops if o.opcode.name != 'COPY')
     for off in (0x200, 0x207, 0x206):  # CF, SF, ZF

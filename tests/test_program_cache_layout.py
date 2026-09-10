@@ -21,12 +21,12 @@ ADD_RAX_RBX = bytes.fromhex('4801d8')
 _FLAGS = ('CF', 'OF', 'SF', 'ZF', 'PF', 'AF')
 
 
-def _layout(first: str, second: str) -> dict:
+def _layout(first: str, second: str) -> dict[str, int]:
     names = [first, second, 'RIP', *_FLAGS]
     return {n: i for i, n in enumerate(names)}
 
 
-def _taint_after(prog, layout: dict, tainted: str) -> dict:
+def _taint_after(prog, layout: dict[str, int], tainted: str) -> dict[str, int]:
     """Run the program with exactly one register tainted -> {name: mask}."""
     n = max(layout.values()) + 1
     values = [0] * n

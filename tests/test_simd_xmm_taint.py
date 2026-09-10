@@ -25,7 +25,7 @@ from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
-from microtaint.types import Architecture
+from microtaint.types import Architecture, Register
 
 _A = RegisterAliases(Architecture.AMD64)
 _SRC = 0x5000
@@ -47,7 +47,7 @@ _LOAD_OPS = {
 }
 
 
-def _regs() -> list:
+def _regs() -> list[Register]:
     return _A.state_format(['RAX', 'RSI', 'RDI', 'XMM0'])
 
 
@@ -155,7 +155,7 @@ def test_sse_memcpy_roundtrip_is_byte_exact(tainted_src: set[int]) -> None:
     assert got == tainted_src, f'roundtrip: dest bytes {sorted(got)} != source {sorted(tainted_src)}'
 
 
-def _regs_two_xmm() -> list:
+def _regs_two_xmm() -> list[Register]:
     return _A.state_format(['RAX', 'RSI', 'RDI', 'XMM0', 'XMM1'])
 
 
@@ -197,7 +197,7 @@ def test_pand_is_lane_exact_and_value_aware() -> None:
 # --- AVX / 256-bit YMM (four 64-bit lanes) ---------------------------------
 
 
-def _regs_ymm() -> list:
+def _regs_ymm() -> list[Register]:
     return _A.state_format(['RAX', 'RSI', 'RDI', 'YMM0', 'YMM1', 'YMM2'])
 
 

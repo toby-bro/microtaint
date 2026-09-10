@@ -86,7 +86,7 @@ class _Cpu:
         self.uc = unicorn.Uc(desc.uc_arch, desc.uc_mode)
         self.uc.mem_map(desc.code_addr, 0x2000)
 
-    def run(self, code: bytes, values: dict) -> dict:
+    def run(self, code: bytes, values: dict[str, int]) -> dict[str, int]:
         d = self.desc
         self.uc.mem_write(d.code_addr, code)
         for name, const in d.gp.items():

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -46,7 +47,7 @@ _BANK = load_bank()
 _ISAS = sorted(_BANK.keys())
 
 
-def _subcircuits(circ: object) -> list:
+def _subcircuits(circ: object) -> list[Any]:
     return list(circ.sub_circuits) if isinstance(circ, ChainedCircuit) else [circ]
 
 

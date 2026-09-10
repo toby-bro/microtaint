@@ -156,8 +156,8 @@ class TwoCorner:
     def __init__(self, ctx, little_endian: bool):
         self.ctx = ctx
         self.le = little_endian
-        self.hi: dict = {}
-        self.lo: dict = {}
+        self.hi: dict[tuple[str, int], int] = {}
+        self.lo: dict[tuple[str, int], int] = {}
 
     def _rd(self, store, vn) -> int:
         if vn.space.name == 'const':

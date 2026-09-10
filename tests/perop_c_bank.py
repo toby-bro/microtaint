@@ -24,8 +24,15 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
+
+if TYPE_CHECKING:                    # imported inside the run for import cost
+    from tests.oracle_harness import Verdict
+
+#: A per-output mask keyed by register or flag name.
+TaintState = dict[str, int]
 
 
 class Declined(Exception):  # noqa: N818
@@ -80,7 +87,7 @@ def _engine_names(arch, names):
     return cached
 
 
-_NAME_MAPS: dict = {}
+_NAME_MAPS: dict[str, dict[str, str]] = {}
 
 
 def perop_c_step(arch, code: bytes, regs, in_taint, in_values):
@@ -109,11 +116,11 @@ def perop_c_taint(arch, code, regs, in_taint, in_values, *, circuit=None):
 class OpStats:
     """Op-count distribution over the instructions the pass answers."""
 
-    counts: list = field(default_factory=list)      # primitive taint ops
-    pcode: list = field(default_factory=list)       # p-code ops in the program
-    by_class: dict = field(default_factory=lambda: {'route': 0, 'diff': 0,
+    counts: list[int] = field(default_factory=list)      # primitive taint ops
+    pcode: list[int] = field(default_factory=list)       # p-code ops in the program
+    by_class: dict[str, int] = field(default_factory=lambda: {'route': 0, 'diff': 0,
                                                     'floor': 0, 'cube': 0})
-    worst: list = field(default_factory=list)       # (ops, label)
+    worst: list[tuple[int, str]] = field(default_factory=list)   # (ops, label)
 
     def add(self, label, cost):
         self.counts.append(cost['ops'])
@@ -160,24 +167,26 @@ class BankReport:
     # OF after a multi-bit shift undefined; SLEIGH models them as unchanged and
     # Unicorn computes something, so both engines "miss" the same bits).
     n_under_new: int = 0
-    new_under_examples: list = field(default_factory=list)
+    new_under_examples: list[tuple[str, TaintState, TaintState, TaintState]] = (
+        field(default_factory=list))
     # vs the whole-instruction differential (the engine's current answer).
     n_tighter: int = 0     # per-op reports LESS taint and ground truth agrees
     n_looser: int = 0      # per-op reports MORE taint than the oracle
     n_same: int = 0
-    under_examples: list = field(default_factory=list)
-    over_examples: list = field(default_factory=list)
-    errors: list = field(default_factory=list)
+    under_examples: list[tuple[str, TaintState, TaintState, Verdict]] = (
+        field(default_factory=list))
+    over_examples: list[tuple[str, Verdict]] = field(default_factory=list)
+    errors: list[tuple[str, str]] = field(default_factory=list)
     #: instruction -> the outputs left out of its verdict because the ISA does
     #: not define them.  Reported, never silently dropped: an exclusion nobody
     #: sees is indistinguishable from a bug nobody found.
-    undefined_outputs: dict = field(default_factory=dict)
+    undefined_outputs: dict[str, list[str]] = field(default_factory=dict)
     #: instruction -> flags the LIFTER never writes, so the engine cannot taint
     #: them however sound it is.  Excluded for the same reason and reported
     #: apart, because unlike the above this one IS a gap somebody could close.
-    unmodelled_outputs: dict = field(default_factory=dict)
+    unmodelled_outputs: dict[str, list[str]] = field(default_factory=dict)
     stats: OpStats = field(default_factory=OpStats)
-    declined_labels: list = field(default_factory=list)
+    declined_labels: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         cov = 100 * self.n_answered / self.n_instrs if self.n_instrs else 0
@@ -200,7 +209,7 @@ _UC_DESC = {'AMD64': '_uc_desc_amd64', 'ARM64': '_uc_desc_arm64',
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
-_REG_MAPS: dict = {}
+_REG_MAPS: dict[str, dict[int, str]] = {}
 
 
 def _offset_to_name(arch):
