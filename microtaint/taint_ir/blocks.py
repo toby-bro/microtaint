@@ -23,7 +23,13 @@ from dataclasses import dataclass
 
 from pypcode import PcodeOp
 
-from microtaint.taint_ir.frompcode import LIFT_BASE, Builder, Emit, Unsupported
+from microtaint.taint_ir.frompcode import (
+    LIFT_BASE,
+    Builder,
+    Emit,
+    Unsupported,
+    builder_for,
+)
 from microtaint.taint_ir.ir import IRProg
 from microtaint.types import ArchLike
 
@@ -82,8 +88,10 @@ def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
     having to work out what is missing.
     """
     if builder is None:
-        be = str(getattr(arch, 'value', arch)).endswith('BE')
-        builder = Builder(arch, be)
+        # The shared one: a Builder costs a register-map build (measured at
+        # ~7 ms, 17% of compiling a block), and it holds no state across a
+        # `build` call that a later one does not overwrite.
+        builder = builder_for(arch)
     ops = _translate(arch, code, base)
     marks = instruction_starts(ops)
     if not marks:
