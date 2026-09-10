@@ -73,7 +73,7 @@ from typing import Any
 
 import pytest
 
-from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.ast import EvalContext, LogicCircuit
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import ImplicitTaintPolicy
@@ -106,7 +106,7 @@ _METRICS = ('cells', 'assigns', 'nodes')
 class _Case:
     __slots__ = ('asm', 'circ', 'ctx', 'isa', 'sim')
 
-    def __init__(self, isa: str, asm: str, circ: Any, ctx: Any,
+    def __init__(self, isa: str, asm: str, circ: LogicCircuit, ctx: EvalContext,
                  sim: CellSimulator) -> None:
         self.isa, self.asm, self.circ, self.ctx, self.sim = isa, asm, circ, ctx, sim
 

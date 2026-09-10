@@ -45,8 +45,9 @@ no engine coupling, so this cannot regress the live path.
 """
 from __future__ import annotations
 
-from typing import Any
+from pypcode import Context, PcodeOp, Varnode
 
+from microtaint.instrumentation.ast import LogicCircuit
 from microtaint.sleigh.lifter import get_context
 from microtaint.types import Architecture, Register
 from tests.perop_prototype import Unsupported, _apply, _mask
@@ -152,7 +153,7 @@ def _add_carry_taint(a_v: int, a_t: int, b_v: int, b_t: int, width: int,
     return _add_carry_full(a_v, a_t, b_v, b_t, width, cin_v, cin_t)[0]
 
 
-def _is_const(vn: Any) -> bool:
+def _is_const(vn: Varnode) -> bool:
     return bool(vn.space.name == 'const')
 
 
@@ -160,7 +161,7 @@ def _is_const(vn: Any) -> bool:
 VId = tuple[str, int, int]
 
 
-def _vid(vn: Any) -> VId:
+def _vid(vn: Varnode) -> VId:
     return (vn.space.name, vn.offset, vn.size)
 
 
@@ -298,24 +299,24 @@ class PerOpFloors:
     """Per-op taint with sound floors.  Byte-granular value+taint stores so
     overlapping registers (AL/AX/EAX/RAX) alias correctly."""
 
-    def __init__(self, ctx: Any, little_endian: bool) -> None:
+    def __init__(self, ctx: Context, little_endian: bool) -> None:
         self.ctx = ctx
         self.le = little_endian
         self.val: dict[tuple[str, int], int] = {}    # (space, offset) -> byte
         self.taint: dict[tuple[str, int], int] = {}  # (space, offset) -> taint byte
 
     # -- byte-wise varnode access (mirrors perop_prototype for aliasing) --
-    def _rd_val(self, vn: Any) -> int:
+    def _rd_val(self, vn: Varnode) -> int:
         if vn.space.name == 'const':
             return int(vn.offset) & _mask(vn.size)
         return self._gather(self.val, vn)
 
-    def _rd_taint(self, vn: Any) -> int:
+    def _rd_taint(self, vn: Varnode) -> int:
         if vn.space.name == 'const':
             return 0
         return self._gather(self.taint, vn)
 
-    def _gather(self, store: dict[tuple[str, int], int], vn: Any) -> int:
+    def _gather(self, store: dict[tuple[str, int], int], vn: Varnode) -> int:
         v = 0
         for i in range(vn.size):
             byte = store.get((vn.space.name, vn.offset + i), 0)
@@ -323,18 +324,18 @@ class PerOpFloors:
             v |= byte << (8 * sh)
         return v
 
-    def _scatter(self, store, vn: Any, val) -> None:
+    def _scatter(self, store, vn: Varnode, val) -> None:
         for i in range(vn.size):
             sh = i if self.le else (vn.size - 1 - i)
             store[(vn.space.name, vn.offset + i)] = (val >> (8 * sh)) & 0xFF
 
-    def init_reg(self, vn: Any, value: int, taint: int) -> None:
+    def init_reg(self, vn: Varnode, value: int, taint: int) -> None:
         m = _mask(vn.size)
         self._scatter(self.val, vn, value & m)
         self._scatter(self.taint, vn, taint & m)
 
     # -- the per-op taint rule -------------------------------------------
-    def _op_taint(self, name: str, op: Any, in_v, in_t) -> int:
+    def _op_taint(self, name: str, op: PcodeOp, in_v, in_t) -> int:
         o_sz = op.output.size
         om = _mask(o_sz)
         isz = op.inputs[0].size if op.inputs else o_sz
@@ -462,7 +463,7 @@ class PerOpFloors:
         # ---- div/rem handled by _AVALANCHE above; anything else opaque ----
         raise Unsupported(name)
 
-    def _local_diff(self, name: str, op: Any, in_v, in_t) -> int:
+    def _local_diff(self, name: str, op: PcodeOp, in_v, in_t) -> int:
         """Bare two-corner differential over THIS op's concrete inputs.  Tightens
         the floor where the two extremal corners actually diverge."""
         try:
@@ -503,7 +504,7 @@ class PerOpFloors:
             self._scatter(self.val, op.output, out_v)
             self._scatter(self.taint, op.output, out_t)
 
-    def out_taint(self, vn: Any) -> int:
+    def out_taint(self, vn: Varnode) -> int:
         return self._gather(self.taint, vn) & _mask(vn.size)
 
 
@@ -579,7 +580,7 @@ def engine_perop_floors(arch: Architecture,
                         in_taint: dict[str, int],
                         in_values: dict[str, int],
                         *,
-                        circuit: Any=None):
+                        circuit: LogicCircuit=None):
     """Oracle-harness engine adapter for per-op-with-floors."""
     return perop_floors_taint(arch, code, regs, in_taint, in_values)
 

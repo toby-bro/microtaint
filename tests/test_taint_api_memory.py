@@ -7,6 +7,8 @@ implementation" has to mean memory as well as registers.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
 
 from microtaint.taint_api import TaintSequence, explain
@@ -37,7 +39,7 @@ def test_never_written_memory_reads_as_zero() -> None:
 
 
 @pytest.mark.parametrize('path', PATHS)
-def test_a_store_puts_taint_in_memory(path: str) -> None:
+def test_a_store_puts_taint_in_memory(path: Literal['compiled', 'differential']) -> None:
     memory = TaintMemory()
     values = {'RBX': 0xCAFEBABE, 'RSP': 0x7000}
     _out, used = explain(Architecture.AMD64, PUSH_RBX, {'RBX': FULL}, values,
@@ -48,7 +50,7 @@ def test_a_store_puts_taint_in_memory(path: str) -> None:
 
 
 @pytest.mark.parametrize('path', PATHS)
-def test_taint_survives_a_round_trip_through_the_stack(path: str) -> None:
+def test_taint_survives_a_round_trip_through_the_stack(path: Literal['compiled', 'differential']) -> None:
     """The question this API exists for: push a tainted register, pop it into
     another, and the taint has to arrive."""
     seq = TaintSequence(Architecture.AMD64, path=path,
@@ -77,7 +79,7 @@ def test_the_two_paths_agree_about_memory() -> None:
 
 
 @pytest.mark.parametrize('path', PATHS)
-def test_clean_memory_does_not_invent_taint(path: str) -> None:
+def test_clean_memory_does_not_invent_taint(path: Literal['compiled', 'differential']) -> None:
     """The direction that matters for false positives: nothing tainted in,
     nothing tainted out."""
     seq = TaintSequence(Architecture.AMD64, path=path,

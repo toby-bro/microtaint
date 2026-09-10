@@ -28,6 +28,8 @@ from typing import Any
 
 import pytest
 
+from microtaint.emulator.reporter import Reporter
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -84,7 +86,7 @@ def _run_with_heap_tracker(binary: Path) -> tuple[Any, Any, Any, Any]:
     return ql, wrapper, heap_tracker, reporter
 
 
-def _findings_of_kind(reporter: Any, kind: str) -> list[Any]:
+def _findings_of_kind(reporter: Reporter, kind: str) -> list[Any]:
     return [f for f in getattr(reporter, 'findings', []) if str(f.kind).endswith(kind)]
 
 

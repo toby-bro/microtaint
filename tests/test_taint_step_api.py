@@ -12,6 +12,8 @@ Two things are checked, and they are different things:
 """
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
 
 from microtaint.taint_api import default_path, explain, taint_step
@@ -34,7 +36,10 @@ TAINT = {'RAX': 0xFF, 'X1': 0xFF}
 
 @pytest.mark.parametrize(('label', 'arch', 'code'), CASES, ids=[c[0] for c in CASES])
 @pytest.mark.parametrize('path', ['compiled', 'differential'])
-def test_both_paths_answer(label: str, arch: Architecture, code: str, path: str) -> None:
+def test_both_paths_answer(label: str,
+                           arch: Architecture,
+                           code: str,
+                           path: Literal['compiled', 'differential']) -> None:
     out = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path=path)
     assert isinstance(out, dict) and out, f'{label}: {path} returned nothing'
     # The post-state, so a register nobody touched keeps what it had.

@@ -24,6 +24,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from pypcode import Context, PcodeOp, Varnode
+
 from microtaint.sleigh.lifter import get_context
 
 _AFFINE_ALWAYS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'PIECE', 'EXTRACT',
@@ -34,7 +36,7 @@ _OPAQUE_PREFIX = ('FLOAT_',)
 _OPAQUE = {'CALLOTHER'}
 
 
-def _const(vn: Any) -> bool:
+def _const(vn: Varnode) -> bool:
     return bool(vn.space.name == 'const')
 
 
@@ -42,7 +44,7 @@ def _popcount(x: int) -> int:
     return bin(x).count('1')
 
 
-def is_affine(op: Any) -> bool:
+def is_affine(op: PcodeOp) -> bool:
     n = op.opcode.name
     if n in _AFFINE_ALWAYS:
         return True
@@ -59,11 +61,11 @@ def is_affine(op: Any) -> bool:
 VId = tuple[str, int, int]
 
 
-def _vid(vn: Any) -> VId:
+def _vid(vn: Varnode) -> VId:
     return (vn.space.name, vn.offset, vn.size)
 
 
-def classify_instr(ctx: Any, code: bytes) -> tuple[str, int]:
+def classify_instr(ctx: Context, code: bytes) -> tuple[str, int]:
     ops = [o for o in ctx.translate(code, 0x1000).ops if o.opcode.name not in _SKIP]
     if not ops:
         return 'EMPTY', 0
@@ -78,7 +80,7 @@ def classify_instr(ctx: Any, code: bytes) -> tuple[str, int]:
         if o.output is not None:
             producers[_vid(o.output)] = o
 
-    def reg_ancestors(vn: Any, seen: set[VId] | None = None) -> set[VId]:
+    def reg_ancestors(vn: Varnode, seen: set[VId] | None = None) -> set[VId]:
         """Register-space leaf varnodes feeding `vn` (transitively)."""
         if seen is None:
             seen = set()

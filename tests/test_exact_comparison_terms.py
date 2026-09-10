@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Callable
-from typing import Any
 
 import microtaint.sleigh.engine as engine
 from microtaint.debug.reg_aliases import RegisterAliases
@@ -63,7 +62,7 @@ def test_comparison_taint_expr_exhaustive(
         for is_signed in (False, True):
             for or_equal in (False, True):
                 def pred(a: int, b: int, w: int = w, is_signed: bool = is_signed,
-                 or_equal: bool = or_equal, sb: Any = sb) -> int:
+                 or_equal: bool = or_equal, sb: int = sb) -> int:
                     if is_signed:
                         a = a - (1 << w) if a & sb else a
                         b = b - (1 << w) if b & sb else b

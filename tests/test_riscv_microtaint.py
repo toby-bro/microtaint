@@ -55,9 +55,10 @@ import pytest
 import unicorn
 import unicorn.riscv_const as ur
 import unicorn.unicorn_py3
+from pytest_benchmark.fixture import BenchmarkFixture
 from riscv_encoder import encode  # test helper in tests/, on sys.path via pytest
 
-from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.ast import EvalContext, LogicCircuit
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
@@ -333,7 +334,7 @@ def circuit_cache() -> dict[str, Any]:
     return {}
 
 
-def _circuit(asm: str, cache: dict[str, Any]) -> Any:
+def _circuit(asm: str, cache: dict[str, LogicCircuit]) -> Any:
     if asm not in cache:
         cache[asm] = generate_static_rule(
             Architecture.RISCV64,
@@ -352,7 +353,7 @@ def _run_microtaint(sim: CellSimulator,
                     asm: str,
                     values: dict[str, int],
                     taint: dict[str, int],
-                    cache: dict[str, Any]) -> dict[str, int]:
+                    cache: dict[str, LogicCircuit]) -> dict[str, int]:
     circuit = _circuit(asm, cache)
     ctx = EvalContext(
         input_values=values,
@@ -574,7 +575,7 @@ _NO_T2_MNEMS: set[str] = {
 )
 def test_oracle_soundness(
     sim_unicorn: CellSimulator,
-    circuit_cache: dict[str, Any],
+    circuit_cache: dict[str, LogicCircuit],
     asm: str,
     vlabel: str,
     tlabel: str,
@@ -617,7 +618,7 @@ def test_oracle_soundness(
 )
 def test_oracle_soundness_t2(
     sim_unicorn: CellSimulator,
-    circuit_cache: dict[str, Any],
+    circuit_cache: dict[str, LogicCircuit],
     asm: str,
     vlabel: str,
     tlabel: str,
@@ -663,7 +664,7 @@ def test_oracle_soundness_t2(
 def test_backends_agree_arithmetic(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict[str, Any],
+    circuit_cache: dict[str, LogicCircuit],
     asm: str,
     vlabel: str,
     tlabel: str,
@@ -692,7 +693,7 @@ def test_backends_agree_arithmetic(
 def test_memory_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict[str, Any],
+    circuit_cache: dict[str, LogicCircuit],
     asm: str,
     values: dict[str, int],
     taint: dict[str, int],
@@ -716,7 +717,7 @@ def test_memory_backends_agree(
 def test_controlflow_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict[str, Any],
+    circuit_cache: dict[str, LogicCircuit],
     asm: str,
     values: dict[str, int],
     taint: dict[str, int],
@@ -756,7 +757,7 @@ def test_controlflow_backends_agree(
 def test_system_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict[str, Any],
+    circuit_cache: dict[str, LogicCircuit],
     asm: str,
     values: dict[str, int],
     taint: dict[str, int],
@@ -795,9 +796,9 @@ BENCH_SET: list[tuple[str, str, dict[str, int], dict[str, int]]] = [
     ids=[lab for lab, _, _, _ in BENCH_SET],
 )
 def test_bench_unicorn(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_unicorn: CellSimulator,
-    circuit_cache: dict[str, Any],
+    circuit_cache: dict[str, LogicCircuit],
     label: str,
     asm: str,
     values: dict[str, int],
@@ -824,9 +825,9 @@ def test_bench_unicorn(
     ids=[lab for lab, _, _, _ in BENCH_SET],
 )
 def test_bench_pcode(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_pcode: CellSimulator,
-    circuit_cache: dict[str, Any],
+    circuit_cache: dict[str, LogicCircuit],
     label: str,
     asm: str,
     values: dict[str, int],
@@ -865,7 +866,7 @@ TAINT_CHAIN: list[str] = [
 ]
 
 
-def _run_chain(sim: CellSimulator, cache: dict[str, Any]) -> dict[str, int]:
+def _run_chain(sim: CellSimulator, cache: dict[str, LogicCircuit]) -> dict[str, int]:
     values: dict[str, int] = {'T0': 8, 'T1': 0x100, 'T2': 0x200, 'T3': 0x300, 'SP': _BASE_DATA + _DATA_SIZE // 2}
     taint: dict[str, int] = {'T0': FULL_TAINT_64}
     for asm in TAINT_CHAIN:
@@ -883,7 +884,7 @@ def _run_chain(sim: CellSimulator, cache: dict[str, Any]) -> dict[str, int]:
 def test_chain_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict[str, Any],
+    circuit_cache: dict[str, LogicCircuit],
 ) -> None:
     final_u = _run_chain(sim_unicorn, circuit_cache)
     final_p = _run_chain(sim_pcode, circuit_cache)
@@ -901,8 +902,8 @@ def test_chain_backends_agree(
 def test_diagnostic_summary(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict[str, Any],
-    capsys: Any,
+    circuit_cache: dict[str, LogicCircuit],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """
     Report MATCH/UNSOUND/BACKEND_DIFF for each primitive on a generic taint.
@@ -944,8 +945,8 @@ def test_diagnostic_summary(
 
 def test_pcode_fallback_rate(
     sim_pcode: CellSimulator,
-    circuit_cache: dict[str, Any],
-    capsys: Any,
+    circuit_cache: dict[str, LogicCircuit],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Report the pcode→Unicorn fallback rate after running the primitive matrix."""
     for asm in ARITHMETIC_PRIMITIVES:

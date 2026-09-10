@@ -69,7 +69,7 @@ def _fresh(layout: dict[str, int], *, rax_tainted: bool = True) -> tuple[Any, An
     return runner, got[0], [0] * len(layout)
 
 
-def _rax(runner: Any, layout: dict[str, int]) -> int:
+def _rax(runner: object, layout: dict[str, int]) -> int:
     return B.runner_taint(runner)[layout['RAX']]
 
 

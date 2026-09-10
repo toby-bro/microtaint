@@ -33,8 +33,9 @@ import os
 from typing import Any
 
 import pytest
+from pytest_benchmark.fixture import BenchmarkFixture
 
-from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.ast import EvalContext, LogicCircuit
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
@@ -1098,7 +1099,7 @@ def prebuilt_circuits() -> dict[str, Any]:
     generate_static_rule LRU cache is keyed on (arch, bytstring) so
     there is exactly one circuit per unique instruction.
     """
-    circuits: dict[str, Any] = {}
+    circuits: dict[str, LogicCircuit] = {}
     for _mnemonic, hex_bytes, _, _, _, _, _ in CORPUS:
         key = hex_bytes
         if key not in circuits:
@@ -1117,7 +1118,7 @@ def prebuilt_circuits() -> dict[str, Any]:
 
 def _run(
     sim: CellSimulator,
-    circuit: Any,
+    circuit: LogicCircuit,
     input_values: dict[str, int],
     input_taint: dict[str, int],
     implicit_policy: ImplicitTaintPolicy = ImplicitTaintPolicy.KEEP,
@@ -1213,7 +1214,7 @@ def _backend_taint_diffs(
 def test_pcode_matches_unicorn(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
     mnemonic: str,
     hex_bytes: str,
     input_values: dict[str, int],
@@ -1278,7 +1279,7 @@ def test_pcode_matches_unicorn(
 )
 def test_expected_taint_unicorn(
     sim_unicorn: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
     mnemonic: str,
     hex_bytes: str,
     input_values: dict[str, int],
@@ -1303,7 +1304,7 @@ def test_expected_taint_unicorn(
 )
 def test_expected_taint_pcode(
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
     mnemonic: str,
     hex_bytes: str,
     input_values: dict[str, int],
@@ -1344,7 +1345,7 @@ _POW2_SCALE_TAINT_CASES: list[tuple[str, dict[str, int], dict[str, int],
 )
 def test_pow2_scale_taint_exact_and_minimal(
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
     hex_bytes: str,
     input_values: dict[str, int],
     input_taint: dict[str, int],
@@ -1436,7 +1437,7 @@ TAINT_SCENARIOS: list[dict[str, Any]] = [
 def test_multi_scenario_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
     hex_bytes: str,
     taint: dict[str, int],
 ) -> None:
@@ -1494,9 +1495,9 @@ BENCH_SINGLE: list[tuple[str, str, dict[str, int], dict[str, int]]] = [
     ids=[m for m, _, _, _ in BENCH_SINGLE],
 )
 def test_bench_single_unicorn(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_unicorn: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
     mnemonic: str,
     hex_bytes: str,
     input_values: dict[str, int],
@@ -1524,9 +1525,9 @@ def test_bench_single_unicorn(
     ids=[m for m, _, _, _ in BENCH_SINGLE],
 )
 def test_bench_single_pcode(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
     mnemonic: str,
     hex_bytes: str,
     input_values: dict[str, int],
@@ -1554,7 +1555,7 @@ def test_bench_single_pcode(
 # ===========================================================================
 
 
-def _run_full_corpus(sim: CellSimulator, circuits: dict[str, Any]) -> list[dict[str, int]]:
+def _run_full_corpus(sim: CellSimulator, circuits: dict[str, LogicCircuit]) -> list[dict[str, int]]:
     """Evaluate every instruction in CORPUS and return all output dicts."""
     outputs = []
     for _, hex_bytes, input_values, input_taint, _, _, _ in CORPUS:
@@ -1564,9 +1565,9 @@ def _run_full_corpus(sim: CellSimulator, circuits: dict[str, Any]) -> list[dict[
 
 
 def test_bench_trace_unicorn(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_unicorn: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
 ) -> None:
     """
     Unicorn backend — full CORPUS sequential trace.
@@ -1583,9 +1584,9 @@ def test_bench_trace_unicorn(
 
 
 def test_bench_trace_pcode(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
 ) -> None:
     """
     P-code backend — full CORPUS sequential trace.
@@ -1609,15 +1610,15 @@ _HOT_VALUES = {'RAX': 1, 'RBX': 1}
 _HOT_TAINT = {'RAX': FULL_TAINT_64, 'RBX': 0x5555555555555555}
 
 
-def _run_hot_loop(sim: CellSimulator, circuit: Any, n: int) -> None:
+def _run_hot_loop(sim: CellSimulator, circuit: LogicCircuit, n: int) -> None:
     for _ in range(n):
         _run(sim, circuit, _HOT_VALUES, _HOT_TAINT)
 
 
 def test_bench_hot_loop_unicorn(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_unicorn: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
 ) -> None:
     """
     Unicorn backend — 1 000-iteration hot loop on ADD RAX,RBX.
@@ -1633,9 +1634,9 @@ def test_bench_hot_loop_unicorn(
 
 
 def test_bench_hot_loop_pcode(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
 ) -> None:
     """
     P-code backend — 1 000-iteration hot loop on ADD RAX,RBX.
@@ -1658,7 +1659,7 @@ def test_bench_hot_loop_pcode(
 
 def test_pcode_fallback_rate(
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
+    prebuilt_circuits: dict[str, LogicCircuit],
 ) -> None:
     """
     After running the full corpus, the pcode backend's fallback rate must be
@@ -1712,7 +1713,7 @@ def chain_circuits() -> dict[str, Any]:
 
 
 def _run_chain(sim: CellSimulator,
-               circuits: dict[str, Any]) -> dict[str, int]:
+               circuits: dict[str, LogicCircuit]) -> dict[str, int]:
     """
     Run the taint chain, feeding output taint of each step as input taint
     for the next.  Returns the final taint state.
@@ -1745,7 +1746,7 @@ def _run_chain(sim: CellSimulator,
 def test_chain_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    chain_circuits: dict[str, Any],
+    chain_circuits: dict[str, LogicCircuit],
 ) -> None:
     """
     Full 10-instruction taint chain: final taint state must be identical
@@ -1765,9 +1766,9 @@ def test_chain_backends_agree(
 
 
 def test_bench_chain_unicorn(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_unicorn: CellSimulator,
-    chain_circuits: dict[str, Any],
+    chain_circuits: dict[str, LogicCircuit],
 ) -> None:
     """Unicorn backend — 10-instruction taint-propagation chain throughput."""
     benchmark.pedantic(
@@ -1779,9 +1780,9 @@ def test_bench_chain_unicorn(
 
 
 def test_bench_chain_pcode(
-    benchmark: Any,
+    benchmark: BenchmarkFixture,
     sim_pcode: CellSimulator,
-    chain_circuits: dict[str, Any],
+    chain_circuits: dict[str, LogicCircuit],
 ) -> None:
     """P-code backend — 10-instruction taint-propagation chain throughput."""
     benchmark.pedantic(
@@ -1802,8 +1803,8 @@ def test_bench_chain_pcode(
 def test_diagnostic_print_all_diffs(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict[str, Any],
-    capsys: Any,
+    prebuilt_circuits: dict[str, LogicCircuit],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """
     Diagnostic helper: runs every corpus entry through both backends and
@@ -1861,7 +1862,7 @@ def test_diagnostic_print_all_diffs(
 
 def test_diagnostic_pcode_register_map(
     sim_pcode: CellSimulator,
-    capsys: Any,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """
     Prints the register name -> (offset, size) mapping that the pcode evaluator uses.

@@ -25,8 +25,9 @@ from __future__ import annotations
 import random
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Callable
 
+from microtaint.instrumentation.ast import LogicCircuit
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
 from microtaint.types import Architecture, Register
 
@@ -123,7 +124,7 @@ def perop_c_step(arch: Architecture, code: bytes, regs: list[Register],
 
 def perop_c_taint(arch: Architecture, code: bytes, regs: list[Register],
                   in_taint: TaintState, in_values: TaintState,
-                  *, circuit: Any = None) -> TaintState:
+                  *, circuit: LogicCircuit = None) -> TaintState:
     """Oracle-harness adapter: taint only."""
     del circuit
     return perop_c_step(arch, code, regs, in_taint, in_values)[0]
@@ -272,7 +273,7 @@ def written_registers(arch: Architecture, code: bytes) -> set[str]:
     return out
 
 
-def uc_initial_state(desc: Any) -> TaintState:
+def uc_initial_state(desc: UcDesc) -> TaintState:
     """The register state Unicorn starts an instruction from, for everything the
     ground-truth driver does NOT write.
 
@@ -294,7 +295,7 @@ def uc_initial_state(desc: Any) -> TaintState:
     return out
 
 
-def gt_vectors(desc: Any, reg_names: list[str], rng: random.Random,
+def gt_vectors(desc: UcDesc, reg_names: list[str], rng: random.Random,
                n: int) -> Iterator[tuple[TaintState, TaintState]]:
     """Input vectors the per-bit ground truth can actually enumerate.
 

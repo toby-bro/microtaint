@@ -17,6 +17,8 @@ from typing import Any
 
 import pytest
 
+from microtaint.taint_ir.ir import IRProg
+
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
 _CASES = [
@@ -51,7 +53,7 @@ def _prog(isa: str, hexcode):
     return build_ir(_arch(isa), bytes.fromhex(hexcode))
 
 
-def _states(prog: Any, n: int, seed: str | int) -> Any:
+def _states(prog: IRProg, n: int, seed: str | int) -> Any:
     rng = random.Random(seed)
     keys = sorted({k for (_kind, k) in prog.inputs})
     return [({k: rng.getrandbits(64) for k in keys},

@@ -37,9 +37,10 @@ import io
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import Any
 
 import pytest
+
+from microtaint.emulator.wrapper import MicrotaintWrapper
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -158,7 +159,7 @@ def _run_with_taint(
         taint_fn(wrapper, buf)
         return len(data)
 
-    def _write_hook(ql: Qiling, fd: int, buf: int, count: int, *_: Any) -> int:
+    def _write_hook(ql: Qiling, fd: int, buf: int, count: int, *_: object) -> int:
         # Capture buf AND read shadow_mask NOW, before libc cleanup runs.
         # Returns count to suppress the actual write (no bytes leak to stdout).
         if fd == 1 and output_buf[0] is None:
@@ -404,7 +405,7 @@ class TestEndToEndPropagation:
             tmp_path,
         )
 
-        def taint(wrapper: Any, buf: Any) -> None:
+        def taint(wrapper: MicrotaintWrapper, buf: int) -> None:
             wrapper.taint_bit(buf, 3)  # taint bit 3 only
 
         shadow, _ = _run_with_taint(binary, b'\x00', taint, output_size=1)
@@ -431,7 +432,7 @@ class TestEndToEndPropagation:
             tmp_path,
         )
 
-        def taint(wrapper: Any, buf: Any) -> None:
+        def taint(wrapper: MicrotaintWrapper, buf: int) -> None:
             wrapper.taint_region(buf, bytes([0x0F]))  # low nibble only
 
         shadow, _ = _run_with_taint(binary, b'\x00', taint, output_size=1)
@@ -461,7 +462,7 @@ class TestEndToEndPropagation:
             tmp_path,
         )
 
-        def taint(wrapper: Any, buf: Any) -> None:
+        def taint(wrapper: MicrotaintWrapper, buf: int) -> None:
             wrapper.taint_bit(buf, 0)  # only bit 0 of input is tainted
 
         shadow, _ = _run_with_taint(binary, b'\xff', taint, output_size=1)
@@ -488,7 +489,7 @@ class TestEndToEndPropagation:
             tmp_path,
         )
 
-        def taint(wrapper: Any, buf: Any) -> None:
+        def taint(wrapper: MicrotaintWrapper, buf: int) -> None:
             wrapper.taint_bit(buf, 3)  # only byte 0, bit 3
 
         shadow, _ = _run_with_taint(binary, b'\x00\x00', taint, output_size=2)
@@ -517,14 +518,14 @@ class TestEndToEndPropagation:
         )
 
         # Approach A: taint all 8 bits individually
-        def taint_all_bits(wrapper: Any, buf: Any) -> None:
+        def taint_all_bits(wrapper: MicrotaintWrapper, buf: int) -> None:
             for bit in range(8):
                 wrapper.taint_bit(buf, bit)
 
         shadow_a, _ = _run_with_taint(binary, b'\xaa', taint_all_bits, output_size=1)
 
         # Approach B: taint via taint_region with 0xFF mask
-        def taint_full(wrapper: Any, buf: Any) -> None:
+        def taint_full(wrapper: MicrotaintWrapper, buf: int) -> None:
             wrapper.taint_region(buf, bytes([0xFF]))
 
         shadow_b, _ = _run_with_taint(binary, b'\xaa', taint_full, output_size=1)
@@ -589,7 +590,8 @@ class TestEndToEndPropagation:
             reporter=reporter,
         )
 
-        def _write_cap(ql: Any, fd, buf: Any, count: int, *_):
+        def _write_cap(ql: Qiling, fd: int, buf: int, count: int,
+                       *_: object) -> int:
             if fd == 1 and captured_buf[0] is None:
                 captured_buf[0] = buf
                 captured_shadow[0] = wrapper.shadow_mem.read_mask(buf, 1)
@@ -621,7 +623,7 @@ class TestEndToEndPropagation:
             tmp_path,
         )
 
-        def taint(wrapper: Any, buf: Any) -> None:
+        def taint(wrapper: MicrotaintWrapper, buf: int) -> None:
             wrapper.taint_region(buf, bytes([0x00]))  # explicit no-taint
 
         shadow, _ = _run_with_taint(binary, b'\xaa', taint, output_size=1)
@@ -645,7 +647,7 @@ class TestEndToEndPropagation:
             tmp_path,
         )
 
-        def taint(wrapper: Any, buf: Any) -> None:
+        def taint(wrapper: MicrotaintWrapper, buf: int) -> None:
             wrapper.taint_bit(buf, 7)  # MSB only
 
         shadow, _ = _run_with_taint(binary, b'\x80', taint, output_size=1)

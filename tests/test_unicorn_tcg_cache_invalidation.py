@@ -82,7 +82,7 @@ def _run(sim: CellSimulator, bs_hex: str, state: dict[str, int], taint: dict[str
 
 # Backend matrix — the bug must be fixed across all three.  Each
 # parameter is a kwargs dict for ``CellSimulator``.
-BACKENDS: list[tuple[str, dict[str, Any]]] = [
+BACKENDS: list[tuple[str, dict[str, bool]]] = [
     ('unicorn', {'use_unicorn': True, 'use_c': False}),
     ('cython', {'use_unicorn': False, 'use_c': False}),
     ('c', {'use_unicorn': False, 'use_c': True}),
@@ -214,7 +214,7 @@ class TestThreeTestPoisoningSequence:
     def test_full_sequence_produces_byte_repeated_taint(
         self,
         backend_name: str,
-        backend_kwargs: dict[str, Any],
+        backend_kwargs: dict[str, bool],
     ) -> None:
         sim = CellSimulator(Architecture.AMD64, **backend_kwargs)
         _run(sim, T7989_BYTES, T7989_STATE, T7989_TAINT)
@@ -231,7 +231,7 @@ class TestThreeTestPoisoningSequence:
             f"inherit BL's taint at bit 1."
         )
 
-    def test_full_sequence_matches_known_sound_value(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_full_sequence_matches_known_sound_value(self, backend_name: str, backend_kwargs: dict[str, bool]) -> None:
         """Sharp-but-fragile pin against the exact value microtaint
         produces today.  Update this only when an intentional taint-
         precision change (more or less overtaint) is committed."""
@@ -246,7 +246,7 @@ class TestThreeTestPoisoningSequence:
             f'changed (intentional? then update this test).'
         )
 
-    def test_full_sequence_matches_isolated_8009(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_full_sequence_matches_isolated_8009(self, backend_name: str, backend_kwargs: dict[str, bool]) -> None:
         """Test 8009 alone produces the correct taint; running the
         poisoning sequence before it must not change that result."""
         sim_alone = CellSimulator(Architecture.AMD64, **backend_kwargs)
@@ -263,7 +263,7 @@ class TestThreeTestPoisoningSequence:
             f'— prior tests must not affect 8009.  TCG cache invalidation regression.'
         )
 
-    def test_repeated_evaluation_is_stable(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_repeated_evaluation_is_stable(self, backend_name: str, backend_kwargs: dict[str, bool]) -> None:
         """Running 8009 multiple times after the poisoning sequence must
         produce the SAME taint each time.  The bug originally produced
         a different broken value on the first call vs. subsequent calls."""
@@ -290,7 +290,7 @@ class TestThreeTestPoisoningSequence:
     def test_8009_taint_satisfies_floor_under_all_orderings(
         self,
         backend_name: str,
-        backend_kwargs: dict[str, Any],
+        backend_kwargs: dict[str, bool],
         order: list[str],
     ) -> None:
         """Whatever the prior-test sequence, 8009's output must keep
@@ -325,7 +325,7 @@ class TestCodeRewriteSemantics:
     tests would all fail catastrophically if the TCG translation cache
     were not invalidated."""
 
-    def test_long_then_short_bytestring(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_long_then_short_bytestring(self, backend_name: str, backend_kwargs: dict[str, bool]) -> None:
         """A long bytestring followed by a SHORTER one — the classic
         cache-invalidation hazard.  The short bytestring's emu_start
         must not dispatch to the cached long-bytestring translation."""
@@ -348,7 +348,7 @@ class TestCodeRewriteSemantics:
             f'partial-register write.  TCG cache regression.'
         )
 
-    def test_short_then_long_bytestring(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_short_then_long_bytestring(self, backend_name: str, backend_kwargs: dict[str, bool]) -> None:
         """Reverse order — a 4-byte bytestring then a 28-byte one.  The
         long bytestring's emu_start must translate ALL its bytes
         afresh, not start with the cached short translation."""
@@ -361,7 +361,7 @@ class TestCodeRewriteSemantics:
             f'TCG cache regression.'
         )
 
-    def test_alternating_bytestrings(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_alternating_bytestrings(self, backend_name: str, backend_kwargs: dict[str, bool]) -> None:
         """Alternate between two bytestrings repeatedly.  Each switch
         must invalidate the cache; if it doesn't, errors will accumulate
         and at least one run will produce an output missing the
@@ -382,7 +382,7 @@ class TestCodeRewriteSemantics:
 @pytest.mark.parametrize(('backend_name', 'backend_kwargs'), BACKENDS, ids=[name for name, _ in BACKENDS])
 class TestMemoryStateInvariants:
 
-    def test_8009_memory_does_not_leak_prior_test_rax(self, backend_name: str, backend_kwargs: dict[str, Any]) -> None:
+    def test_8009_memory_does_not_leak_prior_test_rax(self, backend_name: str, backend_kwargs: dict[str, bool]) -> None:
         """After running the poisoning sequence and reading the spill
         location [rsp-64] = 0x7FFFFFC0 in Unicorn memory, the bytes
         there must be the rep-stosb output (AL of post-mov RAX), NOT

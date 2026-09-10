@@ -68,7 +68,6 @@ Run with:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -212,7 +211,7 @@ class TestBug1RMWDifferential:
         mem_assignments = [a for a in circuit.assignments if hasattr(a.target, 'address_expr')]
         assert len(mem_assignments) == 1
 
-        def _has_cell(expr: Any, depth: int = 0) -> bool:
+        def _has_cell(expr: object, depth: int = 0) -> bool:
             if expr is None or depth > 40:
                 return False
             if type(expr).__name__ == 'InstructionCellExpr':
