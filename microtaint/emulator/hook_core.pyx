@@ -553,6 +553,7 @@ cdef class InstructionHook:
     # refresh step to forget; see the note in fastpath.h.
     cdef MtFastCtx fctx
     cdef bint arr_loaded              # register_taint has been loaded into g_taint
+    cdef bint block_mode              # block mode owns g_taint for the whole run
     cdef public unsigned long arr_fallbacks   # instructions that had to use the dict path
     cdef MemReadCtx mem_ctx           # C guest-read context handed to circuit_c
     cdef bint mem_ctx_ready
@@ -652,6 +653,7 @@ cdef class InstructionHook:
         self.addr_map.cap = 0
         self.addr_map.n = 0
         self.arr_loaded = False
+        self.block_mode = False
         self.arr_fallbacks = 0
         self.mem_ctx_ready = False
         self.rip_slot = -1
@@ -814,6 +816,15 @@ cdef class InstructionHook:
             self._init_mem_ctx()
         for name in names:
             last = self._slot_for(name)
+        # The array is the state for the whole run: the per-instruction hook is
+        # never armed alongside block mode, so nothing else loads the seed in or
+        # syncs the answer back.  Without this, register taint seeded by the
+        # caller was dropped and register taint COMPUTED by the block runtime
+        # was invisible through `wrapper.register_taint` -- measured on
+        # bench_sparse, RBX and R11 came back clean while every memory word
+        # agreed, which reads as a block-mode under-taint.
+        self.block_mode = True
+        self._load_dict_to_arr()
         return last
 
     cdef int _slot_for(self, object name) except -1:
@@ -894,7 +905,11 @@ cdef class InstructionHook:
         up (otherwise a second run would silently ignore it)."""
         if not self.arr_loaded:
             return
-        self.arr_loaded = False
+        # In block mode the array stays authoritative: there is no next
+        # instruction to reload it from the dict, so clearing the flag here
+        # would make every read after the first hand back a stale snapshot.
+        if not self.block_mode:
+            self.arr_loaded = False
         cdef object name
         cdef object slot_obj
         cdef int slot

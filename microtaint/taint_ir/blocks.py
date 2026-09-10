@@ -65,9 +65,14 @@ def instruction_starts(ops: list[PcodeOp]) -> list[tuple[int, int, int]]:
 
 
 def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
-               emit: Emit = Emit.BOTH,
+               emit: Emit = Emit.BOTH, abs_ram: bool = False,
                builder: Builder | None = None) -> list[Region]:
     """Greedy maximal regions covering `code`, in order.
+
+    `abs_ram` says `base` is where the code really runs, so a `ram` varnode --
+    what a PC-relative operand lifts to once the displacement has folded into
+    the program counter -- names a live guest address and can be lowered as a
+    memory access.  It is off by default because the default base is synthetic.
 
     The whole block is tried first, because that is the common case and it costs
     one lowering; only when it declines does this walk instruction by
@@ -98,7 +103,7 @@ def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
         hi = marks[j][0] if j < n else len(ops)
         try:
             return builder.build(ops[lo:hi], end_of[j - 1], emit=emit,
-                                 block=(j - i > 1)), None
+                                 block=(j - i > 1), abs_ram=abs_ram), None
         except Unsupported as exc:
             return None, getattr(exc, 'cut_at', None)
         except Exception:            # a lifter surprise is a decline, not a crash

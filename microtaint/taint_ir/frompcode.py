@@ -366,8 +366,9 @@ class Builder:
         self.be = be
         self.arch = arch
 
-    def build(self, ops: list[PcodeOp], end_addr: int, *, emit: Emit = Emit.TAINT,  # noqa: C901
-              block: bool = False) -> IRProg:
+    def build(self, ops: list[PcodeOp], end_addr: int, *,  # noqa: C901
+              emit: Emit = Emit.TAINT, block: bool = False,
+              abs_ram: bool = False) -> IRProg:
         """Lower `ops`.  `emit` selects which frame becomes the program's
         outputs: 'taint' (the shipped behaviour) or 'value'.
 
@@ -387,6 +388,12 @@ class Builder:
         # Same normalisation as the policy: a member from here on.
         self.emit = Emit(emit)
         self.block = block
+        # `abs_ram` says the ops were translated at the address they really run
+        # at, so a `ram` varnode's offset is a live guest address.  Off by
+        # default because the per-instruction path lifts every instruction at a
+        # synthetic base, where that offset would name the wrong byte -- and a
+        # load or store aimed at the wrong byte is an UNDER-taint.
+        self.abs_ram = abs_ram
         p = IRProg()
         v = SymFrame(p, self.declared, self.be, 'v')
         t = SymFrame(p, self.declared, self.be, 't')
@@ -699,6 +706,44 @@ class Builder:
                             p.splat(p.op(NEZ, addr_t))))
         self._predicated_write(self._out(op), val, tnt)
 
+    def _ram_load(self, vn: Varnode) -> tuple[int, int]:
+        """A varnode that IS memory: a load at an address the lifter resolved.
+
+        A PC-relative operand has no address arithmetic left by the time SLEIGH
+        is done with it -- the displacement folds into the program counter and
+        the operand comes out as a `ram` varnode at an absolute address.  That
+        is a load like any other with a constant address and no address taint,
+        so it goes through the same access machinery and the caller resolves it
+        against guest memory and the shadow in pass one exactly as it does a
+        LOAD.
+
+        Refusing these instead is not the safe direction it looks like: the
+        block that contains one is refused whole and then SKIPPED, so nothing
+        computes its taint at all.  Measured on bench_sparse, that lost RBX,
+        R11 and two memory words -- an under-taint, from two refused blocks in
+        10,701.
+        """
+        p = self.p
+        if vn.size > 8:
+            raise Unsupported('wide ram input')
+        k = self._access_for('load', p.const(vn.offset), vn.size)
+        p.outputs.append((('addrt', k), p.const(0)))
+        return (p.input_value(('mem', k), vn.size * 8),
+                p.input_taint(('mem', k), vn.size * 8))
+
+    def _ram_store(self, vn: Varnode, val: int, tnt: int) -> None:
+        """The store half of `_ram_load`: a write at a resolved address."""
+        p = self.p
+        if vn.size > 8:
+            raise Unsupported('wide ram output')
+        if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
+            raise Unsupported('predicated ram store')
+        k = self._access_for('store', p.const(vn.offset), vn.size)
+        p.outputs.append((('addrt', k), p.const(0)))
+        p.outputs.append((('sttaint', k), p.mask(tnt, vn.size * 8)))
+        if self.emit in (Emit.VALUE, Emit.BOTH):
+            p.outputs.append((('stval', k), p.mask(val, vn.size * 8)))
+
     def _emit_store(self, op: PcodeOp) -> None:
         """A store contributes the taint to write and the address to write it
         at, both as outputs; committing them is the caller's job.
@@ -851,6 +896,8 @@ class Builder:
         if sp in ('register', 'unique'):
             return (self.v.read(sp, vn.offset, vn.size),
                     self.t.read(sp, vn.offset, vn.size))
+        if sp == 'ram' and self.abs_ram:
+            return self._ram_load(vn)
         raise Unsupported(f'input space {sp}')
 
     def _predicated_write(self, vn: Varnode, val: int, tnt: int) -> None:
@@ -868,6 +915,9 @@ class Builder:
         """
         p = self.p
         sp = vn.space.name
+        if sp == 'ram' and self.abs_ram:
+            self._ram_store(vn, val, tnt)
+            return
         if sp not in ('register', 'unique'):
             raise Unsupported(f'output space {sp}')
         if p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1 \

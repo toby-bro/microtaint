@@ -114,7 +114,9 @@ def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str
         return None                      # registers would collide with values
     slot_of = block_slot_resolver(arch, name_to_slot)
     try:
-        regions = plan_block(arch, code, base, builder=builder)
+        # `abs_ram=True`: a block is compiled for the address it runs at, so a
+        # PC-relative operand's resolved `ram` address is the live one.
+        regions = plan_block(arch, code, base, builder=builder, abs_ram=True)
     except Exception:                    # an unliftable block is refused
         return None
     if not regions or any(r.prog is None for r in regions):
