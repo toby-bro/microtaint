@@ -19,7 +19,11 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-dependencies = ["pypcode>=3.3.3", "qiling>=1.4.6", "unicorn>=2.1.4"]
+dependencies = [
+    "pypcode>=4.0.0",
+    "qiling>=1.4.6",
+    "unicorn>=2.1.4",
+]
 
 [project.scripts]
 microtaint = "microtaint.emulator.cli:main"
@@ -328,6 +332,7 @@ untyped_calls_exclude = [
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 disallow_any_generics = true
+disallow_any_explicit = true
 mypy_path = ["stubs"]
 no_implicit_optional = false
 strict_equality = true
