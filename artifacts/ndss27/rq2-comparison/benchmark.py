@@ -2872,7 +2872,26 @@ class GroundTruthSimulator:
         self._STACK_BASE = 0x100000
         self._CODE_BASE = 0x1000
 
+    # Isolate every emulation in its own Unicorn instance.
+    #
+    # The fast oracle reuses one instance across a case's 2^k runs, resetting
+    # every register class, both mapped regions and EFLAGS between them.  That is
+    # about 100x cheaper and almost always right, but on a long batch a few runs
+    # come back with register values NO assignment can produce, which shows up as
+    # a spurious under-taint.  Measured over five seeds of the full corpus: 41
+    # cases reported unsound, and isolated re-verification confirmed ZERO of them.
+    # One was `and rax, 0`, whose output cannot depend on any input, with the
+    # oracle claiming 32 tainted bits in RAX.
+    #
+    # A fresh instance per emulation costs ~3 ms instead of ~30 us, which is about
+    # 16 minutes for the whole 3,263-case ground-truth set -- worth paying for the
+    # run whose numbers go in a paper, not for everyday use.  MICROTAINT_GT_ISOLATE=1
+    # or --gt-isolate turns it on.
+    _ISOLATE = os.environ.get('MICROTAINT_GT_ISOLATE', '') not in ('', '0')
+
     def _ensure_uc(self) -> Any:
+        if self._ISOLATE:
+            self._uc = None
         if self._uc is None:
             unicorn = self._uc_module
             uc = unicorn.Uc(unicorn.UC_ARCH_X86, unicorn.UC_MODE_64)
@@ -3101,7 +3120,9 @@ class GroundTruthSimulator:
         # would execute stale opcodes from a prior test.  Wiping the
         # whole code region at every call costs a single 64 KB memcpy
         # — negligible compared to ~30 µs of emulation per call.
-        if bytestring != self._last_bytestring:
+        if bytestring != self._last_bytestring or self._ISOLATE:
+            # A fresh instance has no code written at all, so the "same bytestring
+            # as last time" shortcut must not apply under isolation.
             uc.mem_write(self._CODE_BASE, self._CODE_ZERO_BUF)
             uc.mem_write(self._CODE_BASE, bytestring)
             self._last_bytestring = bytestring
@@ -4422,6 +4443,17 @@ def main():
         '--path-explosion --arch-failures',
     )
     parser.add_argument(
+        '--gt-isolate',
+        action='store_true',
+        help=(
+            'Give every ground-truth emulation its own Unicorn instance.  ~100x '
+            'slower (about 16 min for the full corpus) and free of the spurious '
+            'under-taints the reused instance produces on a long batch.  Use it for '
+            'a run whose numbers are going to be published; verify_unsound.py does '
+            'the same thing after the fact for a normal run.'
+        ),
+    )
+    parser.add_argument(
         '--ground-truth',
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -4439,6 +4471,11 @@ def main():
         ),
     )
     args = parser.parse_args()
+
+    if args.gt_isolate:
+        # Class attribute, not the env var: the class body has already run.
+        GroundTruthSimulator._ISOLATE = True
+        print('[*] Ground truth: one fresh Unicorn per emulation (slow, no reuse artifacts)')
 
     if args.seed is not None:
         random.seed(args.seed)
