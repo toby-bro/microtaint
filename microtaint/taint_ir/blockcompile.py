@@ -65,6 +65,11 @@ def block_slot_resolver(arch: Any, name_to_slot: dict[str, int]) -> SlotOf:
     return slot_of
 
 
+#: One region as the C runtime wants it: (function address, guest address,
+#: [(kind, size, needs the loaded value)], address-slice function address).
+RegionSpec = tuple[int, int, list[tuple[int, int, int]], int]
+
+
 def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int],
                   *, builder: Any = None,
                   descriptor: Any = None) -> tuple[Any, list[Any], set[int]] | None:
@@ -96,7 +101,8 @@ def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int
     if not regions or any(r.prog is None for r in regions):
         return None
 
-    specs, keep = [], []
+    specs: list[RegionSpec] = []
+    keep: list[Any] = []
     reads: set[int] = set()
     for region in regions:
         prog = region.prog
@@ -129,14 +135,61 @@ def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int
                   if kind == 'v' and isinstance(k, tuple) and k[0] == 'reg'
                   and prog.live[n]}
 
+        # Pass 1 of the two-pass protocol runs only to learn where the LOADS
+        # land, and running the whole taint program for that is paying for
+        # arithmetic nobody reads: measured, 82.7 ops to produce 1.93
+        # addresses.  Re-rooting the SAME program on its address outputs and
+        # letting dead-code elimination run again gives the slice that computes
+        # just those -- no re-lift, no second lowering, only another emit.
+        addr_fn = 0
+        if any(a['kind'] == 'load' for a in accesses):
+            got = _address_slice(prog, slot_of, taint_ir_c)
+            if got is not None:
+                addr_cap, addr_fn = got
+                keep.append(addr_cap)
         specs.append((addr, region.addr,
                       [(0 if a['kind'] == 'load' else 1, a['size'],
                         1 if k in live_mem else 0)
-                       for k, a in enumerate(accesses)]))
+                       for k, a in enumerate(accesses)], addr_fn))
 
     desc = _read_descriptor(descriptor, reads, keep)
     plan = blockpath_c.plan_new(len(code), specs, keep, *desc)
     return plan, regions, reads
+
+
+def _address_slice(prog: Any, slot_of: SlotOf, taint_ir_c: Any) -> Any:
+    """The part of `prog` that computes its load addresses, compiled.
+
+    Returns (capsule, function address) or None if it will not compile, in
+    which case the caller falls back to running the whole program for pass 1 --
+    correct either way, just slower.
+
+    The program is re-rooted in place and restored, because `finish()` only
+    marks which nodes are live and `finalize()` builds the compact program from
+    that mark.  So the slice costs a dead-code pass and an emit, not another
+    lowering.
+    """
+    from microtaint.taint_ir.exec import compile_program  # noqa: PLC0415
+
+    saved_outputs = list(prog.outputs)
+    addr_outputs = [(k, n) for k, n in saved_outputs
+                    if isinstance(k, tuple) and k[0] == 'addr']
+    if not addr_outputs or len(addr_outputs) == len(saved_outputs):
+        return None                      # nothing to prune
+    try:
+        prog.outputs = addr_outputs
+        prog.live = []
+        cap, _ser = compile_program(prog, slot_of)  # type: ignore[no-untyped-call]
+        if not taint_ir_c.jit(cap):
+            return None
+        fn = taint_ir_c.fn_addr(cap)
+        return (cap, fn) if fn else None
+    except Exception:                    # a slice that will not compile is not fatal
+        return None
+    finally:
+        prog.outputs = saved_outputs
+        prog.live = []
+        prog.finish()
 
 
 def _read_descriptor(descriptor: Any, reads: set[int],

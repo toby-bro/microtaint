@@ -19,7 +19,7 @@ def mem_mask(mem: _Capsule, addr: int, size: int) -> int: ...
 
 def plan_new(
     size: int,
-    regions: list[tuple[int, int, list[tuple[int, int, int]]]],
+    regions: list[tuple[int, int, list[tuple[int, int, int]], int]],
     keepalive: Any,
     ids_addr: int = ...,
     ptrs_addr: int = ...,

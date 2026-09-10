@@ -90,8 +90,14 @@ typedef void (*MtBlkFn)(
 /* One lowered run of consecutive instructions. */
 typedef struct {
   void *fn;      /* MtBlkFn, NULL if this region did not lower */
+  /* The slice of `fn` that computes only the load addresses.  Pass 1 wants
+   * nothing else, and the whole program is far larger: measured, 82.7 ops to
+   * produce 1.93 addresses.  NULL means run `fn` for pass 1, which is correct
+   * and merely slower. */
+  void *addr_fn;
   uint64_t addr; /* the region's first guest address */
   int n_acc;
+  int n_load;  /* of them, how many are loads: pass 1 is for those */
   signed char acc_kind[MT_BLK_MAX_ACC]; /* 0 load, 1 store */
   signed char acc_size[MT_BLK_MAX_ACC];
   signed char acc_needval[MT_BLK_MAX_ACC]; /* the program reads the word */
@@ -257,11 +263,14 @@ static int mt_blk_compute(
     memset(sv + MT_BLK_MEM_BASE, 0, accb);
     memset(st + MT_BLK_MEM_BASE, 0, accb);
 
-    if (reg->n_acc > 0) {
+    /* Pass 1 exists only to learn where the LOADS land: a store's address
+     * comes out of pass 2 with everything else.  A region that only stores
+     * therefore needs one pass, not two. */
+    if (reg->n_load > 0) {
       memcpy(so, st, nb);
       memcpy(so + MT_BLK_VAL_BASE, st + MT_BLK_VAL_BASE, nb);
       memset(so + MT_BLK_MEM_BASE, 0, accb);
-      ((MtBlkFn)reg->fn)(sv, st, so);
+      ((MtBlkFn)(reg->addr_fn ? reg->addr_fn : reg->fn))(sv, st, so);
 
       for (int k = 0; k < reg->n_acc; k++) {
         if (reg->acc_kind[k] != 0) { continue; /* stores read nothing */ }

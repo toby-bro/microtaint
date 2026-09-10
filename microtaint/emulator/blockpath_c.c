@@ -328,11 +328,13 @@ static PyObject *py_plan_new(PyObject *self, PyObject *args) {
 
     for (Py_ssize_t i = 0; i < n; i++) {
         PyObject *item = PySequence_Fast_GET_ITEM(seq, i);
-        unsigned long long fn_addr, region_addr;
+        unsigned long long fn_addr, region_addr, addr_fn = 0;
         PyObject *accs;
-        if (!PyArg_ParseTuple(item, "KKO", &fn_addr, &region_addr, &accs)) goto fail;
+        if (!PyArg_ParseTuple(item, "KKO|K", &fn_addr, &region_addr, &accs,
+                              &addr_fn)) goto fail;
         MtBlkRegion *r = &plan->regions[i];
         r->fn = (void *)(uintptr_t)fn_addr;
+        r->addr_fn = (void *)(uintptr_t)addr_fn;
         r->addr = region_addr;
         if (!r->fn) plan->handleable = 0;
         PyObject *aseq = PySequence_Fast(accs, "accesses must be a sequence");
@@ -344,6 +346,7 @@ static PyObject *py_plan_new(PyObject *self, PyObject *args) {
             goto fail;
         }
         r->n_acc = (int)na;
+        r->n_load = 0;
         for (Py_ssize_t k = 0; k < na; k++) {
             int kind, asize, needval;
             if (!PyArg_ParseTuple(PySequence_Fast_GET_ITEM(aseq, k), "iii",
@@ -351,6 +354,7 @@ static PyObject *py_plan_new(PyObject *self, PyObject *args) {
                 Py_DECREF(aseq); goto fail;
             }
             r->acc_kind[k] = (signed char)kind;
+            if (kind == 0) r->n_load++;
             r->acc_size[k] = (signed char)asize;
             r->acc_needval[k] = (signed char)needval;
         }
