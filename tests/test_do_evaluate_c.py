@@ -63,6 +63,6 @@ def test_evaluate_c_matches_evaluate_amd64() -> None:
 
 
 @pytest.mark.parametrize('isa', ['ARM64', 'MIPS64BE', 'PPC32BE', 'RISCV64'])
-def test_evaluate_c_matches_evaluate_other_isas(isa):
+def test_evaluate_c_matches_evaluate_other_isas(isa: str) -> None:
     _ran, n_mism, examples = _check_isa(isa)
     assert n_mism == 0, f'{isa}: evaluate_c != evaluate on {n_mism} circuits, e.g. {examples}'

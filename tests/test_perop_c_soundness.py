@@ -25,7 +25,7 @@ from tests.perop_c_bank import run_bank_perop_c
 
 
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'RISCV64'])
-def test_no_new_under_taint_vs_ground_truth(isa, request: pytest.FixtureRequest):
+def test_no_new_under_taint_vs_ground_truth(isa: str, request: pytest.FixtureRequest) -> None:
     from tests.conftest import fuzz_budget
 
     rep = run_bank_perop_c(isas=[isa],
@@ -44,7 +44,7 @@ def test_no_new_under_taint_vs_ground_truth(isa, request: pytest.FixtureRequest)
 
 @pytest.mark.parametrize('isa,floor', [('AMD64', 0.85), ('ARM64', 0.90),
                                        ('RISCV64', 0.85)])
-def test_coverage_does_not_collapse(isa, floor):
+def test_coverage_does_not_collapse(isa: str, floor):
     """A decline is safe but not free: it sends the instruction back to the
     slow whole-instruction differential.  Guard the fraction the pass answers so
     a rule change cannot buy correctness by quietly declining more."""

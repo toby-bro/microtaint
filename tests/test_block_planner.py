@@ -36,13 +36,13 @@ _DEPENDENT_ADDRESS = (bytes.fromhex('4883c001')      # add rax, 1
                       + bytes.fromhex('4801d8'))     # add rax, rbx
 
 
-def _n_instructions(arch, code: bytes) -> int:
+def _n_instructions(arch: Architecture, code: bytes) -> int:
     from microtaint.sleigh.lifter import get_context
     key = arch.value if hasattr(arch, 'value') else str(arch)
     return len(instruction_starts(get_context(key).translate(code, LIFT_BASE).ops))
 
 
-def _assert_covers(regions, arch, code: bytes) -> None:
+def _assert_covers(regions, arch: Architecture, code: bytes) -> None:
     """In order, contiguous, and covering every instruction exactly once."""
     assert regions, 'the planner returned no regions at all'
     total = _n_instructions(arch, code)

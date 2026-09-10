@@ -34,7 +34,7 @@ TAINT = {'RAX': 0xFF, 'X1': 0xFF}
 
 @pytest.mark.parametrize(('label', 'arch', 'code'), CASES, ids=[c[0] for c in CASES])
 @pytest.mark.parametrize('path', ['compiled', 'differential'])
-def test_both_paths_answer(label: str, arch, code: str, path: str) -> None:
+def test_both_paths_answer(label: str, arch: Architecture, code: str, path: str) -> None:
     out = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path=path)
     assert isinstance(out, dict) and out, f'{label}: {path} returned nothing'
     # The post-state, so a register nobody touched keeps what it had.
@@ -45,7 +45,7 @@ def test_both_paths_answer(label: str, arch, code: str, path: str) -> None:
 
 
 @pytest.mark.parametrize(('label', 'arch', 'code'), CASES, ids=[c[0] for c in CASES])
-def test_the_two_paths_answer_the_same_shape(label: str, arch, code: str) -> None:
+def test_the_two_paths_answer_the_same_shape(label: str, arch: Architecture, code: str) -> None:
     """Same keys from both, so `path=` is the only thing a caller changes."""
     a = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path='compiled')
     b = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path='differential')
@@ -55,7 +55,7 @@ def test_the_two_paths_answer_the_same_shape(label: str, arch, code: str) -> Non
 
 
 @pytest.mark.parametrize(('label', 'arch', 'code'), CASES, ids=[c[0] for c in CASES])
-def test_compiled_is_never_looser_than_it_claims(label: str, arch, code: str) -> None:
+def test_compiled_is_never_looser_than_it_claims(label: str, arch: Architecture, code: str) -> None:
     """Where the compiled path reports MORE than the differential, say so.
 
     Not a failure -- an opaque operation floors to avalanche where a concrete

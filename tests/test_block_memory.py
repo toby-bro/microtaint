@@ -88,7 +88,7 @@ def kit():
             return _MEMBASE + _PER_ACC * key[1] + _OFF[key[0]]
         raise KeyError(key)
 
-    def run(prog, values, taints, machine):
+    def run(prog, values: dict[str, int], taints: dict[str, int], machine):
         """The two-pass protocol, as fastpath.h::mt_ir_mem_step performs it.
 
         Returns (taint, values): a region hands the NEXT region its register
@@ -148,7 +148,7 @@ _CASES = {
 
 @pytest.mark.parametrize('name', sorted(_CASES))
 @pytest.mark.parametrize('tainted', ['RAX', 'RDX'])
-def test_regions_agree_with_the_sequence_through_memory(kit, name, tainted) -> None:
+def test_regions_agree_with_the_sequence_through_memory(kit, name: str, tainted) -> None:
     builder, run = kit
     seq = [bytes.fromhex(h) for h in _CASES[name]]
     seed_taint = {tainted: 0xFF}

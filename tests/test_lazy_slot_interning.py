@@ -52,7 +52,7 @@ def _compiled():
     return comp, sim
 
 
-def _run_ptr(comp, sim, slot_map, taint, values):
+def _run_ptr(comp, sim: CellSimulator, slot_map, taint: dict[str, int], values: dict[str, int]):
     """evaluate_c_arr_ptr against a slot-indexed array -> {name: out taint}."""
     n = max(slot_map.values()) + 1
     arr = ctypes.c_uint64 * n
@@ -67,7 +67,7 @@ def _run_ptr(comp, sim, slot_map, taint, values):
     return {name: int(t[slot]) for name, slot in slot_map.items()}
 
 
-def _run_list(comp, sim, slot_map, taint, values):
+def _run_list(comp, sim: CellSimulator, slot_map, taint: dict[str, int], values: dict[str, int]):
     """evaluate_c_arr (the list form) -> {name: out taint} for the targets."""
     n = max(slot_map.values()) + 1
     t = [0] * n

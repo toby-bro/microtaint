@@ -23,6 +23,7 @@ always the geometry the engine actually uses.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from microtaint.sleigh.lifter import get_context
 from microtaint.types import Architecture, Register
@@ -214,7 +215,7 @@ class RegisterAliases:
 
     # -- bulk helpers for tests -------------------------------------------
 
-    def state_format(self, names: list[str | Register]) -> list[Register]:
+    def state_format(self, names: Sequence[str | Register]) -> list[Register]:
         """A state_format built from human names, vectors expanded to their
         64-bit geometry lanes (so no >64-bit Register reaches the engine).
         Scalars keep an explicit bit width when given as a ``Register``."""

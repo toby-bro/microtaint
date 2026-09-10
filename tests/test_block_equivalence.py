@@ -163,7 +163,7 @@ def kit():
         # Taint in the low half, published values in the high half.
         return layout[name] + (len(layout) if key[0] == 'regv' else 0)
 
-    def run(prog, values, taints):
+    def run(prog, values: dict[str, int], taints: dict[str, int]):
         capsule, _ = compile_program(prog, slot_of)
         n = 2 * len(layout)
         v = [0] * n
@@ -214,7 +214,7 @@ def _unicorn_states(seq: list[bytes], seed: dict[str, int],
 @pytest.mark.parametrize('name', sorted(_SEQUENCES))
 @pytest.mark.parametrize('seed_i', range(len(_SEEDS)))
 @pytest.mark.parametrize('taint_i', range(len(_TAINTS)))
-def test_block_program_matches_the_sequence(kit, name, seed_i, taint_i) -> None:
+def test_block_program_matches_the_sequence(kit, name: str, seed_i, taint_i) -> None:
     builder, layout, run = kit
     seq = _SEQUENCES[name]
     seed, taint_in = _SEEDS[seed_i], _TAINTS[taint_i]

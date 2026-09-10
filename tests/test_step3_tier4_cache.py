@@ -215,7 +215,7 @@ def _gather_observations(binary, addrs, taint_offset):
     observations = []
     tainted_iter_found = [None]
 
-    def write_hook(ql, fd, buf, count, *_):
+    def write_hook(ql, fd, buf, count: int, *_):
         if fd == 1 and count == 8:
             output_shadow.append(wrapper_ref[0].shadow_mem.read_mask(buf, 8))
         return count
@@ -240,7 +240,7 @@ def _gather_observations(binary, addrs, taint_offset):
     )
     wrapper_ref[0] = w
 
-    def read_hook(ql, fd, buf, count):
+    def read_hook(ql, fd, buf, count: int):
         if fd != 0:
             return 0
         ql.mem.write(buf, msg[:count])
@@ -253,7 +253,7 @@ def _gather_observations(binary, addrs, taint_offset):
     observe_addr = addrs['observe']
     state = {'iter': 0}
 
-    def watcher(uc, address, size, user_data):
+    def watcher(uc, address, size: int, user_data):
         if address == loop_head_addr:
             state['iter'] += 1
 

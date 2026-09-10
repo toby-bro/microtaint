@@ -56,6 +56,7 @@ from typing import Callable
 
 import pytest
 
+from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
@@ -106,7 +107,11 @@ def regs() -> list[Register]:
 # ---------------------------------------------------------------------------
 
 
-def _ctx(simulator: CellSimulator, taint, values, *, shadow=None):
+def _ctx(simulator: CellSimulator,
+         taint: dict[str, int],
+         values: dict[str, int],
+         *,
+         shadow: BitPreciseShadowMemory=None):
     """Build an EvalContext with IGNORE policy (we don't care about implicit taint)."""
     return EvalContext(
         input_taint=taint,
@@ -117,7 +122,13 @@ def _ctx(simulator: CellSimulator, taint, values, *, shadow=None):
     )
 
 
-def _eval(simulator: CellSimulator, regs: list[Register], bytestring, taint, values, *, shadow=None):
+def _eval(simulator: CellSimulator,
+          regs: list[Register],
+          bytestring,
+          taint: dict[str, int],
+          values: dict[str, int],
+          *,
+          shadow: BitPreciseShadowMemory=None):
     """Generate the circuit and evaluate it. Returns the output_taint dict."""
     circuit = generate_static_rule(Architecture.AMD64, bytestring, regs)
     return circuit.evaluate(_ctx(simulator, taint, values, shadow=shadow))
@@ -425,7 +436,7 @@ class TestTier6RMWMemoryDestination:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0x01, 8)
 
-        def reader(addr, sz):
+        def reader(addr: int, sz: int):
             if addr == mem_addr:
                 return 0xFF
             return 0
@@ -463,7 +474,7 @@ class TestTier6RMWMemoryDestination:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0xF0, 8)
 
-        def reader(addr, sz):
+        def reader(addr: int, sz: int):
             if addr == mem_addr:
                 return 0xAB
             return 0
@@ -502,7 +513,7 @@ class TestTier6RMWMemoryDestination:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0x01, 8)
 
-        def reader(addr, sz):
+        def reader(addr: int, sz: int):
             if addr == mem_addr:
                 return 0x100
             return 0

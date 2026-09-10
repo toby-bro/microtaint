@@ -43,7 +43,7 @@ class TestRoundTrip:
     """write_mask then read_mask at the same address must return the same value."""
 
     @pytest.mark.parametrize('size', [1, 2, 3, 4, 5, 6, 7, 8])
-    def test_full_mask_round_trip(self, shadow: BitPreciseShadowMemory, size):
+    def test_full_mask_round_trip(self, shadow: BitPreciseShadowMemory, size: int) -> None:
         """A mask of all 1s for `size` bytes round-trips correctly."""
         addr = 0x1000
         mask = (1 << (size * 8)) - 1

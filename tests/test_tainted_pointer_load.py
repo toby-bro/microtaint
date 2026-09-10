@@ -57,7 +57,7 @@ def _table() -> TaintMemory:
 @pytest.mark.parametrize(('label', 'arch', 'code', 'taint', 'values', 'dest'), SHAPES,
                          ids=[s[0] for s in SHAPES])
 def test_a_load_through_a_tainted_address_taints_the_value(
-        label, arch, code, taint, values, dest, path) -> None:
+        label: str, arch: Architecture, code: bytes, taint: dict[str, int], values: dict[str, int], dest, path) -> None:
     out, used = explain(arch, code, taint, values, memory=_table(), path=path)
     assert used == path, f'{label}: asked for {path}, answered by {used}'
     assert out.get(dest, 0), (
@@ -68,7 +68,7 @@ def test_a_load_through_a_tainted_address_taints_the_value(
 @pytest.mark.parametrize(('label', 'arch', 'code', 'taint', 'values', 'dest'), SHAPES,
                          ids=[s[0] for s in SHAPES])
 def test_the_compiled_path_does_not_under_taint_the_differential(
-        label, arch, code, taint, values, dest) -> None:
+        label: str, arch: Architecture, code: bytes, taint: dict[str, int], values: dict[str, int], dest) -> None:
     """Whatever the differential can move, the compiled path must move too.
 
     Stated as containment rather than equality: the differential takes an

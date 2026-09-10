@@ -35,7 +35,7 @@ from tests.conftest import fuzz_budget
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
-def _gt_vectors(gp_names, rng, n, max_bits=4):
+def _gt_vectors(gp_names, rng: random.Random, n, max_bits=4):
     """Vectors tainting only GP regs with few TOTAL bits (ground-truth friendly:
     per-bit enumeration stays cheap and exact)."""
     for _ in range(n):
@@ -55,7 +55,7 @@ def _under_bits(got, ref, keys):
     return u
 
 
-def soundness_report(isa, n_per, seed=7, instr_limit=None):
+def soundness_report(isa: str, n_per, seed: int=7, instr_limit=None):
     """Three-way check: per-op vs ground truth vs engine oracle.  Returns
     (n_cases, n_exact_vs_gt, n_new_under, new_under_examples)."""
     from benchmark.instruction_bank import load_bank
@@ -107,7 +107,7 @@ def soundness_report(isa, n_per, seed=7, instr_limit=None):
     return n_cases, n_exact, len(new_under), new_under
 
 
-def slicewise_report(isa, n_per, seed=11):
+def slicewise_report(isa: str, n_per, seed: int=11):
     """Per-output-slice window (the integration model): trust per-op only on
     outputs whose cone is reconvergence-free.  Returns
     (n_cases, tot_slices, clean_slices, n_new_under_on_clean, examples)."""

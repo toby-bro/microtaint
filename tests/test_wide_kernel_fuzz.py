@@ -101,7 +101,7 @@ def _lane_inputs(rng: random.Random, bases: list[int], nbytes: int,
     return values, taints
 
 
-def _cell_bytes(evaluator, arch, instr, out_base, nbytes, or_in, and_in) -> set[int]:
+def _cell_bytes(evaluator, arch: Architecture, instr, out_base, nbytes, or_in, and_in) -> set[int]:
     ev = evaluator(arch)
     tainted: set[int] = set()
     for k in range(0, nbytes, 8):
@@ -114,7 +114,8 @@ def _cell_bytes(evaluator, arch, instr, out_base, nbytes, or_in, and_in) -> set[
     return tainted
 
 
-def _oracle_bytes(op, bases, values, taints, nbytes) -> set[int]:
+def _oracle_bytes(op: str | None, bases: list[int], values: dict[str, int],
+                  taints: dict[str, int], nbytes: int) -> set[int]:
     """Exact taint via f(V|T) XOR f(V&~T) on the wide per-lane operands."""
     def wide(base: int, src: dict[str, int]) -> int:
         v = 0
@@ -174,7 +175,7 @@ def test_wide_kernels_agree_and_are_exact(seed: int) -> None:
 # be exact.
 # ---------------------------------------------------------------------------
 
-def _cell_wide_native(evaluator, arch, instr, out_base, nbytes, in_vals, in_taints) -> set[int]:
+def _cell_wide_native(evaluator, arch: Architecture, instr, out_base, nbytes, in_vals, in_taints) -> set[int]:
     ev = evaluator(arch)
     or_in: dict[str, int] = {}
     and_in: dict[str, int] = {}
@@ -189,7 +190,8 @@ def _cell_wide_native(evaluator, arch, instr, out_base, nbytes, in_vals, in_tain
     return {j for j in range(nbytes) if (diff >> (j * 8)) & 0xFF}
 
 
-def _wide_oracle(op, bases, vals, taints, nbytes) -> set[int]:
+def _wide_oracle(op: str | None, bases: list[int], vals: dict[int, int],
+                 taints: dict[int, int], nbytes: int) -> set[int]:
     mask = (1 << (nbytes * 8)) - 1
     ops = [(((vals[b] | taints[b]) & mask), ((vals[b] & ~taints[b]) & mask)) for b in bases]
     if op == 'copy':

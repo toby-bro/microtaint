@@ -51,7 +51,7 @@ def bank_sim():
 
 
 @pytest.mark.parametrize(('label', 'code', 'out_reg'), _CASES)
-def test_reexec_matches_sleigh(rx, bank_sim, label, code, out_reg):
+def test_reexec_matches_sleigh(rx, bank_sim, label: str, code: bytes, out_reg):
     from microtaint.instrumentation.ast import InstructionCellExpr  # noqa: PLC0415
     from microtaint.simulator import MachineState  # noqa: PLC0415
     from microtaint.sleigh.engine import generate_static_rule  # noqa: PLC0415

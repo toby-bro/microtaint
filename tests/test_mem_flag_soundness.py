@@ -59,7 +59,7 @@ def _reg_targets(circ):
             if getattr(a.target, 'name', None) is not None and not hasattr(a.target, 'address_expr')]
 
 
-def _true_taint(sim: CellSimulator, hexs, name, be, size, base, taint):
+def _true_taint(sim: CellSimulator, hexs: str, name: str, be, size: int, base, taint: dict[str, int]):
     ice = InstructionCellExpr(ARCH, hexs, name, 0, be, {})
     mk = f'MEM_{hex(RSP)}_{size}'
     pos = ([('r', r, b) for r in RN for b in range(64) if (taint.get(r, 0) >> b) & 1]
@@ -78,7 +78,7 @@ def _true_taint(sim: CellSimulator, hexs, name, be, size, base, taint):
 
 @pytest.mark.parametrize(('label', 'hexs', 'size'),
                          [(k, v[0], v[1]) for k, v in CASES.items()], ids=list(CASES))
-def test_memory_flags_never_under_taint(label, hexs, size, sim: CellSimulator):
+def test_memory_flags_never_under_taint(label: str, hexs: str, size: int, sim: CellSimulator) -> None:
     _cached_generate_static_rule.cache_clear()
     circ = generate_static_rule(ARCH, bytes.fromhex(hexs), REGS)
     targets = _reg_targets(circ)

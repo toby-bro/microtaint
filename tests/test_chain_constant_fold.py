@@ -54,7 +54,7 @@ def cases():
     return _CASE_BYTES
 
 
-def _true_taint(arch, sim, code, name, be, regs, base, taint):
+def _true_taint(arch, sim: CellSimulator, code: bytes, name: str, be, regs, base, taint: dict[str, int]):
     rbits = {r.name: r.bits for r in regs}
     rn = [r.name for r in regs]
     ice = InstructionCellExpr(arch, code.hex(), name, 0, be, {})
@@ -72,7 +72,7 @@ def _true_taint(arch, sim, code, name, be, regs, base, taint):
 
 
 @pytest.mark.parametrize('label', _CASE_LABELS)
-def test_constant_intermediate_macro_is_monolithic(mips, cases, label):
+def test_constant_intermediate_macro_is_monolithic(mips, cases, label: str):
     arch, regs = mips
     code = cases[label]
     circ = generate_static_rule(arch, code, regs)
@@ -82,7 +82,7 @@ def test_constant_intermediate_macro_is_monolithic(mips, cases, label):
 
 
 @pytest.mark.parametrize('label', _CASE_LABELS)
-def test_constant_intermediate_macro_is_sound_and_exact(mips, cases, label):
+def test_constant_intermediate_macro_is_sound_and_exact(mips, cases, label: str):
     arch, regs = mips
     code = cases[label]
     sim = CellSimulator(arch)

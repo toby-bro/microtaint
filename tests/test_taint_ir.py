@@ -13,6 +13,7 @@ Three claims, each of which has already been wrong at least once:
 """
 # ruff: noqa: PLC0415
 import random
+from typing import Any
 
 import pytest
 
@@ -40,17 +41,17 @@ _CASES = [
 ]
 
 
-def _arch(name):
+def _arch(name: str):
     from microtaint.types import Architecture
     return getattr(Architecture, name)
 
 
-def _prog(isa, hexcode):
+def _prog(isa: str, hexcode):
     from microtaint.taint_ir.frompcode import build_ir
     return build_ir(_arch(isa), bytes.fromhex(hexcode))
 
 
-def _states(prog, n, seed):
+def _states(prog: Any, n: int, seed: str | int) -> Any:
     rng = random.Random(seed)
     keys = sorted({k for (_kind, k) in prog.inputs})
     return [({k: rng.getrandbits(64) for k in keys},
@@ -59,7 +60,7 @@ def _states(prog, n, seed):
 
 @pytest.mark.parametrize('isa,label,code', _CASES,
                          ids=[f'{i}:{l}' for i, l, _c in _CASES])
-def test_finalize_preserves_meaning(isa, label, code):
+def test_finalize_preserves_meaning(isa: str, label: str, code: bytes) -> None:
     """Expanding the one-bit cones and compacting must not change any answer."""
     prog = _prog(isa, code)
     fin = prog.finalize()
@@ -69,7 +70,7 @@ def test_finalize_preserves_meaning(isa, label, code):
 
 @pytest.mark.parametrize('isa,label,code', _CASES,
                          ids=[f'{i}:{l}' for i, l, _c in _CASES])
-def test_backends_agree(isa, label, code):
+def test_backends_agree(isa: str, label: str, code: bytes) -> None:
     """The C interpreter, the host emitter and the Python reference agree."""
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir.exec import compile_program
@@ -101,7 +102,7 @@ def test_backends_agree(isa, label, code):
 
 
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'RISCV64'])
-def test_ir_never_under_taints_vs_ground_truth(isa, request: pytest.FixtureRequest):
+def test_ir_never_under_taints_vs_ground_truth(isa: str, request: pytest.FixtureRequest) -> None:
     from tests.conftest import fuzz_budget
     from tests.perop_c_bank import run_bank_perop_c
     from tests.taint_ir_bank import ir_step
@@ -119,7 +120,7 @@ def test_ir_never_under_taints_vs_ground_truth(isa, request: pytest.FixtureReque
 
 @pytest.mark.parametrize('policy', ['concrete', 'avalanche'])
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64'])
-def test_memory_taint_matches_ground_truth(isa, policy):
+def test_memory_taint_matches_ground_truth(isa: str, policy):
     """Loads and stores, against Unicorn per-bit truth over a real data page.
 
     Both pointer policies are checked.  'avalanche' is the sound one and what

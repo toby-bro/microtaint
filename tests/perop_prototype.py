@@ -33,7 +33,7 @@ compaction precision question lives.  Memory + BE come with the corpus extension
 from __future__ import annotations
 
 from microtaint.sleigh.lifter import get_context
-from microtaint.types import Architecture
+from microtaint.types import Architecture, Register
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
@@ -202,7 +202,11 @@ def _arch_key(arch: Architecture) -> str:
     return arch.value if hasattr(arch, 'value') else str(arch)
 
 
-def scheme_b_taint(arch, code, regs, in_taint, in_values):
+def scheme_b_taint(arch: Architecture,
+                   code: bytes,
+                   regs: list[Register],
+                   in_taint: dict[str, int],
+                   in_values: dict[str, int]):
     """Run Scheme B; return output taint dict over the mappable bank registers.
     Raises Unsupported if any op or register can't be mapped (caller skips)."""
     key = _arch_key(arch)
@@ -223,7 +227,13 @@ def scheme_b_taint(arch, code, regs, in_taint, in_values):
     return {name: interp.out_taint(vn) for name, vn in mapped}
 
 
-def engine_scheme_b(arch, code, regs, in_taint, in_values, *, circuit=None):
+def engine_scheme_b(arch: Architecture,
+                    code: bytes,
+                    regs: list[Register],
+                    in_taint: dict[str, int],
+                    in_values: dict[str, int],
+                    *,
+                    circuit=None):
     """Oracle-harness engine adapter for Scheme B."""
     return scheme_b_taint(arch, code, regs, in_taint, in_values)
 

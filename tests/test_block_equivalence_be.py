@@ -58,7 +58,7 @@ def _kit(isa: str):
             raise KeyError(key)
         return layout[name] + (len(layout) if key[0] == 'regv' else 0)
 
-    def run(prog, values, taints):
+    def run(prog, values: dict[str, int], taints: dict[str, int]):
         capsule, _ = compile_program(prog, slot_of)
         v = [0] * width
         t = [0] * width
