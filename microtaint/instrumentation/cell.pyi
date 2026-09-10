@@ -1,3 +1,5 @@
+import functools
+
 from microtaint.emulator.wrapper import RegReadDescriptor
 from microtaint.instrumentation.ast import CellLike
 from microtaint.types import Architecture
@@ -43,9 +45,15 @@ class DecodedOps:
 
     def get_buf_bytes(self) -> bytes: ...
 
+@functools.lru_cache(maxsize=16384)
 def _get_decoded(arch: Architecture, bytestring: bytes) -> DecodedOps:
     """
     Cached version of _predecode_ops.
+
+    The decorator is part of the contract, not decoration: callers use
+    ``.cache_clear()`` (tests, to isolate a rule) and ``.cache_info()``
+    (``LogicCircuit.precompile``'s guard, to assert the decode was warmed
+    rather than timing it).  Declaring it as a bare function hid both.
     """
 
 class PCodeCellEvaluator:

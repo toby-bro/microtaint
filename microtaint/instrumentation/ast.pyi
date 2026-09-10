@@ -355,6 +355,12 @@ class ChainedCircuit(LogicCircuit):
         instruction: str,
         state_format: list[Register],
     ) -> None: ...
+    # Declared here and not merely inherited: ChainedCircuit is a SEPARATE cdef
+    # class at runtime, not a LogicCircuit subclass, so it inherits nothing. The
+    # attribute was simply missing and every sequence raised AttributeError.
+    def precompile(self, simulator: CellSimulator | None) -> None:
+        """Precompile every step, so the first evaluate pays for none of them."""
+
     def evaluate(self, context: EvalContext) -> dict[str, int]: ...
 
 class InstructionCellExpr(Expr):

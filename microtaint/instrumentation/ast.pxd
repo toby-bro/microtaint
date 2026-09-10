@@ -39,4 +39,5 @@ cdef class LogicCircuit:
 
     cpdef precompile(self, object simulator)
     cdef _compile_now(self, object simulator)
+    cdef _warm_decode(self)
     cpdef dict evaluate(self, EvalContext context)

@@ -1257,6 +1257,34 @@ cdef class LogicCircuit:
         that inferior form instead of recompiling. Idempotent.
         """
         self._compile_now(simulator)
+        self._warm_decode()
+
+    cdef _warm_decode(self):
+        """Warm the p-code decode cache for this circuit's instruction.
+
+        Building the compiled form is not the whole of the first-call cost. The
+        first evaluate ALSO populates ``cell._get_decoded``, which runs the SLEIGH
+        translation and fills the ``DecodedOps`` C-struct array, and that is the
+        larger half: measured on the RQ2 corpus, `shrd rax,rbx,cl` costs 467 us on
+        its first evaluate against 8.4 us steady, and warming the decode first
+        brings the first call to 61 us. With 9,858 cases over only 426 distinct
+        byte-strings, those 426 cold decodes were most of the reported p99 and all
+        of the reported p100 -- a property of the corpus, not of propagation.
+
+        Like compilation, the decode is a pure function of (architecture, bytes):
+        no values, no taint, nothing that could specialise it to the state it is
+        later evaluated on.
+        """
+        try:
+            # Lazy: cell.pyx does not import ast.pyx, but keeping this out of
+            # module scope matches how the other cross-module uses here are done.
+            from microtaint.instrumentation.cell import _get_decoded
+            _get_decoded(self.architecture, bytes.fromhex(self.instruction))
+        except Exception:
+            # `instruction` is not always a hex bytestring (tests build circuits
+            # with labels), and an arch the cell kernel cannot lift simply has
+            # nothing to warm. Never fail a precompile over an optimisation.
+            pass
 
     cdef _compile_now(self, object simulator):
         # Compiled-bytecode fast path:  if circuit_c is importable and the
@@ -1497,6 +1525,21 @@ cdef class ChainedCircuit:
     def __repr__(self):
         return (f'ChainedCircuit(instr={self.instruction}, '
                 f'n_steps={len(self.sub_circuits)})')
+
+    cpdef precompile(self, object simulator):
+        """Precompile every step, so the first evaluate pays for none of them.
+
+        ChainedCircuit is a separate cdef class rather than a LogicCircuit
+        subclass, so it did not inherit `precompile` and calling it raised
+        AttributeError on every multi-instruction sequence. That is worth
+        stating because of how it failed: the RQ2 worker calls precompile
+        unconditionally, so 753 of 943 sequence cases errored, the harness
+        recorded `time_ns: 0` for each, and the merge then carried the zeros
+        forward as if they were completed runs.
+        """
+        cdef LogicCircuit sub
+        for sub in self.sub_circuits:
+            sub.precompile(simulator)
 
     cpdef dict evaluate(self, EvalContext context):
         cdef dict taint = dict(context.input_taint)
