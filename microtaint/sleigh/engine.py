@@ -1485,6 +1485,26 @@ def _build_signed_overflow_taint(  # noqa: C901
                 BinaryExpr(Op.AND, BinaryExpr(shift_op, t, Constant(amount, 8)), keep),
                 bits,
             )
+        if d.opcode.name == 'LOAD' and len(d.inputs) == 2:
+            # A MEMORY operand.  Read-modify-write arithmetic feeds the overflow
+            # flag from a LOAD rather than a register -- SLEIGH lifts
+            # `add byte ptr [rsp], bl` as one load per flag, so OF is
+            # `scarry(*[ram]RSP, BL)`.  Declining here left OF to the differential
+            # plus floors, and every one of those floors is conditioned on memory
+            # taint or a FULLY tainted register, so a clean memory operand left the
+            # flag with no cover at all: 201 under-taints in 4,000 random states.
+            #
+            # Signed overflow is non-monotone, which is exactly what the 2-corner
+            # differential cannot see, so the answer is the same one the sibling
+            # comparison term already uses -- resolve the operand to its memory
+            # value and taint and stay in the exact closed form, rather than adding
+            # a floor that would over-taint.  `_stack_mem_operand` restricts this to
+            # stack addresses, where the engine reads shadow memory at a concrete
+            # address; anything else still declines rather than guessing.
+            mem = _stack_mem_operand(d.inputs[1], vn.size, slice_ops, mapper)
+            if mem is None:
+                return None
+            return (mem[0], mem[1], vn.size * 8)
         return None
 
     # ---- shape 1: a plain two-operand overflow flag -------------------------

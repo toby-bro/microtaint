@@ -35,8 +35,6 @@ from __future__ import annotations
 import itertools
 import random
 
-import pytest
-
 from microtaint.instrumentation.ast import EvalContext, InstructionCellExpr, LogicCircuit
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.sleigh.engine import generate_static_rule
@@ -72,7 +70,6 @@ def _got_of(sim: CellSimulator, circ: LogicCircuit, base: dict[str, int], taint:
     return int(out.get('OF', 0)) & 1
 
 
-@pytest.mark.xfail(strict=True, reason='OF of add [mem],reg has no floor when memory is clean')
 def test_mem_rmw_overflow_flag_one_state() -> None:
     """The first state the search finds: mem=0x60, BL=0x18, tainted bits 0xa4."""
     sim = CellSimulator(_ARCH)
@@ -88,7 +85,6 @@ def test_mem_rmw_overflow_flag_one_state() -> None:
     assert _got_of(sim, circ, base, taint) == 1, 'OF under-tainted'
 
 
-@pytest.mark.xfail(strict=True, reason='OF of add [mem],reg has no floor when memory is clean')
 def test_mem_rmw_overflow_flag_never_under_taints() -> None:
     """Over a fixed sweep, not one state where OF moves may be reported clean."""
     sim = CellSimulator(_ARCH)
