@@ -15,9 +15,22 @@ it an engine bug. Build the state_format through `RegisterAliases`, which
 derives the lane names from pypcode's own register geometry, and two of the
 three come back bit-exact.
 
-The third is real. `psllq xmm0,8` clears the lane's taint instead of shifting
-it, so the taint that reached xmm0 does not come back out. It is marked xfail;
-when it is fixed, remove the marker rather than the test.
+The third is real, and bisecting the tags places it exactly. Ground truth is
+0x6080000000800000; each cell is what reaches RAX:
+
+    v0.6.9   0xe0e0e0e0e0e0e000   sound (over-tainted), and what the paper recorded
+    v0.6.10  0xe0e0e0e0e0e0e000   sound
+    v0.6.11  0xe000               UNSOUND
+    v0.6.12  0xe000               UNSOUND
+    v0.6.13  0x0                  UNSOUND
+    v0.6.14  0x0                  UNSOUND
+    v0.6.15  0x0                  UNSOUND
+
+So it broke in v0.6.11, the release that also introduced the geometry lane names,
+and got worse in v0.6.13. On HEAD, truncating the sequence shows where the taint
+goes: the first four instructions return 0xe0e0e0e0e0e0e000 and inserting
+`psllq xmm0,8` before the writeback returns 0. It is marked xfail; when it is
+fixed, remove the marker rather than the test.
 
 Soundness is what is asserted -- the engine mask must CONTAIN the ground-truth
 mask. Over-taint is a precision cost the engine is allowed to pay.
