@@ -1867,6 +1867,41 @@ static PyObject *normalize_register_dict(PyObject *arch_str, PyObject *input_dic
     return result;
 }
 
+/* Diagnose why an assignment failed to produce an integer.
+ *
+ * The evaluator returns None when it cannot compute a mask, and the caller then
+ * has nothing useful to say.  The overwhelmingly common cause is an input mask
+ * wider than the 64-bit mask path -- a taint mask built by SUMMING bit
+ * positions carries into bit 64 the moment two draws collide -- so name that
+ * input rather than leaving a bare TypeError from the arithmetic below.
+ * Called only on the failure path, so it costs nothing when things work. */
+static void set_non_integer_result_error(PyObject *input_taint)
+{
+    PyObject *key, *val;
+    Py_ssize_t pos = 0;
+    if (input_taint && PyDict_Check(input_taint)) {
+        while (PyDict_Next(input_taint, &pos, &key, &val)) {
+            if (!PyLong_Check(val)) continue;
+            size_t nbits = _PyLong_NumBits(val);
+            if (nbits != (size_t)-1 && nbits > 64) {
+                /* Replace whatever the arithmetic raised: "unsupported operand
+                 * type(s) for <<: 'NoneType' and 'int'" says nothing about the
+                 * caller's mistake, and this says everything. */
+                PyErr_Clear();
+                PyErr_Format(PyExc_ValueError,
+                             "input taint mask for %S is %zu bits wide; the taint path is "
+                             "64-bit, so a bit above the register width cannot be represented",
+                             key, nbits);
+                return;
+            }
+        }
+    }
+    if (!PyErr_Occurred()) {
+        PyErr_SetString(PyExc_TypeError, "taint evaluation produced a non-integer result");
+    }
+}
+
+
 /* The main entry point: CompiledCircuit.evaluate(context). */
 /* Internal: do the actual evaluation given pre-extracted context fields.
  * Steals no references; caller owns them all. */
@@ -2045,21 +2080,34 @@ static PyObject *do_evaluate(CompiledCircuit *self,
             Py_DECREF(one); Py_DECREF(width_obj); Py_DECREF(bs_obj);
             Py_DECREF(one_shl); Py_DECREF(m1); Py_DECREF(mask_unshifted);
 
-            PyObject *val_shifted = PyNumber_Lshift(val, PyLong_FromLong(bit_start));
+            /* Same contract as the compiled path below: `val` is whatever the
+             * expression evaluated to, so every step here is checked rather
+             * than assumed.  The shift amount used to leak a PyLong per
+             * assignment as well. */
+            PyObject *bs_shift = PyLong_FromLong(bit_start);
+            PyObject *val_shifted = bs_shift ? PyNumber_Lshift(val, bs_shift) : NULL;
+            Py_XDECREF(bs_shift);
             Py_DECREF(val);
-            PyObject *val_masked  = PyNumber_And(val_shifted, mask);
-            Py_DECREF(val_shifted);
+            PyObject *val_masked  = (val_shifted && mask) ? PyNumber_And(val_shifted, mask) : NULL;
+            Py_XDECREF(val_shifted);
 
-            PyObject *current = PyDict_GetItem(output_taint, target_name_obj);
-            if (!current) current = PyLong_FromLong(0);
-            else Py_INCREF(current);
-            PyObject *neg_one = PyLong_FromLong(-1);
-            PyObject *not_mask = PyNumber_Xor(mask, neg_one);
-            Py_DECREF(neg_one);
-            PyObject *current_clear = PyNumber_And(current, not_mask);
-            Py_DECREF(current); Py_DECREF(not_mask);
-            PyObject *new_val = PyNumber_Or(current_clear, val_masked);
-            Py_DECREF(current_clear); Py_DECREF(val_masked); Py_DECREF(mask);
+            PyObject *current = val_masked ? PyDict_GetItem(output_taint, target_name_obj) : NULL;
+            if (val_masked && !current) current = PyLong_FromLong(0);
+            else Py_XINCREF(current);
+            PyObject *neg_one = current ? PyLong_FromLong(-1) : NULL;
+            PyObject *not_mask = neg_one ? PyNumber_Xor(mask, neg_one) : NULL;
+            Py_XDECREF(neg_one);
+            PyObject *current_clear = not_mask ? PyNumber_And(current, not_mask) : NULL;
+            Py_XDECREF(current); Py_XDECREF(not_mask);
+            PyObject *new_val = current_clear ? PyNumber_Or(current_clear, val_masked) : NULL;
+            Py_XDECREF(current_clear); Py_XDECREF(val_masked); Py_XDECREF(mask);
+            if (!new_val) {
+                Py_XDECREF(target_name_obj);
+                Py_XDECREF(built_ctx);
+                Py_DECREF(output_taint);
+                set_non_integer_result_error(input_taint);
+                return NULL;
+            }
 
             PyDict_SetItem(output_taint, target_name_obj, new_val);
             Py_DECREF(new_val);
@@ -2174,22 +2222,38 @@ static PyObject *do_evaluate(CompiledCircuit *self,
         Py_DECREF(one_shl); Py_DECREF(m1); Py_DECREF(mask_unshifted);
 
         PyObject *bs_obj2 = PyLong_FromLong(bit_start);
-        PyObject *val_shifted = PyNumber_Lshift(result, bs_obj2);
-        Py_DECREF(bs_obj2);
+        PyObject *val_shifted = bs_obj2 ? PyNumber_Lshift(result, bs_obj2) : NULL;
+        Py_XDECREF(bs_obj2);
         Py_DECREF(result);
-        PyObject *val_masked  = PyNumber_And(val_shifted, mask);
-        Py_DECREF(val_shifted);
+        /* `result` is whatever the evaluator returned, and a fallback path can
+         * hand back None: shifting that raises, and the unchecked chain below
+         * then passed NULL to PyNumber_And and took the interpreter down.  A
+         * taint mask one bit wider than its register reached here that way. */
+        PyObject *val_masked  = (val_shifted && mask) ? PyNumber_And(val_shifted, mask) : NULL;
+        Py_XDECREF(val_shifted);
+        if (!val_masked) {
+            Py_XDECREF(mask);
+            Py_DECREF(output_taint);
+            Py_DECREF(target_name);
+            set_non_integer_result_error(input_taint);
+            return NULL;
+        }
 
         PyObject *current = PyDict_GetItem(output_taint, target_name);
         if (!current) current = PyLong_FromLong(0);
         else Py_INCREF(current);
         PyObject *neg_one = PyLong_FromLong(-1);
-        PyObject *not_mask = PyNumber_Xor(mask, neg_one);
-        Py_DECREF(neg_one);
-        PyObject *current_clear = PyNumber_And(current, not_mask);
-        Py_DECREF(current); Py_DECREF(not_mask);
-        PyObject *new_val = PyNumber_Or(current_clear, val_masked);
-        Py_DECREF(current_clear); Py_DECREF(val_masked); Py_DECREF(mask);
+        PyObject *not_mask = neg_one ? PyNumber_Xor(mask, neg_one) : NULL;
+        Py_XDECREF(neg_one);
+        PyObject *current_clear = (current && not_mask) ? PyNumber_And(current, not_mask) : NULL;
+        Py_XDECREF(current); Py_XDECREF(not_mask);
+        PyObject *new_val = current_clear ? PyNumber_Or(current_clear, val_masked) : NULL;
+        Py_XDECREF(current_clear); Py_DECREF(val_masked); Py_DECREF(mask);
+        if (!new_val) {
+            Py_DECREF(output_taint);
+            Py_DECREF(target_name);
+            return NULL;
+        }
 
         PyDict_SetItem(output_taint, target_name, new_val);
         Py_DECREF(new_val);

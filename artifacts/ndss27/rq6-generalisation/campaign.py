@@ -162,7 +162,13 @@ def gen_taint(rng, b: Bench, srcs):
         elif kind < 0.8:                                  # dense random
             taint[r] = rng.getrandbits(b.bits)
         else:                                             # sparse few bits
-            taint[r] = sum(1 << rng.randrange(b.bits) for _ in range(rng.randint(1, 3)))
+            # OR, not sum: summing two draws of the same position carries into
+            # the next bit, and two draws of the top bit carry OUT of the
+            # register.  That produced a mask one bit wider than the register
+            # about once in 1,400 cases, which used to segfault the engine.
+            taint[r] = 0
+            for _ in range(rng.randint(1, 3)):
+                taint[r] |= 1 << rng.randrange(b.bits)
     if len(srcs) >= 2 and rng.random() < 0.35:            # correlate two sources
         a, c = srcs[0], srcs[1]
         taint[c] = taint[a]

@@ -62,7 +62,6 @@ def _run(code: str, taint: int) -> subprocess.CompletedProcess[str]:
     )
 
 
-@pytest.mark.xfail(strict=True, reason='do_evaluate segfaults on a mask wider than the register')
 @pytest.mark.parametrize('code', ['4809d8', '4801d8', '4831d8'])  # or / add / xor rax, rbx
 def test_taint_mask_wider_than_register(code: str) -> None:
     """One bit above the register width is not a bit of that register."""
@@ -71,7 +70,6 @@ def test_taint_mask_wider_than_register(code: str) -> None:
     assert proc.returncode == 0, f'{proc.stdout}{proc.stderr[-400:]}'
 
 
-@pytest.mark.xfail(strict=True, reason='do_evaluate segfaults on a mask wider than the register')
 def test_taint_mask_from_summed_bit_positions() -> None:
     """The exact shape the campaign generates: two draws of the same position."""
     proc = _run('4809d8', (1 << 63) + (1 << 63))
