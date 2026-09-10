@@ -72,6 +72,7 @@ def instruction_starts(ops: list[PcodeOp]) -> list[tuple[int, int, int]]:
 
 def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
                emit: Emit = Emit.BOTH, abs_ram: bool = False,
+               max_acc: int | None = None,
                builder: Builder | None = None) -> list[Region]:
     """Greedy maximal regions covering `code`, in order.
 
@@ -115,7 +116,8 @@ def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
         hi = marks[j][0] if j < n else len(ops)
         try:
             return builder.build(ops[lo:hi], end_of[j - 1], emit=emit,
-                                 block=(j - i > 1), abs_ram=abs_ram), None
+                                 block=(j - i > 1), abs_ram=abs_ram,
+                                 max_acc=max_acc), None
         except Unsupported as exc:
             return None, getattr(exc, 'cut_at', None)
         except Exception:            # a lifter surprise is a decline, not a crash

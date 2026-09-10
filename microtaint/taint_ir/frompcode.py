@@ -368,7 +368,7 @@ class Builder:
 
     def build(self, ops: list[PcodeOp], end_addr: int, *,  # noqa: C901
               emit: Emit = Emit.TAINT, block: bool = False,
-              abs_ram: bool = False) -> IRProg:
+              abs_ram: bool = False, max_acc: int | None = None) -> IRProg:
         """Lower `ops`.  `emit` selects which frame becomes the program's
         outputs: 'taint' (the shipped behaviour) or 'value'.
 
@@ -394,6 +394,12 @@ class Builder:
         # synthetic base, where that offset would name the wrong byte -- and a
         # load or store aimed at the wrong byte is an UNDER-taint.
         self.abs_ram = abs_ram
+        # The runtime has room for a fixed number of memory accesses per
+        # program.  Overflowing it used to refuse the whole BLOCK, which the
+        # hook then skipped; declining here instead names the instruction that
+        # overflowed, so the planner cuts the region there and every
+        # instruction still lands in one.
+        self.max_acc = max_acc
         p = IRProg()
         v = SymFrame(p, self.declared, self.be, 'v')
         t = SymFrame(p, self.declared, self.be, 't')
@@ -680,6 +686,10 @@ class Builder:
             self.access_map[key] = k
             self.accesses.append({'kind': kind, 'size': size, 'addr': addr_node,
                                   'instr': self.cur_instr})
+            if self.max_acc is not None and len(self.accesses) > self.max_acc:
+                raise Unsupported(
+                    f'{len(self.accesses)} memory accesses, the runtime has '
+                    f'room for {self.max_acc}', cut_at=self.cur_instr)
             self.p.outputs.append((('addr', k), addr_node))
         return k
 
@@ -750,18 +760,12 @@ class Builder:
         """The store half of `_emit_wide_load`."""
         p = self.p
         src = op.inputs[2]
-        if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
-            raise Unsupported('predicated store')
         addr_v, addr_t = self._read_in(op.inputs[1])
         for lane in range(0, src.size, 8):
             lsz = min(8, src.size - lane)
             a = addr_v if lane == 0 else p.op(ADD, addr_v, p.const(lane))
             val_v, val_t = self._read_lane(src, lane, lsz)
-            k = self._access_for('store', a, lsz)
-            p.outputs.append((('addrt', k), addr_t))
-            p.outputs.append((('sttaint', k), p.mask(val_t, lsz * 8)))
-            if self.emit in (Emit.VALUE, Emit.BOTH):
-                p.outputs.append((('stval', k), p.mask(val_v, lsz * 8)))
+            self._store_access(a, addr_t, lsz, val_v, val_t)
 
     def _ram_load(self, vn: Varnode) -> tuple[int, int]:
         """A varnode that IS memory: a load at an address the lifter resolved.
@@ -793,13 +797,7 @@ class Builder:
         p = self.p
         if vn.size > 8:
             raise Unsupported('wide ram output')
-        if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
-            raise Unsupported('predicated ram store')
-        k = self._access_for('store', p.const(vn.offset), vn.size)
-        p.outputs.append((('addrt', k), p.const(0)))
-        p.outputs.append((('sttaint', k), p.mask(tnt, vn.size * 8)))
-        if self.emit in (Emit.VALUE, Emit.BOTH):
-            p.outputs.append((('stval', k), p.mask(val, vn.size * 8)))
+        self._store_access(p.const(vn.offset), p.const(0), vn.size, val, tnt)
 
     def _emit_store(self, op: PcodeOp) -> None:
         """A store contributes the taint to write and the address to write it
@@ -820,20 +818,13 @@ class Builder:
         wrote to the previous iteration's index throughout.  Nothing on the
         per-instruction path asks for values, so its slot layout is unchanged.
         """
-        p = self.p
         size = op.inputs[2].size
         if size > 8:
             self._emit_wide_store(op)
             return
-        if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
-            raise Unsupported('predicated store')
         addr_v, addr_t = self._read_in(op.inputs[1])
         val_v, val_t = self._read_in(op.inputs[2])
-        k = self._access_for('store', addr_v, size)
-        p.outputs.append((('addrt', k), addr_t))
-        p.outputs.append((('sttaint', k), p.mask(val_t, size * 8)))
-        if self.emit in (Emit.VALUE, Emit.BOTH):
-            p.outputs.append((('stval', k), p.mask(val_v, size * 8)))
+        self._store_access(addr_v, addr_t, size, val_v, val_t)
 
     def _check_address_independence(self, p: IRProg) -> None:
         """An address may not depend on a value this instruction itself loaded.
@@ -985,12 +976,52 @@ class Builder:
             return
         old_v = self.v.read(sp, vn.offset, vn.size)
         old_t = self.t.read(sp, vn.offset, vn.size)
+        new_v, new_t = self._join_under_predicate(old_v, old_t, val, tnt)
+        self.v.write(sp, vn.offset, vn.size, new_v)
+        self.t.write(sp, vn.offset, vn.size, new_t)
+
+    def _join_under_predicate(self, old_v: int, old_t: int,
+                              val: int, tnt: int) -> tuple[int, int]:
+        """What a write becomes when the predicate is not known-true.
+
+        With an UNKNOWN but untainted predicate it is a select, which is exact
+        and branch-free.  With a TAINTED predicate it is implicit flow: WHICH
+        value lands is itself secret, so the result carries both sides' taint
+        plus every bit on which the two sides differ.  That is the exact join,
+        not a floor.
+
+        Shared by the register and the memory paths, because a predicated store
+        is the same question about a different place, and two copies of this
+        would be two chances for them to disagree.
+        """
+        p = self.p
         new_v = p.op(SEL, val, old_v, self.pred_v)
-        new_t = p.op(SEL, tnt, old_t, self.pred_t if False else self.pred_v)
+        new_t = p.op(SEL, tnt, old_t, self.pred_v)
         leak = p.op(AND, p.splat(self.pred_t),
                     p.op(OR, p.op(OR, tnt, old_t), p.op(XOR, val, old_v)))
-        self.v.write(sp, vn.offset, vn.size, new_v)
-        self.t.write(sp, vn.offset, vn.size, p.op(OR, new_t, leak))
+        return new_v, p.op(OR, new_t, leak)
+
+    def _store_access(self, addr_v: int, addr_t: int, size: int,
+                      val: int, tnt: int) -> None:
+        """Commit one store, under the current predicate.
+
+        A store that may not happen is a store of `predicate ? new : old`, so
+        the old contents are READ first and joined exactly as a register write
+        is.  Refusing instead is not the safe direction: the block is refused
+        whole and then skipped, so nothing computes its taint at all.
+        """
+        p = self.p
+        if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
+            old = self._access_for('load', addr_v, size)
+            p.outputs.append((('addrt', old), addr_t))
+            val, tnt = self._join_under_predicate(
+                p.input_value(('mem', old), size * 8),
+                p.input_taint(('mem', old), size * 8), val, tnt)
+        k = self._access_for('store', addr_v, size)
+        p.outputs.append((('addrt', k), addr_t))
+        p.outputs.append((('sttaint', k), p.mask(tnt, size * 8)))
+        if self.emit in (Emit.VALUE, Emit.BOTH):
+            p.outputs.append((('stval', k), p.mask(val, size * 8)))
 
     # -- wide varnodes -------------------------------------------------
     #: Opcodes whose every output bit depends only on the input bits in the
@@ -1011,6 +1042,14 @@ class Builder:
         if sp in ('register', 'unique'):
             return (self.v.read(sp, vn.offset + lane, lsz),
                     self.t.read(sp, vn.offset + lane, lsz))
+        if sp == 'ram' and self.abs_ram:
+            # A PC-relative operand wider than a machine word: the resolved
+            # address is a constant, so lane `k` is simply the load at
+            # `address + k`, exactly as for a wide LOAD.
+            k = self._access_for('load', p.const(vn.offset + lane), lsz)
+            p.outputs.append((('addrt', k), p.const(0)))
+            return (p.input_value(('mem', k), lsz * 8),
+                    p.input_taint(('mem', k), lsz * 8))
         raise Unsupported(f'wide input space {sp}')
 
     def _emit_wide_special(self, name: str, op: PcodeOp) -> bool:
@@ -1080,13 +1119,78 @@ class Builder:
 
         return False
 
+    def _emit_wide_shift(self, name: str, op: PcodeOp) -> bool:
+        """A shift of a varnode wider than a machine word, exactly.
+
+        `pslldq` / `psrldq` shift a whole vector register, so the p-code is one
+        INT_LEFT or INT_RIGHT on a 16-byte varnode.  That is not bit-parallel
+        across lanes -- bits cross from one lane into the next -- so the
+        lane-by-lane path declines it, and a block containing one is refused
+        and then SKIPPED.
+
+        It is still exact rather than approximate, because the shift amount is
+        an immediate: lane `i` of the result is a funnel shift of two input
+        lanes, and TAINT follows the identical routing, a shift being a pure
+        permutation of bit positions.  Returns False when the shape is not one
+        this can do exactly, so the caller keeps looking.
+        """
+        p = self.p
+        if self.be:
+            return False                 # lane 0 is taken as least significant
+        out = self._out(op)
+        src = op.inputs[0]
+        osz = out.size
+        if osz % 8 or src.size != osz:
+            return False                 # a ragged top lane is not a clean funnel
+        amt_v, amt_t = self._read_in(op.inputs[1])
+        if not p.is_const(amt_v) or not p.is_const(amt_t) or p.const_val(amt_t):
+            return False                 # a secret or runtime shift distance
+        k = p.const_val(amt_v)
+        n_lanes = osz // 8
+        if k >= osz * 8:                 # shifted out entirely
+            for lane in range(n_lanes):
+                self._write_lane(out, lane * 8, 8, p.const(0), p.const(0))
+            return True
+        q, r = divmod(k, 64)
+        # Read every lane before writing any: source and destination are the
+        # same register here, so a lane written early would be read late.
+        lanes = [self._read_lane(src, i * 8, 8) for i in range(n_lanes)]
+        zero = (p.const(0), p.const(0))
+
+        def at(i: int) -> tuple[int, int]:
+            """Lane `i`, or zero for one shifted in from outside."""
+            return lanes[i] if 0 <= i < n_lanes else zero
+
+        for i in range(n_lanes):
+            lo = at(i + q) if name == 'INT_RIGHT' else at(i - q)
+            hi = at(i + q + 1) if name == 'INT_RIGHT' else at(i - q - 1)
+            if r == 0:
+                v, t = lo
+            elif name == 'INT_RIGHT':
+                sh, back = p.const(r), p.const(64 - r)
+                v = p.op(OR, p.op(SHR, lo[0], sh), p.op(SHL, hi[0], back))
+                t = p.op(OR, p.op(SHR, lo[1], sh), p.op(SHL, hi[1], back))
+            else:
+                sh, back = p.const(r), p.const(64 - r)
+                v = p.op(OR, p.op(SHL, lo[0], sh), p.op(SHR, hi[0], back))
+                t = p.op(OR, p.op(SHL, lo[1], sh), p.op(SHR, hi[1], back))
+            self._write_lane(out, i * 8, 8, p.mask(v, 64), p.mask(t, 64))
+        return True
+
     def _write_lane(self, vn: Varnode, lane: int, lsz: int, val: int, tnt: int) -> None:
         p = self.p
         sp = vn.space.name
-        if sp not in ('register', 'unique'):
-            raise Unsupported(f'wide output space {sp}')
         if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
             raise Unsupported('predicated wide write')
+        if sp == 'ram' and self.abs_ram:
+            k = self._access_for('store', p.const(vn.offset + lane), lsz)
+            p.outputs.append((('addrt', k), p.const(0)))
+            p.outputs.append((('sttaint', k), p.mask(tnt, lsz * 8)))
+            if self.emit in (Emit.VALUE, Emit.BOTH):
+                p.outputs.append((('stval', k), p.mask(val, lsz * 8)))
+            return
+        if sp not in ('register', 'unique'):
+            raise Unsupported(f'wide output space {sp}')
         self.v.write(sp, vn.offset + lane, lsz, val)
         self.t.write(sp, vn.offset + lane, lsz, tnt)
 
@@ -1159,6 +1263,8 @@ class Builder:
                [x.size for x in op.inputs] + [self._out(op).size]):
             if name in self._LANE_OPS:
                 self._emit_wide(name, op)
+                return
+            if name in ('INT_LEFT', 'INT_RIGHT') and self._emit_wide_shift(name, op):
                 return
             if self._emit_wide_special(name, op):
                 return

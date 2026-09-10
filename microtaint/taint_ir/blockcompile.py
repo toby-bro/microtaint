@@ -116,7 +116,8 @@ def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str
     try:
         # `abs_ram=True`: a block is compiled for the address it runs at, so a
         # PC-relative operand's resolved `ram` address is the live one.
-        regions = plan_block(arch, code, base, builder=builder, abs_ram=True)
+        regions = plan_block(arch, code, base, builder=builder, abs_ram=True,
+                             max_acc=lay['max_acc'])
     except Exception:                    # an unliftable block is refused
         return None
     if not regions or any(r.prog is None for r in regions):
@@ -166,8 +167,11 @@ def _compile_regions(regions: list[Region], slot_of: SlotOf,
         if later_reads[ri] is not None:
             _keep_only_needed_values(prog, later_reads[ri])
         accesses = list(getattr(prog, 'accesses', None) or [])
-        if len(accesses) > lay['max_acc']:
-            return None
+        # The lowering was given the limit, so it cut the region rather than
+        # producing a program that overflows; a program that got here anyway
+        # would address slots the runtime does not have.
+        assert len(accesses) <= lay['max_acc'], (
+            f'{len(accesses)} accesses in a region, limit {lay["max_acc"]}')
         try:
             cap, _ser = compile_program(prog, slot_of)
         except Exception:                # an unplaceable slot is a refusal
