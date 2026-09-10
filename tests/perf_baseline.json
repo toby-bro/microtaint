@@ -33,7 +33,7 @@
     "CALL r64": {
       "assigns": 3,
       "cells": 1,
-      "nodes": 32
+      "nodes": 56
     },
     "CMP r64,imm8": {
       "assigns": 5,
@@ -142,18 +142,18 @@
     },
     "PUSH imm32": {
       "assigns": 2,
-      "cells": 0,
-      "nodes": 2
+      "cells": 1,
+      "nodes": 17
     },
     "PUSH r64": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 17
+      "nodes": 30
     },
     "RET": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 22
+      "nodes": 33
     },
     "ROL r64,imm8": {
       "assigns": 3,
@@ -1742,103 +1742,103 @@
     },
     "push rax; adc qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5,
-      "nodes": 1031
+      "cells": 7,
+      "nodes": 1042
     },
     "push rax; add qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 459
+      "nodes": 470
     },
     "push rax; add qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5,
-      "nodes": 673
+      "cells": 7,
+      "nodes": 684
     },
     "push rax; and qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 443
+      "nodes": 472
     },
     "push rax; and qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5,
-      "nodes": 638
+      "cells": 7,
+      "nodes": 667
     },
     "push rax; dec qword ptr [rsp]; pop rcx": {
       "assigns": 8,
       "cells": 2,
-      "nodes": 458
+      "nodes": 469
     },
     "push rax; inc qword ptr [rsp]; pop rcx": {
       "assigns": 8,
       "cells": 2,
-      "nodes": 458
+      "nodes": 469
     },
     "push rax; neg qword ptr [rsp]; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 536
+      "nodes": 547
     },
     "push rax; not qword ptr [rsp]; pop rcx": {
       "assigns": 4,
       "cells": 1,
-      "nodes": 125
+      "nodes": 136
     },
     "push rax; or qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 443
+      "nodes": 472
     },
     "push rax; or qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5,
-      "nodes": 638
+      "cells": 7,
+      "nodes": 667
     },
     "push rax; pop rax": {
       "assigns": 3,
       "cells": 1,
-      "nodes": 90
+      "nodes": 101
     },
     "push rax; pop rbx": {
       "assigns": 3,
       "cells": 1,
-      "nodes": 90
+      "nodes": 101
     },
     "push rax; push rbx; pop rcx; pop rdx": {
       "assigns": 5,
-      "cells": 2,
-      "nodes": 181
+      "cells": 4,
+      "nodes": 192
     },
     "push rax; shl qword ptr [rsp], 7; pop rcx": {
       "assigns": 9,
-      "cells": 3,
-      "nodes": 1615
+      "cells": 4,
+      "nodes": 1626
     },
     "push rax; sub qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 459
+      "nodes": 470
     },
     "push rax; xadd qword ptr [rsp], rbx; pop rcx": {
       "assigns": 10,
-      "cells": 5,
-      "nodes": 728
+      "cells": 7,
+      "nodes": 739
     },
     "push rax; xchg qword ptr [rsp], rbx; pop rcx": {
       "assigns": 5,
-      "cells": 2,
-      "nodes": 219
+      "cells": 4,
+      "nodes": 230
     },
     "push rax; xor qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 443
+      "nodes": 472
     },
     "push rax; xor qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
-      "cells": 5,
-      "nodes": 638
+      "cells": 7,
+      "nodes": 667
     },
     "rcl al": {
       "assigns": 3,
@@ -4592,7 +4592,7 @@
     "stp x1, x2, [sp, #-16]!; ldp x0, x3, [sp], #16": {
       "assigns": 5,
       "cells": 2,
-      "nodes": 181
+      "nodes": 192
     },
     "str w1, [sp, #-16]; ldr w0, [sp, #-16]": {
       "assigns": 2,
@@ -4602,22 +4602,22 @@
     "str x1, [sp, #-16]!; ldr w0, [sp], #16": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 90
+      "nodes": 101
     },
     "str x1, [sp, #-16]!; ldr x0, [sp], #16": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 90
+      "nodes": 101
     },
     "str x1, [sp, #-16]!; ldr x0, [sp]; add x0, x0, x2; add sp, sp, #16": {
       "assigns": 3,
-      "cells": 2,
-      "nodes": 118
+      "cells": 4,
+      "nodes": 129
     },
     "str x1, [sp, #-16]!; ldr x0, [sp]; eor x0, x0, x2; add sp, sp, #16": {
       "assigns": 3,
-      "cells": 2,
-      "nodes": 118
+      "cells": 4,
+      "nodes": 129
     },
     "str x1, [sp, #-16]; ldr x0, [sp, #-16]": {
       "assigns": 2,
@@ -4627,7 +4627,7 @@
     "strb w1, [sp, #-16]!; ldrb w0, [sp], #16": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 90
+      "nodes": 101
     },
     "strb w1, [sp, #-16]; ldrb w0, [sp, #-16]": {
       "assigns": 2,
@@ -4637,7 +4637,7 @@
     "strh w1, [sp, #-16]!; ldrsh x0, [sp], #16": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 102
+      "nodes": 113
     },
     "strh w1, [sp, #-16]; ldrh w0, [sp, #-16]": {
       "assigns": 2,
@@ -7860,7 +7860,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-06T06:27:07.323980+00:00",
+    "generated": "2026-09-10T02:22:15.400108+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

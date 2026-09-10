@@ -4728,11 +4728,39 @@ def extract_dependencies(  # noqa: C901
                             _collect_ptr_offsets(inp, visited)
                     break
 
+    # Which ops actually produce THIS target.  Dependencies used to be extracted
+    # per INSTRUCTION rather than per target, so every output of an instruction
+    # got the same set.  For most instructions that is harmless -- the outputs
+    # share their inputs -- but `push %rbp` has two targets with disjoint
+    # dependencies:
+    #
+    #     RSP = RSP - 8          RSP_out depends on RSP, not on RBP
+    #     STORE ram, RSP, RBP    the stored word depends on RBP, not on RSP
+    #
+    # Sharing one set demoted RSP to an ADDRESS dependency (the STORE's pointer)
+    # and left RBP as the only VALUE dependency -- for the RSP output too.  That
+    # is both halves of a confirmed defect: the stack pointer's own taint was
+    # dropped on every push (an under-taint), and RSP was tainted from the
+    # pushed register (an over-taint).
+    #
+    # A LOAD contributes its address registers only where it feeds this target,
+    # and a STORE only to its own target -- which is the one whose out_vn is the
+    # value being stored.  `_collect_ptr_offsets` still walks all_ops to resolve
+    # unique temporaries; only which accesses COUNT is scoped.
+    _slice_ids = {id(o) for o in _slice_ops}
+
+    def _is_this_targets_store(op: PcodeOp) -> bool:
+        v = op.inputs[2] if len(op.inputs) > 2 else None
+        return (v is not None and v.space.name == _out_vn.space.name
+                and v.offset == _out_vn.offset and v.size == _out_vn.size)
+
     for op in all_ops:
         if op.opcode.name == 'LOAD':
-            _collect_ptr_offsets(op.inputs[1])
+            if id(op) in _slice_ids or not _slice_ops:
+                _collect_ptr_offsets(op.inputs[1])
         elif op.opcode.name == 'STORE':
-            _collect_ptr_offsets(op.inputs[1])
+            if _is_this_targets_store(op) or id(op) in _slice_ids:
+                _collect_ptr_offsets(op.inputs[1])
 
     # Pre-calculate this ONCE instead of inside the resolution loop
     load_op_index = next(

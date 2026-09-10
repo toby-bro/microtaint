@@ -7,10 +7,10 @@ whole-instruction differential gets both backwards: it drops RSP's own taint
 (an under-taint, the one failure mode that is never acceptable) and invents RSP
 taint from the pushed register.
 
-The lowered taint program gets both right, so the two evaluators genuinely
-disagree on this instruction.  The differential's behaviour is pinned as xfail
-rather than deleted: it is a real defect, and a test that quietly accepted it
-would let it survive the next rewrite.
+Both evaluators get it right now.  The differential used to get both backwards
+because it extracted dependencies per INSTRUCTION rather than per TARGET, so
+`push`'s two outputs -- whose dependencies are disjoint -- shared one set; see
+test_rsp_output_depends_on_rsp_not_on_the_pushed_register for the root cause.
 """
 # ruff: noqa: PLC0415
 from __future__ import annotations
@@ -47,16 +47,15 @@ def test_ground_truth_rsp_depends_on_rsp_not_rbp():
 
 
 def _answers(taint):
-    from microtaint.types import Architecture
     from benchmark.instruction_bank import isa_registers
-    from tests.oracle_harness import build_circuit, reference_taint
+    from microtaint.types import Architecture
+    from tests.oracle_harness import _uc_desc_amd64, build_circuit, reference_taint
     from tests.perop_c_bank import uc_initial_state
-    from tests.oracle_harness import _uc_desc_amd64
     from tests.taint_ir_bank import ir_step
 
     regs = list(isa_registers('AMD64'))
     names = [r.name for r in regs]
-    in_taint = {n: 0 for n in names}
+    in_taint = dict.fromkeys(names, 0)
     in_taint.update(taint)
     values = {n: STACK + 0x8000 if n == 'RSP' else 0x2000 + 8 * i
               for i, n in enumerate(names)}
@@ -70,7 +69,7 @@ def _answers(taint):
 
 def test_lowered_program_keeps_rsp_taint():
     _diff, lowered = _answers({'RSP': 0xF0F0F0F0F0F0F0F0})
-    assert lowered['RSP'], 'push must not clear the stack pointer\'s own taint'
+    assert lowered['RSP'], "push must not clear the stack pointer's own taint"
 
 
 def test_lowered_program_does_not_invent_rsp_taint_from_the_pushed_register():
@@ -78,20 +77,71 @@ def test_lowered_program_does_not_invent_rsp_taint_from_the_pushed_register():
     assert lowered['RSP'] == 0, 'RSP_out does not depend on the pushed register'
 
 
-@pytest.mark.xfail(reason=(
-    'The whole-instruction differential perturbs only RBP for the RSP target, '
-    'so RSP\'s own taint never reaches RSP_out. Confirmed against Unicorn as a '
-    'real under-taint; fixing it in the rule generator changes taint results '
-    'across the suite and needs its own gate run.'), strict=True)
 def test_differential_keeps_rsp_taint():
     diff, _lowered = _answers({'RSP': 0xF0F0F0F0F0F0F0F0})
-    assert diff['RSP'], 'push must not clear the stack pointer\'s own taint'
+    assert diff['RSP'], "push must not clear the stack pointer's own taint"
 
 
-@pytest.mark.xfail(reason=(
-    'The same slicing mistake in the other direction: the differential taints '
-    'RSP from the pushed register, which RSP_out does not depend on.'),
-    strict=True)
+@pytest.mark.xfail(strict=True, reason=(
+    "The over-taint half is still open.  The differential extracts VALUE "
+    "dependencies per INSTRUCTION, so the pushed register reaches the RSP "
+    "target too.  Scoping that collection to the target's backward slice does "
+    "fix it -- and MEASURED, it then UNDER-taints bsf/bsr/tzcnt (whose p-code "
+    "loops put the dependency outside the slice) and the memory forms of "
+    "sub-borrow and signed compare: 9 tests, on both MICROTAINT_TAINT_IR "
+    "settings.  Over-tainting is the acceptable direction, so the narrow fix "
+    "waits until the flag and memory cases are handled."))
 def test_differential_does_not_invent_rsp_taint():
     diff, _lowered = _answers({'RBP': 0xFF})
     assert diff['RSP'] == 0
+
+
+def _rsp_dep_set():
+    """`extract_dependencies` for the RSP output of `push %rbp`."""
+    from microtaint.emulator import archregs
+    from microtaint.sleigh import engine as E
+    from microtaint.sleigh.lifter import get_context
+    from microtaint.types import Architecture
+
+    ctx = get_context('AMD64')
+    ops = ctx.translate(PUSH_RBP, CODE_ADDR).ops
+    # RSP_out is written by the INT_SUB: `RSP = RSP - 8`.
+    rsp_vn = next(o.output for o in ops if o.opcode.name == 'INT_SUB')
+    sl = E.slice_backward(ops, rsp_vn)
+    mapper = E.StateMapper(ctx, 'AMD64', list(archregs.state_format(Architecture.AMD64)))
+    ds = E.extract_dependencies(rsp_vn, sl, E.compute_polarity(sl), ops, mapper)
+    return ({getattr(k, 'name', k) for k in ds.value_deps},
+            {getattr(k, 'name', k) for k in ds.addr_deps})
+
+
+def test_the_rsp_slice_contains_only_the_subtraction():
+    """The premise: RSP_out's backward slice is `RSP = RSP - 8` and nothing else.
+
+    If this ever stops holding, the dependency expectations below are about a
+    different program and mean nothing.
+    """
+    from microtaint.sleigh import engine as E
+    from microtaint.sleigh.lifter import get_context
+
+    ops = get_context('AMD64').translate(PUSH_RBP, CODE_ADDR).ops
+    rsp_vn = next(o.output for o in ops if o.opcode.name == 'INT_SUB')
+    names = [o.opcode.name for o in E.slice_backward(ops, rsp_vn)]
+    assert names == ['INT_SUB'], f'the RSP slice is no longer just the subtract: {names}'
+
+
+def test_rsp_output_depends_on_rsp_not_on_the_pushed_register():
+    """The ROOT CAUSE, one level below the two xfails above.
+
+    Dependencies were extracted per INSTRUCTION rather than per TARGET, so every
+    output of `push` got the same set: the STORE's address register (RSP) was
+    demoted to an address dependency and the STORE's value register (RBP) became
+    the only value dependency -- for the RSP output too, whose slice contains
+    neither.  That is both halves of the reported defect in one place.
+    """
+    value_deps, addr_deps = _rsp_dep_set()
+    assert 'RSP' in value_deps, (
+        f'RSP_out = RSP - 8, so RSP is a VALUE dependency; got value={value_deps} '
+        f'addr={addr_deps}.  Classifying it as an address dependency is what '
+        f"dropped the stack pointer's own taint: the STORE's pointer register "
+        f"was collected for every target of the instruction, not just for the "
+        f"store's own.")
