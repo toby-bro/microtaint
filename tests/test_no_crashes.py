@@ -103,7 +103,7 @@ def arm64_registers() -> list[Register]:
 def test_push_pop_no_crash(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('505b')
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         # Use 64-bit RAX/RBX since PUSH/POP in 64-bit mode are 64-bit operations
         input_values={'RAX': 0x12345678, 'RBX': 0},
         input_taint={'RAX': 0xFFFFFFFF, 'RBX': 0},
@@ -111,7 +111,7 @@ def test_push_pop_no_crash(simulator: CellSimulator, amd64_registers: list[Regis
     )
 
     # We expect the 0xFFFFFFFF taint to completely transfer to RBX
-    assert circuit.evaluate(ctx).get('RBX', 0) == 0xFFFFFFFF
+    assert circuit.evaluate(ectx).get('RBX', 0) == 0xFFFFFFFF
 
 
 def test_implicit_stack_memory_operations_do_not_crash() -> None:
@@ -133,13 +133,13 @@ def test_implicit_stack_memory_operations_do_not_crash() -> None:
 
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0xDEADBEEF, 'RBX': 0},
         input_taint={'RAX': 0xFFFFFFFFFFFFFFFF, 'RBX': 0},
         simulator=sim,
     )
 
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
 
     # The instruction should execute cleanly without throwing UC_ERR_MAP.
     # Furthermore, because RAX was pushed and then popped into RBX,

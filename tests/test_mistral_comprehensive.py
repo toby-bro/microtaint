@@ -146,30 +146,30 @@ def extract_flag(ast_output: dict[str, int], flag_name: str) -> int:  # noqa: C9
 def test_mov_reg_reg_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('4889C3')  # MOV RBX, RAX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0x1234, 'RBX': 0},
         input_taint={'RAX': 0xFFFFFFFFFFFFFFFF, 'RBX': 0},
         simulator=simulator,
     )
-    assert circuit.evaluate(ctx).get('RBX', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('RBX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_mov_imm_reg_clears_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('48B80100000000000000')  # MOV RAX, 1
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(input_values={'RAX': 0}, input_taint={'RAX': 0xFFFFFFFFFFFFFFFF}, simulator=simulator)
-    assert circuit.evaluate(ctx).get('RAX', 0) == 0
+    ectx = EvalContext(input_values={'RAX': 0}, input_taint={'RAX': 0xFFFFFFFFFFFFFFFF}, simulator=simulator)
+    assert circuit.evaluate(ectx).get('RAX', 0) == 0
 
 
 def test_mov_partial_reg_propagates_low_32(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('89C3')  # MOV EBX, EAX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'EAX': 0x12345678, 'EBX': 0},
         input_taint={'EAX': 0xFFFFFFFF, 'EBX': 0},
         simulator=simulator,
     )
-    assert circuit.evaluate(ctx).get('EBX', 0) == 0xFFFFFFFF
+    assert circuit.evaluate(ectx).get('EBX', 0) == 0xFFFFFFFF
 
 
 # ==========================================
@@ -180,57 +180,57 @@ def test_mov_partial_reg_propagates_low_32(simulator: CellSimulator, amd64_regis
 def test_add_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('4801D8')  # ADD RAX, RBX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0, 'RBX': 0},
         input_taint={'RAX': 0xAAAAAAAAAAAAAAAA, 'RBX': 0x5555555555555555},
         simulator=simulator,
     )
-    assert circuit.evaluate(ctx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_add_partial_reg_propagates_low_16(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('6601C3')  # ADD BX, AX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'AX': 0x1234, 'BX': 0x5678},
         input_taint={'AX': 0xFFFF, 'BX': 0xFFFF},
         simulator=simulator,
     )
-    assert circuit.evaluate(ctx).get('BX', 0) == 0xFFFF
+    assert circuit.evaluate(ectx).get('BX', 0) == 0xFFFF
 
 
 def test_add_overflow_sets_of(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('01D8')  # ADD EAX, EBX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'EAX': 0x7FFFFFFF, 'EBX': 1},
         input_taint={'EAX': 0x10, 'EBX': 0},
         simulator=simulator,
     )
     # The output flips between an overflow state and a non-overflow state, tainting OF
-    assert extract_flag(circuit.evaluate(ctx), 'OF') == 1
+    assert extract_flag(circuit.evaluate(ectx), 'OF') == 1
 
 
 def test_sub_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('4829D8')  # SUB RAX, RBX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0, 'RBX': 0},
         input_taint={'RAX': 0xAAAAAAAAAAAAAAAA, 'RBX': 0x5555555555555555},
         simulator=simulator,
     )
-    assert circuit.evaluate(ctx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_sub_borrow_sets_cf(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('29D8')  # SUB EAX, EBX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'EAX': 0, 'EBX': 1},
         input_taint={'EAX': 0x10, 'EBX': 0},
         simulator=simulator,
     )
-    assert extract_flag(circuit.evaluate(ctx), 'CF') == 1
+    assert extract_flag(circuit.evaluate(ectx), 'CF') == 1
 
 
 # ==========================================
@@ -241,26 +241,26 @@ def test_sub_borrow_sets_cf(simulator: CellSimulator, amd64_registers: list[Regi
 def test_and_partial_mask_propagates_low_16(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('6621C3')  # AND BX, AX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'AX': 0xFFFF, 'BX': 0xFFFF},
         input_taint={'AX': 0x0000FFFF, 'BX': 0x0000FFFF},  # Use strict 16-bit taints
         simulator=simulator,
     )
-    assert circuit.evaluate(ctx).get('BX', 0) == 0x0000FFFF
+    assert circuit.evaluate(ectx).get('BX', 0) == 0x0000FFFF
 
 
 def test_and_imm_partial_mask(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('25FF000000')  # AND EAX, 0x000000FF
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(input_values={'EAX': 0xFFFFFFFF}, input_taint={'EAX': 0xFFFFFFFF}, simulator=simulator)
-    assert circuit.evaluate(ctx).get('EAX', 0) == 0x000000FF
+    ectx = EvalContext(input_values={'EAX': 0xFFFFFFFF}, input_taint={'EAX': 0xFFFFFFFF}, simulator=simulator)
+    assert circuit.evaluate(ectx).get('EAX', 0) == 0x000000FF
 
 
 def test_or_partial_propagates_high_8(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('08D8')  # OR AL, BL
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(input_values={'AL': 0x00, 'BL': 0xFF}, input_taint={'AL': 0x00, 'BL': 0xFF}, simulator=simulator)
-    assert circuit.evaluate(ctx).get('AL', 0) == 0xFF
+    ectx = EvalContext(input_values={'AL': 0x00, 'BL': 0xFF}, input_taint={'AL': 0x00, 'BL': 0xFF}, simulator=simulator)
+    assert circuit.evaluate(ectx).get('AL', 0) == 0xFF
 
 
 # ==========================================
@@ -271,32 +271,32 @@ def test_or_partial_propagates_high_8(simulator: CellSimulator, amd64_registers:
 def test_bswap_propagates_full_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('480FC8')  # BSWAP RAX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0x0123456789ABCDEF},
         input_taint={'RAX': 0xFFFFFFFFFFFFFFFF},
         simulator=simulator,
     )
-    assert circuit.evaluate(ctx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_rol_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('48C1C008')  # ROL RAX, 8
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0x00FF00FF00FF00FF},
         input_taint={'RAX': 0x00FF00FF00FF00FF},
         simulator=simulator,
     )
     # The taint mask itself gets rotated
-    assert circuit.evaluate(ctx).get('RAX', 0) == 0xFF00FF00FF00FF00
+    assert circuit.evaluate(ectx).get('RAX', 0) == 0xFF00FF00FF00FF00
 
 
 def test_ror_preserves_taint_if_zero_shift(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('48C1C800')  # ROR RAX, 0
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(input_values={'RAX': 0x1234}, input_taint={'RAX': 0xFFFFFFFFFFFFFFFF}, simulator=simulator)
+    ectx = EvalContext(input_values={'RAX': 0x1234}, input_taint={'RAX': 0xFFFFFFFFFFFFFFFF}, simulator=simulator)
     # Taint does not clear on a shift by zero, it preserves perfectly.
-    assert circuit.evaluate(ctx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 # ==========================================
@@ -307,12 +307,12 @@ def test_ror_preserves_taint_if_zero_shift(simulator: CellSimulator, amd64_regis
 def test_mul_propagates_taint_to_rdx_rax(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('48F7E2')  # MUL RDX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 2, 'RDX': 3},
         input_taint={'RAX': 0xFFFFFFFFFFFFFFFF, 'RDX': 0},
         simulator=simulator,
     )
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
     assert output.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
     # RDX holds floor(RAX * 3 / 2^64), which for a fully tainted RAX ranges over
     # {0, 1, 2} only -- so exactly two bits are tainted, not the whole register.
@@ -322,13 +322,13 @@ def test_mul_propagates_taint_to_rdx_rax(simulator: CellSimulator, amd64_registe
 def test_imul_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('480FAFD8')  # IMUL RBX, RAX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 2, 'RBX': 3},
         input_taint={'RAX': 0xFFFFFFFFFFFFFFFF, 'RBX': 0},
         simulator=simulator,
     )
     # 2-operand IMUL outputs strictly to the destination register (RBX)
-    assert circuit.evaluate(ctx).get('RBX', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('RBX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 # ==========================================
@@ -339,27 +339,27 @@ def test_imul_propagates_taint(simulator: CellSimulator, amd64_registers: list[R
 def test_cmp_equal_sets_zf(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('39D8')  # CMP EAX, EBX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'EAX': 5, 'EBX': 5},
         input_taint={'EAX': 0xFFFFFFFF, 'EBX': 0},
         simulator=simulator,
     )
-    assert extract_flag(circuit.evaluate(ctx), 'ZF') == 1
+    assert extract_flag(circuit.evaluate(ectx), 'ZF') == 1
 
 
 def test_test_propagates_taint_to_flags(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('85D2')  # TEST EDX, EDX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(input_values={'RDX': 0}, input_taint={'RDX': 0x10}, simulator=simulator)
-    output = circuit.evaluate(ctx)
+    ectx = EvalContext(input_values={'RDX': 0}, input_taint={'RDX': 0x10}, simulator=simulator)
+    output = circuit.evaluate(ectx)
     assert extract_flag(output, 'ZF') == 1
 
 
 def test_setz_propagates_zf_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('0F94C0')  # SETZ AL
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(input_values={'EFLAGS': 0x40}, input_taint={'ZF': 1}, simulator=simulator)
-    assert circuit.evaluate(ctx).get('AL', 0) == 1
+    ectx = EvalContext(input_values={'EFLAGS': 0x40}, input_taint={'ZF': 1}, simulator=simulator)
+    assert circuit.evaluate(ectx).get('AL', 0) == 1
 
 
 # ==========================================
@@ -370,23 +370,23 @@ def test_setz_propagates_zf_taint(simulator: CellSimulator, amd64_registers: lis
 def test_lea_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('488D0418')  # LEA RAX, [RAX + RBX]
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0x1000, 'RBX': 0x20},
         input_taint={'RAX': 0xFFFFFFFFFFFFFFFF, 'RBX': 0},
         simulator=simulator,
     )
-    assert circuit.evaluate(ctx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_xchg_propagates_taint_bidirectional(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('4891')  # XCHG RAX, RCX (64-bit explicit)
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0, 'RCX': 0},
         input_taint={'RAX': 0x10, 'RCX': 0x20},
         simulator=simulator,
     )
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
     assert output.get('RAX', 0) == 0x20
     assert output.get('RCX', 0) == 0x10
 
@@ -399,26 +399,26 @@ def test_xchg_propagates_taint_bidirectional(simulator: CellSimulator, amd64_reg
 def test_inc_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('FFC0')  # INC EAX (32-bit zero extends)
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(input_values={'EAX': 0}, input_taint={'EAX': 0xFFFFFFFF}, simulator=simulator)
-    assert circuit.evaluate(ctx).get('EAX', 0) == 0xFFFFFFFF
+    ectx = EvalContext(input_values={'EAX': 0}, input_taint={'EAX': 0xFFFFFFFF}, simulator=simulator)
+    assert circuit.evaluate(ectx).get('EAX', 0) == 0xFFFFFFFF
 
 
 def test_neg_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('48F7D8')  # NEG RAX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(input_values={'RAX': 5}, input_taint={'RAX': 0xFFFFFFFFFFFFFFFF}, simulator=simulator)
-    assert circuit.evaluate(ctx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
+    ectx = EvalContext(input_values={'RAX': 5}, input_taint={'RAX': 0xFFFFFFFFFFFFFFFF}, simulator=simulator)
+    assert circuit.evaluate(ectx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_not_propagates_taint(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('48F7D0')  # NOT RAX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0xFFFFFFFFFFFFFFFF},
         input_taint={'RAX': 0xFFFFFFFFFFFFFFFF},
         simulator=simulator,
     )
-    assert circuit.evaluate(ctx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 # ==========================================
@@ -429,23 +429,23 @@ def test_not_propagates_taint(simulator: CellSimulator, amd64_registers: list[Re
 def test_arm64_mov_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('E00300AA')  # MOV X0, X0
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(input_values={'X0': 0}, input_taint={'X0': 0xFFFFFFFFFFFFFFFF}, simulator=arm64_simulator)
-    assert circuit.evaluate(ctx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
+    ectx = EvalContext(input_values={'X0': 0}, input_taint={'X0': 0xFFFFFFFFFFFFFFFF}, simulator=arm64_simulator)
+    assert circuit.evaluate(ectx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_arm64_mov_imm_clears_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('00008052')  # MOV W0, #0
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(input_values={'W0': 0}, input_taint={'W0': 0xFFFFFFFF}, simulator=arm64_simulator)
-    assert circuit.evaluate(ctx).get('W0', 0) == 0
+    ectx = EvalContext(input_values={'W0': 0}, input_taint={'W0': 0xFFFFFFFF}, simulator=arm64_simulator)
+    assert circuit.evaluate(ectx).get('W0', 0) == 0
 
 
 def test_arm64_movk_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('0000A072')  # MOVK W0, #0, LSL #0
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(input_values={'W0': 0}, input_taint={'W0': 0xFFFFFFFF}, simulator=arm64_simulator)
+    ectx = EvalContext(input_values={'W0': 0}, input_taint={'W0': 0xFFFFFFFF}, simulator=arm64_simulator)
     # MOVK replaces lower 16 bits with 0, leaving top 16 bits intact
-    assert circuit.evaluate(ctx).get('W0', 0) == 0x0000FFFF
+    assert circuit.evaluate(ectx).get('W0', 0) == 0x0000FFFF
 
 
 # ==========================================
@@ -456,26 +456,26 @@ def test_arm64_movk_propagates_taint(arm64_simulator: CellSimulator, arm64_regis
 def test_arm64_add_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('0000008B')  # ADD X0, X0, X0
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(input_values={'X0': 0}, input_taint={'X0': 0xFFFFFFFFFFFFFFFF}, simulator=arm64_simulator)
-    assert circuit.evaluate(ctx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
+    ectx = EvalContext(input_values={'X0': 0}, input_taint={'X0': 0xFFFFFFFFFFFFFFFF}, simulator=arm64_simulator)
+    assert circuit.evaluate(ectx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_arm64_add_imm_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('00000011')  # ADD W0, W0, #0
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(input_values={'W0': 0}, input_taint={'W0': 0xFFFFFFFF}, simulator=arm64_simulator)
-    assert circuit.evaluate(ctx).get('W0', 0) == 0xFFFFFFFF
+    ectx = EvalContext(input_values={'W0': 0}, input_taint={'W0': 0xFFFFFFFF}, simulator=arm64_simulator)
+    assert circuit.evaluate(ectx).get('W0', 0) == 0xFFFFFFFF
 
 
 def test_arm64_sub_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('000001CB')  # SUB X0, X0, X1
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'X0': 5, 'X1': 2},
         input_taint={'X0': 0xFFFFFFFFFFFFFFFF, 'X1': 0},
         simulator=arm64_simulator,
     )
-    assert circuit.evaluate(ctx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 # ==========================================
@@ -486,30 +486,30 @@ def test_arm64_sub_propagates_taint(arm64_simulator: CellSimulator, arm64_regist
 def test_arm64_and_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('0000008A')  # AND X0, X0, X0
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'X0': 0xFFFFFFFFFFFFFFFF},
         input_taint={'X0': 0xFFFFFFFFFFFFFFFF},
         simulator=arm64_simulator,
     )
-    assert circuit.evaluate(ctx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_arm64_orr_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('000000AA')  # ORR X0, X0, X0
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(input_values={'X0': 0}, input_taint={'X0': 0xFFFFFFFFFFFFFFFF}, simulator=arm64_simulator)
-    assert circuit.evaluate(ctx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
+    ectx = EvalContext(input_values={'X0': 0}, input_taint={'X0': 0xFFFFFFFFFFFFFFFF}, simulator=arm64_simulator)
+    assert circuit.evaluate(ectx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 def test_arm64_eor_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('000001CA')  # EOR X0, X0, X1
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'X0': 0, 'X1': 0},
         input_taint={'X0': 0xFFFFFFFFFFFFFFFF, 'X1': 0},
         simulator=arm64_simulator,
     )
-    assert circuit.evaluate(ctx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 # ==========================================
@@ -523,16 +523,16 @@ def test_arm64_ubfx_right_shift_propagates_taint(
 ) -> None:
     bytestring = bytes.fromhex('007C1053')  # Right shifts W0 by 16 (>> 0x10), zero extends to X0
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(input_values={'W0': 0x10000}, input_taint={'W0': 0x10000}, simulator=arm64_simulator)
+    ectx = EvalContext(input_values={'W0': 0x10000}, input_taint={'W0': 0x10000}, simulator=arm64_simulator)
     # Taint bit 16 shifts right by 16 positions (0x10000 >> 16 -> 0x1).
-    assert circuit.evaluate(ctx).get('X0', 0) == 0x1
+    assert circuit.evaluate(ectx).get('X0', 0) == 0x1
 
 
 def test_arm64_lsr_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('007C0053')  # LSR W0, W0, #1
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(input_values={'W0': 0xFFFFFFFF}, input_taint={'W0': 0xFFFFFFFF}, simulator=arm64_simulator)
-    assert circuit.evaluate(ctx).get('W0', 0) == 0xFFFFFFFF
+    ectx = EvalContext(input_values={'W0': 0xFFFFFFFF}, input_taint={'W0': 0xFFFFFFFF}, simulator=arm64_simulator)
+    assert circuit.evaluate(ectx).get('W0', 0) == 0xFFFFFFFF
 
 
 # ==========================================
@@ -543,24 +543,24 @@ def test_arm64_lsr_propagates_taint(arm64_simulator: CellSimulator, arm64_regist
 def test_arm64_cmp_sets_nzcv(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('1F0001EB')  # CMP X0, X1
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'X0': 5, 'X1': 5},
         input_taint={'X0': 0x10, 'X1': 0},
         simulator=arm64_simulator,
     )
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
     assert extract_flag(output, 'Z') == 1
 
 
 def test_arm64_tst_propagates_taint_to_nzcv(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('1F0001EA')  # TST X0, X1
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'X0': 0, 'X1': 0xFF},
         input_taint={'X0': 0xFF, 'X1': 0x0},
         simulator=arm64_simulator,
     )
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
     assert extract_flag(output, 'Z') == 1
 
 
@@ -572,8 +572,8 @@ def test_arm64_tst_propagates_taint_to_nzcv(arm64_simulator: CellSimulator, arm6
 def test_arm64_mul_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('007C009B')  # MUL X0, X0, X0
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(input_values={'X0': 2}, input_taint={'X0': 0xFFFFFFFFFFFFFFFF}, simulator=arm64_simulator)
-    assert circuit.evaluate(ctx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
+    ectx = EvalContext(input_values={'X0': 2}, input_taint={'X0': 0xFFFFFFFFFFFFFFFF}, simulator=arm64_simulator)
+    assert circuit.evaluate(ectx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 # ==========================================
@@ -584,12 +584,12 @@ def test_arm64_mul_propagates_taint(arm64_simulator: CellSimulator, arm64_regist
 def test_arm64_ldr_propagates_taint(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('000040F9')  # LDR X0, [X0]
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'X0': 0x1000},
         input_taint={'MEM_0x1000_8': 0xFFFFFFFFFFFFFFFF},  # Explicit size suffix _8 required
         simulator=arm64_simulator,
     )
-    assert circuit.evaluate(ctx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
+    assert circuit.evaluate(ectx).get('X0', 0) == 0xFFFFFFFFFFFFFFFF
 
 
 # ==========================================
@@ -600,23 +600,23 @@ def test_arm64_ldr_propagates_taint(arm64_simulator: CellSimulator, arm64_regist
 def test_arm64_add_sets_carry(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('000001AB')  # ADDS X0, X0, X1 (Flag-setting variant)
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'X0': 0xFFFFFFFFFFFFFFFF, 'X1': 1},
         input_taint={'X0': 0x10, 'X1': 0},
         simulator=arm64_simulator,
     )
-    assert extract_flag(circuit.evaluate(ctx), 'C') == 1
+    assert extract_flag(circuit.evaluate(ectx), 'C') == 1
 
 
 def test_arm64_sub_sets_negative(arm64_simulator: CellSimulator, arm64_registers: list[Register]) -> None:
     bytestring = bytes.fromhex('000001EB')  # SUBS X0, X0, X1 (Flag-setting variant)
     circuit = generate_static_rule(Architecture.ARM64, bytestring, arm64_registers)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'X0': 0, 'X1': 1},
         input_taint={'X0': 0x10, 'X1': 0},
         simulator=arm64_simulator,
     )
-    assert extract_flag(circuit.evaluate(ctx), 'N') == 1
+    assert extract_flag(circuit.evaluate(ectx), 'N') == 1
 
 
 def test_ret_propagates_taint_to_rip(simulator: CellSimulator, amd64_registers: list[Register]) -> None:
@@ -626,7 +626,7 @@ def test_ret_propagates_taint_to_rip(simulator: CellSimulator, amd64_registers: 
     # We need a concrete stack pointer to resolve the memory read
     stack_ptr = 0x80000000
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={
             'RSP': stack_ptr,
         },
@@ -638,7 +638,7 @@ def test_ret_propagates_taint_to_rip(simulator: CellSimulator, amd64_registers: 
         implicit_policy=ImplicitTaintPolicy.KEEP,
     )
 
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
 
     assert (
         output.get('RIP', 0) == 0xFFFFFFFFFFFFFFFF
@@ -665,49 +665,49 @@ def test_cond_transportable_cmp_with_immediate(amd64_registers: list[Register]) 
 
     # Case 1: AL is fully tainted, value happens to equal the constant.
     # The constant 0x58 is reachable → ZF must be tainted.
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0x58},
         input_taint={'RAX': 0xFF},
         simulator=sim,
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     assert out.get('ZF', 0) == 1, 'ZF should be tainted: fully tainted AL could equal 0x58'
 
     # Case 2: AL is fully tainted, value does NOT equal constant.
     # But since AL is fully tainted, 0x58 is still reachable → ZF must be tainted.
-    ctx2 = EvalContext(
+    ectx2 = EvalContext(
         input_values={'RAX': 0x00},
         input_taint={'RAX': 0xFF},
         simulator=sim,
     )
-    out2 = circuit.evaluate(ctx2)
+    out2 = circuit.evaluate(ectx2)
     assert out2.get('ZF', 0) == 1, 'ZF should be tainted: fully tainted AL can reach 0x58'
 
     # Case 3: Only bit 0 of AL is tainted, AL=0x10.
     # Tainted AL can be 0x10 or 0x11 — neither equals 0x58 → ZF NOT tainted.
-    ctx3 = EvalContext(
+    ectx3 = EvalContext(
         input_values={'RAX': 0x10},
         input_taint={'RAX': 0x01},
         simulator=sim,
     )
-    out3 = circuit.evaluate(ctx3)
+    out3 = circuit.evaluate(ectx3)
     assert out3.get('ZF', 0) == 0, 'ZF should NOT be tainted: tainted bit cannot make AL reach 0x58'
 
     # Case 4: Bits 0-5 tainted, AL=0x58.
     # AL can range 0x58..0x5F and 0x40..0x7F etc — 0x58 is reachable → ZF tainted.
-    ctx4 = EvalContext(
+    ectx4 = EvalContext(
         input_values={'RAX': 0x58},
         input_taint={'RAX': 0x3F},
         simulator=sim,
     )
-    out4 = circuit.evaluate(ctx4)
+    out4 = circuit.evaluate(ectx4)
     assert out4.get('ZF', 0) == 1, 'ZF should be tainted: 0x58 is reachable with tainted lower 6 bits'
 
     # Case 5: No taint → no taint on output.
-    ctx5 = EvalContext(
+    ectx5 = EvalContext(
         input_values={'RAX': 0x58},
         input_taint={},
         simulator=sim,
     )
-    out5 = circuit.evaluate(ctx5)
+    out5 = circuit.evaluate(ectx5)
     assert out5.get('ZF', 0) == 0, 'ZF should NOT be tainted: no input taint'

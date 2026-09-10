@@ -32,13 +32,13 @@ def test_mov_clean_pointer_propagates_exact_memory_taint(amd64_registers: list[R
     bytestring = bytes.fromhex('488b03')  # MOV RAX, QWORD PTR [RBX]
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RBX': 0x1000},
         input_taint={'RBX': 0, 'MEM_0x1000_8': 0x00000000000000FF},  # Low 8 bits tainted
         simulator=sim,
     )
 
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     assert out.get('RAX', 0) == 0xFF
 
 
@@ -52,13 +52,13 @@ def test_mov_tainted_pointer_avalanches_output(amd64_registers: list[Register]) 
     bytestring = bytes.fromhex('488b03')  # MOV RAX, QWORD PTR [RBX]
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RBX': 0x1000},
         input_taint={'RBX': 0x01, 'MEM_0x1000_8': 0},  # Memory is clean, pointer is compromised
         simulator=sim,
     )
 
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     assert out.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
@@ -73,11 +73,11 @@ def test_add_tainted_pointer_avalanches_output(amd64_registers: list[Register]) 
     bytestring = bytes.fromhex('480303')  # ADD RAX, QWORD PTR [RBX]
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0, 'RBX': 0x1000},
         input_taint={'RAX': 0, 'RBX': 0x01, 'MEM_0x1000_8': 0},
         simulator=sim,
     )
 
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     assert out.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF

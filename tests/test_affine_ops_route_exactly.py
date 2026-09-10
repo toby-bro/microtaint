@@ -223,11 +223,11 @@ def _taint_out(arch: Architecture, hx: str) -> dict[str, int]:
         for vseed in (0, 0x0123456789ABCDEF):
             values = {r.name: (vseed ^ (i * 0x1111)) for i, r in enumerate(regs)}
             taint = {r.name: tmask for r in regs[:4]}
-            ctx = EvalContext(
+            ectx = EvalContext(
                 input_values=values, input_taint=taint, simulator=sim,
                 implicit_policy=ImplicitTaintPolicy.KEEP,
             )
-            for k, v in (circ.evaluate(ctx) or {}).items():
+            for k, v in (circ.evaluate(ectx) or {}).items():
                 out[f'{tmask:x}/{vseed:x}/{k}'] = int(v)
     return out
 

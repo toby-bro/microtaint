@@ -104,24 +104,24 @@ def test_category_cond_transportable_equality(amd64_registers: list[Register]) -
     # Value: EAX=0x10, EBX=0x10 (ZF = 1)
     # Taint: EAX bit 0 is tainted.
     # If EAX bit 0 flips, EAX=0x11, EBX=0x10 (ZF flips to 0). Thus, ZF is tainted.
-    ctx_match = EvalContext(
+    ectx_match = EvalContext(
         input_values={'RAX': 0x10, 'RBX': 0x10},
         input_taint={'RAX': 0x01, 'RBX': 0x00},
         simulator=simulator,
     )
-    out_match = circuit.evaluate(ctx_match)
+    out_match = circuit.evaluate(ectx_match)
     assert out_match['ZF'] == 1, 'ZF should be tainted because untainted bits match.'
 
     # Scenario B: The untainted bits DO NOT match.
     # Value: EAX=0x10, EBX=0x20 (ZF = 0)
     # Taint: EAX bit 0 is tainted.
     # If EAX bit 0 flips, EAX=0x11, EBX=0x20 (ZF remains 0). Thus, ZF is NOT tainted.
-    ctx_no_match = EvalContext(
+    ectx_no_match = EvalContext(
         input_values={'RAX': 0x10, 'RBX': 0x20},
         input_taint={'RAX': 0x01, 'RBX': 0x00},
         simulator=simulator,
     )
-    out_no_match = circuit.evaluate(ctx_no_match)
+    out_no_match = circuit.evaluate(ectx_no_match)
     assert out_no_match['ZF'] == 0, 'ZF should NOT be tainted because untainted bits differ.'
 
 

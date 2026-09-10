@@ -35,7 +35,7 @@ def sim() -> CellSimulator:
 
 def _mem_outputs(hex_bytes: str, shadow: BitPreciseShadowMemory, sim: CellSimulator) -> dict[str, int]:
     circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex(hex_bytes), X64)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={},
         input_values={'RBP': RBP_VAL},
         simulator=sim,
@@ -43,7 +43,7 @@ def _mem_outputs(hex_bytes: str, shadow: BitPreciseShadowMemory, sim: CellSimula
         shadow_memory=shadow,
         mem_reader=lambda addr, sz: 0,  # noqa: ARG005
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     return {k: v for k, v in out.items() if k.startswith('MEM_')}
 
 

@@ -80,12 +80,12 @@ def _run_case(arch: Architecture, hx: str, *, rax_taint: int,
     concrete = {BASE + i: (0x11 * (i + 1)) & 0xFF for i in range(8)}
     mem_reader = _mem_reader_factory(concrete)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values=dict(values), input_taint=dict(taint),
         simulator=sim, implicit_policy=ImplicitTaintPolicy.KEEP,
         shadow_memory=shadow, mem_reader=mem_reader,
     )
-    ref = circ.evaluate(ctx)
+    ref = circ.evaluate(ectx)
     compiled = circ._compiled
     # `_compiled` is False until the first evaluate forces compilation,
     # which every one of these sites has already done.
@@ -144,10 +144,10 @@ def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int,
     shadow_ref = BitPreciseShadowMemory()
     for off, tb in mem_taint_bytes.items():
         shadow_ref.write_mask(BASE + off, tb, 1)
-    ctx = EvalContext(input_values=dict(values), input_taint=dict(taint),
+    ectx = EvalContext(input_values=dict(values), input_taint=dict(taint),
                       simulator=sim, implicit_policy=ImplicitTaintPolicy.KEEP,
                       shadow_memory=shadow_ref, mem_reader=mem_reader)
-    ref = circ.evaluate(ctx)
+    ref = circ.evaluate(ectx)
     compiled = circ._compiled
     # `_compiled` is False until the first evaluate forces compilation,
     # which every one of these sites has already done.
@@ -234,14 +234,14 @@ def test_c_mem_arms_per_evaluate_frame_recycle() -> None:
     shadow.write_mask(BASE, 0xFF, 1)
     reader = _mem_reader_factory({BASE + i: 0x11 for i in range(8)})
 
-    def make_ctx() -> EvalContext:
+    def make_ectx() -> EvalContext:
         return EvalContext(
             input_values=dict(values), input_taint=dict(taint),
             simulator=sim, implicit_policy=ImplicitTaintPolicy.KEEP,
             shadow_memory=shadow, mem_reader=reader,
         )
 
-    circ.evaluate(make_ctx())  # warm / compile
+    circ.evaluate(make_ectx())  # warm / compile
     compiled = circ._compiled
     # `_compiled` is False until the first evaluate forces compilation,
     # which every one of these sites has already done.
@@ -256,7 +256,7 @@ def test_c_mem_arms_per_evaluate_frame_recycle() -> None:
     # Reference cadence: do_evaluate resets the pool per call -> N re-executions.
     base = kernel.native_calls
     for _ in range(N):
-        circ.evaluate(make_ctx())
+        circ.evaluate(make_ectx())
     count_ref = kernel.native_calls - base
     assert count_ref > 0, 'do_evaluate executed no cells (circuit has no cell?)'
 
@@ -299,12 +299,12 @@ def test_c_mem_persistent_kernel_sequence() -> None:
         values['RAX'] = (0xDEAD * (step + 1)) & 0xFFFFFFFFFFFFFFFF
         taint = {r.name: 0 for r in regs}
         taint['RAX'] = (0xFF << (step % 5)) & 0xFFFFFFFFFFFFFFFF
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_values=dict(values), input_taint=dict(taint),
             simulator=sim, implicit_policy=ImplicitTaintPolicy.KEEP,
             shadow_memory=shadow, mem_reader=reader,
         )
-        ref = circ.evaluate(ctx)
+        ref = circ.evaluate(ectx)
         compiled = circ._compiled
         assert compiled is not None and not isinstance(compiled, bool)
         cmem = compiled.evaluate_c_mem(dict(taint), dict(values), sim._pcode, shadow, reader)

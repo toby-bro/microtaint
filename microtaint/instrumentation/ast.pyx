@@ -1477,7 +1477,7 @@ cdef class ChainedCircuit:
     cpdef dict evaluate(self, EvalContext context):
         cdef dict taint = dict(context.input_taint)
         cdef dict values = dict(context.input_values)  # mutable concrete state
-        cdef EvalContext step_ctx
+        cdef EvalContext step_ectx
         cdef LogicCircuit sub
         cdef object sim = context.simulator
 
@@ -1488,7 +1488,7 @@ cdef class ChainedCircuit:
             # bits set/cleared by an earlier instruction) read the concrete
             # values of source registers and can under-taint when those
             # values are stale.
-            step_ctx = EvalContext(
+            step_ectx = EvalContext(
                 input_taint=taint,
                 input_values=values,
                 simulator=sim,
@@ -1496,7 +1496,7 @@ cdef class ChainedCircuit:
                 shadow_memory=context.shadow_memory,
                 mem_reader=context.mem_reader,
             )
-            taint = sub.evaluate(step_ctx)
+            taint = sub.evaluate(step_ectx)
 
             # Update concrete state by running THIS step's instruction
             # concretely on the running values.  The result is independent of

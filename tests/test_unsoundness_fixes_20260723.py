@@ -189,8 +189,8 @@ def _assert_sound(arch_name: str, code_hex: str, state: dict[str, int],
     if arch_name not in _SIMS:
         _SIMS[arch_name] = CellSimulator(getattr(Architecture, arch.key))
     rule = generate_static_rule(getattr(Architecture, arch.key), code, arch.fmt)
-    ctx = EvalContext(input_values=full_state, input_taint=taint, simulator=_SIMS[arch_name])
-    mt = rule.evaluate(ctx)
+    ectx = EvalContext(input_values=full_state, input_taint=taint, simulator=_SIMS[arch_name])
+    mt = rule.evaluate(ectx)
     for reg, gt_bits in gt.items():
         if reg in skip:  # architecturally-undefined flag: Unicorn invents a value
             continue

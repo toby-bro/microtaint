@@ -968,10 +968,10 @@ class CellSimulator:
         # The address registers are present as bare-register entries in
         # both or_inputs and and_inputs (with the same value, since
         # address-only regs are not polarised), so we use either dict.
-        ctx = EvalContext(input_taint={}, input_values=or_inputs, simulator=self)
+        ectx = EvalContext(input_taint={}, input_values=or_inputs, simulator=self)
 
-        v_state_or = _build_machine_state(or_inputs, ctx)
-        v_state_and = _build_machine_state(and_inputs, ctx)
+        v_state_or = _build_machine_state(or_inputs, ectx)
+        v_state_and = _build_machine_state(and_inputs, ectx)
 
         try:
             self._execute(bytes.fromhex(cell.instruction), v_state_or)

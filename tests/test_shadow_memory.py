@@ -138,7 +138,7 @@ def test_movzbl_rbp_offset_taint_propagation(amd64_registers: list[Register]) ->
     for a in circuit.assignments:
         print(f'  {a}')
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={},
         input_values={'RBP': rbp},
         shadow_memory=shadow,
@@ -149,7 +149,7 @@ def test_movzbl_rbp_offset_taint_propagation(amd64_registers: list[Register]) ->
     print('\nManual expression evaluation:')
     for a in circuit.assignments:
         if a.expression is not None:
-            val = a.expression.evaluate(ctx)
+            val = a.expression.evaluate(ectx)
             print(f'  {a.target} => {hex(val)}')
 
         # If it's a memory operand in the expression tree, trace it
@@ -158,26 +158,26 @@ def test_movzbl_rbp_offset_taint_propagation(amd64_registers: list[Register]) ->
         def trace_expr(expr: Expr, depth: int = 0) -> None:
             indent = '    ' * depth
             if isinstance(expr, MemoryOperand):
-                addr = expr.address_expr.evaluate(ctx)
+                addr = expr.address_expr.evaluate(ectx)
                 taint_val = shadow.read_mask(addr, expr.size) if expr.is_taint else None
                 print(
                     f"{indent}MemoryOperand(addr={hex(addr)}, size={expr.size}, is_taint={expr.is_taint}) => taint={hex(taint_val) if taint_val is not None else 'N/A'}",  # noqa: E501
                 )
             elif isinstance(expr, TaintOperand):
-                val = expr.evaluate(ctx)
+                val = expr.evaluate(ectx)
                 print(f'{indent}TaintOperand({expr.name}, is_taint={expr.is_taint}) => {hex(val)}')
             elif isinstance(expr, BinaryExpr):
                 print(f'{indent}BinaryExpr({expr.op})')
                 trace_expr(expr.lhs, depth + 1)
                 trace_expr(expr.rhs, depth + 1)
             else:
-                val = expr.evaluate(ctx)
+                val = expr.evaluate(ectx)
                 print(f'{indent}{type(expr).__name__} => {hex(val)}')
 
         if a.expression is not None:
             trace_expr(a.expression)
 
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     print(f'\nFull output: {out}')
 
     assert (

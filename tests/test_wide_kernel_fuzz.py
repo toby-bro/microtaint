@@ -161,11 +161,11 @@ def test_wide_kernels_agree_and_are_exact(seed: int) -> None:
                 and_in.setdefault(k, v & _FULL)
             py = _cell_bytes(PCodeCellEvaluator, arch, instr, out_base, nbytes, or_in, and_in)
             c = _cell_bytes(PCodeCellEvaluatorC, arch, instr, out_base, nbytes, or_in, and_in)
-            ctx = f'{asm} seed={seed} taints={taints}'
-            assert py == c, f'PARITY: cell.pyx {py} != cell_c {c} :: {ctx}'
+            where = f'{asm} seed={seed} taints={taints}'
+            assert py == c, f'PARITY: cell.pyx {py} != cell_c {c} :: {where}'
             if op is not None:
                 oracle = _oracle_bytes(op, bases, values, taints, nbytes)
-                assert py == oracle, f'EXACT: {py} != oracle {oracle} :: {ctx}'
+                assert py == oracle, f'EXACT: {py} != oracle {oracle} :: {where}'
 
 
 # ---------------------------------------------------------------------------
@@ -222,8 +222,8 @@ def test_wide_native_kernels_agree_and_exact(seed: int) -> None:
                     taints[b] |= _rand_lane(rng) << (k * 8)
             py = _cell_wide_native(PCodeCellEvaluator, arch, instr, out_base, nbytes, vals, taints)
             c = _cell_wide_native(PCodeCellEvaluatorC, arch, instr, out_base, nbytes, vals, taints)
-            ctx = f'{asm} seed={seed}'
-            assert py == c, f'WIDE PARITY: cell.pyx {py} != cell_c {c} :: {ctx}'
+            where = f'{asm} seed={seed}'
+            assert py == c, f'WIDE PARITY: cell.pyx {py} != cell_c {c} :: {where}'
             if op is not None:
                 oracle = _wide_oracle(op, bases, vals, taints, nbytes)
-                assert py == oracle, f'WIDE EXACT: {py} != oracle {oracle} :: {ctx}'
+                assert py == oracle, f'WIDE EXACT: {py} != oracle {oracle} :: {where}'

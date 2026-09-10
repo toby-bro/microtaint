@@ -151,8 +151,8 @@ _CTRL = {'BRANCH', 'BRANCHIND', 'CBRANCH', 'CALL', 'CALLIND', 'RETURN'}
 # ---------------------------------------------------------------------------
 
 class TwoCorner:
-    def __init__(self, ctx, little_endian: bool):
-        self.ctx = ctx
+    def __init__(self, sctx, little_endian: bool):
+        self.sctx = sctx
         self.le = little_endian
         self.hi: dict[tuple[str, int], int] = {}
         self.lo: dict[tuple[str, int], int] = {}
@@ -212,9 +212,9 @@ def scheme_b_taint(arch: Architecture,
     key = _arch_key(arch)
     if not _ARCH_LE.get(key, False):
         raise Unsupported(f'BE arch {key}')
-    ctx = get_context(key)
-    reg_vn = ctx.registers
-    interp = TwoCorner(ctx, _ARCH_LE[key])
+    sctx = get_context(key)
+    reg_vn = sctx.registers
+    interp = TwoCorner(sctx, _ARCH_LE[key])
     mapped = []
     for r in regs:
         vn = reg_vn.get(r.name)
@@ -222,7 +222,7 @@ def scheme_b_taint(arch: Architecture,
             continue  # e.g. EFLAGS/RIP not a pypcode register -> not compared
         mapped.append((r.name, vn))
         interp.init_reg(vn, in_values.get(r.name, 0), in_taint.get(r.name, 0))
-    ops = ctx.translate(code, 0x1000).ops
+    ops = sctx.translate(code, 0x1000).ops
     interp.run(ops)
     return {name: interp.out_taint(vn) for name, vn in mapped}
 

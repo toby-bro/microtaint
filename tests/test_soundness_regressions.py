@@ -131,13 +131,13 @@ def _microtaint_run(
     zero = {r.name: 0 for r in regs}
     _cached_generate_static_rule.cache_clear()
     circuit = generate_static_rule(Architecture.AMD64, code, regs)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={**zero, **taint},
         input_values={**zero, **state},
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circuit.evaluate(ctx)
+    return circuit.evaluate(ectx)
 
 
 def _assert_sound(

@@ -163,7 +163,7 @@ class MemMapping:
 _CONST_ADDR_MARKER = 'CONSTZERO'
 _CONST_ADDR_BASE = RegMapping(_CONST_ADDR_MARKER, 0, 63)
 
-# Every instruction is translated at this fixed base (see ctx.translate below).
+# Every instruction is translated at this fixed base (see sctx.translate below).
 # A compile-time-constant memory address is therefore expressed relative to it.
 _TRANSLATE_BASE = 0x1000
 
@@ -199,13 +199,13 @@ def _pc_relative_addrs(
     moved by exactly the base delta.  The two translations share op/varnode order,
     so the extracted address lists align positionally.
     """
-    ctx = get_context(arch)
+    sctx = get_context(arch)
     state_format = [Register(name=n, bits=b) for n, b in state_format_tuple]
     delta = 0x40000
 
     def _addrs(base: int) -> list[int]:
-        ops = ctx.translate(bytestring, base).ops
-        mp = StateMapper(ctx, arch, state_format)
+        ops = sctx.translate(bytestring, base).ops
+        mp = StateMapper(sctx, arch, state_format)
         out: list[int] = []
         for op in ops:
             if op.opcode.name in ('LOAD', 'STORE'):
@@ -328,7 +328,7 @@ def _vec_lane_span(offset: int, size: int, vec_bases: frozenset[int]) -> list[in
 _VEC_LANE_BASES_CACHE: dict[str, frozenset[int]] = {}
 
 
-def _vector_lane_bases(ctx: Context, arch: str) -> frozenset[int]:
+def _vector_lane_bases(sctx: Context, arch: str) -> frozenset[int]:
     """The set of 8-aligned lane-base offsets that lie inside some register-space
     varnode wider than 8 bytes (i.e. every vector register's lanes).  Cached per
     arch because it depends only on the Sleigh register layout."""
@@ -336,7 +336,7 @@ def _vector_lane_bases(ctx: Context, arch: str) -> frozenset[int]:
     if cached is not None:
         return cached
     bases: set[int] = set()
-    for _vn in ctx.registers.values():
+    for _vn in sctx.registers.values():
         if _vn.space.name == 'register' and _vn.size > 8:
             _b = _vn.offset & ~7
             _end = _vn.offset + _vn.size
@@ -351,7 +351,7 @@ def _vector_lane_bases(ctx: Context, arch: str) -> frozenset[int]:
 _FLAG_OFFSETS_CACHE: dict[str, frozenset[int]] = {}
 
 
-def _standalone_flag_offsets(ctx: Context, arch: str) -> frozenset[int]:
+def _standalone_flag_offsets(sctx: Context, arch: str) -> frozenset[int]:
     """Sleigh offsets of every STANDALONE 1-byte register: a 1-byte register-space
     varnode that no wider register contains.  These are the condition flags (x86
     CF/OF/..., ARM64 C, PPC xer_ca, ...), which Sleigh stores 1-per-byte but which
@@ -364,7 +364,7 @@ def _standalone_flag_offsets(ctx: Context, arch: str) -> frozenset[int]:
         return cached
     one_byte: set[int] = set()
     covered: set[int] = set()
-    for _vn in ctx.registers.values():
+    for _vn in sctx.registers.values():
         if _vn.space.name != 'register':
             continue
         if _vn.size == 1:
@@ -377,8 +377,8 @@ def _standalone_flag_offsets(ctx: Context, arch: str) -> frozenset[int]:
 
 
 class StateMapper:
-    def __init__(self, ctx: Context, arch: str, state_format: list[Register]):
-        self.ctx = ctx
+    def __init__(self, sctx: Context, arch: str, state_format: list[Register]):
+        self.sctx = sctx
         self.arch = arch
         self.state_format = state_format
         arch_upper = str(arch).upper()
@@ -390,7 +390,7 @@ class StateMapper:
 
         self.sf_resolved: list[tuple[Register, Varnode]] = []
         for sf_reg in state_format:
-            s_r: Varnode | None = ctx.registers.get(sf_reg.name) or ctx.registers.get(
+            s_r: Varnode | None = sctx.registers.get(sf_reg.name) or sctx.registers.get(
                 sf_reg.name.lower(),
             )
             # The state_format uses OFFICIAL Sleigh register names.  Friendly
@@ -409,11 +409,11 @@ class StateMapper:
         # 8-aligned lane bases of every vector register (geometry from pypcode).
         # A wide register varnode no state_format entry covers is lane-synthesised
         # onto VL_<lane_base> here, tracking any ISA's SIMD file without enumeration.
-        self._vec_lane_bases: frozenset[int] = _vector_lane_bases(ctx, str(arch))
+        self._vec_lane_bases: frozenset[int] = _vector_lane_bases(sctx, str(arch))
         # Standalone 1-byte flag offsets (geometry-derived) -- used to tell a
         # carry-fill flag from a shift-amount GPR sub-byte in rotate-through-carry
         # categorisation, ISA-generally (no hardcoded x86 flag-offset table).
-        self.flag_offsets: frozenset[int] = _standalone_flag_offsets(ctx, str(arch))
+        self.flag_offsets: frozenset[int] = _standalone_flag_offsets(sctx, str(arch))
 
     def lane_base_offset(self, name: str, default: int) -> int:
         """Sleigh byte offset of a state entry / synthetic lane by name.  A listed
@@ -664,7 +664,7 @@ def resolve_ptr_with_offset(  # noqa: C901
 def apply_sless_msb_split(
     deps: dict[RegMapping | MemMapping, int],
     slice_ops: list[PcodeOp],
-    _ctx: Context,
+    _sctx: Context,
     _arch: Architecture,
     _state_format: list[Register],
 ) -> dict[RegMapping | MemMapping, int]:
@@ -762,13 +762,13 @@ def _cached_generate_static_rule(  # noqa: C901
 ) -> LogicCircuit:
     state_format = [Register(name=name, bits=bits) for name, bits in state_format_tuple]
 
-    ctx = get_context(arch)
-    translation = ctx.translate(bytestring, 0x1000)
+    sctx = get_context(arch)
+    translation = sctx.translate(bytestring, 0x1000)
 
     outputs, store_ops, ram_outputs = get_register_outputs_and_stores(translation)
     unique_outputs = {get_varnode_id(out): out for out in outputs}.values()
 
-    mapper = StateMapper(ctx, arch, state_format)
+    mapper = StateMapper(sctx, arch, state_format)
 
     # Which compile-time-constant memory addresses are PC-relative (resolve against
     # the runtime pc) vs genuinely absolute (baked).  Shared by outputs and deps.
@@ -827,7 +827,7 @@ def _cached_generate_static_rule(  # noqa: C901
 
         # Apply polarity split for signed comparisons (value_deps only — addr_deps
         # are not used in the differential so they don't need polarity treatment).
-        split_value_deps = apply_sless_msb_split(dep_set.value_deps, slice_ops, ctx, arch, state_format)
+        split_value_deps = apply_sless_msb_split(dep_set.value_deps, slice_ops, sctx, arch, state_format)
         dep_set = DependencySet(value_deps=split_value_deps, addr_deps=dep_set.addr_deps)
 
         out_target, out_name, out_bit_start, out_bit_end = generate_output_target(mapping)
@@ -1104,7 +1104,7 @@ _BOOL_OUTPUT_OPCODES: frozenset[str] = frozenset({
 
 def _chain_intermediate_flags(
     translation: Translation,
-    ctx: Context,
+    sctx: Context,
     arch: Architecture,
     reg_names_tuple: tuple[tuple[str, int], ...],
 ) -> tuple[tuple[str, int], ...]:
@@ -1137,7 +1137,7 @@ def _chain_intermediate_flags(
     >8-byte scalar is skipped, since a wider Register corrupts the mask path.
     Over-inclusion is safe (filtered back)."""
     name_by_key: dict[tuple[int, int], str] = {
-        (vn.offset, vn.size): nm for nm, vn in ctx.registers.items() if vn.space.name == 'register'
+        (vn.offset, vn.size): nm for nm, vn in sctx.registers.items() if vn.space.name == 'register'
     }
     written: set[tuple[int, int]] = set()
     read: set[tuple[int, int]] = set()
@@ -1151,7 +1151,7 @@ def _chain_intermediate_flags(
             if inp.space.name == 'register':
                 read.add((inp.offset, inp.size))
     existing = {name for name, _ in reg_names_tuple}
-    vec_bases = _vector_lane_bases(ctx, str(arch))
+    vec_bases = _vector_lane_bases(sctx, str(arch))
     extra: list[tuple[str, int]] = []
     seen: set[str] = set()
 
@@ -1265,8 +1265,8 @@ def generate_static_rule(
     #
     #   2. STORE/LOAD present: shadow memory is not threaded between steps,
     #      so memory-taint would be silently lost (push/pop, load-then-store).
-    ctx = get_context(arch)
-    translation = ctx.translate(bytestring, 0x1000)
+    sctx = get_context(arch)
+    translation = sctx.translate(bytestring, 0x1000)
     imarks = [(op.inputs[0].offset - 0x1000, op.inputs[0].size) for op in translation.ops if op.opcode.name == 'IMARK']
     if len(imarks) <= 1:
         return circuit  # single instruction — no chaining needed
@@ -1296,7 +1296,7 @@ def generate_static_rule(
     # register are all picked up by geometry, with no hardcoded per-arch flag list.
     # Over-inclusion is safe: the final output dict is filtered back to the
     # caller's state_format by ChainedCircuit.evaluate.
-    _extra_flags = _chain_intermediate_flags(translation, ctx, arch, reg_names_tuple)
+    _extra_flags = _chain_intermediate_flags(translation, sctx, arch, reg_names_tuple)
     sub_reg_names_tuple = reg_names_tuple + _extra_flags if _extra_flags else reg_names_tuple
 
     sub_circuits: list[LogicCircuit] = []

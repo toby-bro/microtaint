@@ -50,8 +50,8 @@ def _engine(code_hex: str, rbx: int, taint: int) -> int:
     vals['RSP'] = 0x80000000
     taints = {r.name: 0 for r in _REGS}
     taints['RBX'] = taint
-    ctx = EvalContext(input_values=vals, input_taint=taints, simulator=CellSimulator(Architecture.AMD64))
-    out = circuit.evaluate(ctx)
+    ectx = EvalContext(input_values=vals, input_taint=taints, simulator=CellSimulator(Architecture.AMD64))
+    out = circuit.evaluate(ectx)
     return int(out.get('RAX', 0)) & _MASK64
 
 

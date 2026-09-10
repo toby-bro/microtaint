@@ -53,13 +53,13 @@ class RegisterAliases:
     def __init__(self, arch: Architecture | str) -> None:
         self.arch: str = arch.name if isinstance(arch, Architecture) else str(arch)
         self.is_big_endian: bool = self.arch.upper().endswith('BE')
-        ctx = get_context(self.arch)
+        sctx = get_context(self.arch)
 
         # name(upper) -> (offset, size); split into scalar (<=8) and vector (>8).
         self._scalars: dict[str, tuple[int, int]] = {}
         self._vectors: dict[str, tuple[int, int]] = {}
         self._canonical: dict[str, str] = {}  # upper -> original-case sleigh name
-        for name, vn in ctx.registers.items():
+        for name, vn in sctx.registers.items():
             if vn.space.name != 'register':
                 continue
             up = name.upper()

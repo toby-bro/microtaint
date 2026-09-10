@@ -702,7 +702,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pypcode", specifier = ">=3.3.3" },
+    { name = "pypcode", specifier = ">=4.0.0" },
     { name = "qiling", specifier = ">=1.4.6" },
     { name = "unicorn", specifier = ">=2.1.4" },
 ]

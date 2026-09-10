@@ -313,8 +313,8 @@ def _predecode_ops(arch, bytestring):
     Returns a DecodedOps instance with has_fallback, n_ops, and the struct array filled.
     All fields are C-typed — no Python tuples in the execution hot loop.
     """
-    ctx         = get_context(arch)
-    translation = ctx.translate(bytestring, 0x1000)
+    sctx         = get_context(arch)
+    translation = sctx.translate(bytestring, 0x1000)
     ops         = translation.ops
     cdef DecodedOps result = DecodedOps()
     result.n_ops = 0
@@ -1727,9 +1727,9 @@ _ARCH_PC: dict = {}  # arch_str -> (reg_offset: long, reg_size: int)
 
 @functools.lru_cache(maxsize=8)
 def _build_reg_maps(arch):
-    ctx = get_context(arch)
+    sctx = get_context(arch)
     offsets, sizes = {}, {}
-    for name, vn in ctx.registers.items():
+    for name, vn in sctx.registers.items():
         key = name.upper()
         offsets[key] = vn.offset
         sizes[key]   = vn.size

@@ -72,13 +72,13 @@ def _ev(
     values: dict[str, int],
 ) -> dict[str, int]:
     circuit = generate_static_rule(AMD64, code, regs)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=taint,
         input_values=values,
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circuit.evaluate(ctx)
+    return circuit.evaluate(ectx)
 
 
 def _z(regs: list[Register]) -> dict[str, int]:

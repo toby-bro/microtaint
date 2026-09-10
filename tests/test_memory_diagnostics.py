@@ -90,7 +90,7 @@ def _eval(
         for a in circuit.assignments:
             print(f'  {a}')
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=reg_taint,
         input_values=reg_values,
         simulator=sim,
@@ -98,7 +98,7 @@ def _eval(
         shadow_memory=shadow,
         mem_reader=lambda addr, sz: 0,
     )
-    result = circuit.evaluate(ctx)
+    result = circuit.evaluate(ectx)
 
     if print_circuit:
         print(f'--- Output state for {hex_bytes} ---')

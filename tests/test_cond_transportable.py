@@ -73,12 +73,12 @@ def test_extensive_conditional_transportability_equality(
     circuit = generate_static_rule(arch, bytestring, amd64_registers)
 
     # 2. Evaluate the AST against the specific parameterized state
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': v_eax, 'RBX': v_ebx},
         input_taint={'RAX': t_eax, 'RBX': t_ebx},
         simulator=simulator,
     )
-    result = circuit.evaluate(ctx)
+    result = circuit.evaluate(ectx)
 
     # 3. Extract the Zero Flag (ZF) taint
     zf_taint = result.get('ZF')

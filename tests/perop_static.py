@@ -65,8 +65,8 @@ def _vid(vn: Varnode) -> VId:
     return (vn.space.name, vn.offset, vn.size)
 
 
-def classify_instr(ctx: Context, code: bytes) -> tuple[str, int]:
-    ops = [o for o in ctx.translate(code, 0x1000).ops if o.opcode.name not in _SKIP]
+def classify_instr(sctx: Context, code: bytes) -> tuple[str, int]:
+    ops = [o for o in sctx.translate(code, 0x1000).ops if o.opcode.name not in _SKIP]
     if not ops:
         return 'EMPTY', 0
     # opaque?
@@ -133,7 +133,7 @@ def run(isas: list[str] | None = None) -> dict[str, Any]:
     for name, spec in specs.items():
         key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
         try:
-            ctx = get_context(key)
+            sctx = get_context(key)
         except Exception:
             continue
         cnt: Counter[str] = Counter()
@@ -141,7 +141,7 @@ def run(isas: list[str] | None = None) -> dict[str, Any]:
         n = 0
         for ins in spec.instructions:
             try:
-                cls, rc = classify_instr(ctx, ins.bytes)
+                cls, rc = classify_instr(sctx, ins.bytes)
             except Exception:
                 cls, rc = 'ERROR', 0
             cnt[cls] += 1

@@ -26,7 +26,7 @@ from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 from tests.conftest import slow_tier_enabled
 
 
-def _ctx() -> EvalContext:
+def _ectx() -> EvalContext:
     return EvalContext(input_taint={}, input_values={}, simulator=None, implicit_policy=ImplicitTaintPolicy.IGNORE)
 
 
@@ -76,7 +76,7 @@ def test_comparison_taint_expr_exhaustive(
                                     Constant(a, w), Constant(ta, w), Constant(b, w), Constant(tb, w),
                                     w, is_signed, or_equal,
                                 )
-                                assert e.evaluate(_ctx()) & 1 == _true_taint(pred, a, ta, b, tb)
+                                assert e.evaluate(_ectx()) & 1 == _true_taint(pred, a, ta, b, tb)
 
 
 def test_equality_taint_expr_exhaustive(
@@ -95,7 +95,7 @@ def test_equality_taint_expr_exhaustive(
                         e = EqualityTaintExpr(
                             Constant(a, w), Constant(ta, w), Constant(b, w), Constant(tb, w), w,
                         )
-                        assert e.evaluate(_ctx()) & 1 == _true_taint(lambda x, y: int(x == y), a, ta, b, tb)
+                        assert e.evaluate(_ectx()) & 1 == _true_taint(lambda x, y: int(x == y), a, ta, b, tb)
 
 
 # --- integration: the packed-comparison builder on real instructions ---
@@ -113,13 +113,13 @@ _CMPW_MFCR = bytes.fromhex('7c0428007c600026')  # cmpw 0,4,5 ; mfcr 3
 def _ppc_r3(vals: dict[str, int], taint: dict[str, int]) -> int:
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(_PPC, _CMPW_MFCR, _PPC_FMT)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={**_PPC_ZERO, **taint},
         input_values={**_PPC_ZERO, **vals},
         simulator=CellSimulator(_PPC),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circ.evaluate(ctx).get('R3', 0)
+    return circ.evaluate(ectx).get('R3', 0)
 
 
 def test_cmpw_mfcr_exact_via_packed_comparison() -> None:
@@ -144,13 +144,13 @@ def test_cmpw_builder_falls_through_without_xer() -> None:
     zero = {r.name: 0 for r in fmt}
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(_PPC, _CMPW_MFCR, fmt)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={**zero, 'R4': 0xFFFFFFFF, 'R5': 0xFFFFFFFF},
         input_values={**zero, 'R4': 0, 'R5': 0},
         simulator=CellSimulator(_PPC),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert circ.evaluate(ctx).get('R3', 0) & 0xE0000000  # LT/GT/EQ still tainted (sound)
+    assert circ.evaluate(ectx).get('R3', 0) & 0xE0000000  # LT/GT/EQ still tainted (sound)
 
 
 _ARM = Architecture.ARM64
@@ -168,13 +168,13 @@ def _arm_x0(code: bytes, vals: dict[str, int],
             taint: dict[str, int]) -> int:
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(_ARM, code, _ARM_FMT)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=_ARM_A.to_engine({**_ARM_ZERO, **taint}),
         input_values=_ARM_A.to_engine({**_ARM_ZERO, **vals}),
         simulator=CellSimulator(_ARM, use_unicorn=False, use_c=False),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return _ARM_A.read(circ.evaluate(ctx), 'X0')
+    return _ARM_A.read(circ.evaluate(ectx), 'X0')
 
 
 def test_cset_lt_ge_exact_via_equality_term() -> None:

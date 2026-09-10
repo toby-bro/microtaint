@@ -1123,13 +1123,13 @@ def _run(
     input_taint: dict[str, int],
     implicit_policy: ImplicitTaintPolicy = ImplicitTaintPolicy.KEEP,
 ) -> dict[str, int]:
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values=input_values,
         input_taint=input_taint,
         simulator=sim,
         implicit_policy=implicit_policy,
     )
-    out: dict[str, int] = circuit.evaluate(ctx)
+    out: dict[str, int] = circuit.evaluate(ectx)
     return out
 
 
@@ -1730,13 +1730,13 @@ def _run_chain(sim: CellSimulator,
 
     for _, hex_bytes in TAINT_CHAIN:
         circuit = circuits[hex_bytes]
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_values=values,
             input_taint=taint,
             simulator=sim,
             implicit_policy=ImplicitTaintPolicy.KEEP,
         )
-        taint = circuit.evaluate(ctx)
+        taint = circuit.evaluate(ectx)
         # Keep concrete values unchanged (in a real analysis they'd update too,
         # but for taint-only comparison the concrete values just need to be valid)
 

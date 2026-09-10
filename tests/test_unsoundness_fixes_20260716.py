@@ -96,8 +96,8 @@ def _eval(bytestring: bytes, state: dict[str, int], taint: dict[str, int]) -> di
     rule = generate_static_rule(_ARCH, bytestring, _REGS_GP)
     # RSP must match the ground-truth harness so memory operands ([rsp-16], ...)
     # resolve to the same address; harmless for non-memory instructions.
-    ctx = EvalContext(input_values={'RSP': _RSP, **state}, input_taint=taint, simulator=_SIM)
-    return rule.evaluate(ctx)
+    ectx = EvalContext(input_values={'RSP': _RSP, **state}, input_taint=taint, simulator=_SIM)
+    return rule.evaluate(ectx)
 
 
 def _assert_sound(label: str, bytestring: bytes, state: dict[str, int], taint: dict[str, int]) -> None:

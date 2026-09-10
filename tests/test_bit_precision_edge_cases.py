@@ -102,13 +102,13 @@ def _mt_eval(
     values: dict[str, int],
 ) -> dict[str, int]:
     circuit = generate_static_rule(Architecture.AMD64, code, regs_list)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=taint,
         input_values=values,
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circuit.evaluate(ctx)
+    return circuit.evaluate(ectx)
 
 
 @pytest.fixture(scope='module')
@@ -728,13 +728,13 @@ def _mt64(sim: CellSimulator, regs: list[Register], code: bytes, taint: dict[str
     # inputs and outputs through the helper so the engine sees Sleigh names only.
     engine_fmt = _ARM64_ALIASES.state_format(regs)
     circuit = generate_static_rule(Architecture.ARM64, code, engine_fmt)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=_ARM64_ALIASES.to_engine(taint),
         input_values=_ARM64_ALIASES.to_engine(values),
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     return {r.name: _ARM64_ALIASES.read(out, r.name) for r in regs}
 
 

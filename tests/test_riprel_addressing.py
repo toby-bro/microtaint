@@ -50,13 +50,13 @@ def test_riprel_load_reads_tainted_global(simulator: CellSimulator, regs: list[R
     # assertion cannot pass or fail on an address off-by-one.
     for addr in range(_TRANSLATE_BASE - 0x100, _TRANSLATE_BASE + 0x100):
         shadow.write_mask(addr, 0xFF, 1)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RIP': _TRANSLATE_BASE, 'RAX': 0},
         input_taint={},
         simulator=simulator,
         shadow_memory=shadow,
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     assert out.get('RAX', 0) != 0, (
         'RIP-relative load from tainted memory must taint the destination '
         '(under-taint / unsound if 0)'
@@ -67,13 +67,13 @@ def test_riprel_store_taints_global(simulator: CellSimulator, regs: list[Registe
     """MOV [RIP+0], AL (88 05 00000000) of a tainted AL must taint the target byte."""
     circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('880500000000'), regs)
     shadow = BitPreciseShadowMemory()
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RIP': _TRANSLATE_BASE, 'RAX': 0},
         input_taint={'RAX': 0xFF},  # AL tainted
         simulator=simulator,
         shadow_memory=shadow,
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     tainted_mem = {k: v for k, v in out.items() if k.startswith('MEM') and v}
     assert tainted_mem, (
         'RIP-relative store of a tainted register must produce a tainted memory '
@@ -88,14 +88,14 @@ def test_riprel_store_resolves_against_runtime_pc(simulator: CellSimulator, regs
     (RIP + 6), NOT the baked 0x1006 -- otherwise the shadow write lands at the
     wrong address in a full-program run (the DNS end-to-end sink bug)."""
     circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('880500000000'), regs)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RIP': 0x500000, 'RAX': 0},
         input_taint={'RAX': 0xFF},  # AL tainted
         simulator=simulator,
         shadow_memory=BitPreciseShadowMemory(),
         mem_reader=lambda addr, sz: 0,  # noqa: ARG005
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     mem = {k: v for k, v in out.items() if k.startswith('MEM') and v}
     assert 'MEM_0x500006_1' in mem, (
         f'PC-relative store must target RIP+6 = 0x500006 (runtime pc), got {mem}'
@@ -113,14 +113,14 @@ def test_riprel_arith_flows_memory_operand(simulator: CellSimulator, regs: list[
     shadow = BitPreciseShadowMemory()
     for addr in range(_TRANSLATE_BASE - 0x100, _TRANSLATE_BASE + 0x100):
         shadow.write_mask(addr, 0xFF, 1)  # the global is tainted, EAX is not
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RIP': _TRANSLATE_BASE, 'RAX': 0},
         input_taint={},
         simulator=simulator,
         shadow_memory=shadow,
         mem_reader=lambda addr, sz: 0,  # noqa: ARG005
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     assert out.get('RAX', 0) != 0, (
         'absolute memory operand must flow through arithmetic; under-taint if 0'
     )
@@ -140,14 +140,14 @@ def test_arm64_pcrel_literal_load_reads_tainted() -> None:
     shadow = BitPreciseShadowMemory()
     for addr in range(0x1000, 0x1020):
         shadow.write_mask(addr, 0xFF, 1)  # the literal (at PC+8) is tainted
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'pc': 0x1000},
         input_taint={},
         simulator=arm_sim,
         shadow_memory=shadow,
         mem_reader=lambda addr, sz: 0,  # noqa: ARG005
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     assert out.get('x0', 0) != 0, (
         'ARM64 PC-relative literal load from tainted memory must taint the '
         'destination (under-taint / unsound if 0)'

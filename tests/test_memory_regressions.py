@@ -141,7 +141,7 @@ class TestBug1RMWDifferential:
         def reader(addr: int, sz: int):
             return 0xFF if addr == mem_addr else 0
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={'RAX': 0x01},
             input_values={'RAX': 0x01, 'RBP': rbp},
             simulator=simulator,
@@ -150,7 +150,7 @@ class TestBug1RMWDifferential:
             implicit_policy=ImplicitTaintPolicy.IGNORE,
         )
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('480145f0'), regs)
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         mem_taint = out.get(f'MEM_{hex(mem_addr)}_8', 0)
         # The differential bits (0x1FE) MUST be set; the OR-fallback may
         # additionally set bit 0 (giving 0x1FF).  Either is correct.
@@ -171,7 +171,7 @@ class TestBug1RMWDifferential:
         def reader(addr: int, sz: int):
             return 0x100 if addr == mem_addr else 0
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={'RAX': 0},
             input_values={'RAX': 0x01, 'RBP': rbp},
             simulator=simulator,
@@ -180,7 +180,7 @@ class TestBug1RMWDifferential:
             implicit_policy=ImplicitTaintPolicy.IGNORE,
         )
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('482945f0'), regs)
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         mem_taint = out.get(f'MEM_{hex(mem_addr)}_8', 0)
         assert (
             bin(mem_taint).count('1') >= 9
@@ -195,7 +195,7 @@ class TestBug1RMWDifferential:
         fully-tainted memory output."""
         rbp = 0x80000000DD00
         mem_addr = rbp - 0x10
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={'RAX': 0xFFFFFFFFFFFFFFFF},
             input_values={'RAX': 0xDEADBEEF, 'RBP': rbp},
             simulator=simulator,
@@ -226,7 +226,7 @@ class TestBug1RMWDifferential:
             'pure store routed through the cell differential; '
             'the cheap OR-only path should be used for performance.'
         )
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         assert out.get(f'MEM_{hex(mem_addr)}_8', 0) == 0xFFFFFFFFFFFFFFFF
 
 
@@ -251,7 +251,7 @@ class TestBug2MemoryInputOffset:
         def reader(addr: int, sz: int):
             return 0xFF if addr == mem_addr else 0
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={'RAX': 0},
             input_values={'RAX': 0x01, 'RBP': rbp},
             simulator=simulator,
@@ -260,7 +260,7 @@ class TestBug2MemoryInputOffset:
             implicit_policy=ImplicitTaintPolicy.IGNORE,
         )
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('480345f0'), regs)
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         rax_taint = out.get('RAX', 0)
         assert bin(rax_taint).count('1') >= 9, (
             f'add rax, [rbp-0x10] with tainted mem must produce carry-ripple '
@@ -280,7 +280,7 @@ class TestBug2MemoryInputOffset:
         def reader(addr: int, sz: int):
             return 0xDEADBEEF if addr == mem_addr else 0
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={},
             input_values={'RBP': rbp},
             simulator=simulator,
@@ -289,7 +289,7 @@ class TestBug2MemoryInputOffset:
             implicit_policy=ImplicitTaintPolicy.IGNORE,
         )
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('488b45f0'), regs)
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         assert out.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
 
 
@@ -313,7 +313,7 @@ class TestBug3AddressOnlyRegisters:
         def reader(addr: int, sz: int):
             return 0x01 if addr == 0x3000 else 0
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={'RDX': 0},
             input_values={'RAX': 0x3000, 'RDX': 0xFF},
             simulator=simulator,
@@ -322,7 +322,7 @@ class TestBug3AddressOnlyRegisters:
             implicit_policy=ImplicitTaintPolicy.IGNORE,
         )
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('480310'), regs)
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         rdx_taint = out.get('RDX', 0)
         assert bin(rdx_taint).count('1') >= 9, (
             f'add rdx, [rax] (RAX address-only) must produce carry-ripple '
@@ -341,7 +341,7 @@ class TestBug3AddressOnlyRegisters:
         def reader(addr: int, sz: int):
             return 0xFF if addr == 0x4000 else 0
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={'RBX': 0x01},
             input_values={'RAX': 0x4000, 'RBX': 0x01},
             simulator=simulator,
@@ -351,7 +351,7 @@ class TestBug3AddressOnlyRegisters:
         )
         # add [rax], rbx  (48 01 18)
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('480118'), regs)
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         mem_taint = out.get('MEM_0x4000_8', 0)
         assert bin(mem_taint).count('1') >= 8, (
             f'add [rax], rbx must produce carry-ripple popcount>=8; '

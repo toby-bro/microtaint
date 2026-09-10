@@ -107,7 +107,7 @@ def regs() -> list[Register]:
 # ---------------------------------------------------------------------------
 
 
-def _ctx(simulator: CellSimulator,
+def _ectx(simulator: CellSimulator,
          taint: dict[str, int],
          values: dict[str, int],
          *,
@@ -131,7 +131,7 @@ def _eval(simulator: CellSimulator,
           shadow: BitPreciseShadowMemory=None):
     """Generate the circuit and evaluate it. Returns the output_taint dict."""
     circuit = generate_static_rule(Architecture.AMD64, bytestring, regs)
-    return circuit.evaluate(_ctx(simulator, taint, values, shadow=shadow))
+    return circuit.evaluate(_ectx(simulator, taint, values, shadow=shadow))
 
 
 def _diff_truth(op: Callable, v: int, t: int, mask: int = 0xFFFFFFFFFFFFFFFF) -> int:
@@ -441,7 +441,7 @@ class TestTier6RMWMemoryDestination:
                 return 0xFF
             return 0
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={'RAX': 0x01},
             input_values={'RAX': 0x01, 'RBP': rbp},
             simulator=simulator,
@@ -450,7 +450,7 @@ class TestTier6RMWMemoryDestination:
             implicit_policy=ImplicitTaintPolicy.IGNORE,
         )
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('480145f0'), regs)
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         mem_taint = out.get(f'MEM_{hex(mem_addr)}_8', 0)
         # Bare minimum: more than 1 bit must be tainted (carry ripple)
         popcount = bin(mem_taint).count('1')
@@ -479,7 +479,7 @@ class TestTier6RMWMemoryDestination:
                 return 0xAB
             return 0
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={'RAX': 0x0F},
             input_values={'RAX': 0xCD, 'RBP': rbp},
             simulator=simulator,
@@ -488,7 +488,7 @@ class TestTier6RMWMemoryDestination:
             implicit_policy=ImplicitTaintPolicy.IGNORE,
         )
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('483145e8'), regs)
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         mem_taint = out.get(f'MEM_{hex(mem_addr)}_8', 0)
         # XOR is bit-independent, so the right answer is T_mem | T_RAX = 0xFF
         assert mem_taint & 0xFF == 0xFF, f'xor [mem], reg: expected low byte = 0xFF, got {mem_taint & 0xFF:#x}'
@@ -518,7 +518,7 @@ class TestTier6RMWMemoryDestination:
                 return 0x100
             return 0
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint={'RAX': 0},
             input_values={'RAX': 0x01, 'RBP': rbp},
             simulator=simulator,
@@ -527,7 +527,7 @@ class TestTier6RMWMemoryDestination:
             implicit_policy=ImplicitTaintPolicy.IGNORE,
         )
         circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('482945f0'), regs)
-        out = circuit.evaluate(ctx)
+        out = circuit.evaluate(ectx)
         mem_taint = out.get(f'MEM_{hex(mem_addr)}_8', 0)
         popcount = bin(mem_taint).count('1')
         assert (

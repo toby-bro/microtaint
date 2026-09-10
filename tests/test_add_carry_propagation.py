@@ -33,12 +33,12 @@ def test_add_no_carry(amd64_registers: list[Register]) -> None:
     circuit = generate_static_rule(arch, code, amd64_registers)
     simulator = CellSimulator(arch)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0x10, 'RBX': 0x01},
         input_taint={'RAX': 0x00, 'RBX': 0x01},
         simulator=simulator,
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
 
     # 0x10 + 1 = 0x11. 0x10 + 0 = 0x10. Diff: 0x11 ^ 0x10 = 0x1.
     assert out.get('RAX', 0) == 0x01, 'Taint should not spread without a carry.'
@@ -54,12 +54,12 @@ def test_add_one_carry_ripple(amd64_registers: list[Register]) -> None:
     circuit = generate_static_rule(arch, code, amd64_registers)
     simulator = CellSimulator(arch)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0x0F, 'RBX': 0x01},
         input_taint={'RAX': 0x00, 'RBX': 0x01},
         simulator=simulator,
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
 
     # V1: 0x0F + 1 = 0x10.
     # V0: 0x0F + 0 = 0x0F.
@@ -78,12 +78,12 @@ def test_add_segmented_carries(amd64_registers: list[Register]) -> None:
     circuit = generate_static_rule(arch, code, amd64_registers)
     simulator = CellSimulator(arch)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0x080F, 'RBX': 0x0101},
         input_taint={'RAX': 0x0000, 'RBX': 0x0001},  # Only the lowest 1 is tainted
         simulator=simulator,
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
 
     # V1: 0x080F + 0x0101 = 0x0910
     # V0: 0x080F + 0x0100 = 0x090F (Notice the untainted 0x0100 remains constant)
@@ -104,12 +104,12 @@ def test_add_cancellation_prevention(amd64_registers: list[Register]) -> None:
     circuit = generate_static_rule(arch, code, amd64_registers)
     simulator = CellSimulator(arch)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0x01, 'RBX': 0x01},
         input_taint={'RAX': 0x01, 'RBX': 0x01},
         simulator=simulator,
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
 
     # Differential: (1+1=2) ^ (0+0=0) = 2 (0b10).
     # Transport Term: T_RAX(1) | T_RBX(1) = 1 (0b01).

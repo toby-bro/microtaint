@@ -247,7 +247,7 @@ def _differential(arch: Architecture, code: bytes, in_taint: dict[str, int],
     from microtaint.sleigh.engine import generate_static_rule
 
     circuit = generate_static_rule(arch, code, list(state_format))
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=dict(in_taint),
         input_values=dict(in_values),
         simulator=CellSimulator(arch),
@@ -260,7 +260,7 @@ def _differential(arch: Architecture, code: bytes, in_taint: dict[str, int],
     # own assignments, so overlaying them on the input is what makes the two
     # paths answer the same question in the same shape -- without which
     # "run the suite against either implementation" is not a thing you can do.
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     # A store arrives as an output named `MEM_<address>_<size>`, with the
     # address already resolved.  `evaluate` does not commit it -- in the
     # emulator the hook does that -- so the API has to, or a `push` leaves

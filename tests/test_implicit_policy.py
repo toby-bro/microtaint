@@ -28,13 +28,13 @@ def test_implicit_taint_policies(capsys: pytest.CaptureFixture[str]) -> None:  #
     taint = {'RDI': 0xFFFFFFFFFFFFFFFF, 'RIP': 0}
 
     # --- Test 1: IGNORE (Default) ---
-    ctx_ignore = EvalContext(
+    ectx_ignore = EvalContext(
         input_values=state,
         input_taint=taint,
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    out_ignore = circuit.evaluate(ctx_ignore)
+    out_ignore = circuit.evaluate(ectx_ignore)
 
     # Prove that the PC taint was successfully stripped to prevent path explosion!
     assert 'RIP' not in out_ignore
@@ -43,13 +43,13 @@ def test_implicit_taint_policies(capsys: pytest.CaptureFixture[str]) -> None:  #
     capsys.readouterr()
 
     # --- Test 2: WARN ---
-    ctx_warn = EvalContext(
+    ectx_warn = EvalContext(
         input_values=state,
         input_taint=taint,
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.WARN,
     )
-    out_warn = circuit.evaluate(ctx_warn)
+    out_warn = circuit.evaluate(ectx_warn)
 
     assert 'RIP' not in out_warn
 
@@ -58,7 +58,7 @@ def test_implicit_taint_policies(capsys: pytest.CaptureFixture[str]) -> None:  #
     assert 'Implicit Taint Detected' in captured.out
 
     # --- Test 3: STOP ---
-    ctx_stop = EvalContext(
+    ectx_stop = EvalContext(
         input_values=state,
         input_taint=taint,
         simulator=sim,
@@ -67,7 +67,7 @@ def test_implicit_taint_policies(capsys: pytest.CaptureFixture[str]) -> None:  #
 
     # Prove that the engine throws the detailed Exception and halts execution
     with pytest.raises(ImplicitTaintError) as exc_info:
-        circuit.evaluate(ctx_stop)
+        circuit.evaluate(ectx_stop)
 
     assert 'FATAL: Implicit Taint Detected' in str(exc_info.value)
     assert '48f7c7010000007403' in str(exc_info.value)

@@ -124,8 +124,8 @@ def _eval_microtaint(
     circuit = generate_static_rule(Architecture.AMD64, bytestring, regs)
     full_state = {r.name: state.get(r.name, 0) for r in regs}
     full_taint = {r.name: taint.get(r.name, 0) for r in regs}
-    ctx = EvalContext(input_values=full_state, input_taint=full_taint, simulator=_SIM)
-    raw = circuit.evaluate(ctx)
+    ectx = EvalContext(input_values=full_state, input_taint=full_taint, simulator=_SIM)
+    raw = circuit.evaluate(ectx)
     return {r.name: (raw.get(r.name, 0) & MASK64 if isinstance(raw.get(r.name, 0), int) else 0) for r in regs}
 
 

@@ -103,12 +103,12 @@ def _rsp_dep_set():
     from microtaint.sleigh.lifter import get_context
     from microtaint.types import Architecture
 
-    ctx = get_context('AMD64')
-    ops = ctx.translate(PUSH_RBP, CODE_ADDR).ops
+    sctx = get_context('AMD64')
+    ops = sctx.translate(PUSH_RBP, CODE_ADDR).ops
     # RSP_out is written by the INT_SUB: `RSP = RSP - 8`.
     rsp_vn = next(o.output for o in ops if o.opcode.name == 'INT_SUB')
     sl = E.slice_backward(ops, rsp_vn)
-    mapper = E.StateMapper(ctx, 'AMD64', list(archregs.state_format(Architecture.AMD64)))
+    mapper = E.StateMapper(sctx, 'AMD64', list(archregs.state_format(Architecture.AMD64)))
     ds = E.extract_dependencies(rsp_vn, sl, E.compute_polarity(sl), ops, mapper)
     return ({getattr(k, 'name', k) for k in ds.value_deps},
             {getattr(k, 'name', k) for k in ds.addr_deps})

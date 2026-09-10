@@ -130,13 +130,13 @@ def _microtaint_run(asm_lines: list[str], state: dict[str, int], taint: dict[str
 
     _cached_generate_static_rule.cache_clear()
     circuit = generate_static_rule(Architecture.AMD64, code, _REG_OBJS)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=full_taint,
         input_values=full_state,
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circuit.evaluate(ctx)
+    return circuit.evaluate(ectx)
 
 
 def _assert_sound(asm_lines: list[str], state: dict[str, int], taint: dict[str, int]) -> None:
@@ -666,13 +666,13 @@ def _microtaint_run_worker_style(asm_lines: list[str], state: dict[str, int], ta
     circuit = generate_static_rule(Architecture.AMD64, code, _WORKER_REGS)
     full_state = {r: state.get(r, 0) for r in REGS}
     full_taint = {r: taint.get(r, 0) for r in REGS}
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=full_taint,
         input_values=full_state,
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circuit.evaluate(ctx)
+    return circuit.evaluate(ectx)
 
 
 def _assert_sound_worker(asm_lines: list[str], state: dict[str, int], taint: dict[str, int]) -> None:

@@ -355,13 +355,13 @@ def _run_microtaint(sim: CellSimulator,
                     taint: dict[str, int],
                     cache: dict[str, LogicCircuit]) -> dict[str, int]:
     circuit = _circuit(asm, cache)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values=values,
         input_taint=taint,
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.KEEP,
     )
-    out: dict[str, int] = circuit.evaluate(ctx)
+    out: dict[str, int] = circuit.evaluate(ectx)
     return out
 
 
@@ -807,13 +807,13 @@ def test_bench_unicorn(
     circuit = _circuit(asm, circuit_cache)
 
     def _go() -> dict[str, int]:
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_values=values,
             input_taint=taint,
             simulator=sim_unicorn,
             implicit_policy=ImplicitTaintPolicy.KEEP,
         )
-        out: dict[str, int] = circuit.evaluate(ctx)
+        out: dict[str, int] = circuit.evaluate(ectx)
         return out
 
     benchmark.pedantic(_go, rounds=50, warmup_rounds=3)
@@ -836,13 +836,13 @@ def test_bench_pcode(
     circuit = _circuit(asm, circuit_cache)
 
     def _go() -> dict[str, int]:
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_values=values,
             input_taint=taint,
             simulator=sim_pcode,
             implicit_policy=ImplicitTaintPolicy.KEEP,
         )
-        out: dict[str, int] = circuit.evaluate(ctx)
+        out: dict[str, int] = circuit.evaluate(ectx)
         return out
 
     benchmark.pedantic(_go, rounds=50, warmup_rounds=3)
@@ -871,13 +871,13 @@ def _run_chain(sim: CellSimulator, cache: dict[str, LogicCircuit]) -> dict[str, 
     taint: dict[str, int] = {'T0': FULL_TAINT_64}
     for asm in TAINT_CHAIN:
         circuit = _circuit(asm, cache)
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_values=values,
             input_taint=taint,
             simulator=sim,
             implicit_policy=ImplicitTaintPolicy.KEEP,
         )
-        taint = circuit.evaluate(ctx)
+        taint = circuit.evaluate(ectx)
     return taint
 
 

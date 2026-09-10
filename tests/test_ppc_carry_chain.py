@@ -60,13 +60,13 @@ _LWZ = '80640000'  # lwz r3, 0(r4)     -> memory load
 def _taint(code: str, values: dict[str, int], taint: dict[str, int], out: str = 'R3') -> int:
     _cached_generate_static_rule.cache_clear()
     circ = generate_static_rule(ARCH, bytes.fromhex(code), _FMT)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={**_ZERO, **taint},
         input_values={**_ZERO, **values},
         simulator=CellSimulator(ARCH),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circ.evaluate(ctx).get(out, 0)
+    return circ.evaluate(ectx).get(out, 0)
 
 
 def test_native_be_safe_predicate() -> None:
@@ -178,13 +178,13 @@ def test_mfcr_consumes_condition_register_into_gpr() -> None:
     zero = {r.name: 0 for r in _FMT_CR4}
     _cached_generate_static_rule.cache_clear()
     circ = generate_static_rule(ARCH, bytes.fromhex(_MFCR), _FMT_CR4)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={**zero, 'CR0': 0xF},
         input_values={**zero, 'CR0': 0x5},
         simulator=CellSimulator(ARCH),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert circ.evaluate(ctx).get('R3', 0) == 0xF0000000  # CR0's 4 tainted bits -> R3[31:28]
+    assert circ.evaluate(ectx).get('R3', 0) == 0xF0000000  # CR0's 4 tainted bits -> R3[31:28]
 
 
 _CMPW_MFCR = '7c0428007c600026'  # cmpw 0,4,5 ; mfcr 3
@@ -200,13 +200,13 @@ def test_cmpw_mfcr_packed_lt_gt_comparison() -> None:
     zero = {r.name: 0 for r in _FMT_CR4}
     _cached_generate_static_rule.cache_clear()
     circ = generate_static_rule(ARCH, bytes.fromhex(_CMPW_MFCR), _FMT_CR4)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={**zero, 'R4': 0x34D7D284, 'R5': 0x34D7D284},  # same partial mask
         input_values={**zero, 'R4': 0xF71086F6, 'R5': 0xDED57EEF},
         simulator=CellSimulator(ARCH),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert circ.evaluate(ctx).get('R3', 0) & 0xC0000000 == 0xC0000000  # LT,GT bits tainted
+    assert circ.evaluate(ectx).get('R3', 0) & 0xC0000000 == 0xC0000000  # LT,GT bits tainted
 
 
 if __name__ == '__main__':

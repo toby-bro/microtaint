@@ -53,13 +53,13 @@ def _clean_cases():
                 circ = generate_static_rule(spec.arch, ins.bytes, spec.regs)
             except Exception:
                 continue
-            ctx = EvalContext(
+            ectx = EvalContext(
                 input_values=vals,
                 input_taint={},          # the whole point: nothing is tainted
                 simulator=sim,
                 implicit_policy=ImplicitTaintPolicy.KEEP,
             )
-            yield spec.name, ins.label, circ, ctx
+            yield spec.name, ins.label, circ, ectx
 
 
 def _bank_isas() -> list[str]:
@@ -74,12 +74,12 @@ def test_clean_inputs_produce_no_taint(isa: str) -> None:
     """No instruction may invent taint from an all-clean input state."""
     checked = 0
     offenders: list[str] = []
-    for case_isa, label, circ, ctx in _clean_cases():
+    for case_isa, label, circ, ectx in _clean_cases():
         if case_isa != isa:
             continue
         checked += 1
         try:
-            out = circ.evaluate(ctx)
+            out = circ.evaluate(ectx)
         except Exception:
             continue
         dirty = {k: hex(int(v)) for k, v in (out or {}).items() if int(v) != 0}

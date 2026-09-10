@@ -122,9 +122,9 @@ class TestResolvePtrTemporalOrdering:
         The buggy resolver returned (RDI, 1) because it picked up the
         post-store INT_SUB that updates RDI within the same instruction.
         """
-        ctx = get_context('AMD64')
-        mapper = StateMapper(ctx, 'AMD64', regs)
-        translation = ctx.translate(bytes.fromhex('f3aa'), 0x1000)
+        sctx = get_context('AMD64')
+        mapper = StateMapper(sctx, 'AMD64', regs)
+        translation = sctx.translate(bytes.fromhex('f3aa'), 0x1000)
 
         # Find the STORE op and its index
         store_idx = None
@@ -160,9 +160,9 @@ class TestResolvePtrTemporalOrdering:
 
     def test_rep_movsb_store_addr_is_rdi_with_zero_offset(self, regs: list[Register]) -> None:
         """Same bug shape for rep movsb (f3 a4): post-store updates RDI."""
-        ctx = get_context('AMD64')
-        mapper = StateMapper(ctx, 'AMD64', regs)
-        translation = ctx.translate(bytes.fromhex('f3a4'), 0x1000)
+        sctx = get_context('AMD64')
+        mapper = StateMapper(sctx, 'AMD64', regs)
+        translation = sctx.translate(bytes.fromhex('f3a4'), 0x1000)
 
         store_idx = None
         ptr_vn = None
@@ -188,9 +188,9 @@ class TestResolvePtrTemporalOrdering:
 
     def test_rep_movsq_store_addr_is_rdi_with_zero_offset(self, regs: list[Register]) -> None:
         """rep movsq (f3 48 a5) — qword version, same bug pattern."""
-        ctx = get_context('AMD64')
-        mapper = StateMapper(ctx, 'AMD64', regs)
-        translation = ctx.translate(bytes.fromhex('f348a5'), 0x1000)
+        sctx = get_context('AMD64')
+        mapper = StateMapper(sctx, 'AMD64', regs)
+        translation = sctx.translate(bytes.fromhex('f348a5'), 0x1000)
 
         store_idx = None
         ptr_vn = None

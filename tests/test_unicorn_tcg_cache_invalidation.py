@@ -75,8 +75,8 @@ def _run(sim: CellSimulator, bs_hex: str, state: dict[str, int], taint: dict[str
     full_taint = {r.name: taint.get(r.name, 0) for r in _REGS}
     bytestring = bytes.fromhex(bs_hex)
     circuit = generate_static_rule(Architecture.AMD64, bytestring, _REGS)
-    ctx = EvalContext(input_values=full_state, input_taint=full_taint, simulator=sim)
-    raw = circuit.evaluate(ctx)
+    ectx = EvalContext(input_values=full_state, input_taint=full_taint, simulator=sim)
+    raw = circuit.evaluate(ectx)
     return raw.get('RAX', 0) & ((1 << 64) - 1)
 
 

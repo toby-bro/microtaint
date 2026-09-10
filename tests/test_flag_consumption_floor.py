@@ -45,13 +45,13 @@ _CSET_HI = b'\xe0\x97\x9f\x9a'
 def _x0_taint(code: bytes, taint: dict[str, int]) -> int:
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(ARCH, code, _FMT)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=_A.to_engine({**_ZERO, **taint}),
         input_values=_A.to_engine({**_ZERO, 'N': 1, 'V': 0, 'Z': 0, 'C': 1}),
         simulator=_SIM,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return _A.read(circ.evaluate(ctx), 'X0')
+    return _A.read(circ.evaluate(ectx), 'X0')
 
 
 def test_cset_lt_taints_wide_output_from_its_flags() -> None:
@@ -91,13 +91,13 @@ def test_cset_hi_is_exact_not_floored() -> None:
     regresses to 1.)"""
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(ARCH, _CSET_HI, _FMT)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=_A.to_engine({**_ZERO, 'C': 1}),
         input_values=_A.to_engine({**_ZERO, 'Z': 1, 'C': 1}),  # Z=1 -> C&!Z == 0 always
         simulator=_SIM,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert _A.read(circ.evaluate(ctx), 'X0') == 0
+    assert _A.read(circ.evaluate(ectx), 'X0') == 0
 
 
 # csel x0, x1, x2, lt  -- a 2-way select gated by NZCV
@@ -117,7 +117,7 @@ def test_csel_tainted_condition_uses_isa_general_passthrough() -> None:
     recovers the operand taint."""
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(ARCH, _CSEL_LT, _FMT_SEL)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=_A.to_engine({**_ZERO_SEL, 'N': 1, 'X1': 0xF}),
         input_values=_A.to_engine({**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xF, 'X2': 0xF}),
         simulator=CellSimulator(ARCH, use_unicorn=False, use_c=False),
@@ -125,7 +125,7 @@ def test_csel_tainted_condition_uses_isa_general_passthrough() -> None:
     )
     # tainted condition + cancelling operands: differential alone -> 0; the
     # passthrough must recover x1's taint.
-    assert _A.read(circ.evaluate(ctx), 'X0') & 0xF == 0xF
+    assert _A.read(circ.evaluate(ectx), 'X0') & 0xF == 0xF
 
 
 def test_csel_tainted_condition_taints_operand_value_difference() -> None:
@@ -137,21 +137,21 @@ def test_csel_tainted_condition_taints_operand_value_difference() -> None:
     circ = engine.generate_static_rule(ARCH, _CSEL_LT, _FMT_SEL)
     # N tainted -> condition (N != V) tainted; operands UNtainted but differ in
     # value (0xFF00 vs 0x00FF -> differ in the low 16 bits).
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=_A.to_engine({**_ZERO_SEL, 'N': 1}),
         input_values=_A.to_engine({**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xFF00, 'X2': 0x00FF}),
         simulator=CellSimulator(ARCH, use_unicorn=False, use_c=False),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert _A.read(circ.evaluate(ctx), 'X0') & 0xFFFF == 0xFFFF  # (x1 XOR x2)
+    assert _A.read(circ.evaluate(ectx), 'X0') & 0xFFFF == 0xFFFF  # (x1 XOR x2)
     # condition UNtainted -> select is concrete -> no value-difference taint
-    ctx2 = EvalContext(
+    ectx2 = EvalContext(
         input_taint=_A.to_engine({**_ZERO_SEL}),
         input_values=_A.to_engine({**_ZERO_SEL, 'N': 1, 'V': 0, 'X1': 0xFF00, 'X2': 0x00FF}),
         simulator=CellSimulator(ARCH, use_unicorn=False, use_c=False),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert _A.read(circ.evaluate(ctx2), 'X0') == 0
+    assert _A.read(circ.evaluate(ectx2), 'X0') == 0
 
 
 _MIPS = Architecture.MIPS64BE
@@ -164,25 +164,25 @@ _SLTU = b'\x00\x85\x10\x2b'  # sltu $2,$4,$5  = zext(a0  < a1)  (big-endian word
 def _v0_taint(code: bytes, taint: dict[str, int]) -> int:
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(_MIPS, code, _MIPS_FMT)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={**_MIPS_ZERO, **taint},
         input_values={**_MIPS_ZERO, 'A0': 0x5, 'A1': 0x5},
         simulator=CellSimulator(_MIPS),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circ.evaluate(ctx).get('V0', 0)
+    return circ.evaluate(ectx).get('V0', 0)
 
 
 def _v0_taint_vals(code: bytes, values: dict[str, int], taint: dict[str, int]) -> int:
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(_MIPS, code, _MIPS_FMT)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={**_MIPS_ZERO, **taint},
         input_values={**_MIPS_ZERO, **values},
         simulator=CellSimulator(_MIPS),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circ.evaluate(ctx).get('V0', 0)
+    return circ.evaluate(ectx).get('V0', 0)
 
 
 def test_mips_slt_comparison_into_wide_register() -> None:

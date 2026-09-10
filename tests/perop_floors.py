@@ -299,8 +299,8 @@ class PerOpFloors:
     """Per-op taint with sound floors.  Byte-granular value+taint stores so
     overlapping registers (AL/AX/EAX/RAX) alias correctly."""
 
-    def __init__(self, ctx: Context, little_endian: bool) -> None:
-        self.ctx = ctx
+    def __init__(self, sctx: Context, little_endian: bool) -> None:
+        self.sctx = sctx
         self.le = little_endian
         self.val: dict[tuple[str, int], int] = {}    # (space, offset) -> byte
         self.taint: dict[tuple[str, int], int] = {}  # (space, offset) -> taint byte
@@ -522,9 +522,9 @@ def perop_floors_taint(arch: Architecture,
     key = _arch_key(arch)
     if not _ARCH_LE.get(key, False):
         raise Unsupported(f'BE arch {key}')
-    ctx = get_context(key)
-    reg_vn = ctx.registers
-    interp = PerOpFloors(ctx, _ARCH_LE[key])
+    sctx = get_context(key)
+    reg_vn = sctx.registers
+    interp = PerOpFloors(sctx, _ARCH_LE[key])
     mapped = []
     for r in regs:
         vn = _resolve_vn(reg_vn, r.name)
@@ -532,7 +532,7 @@ def perop_floors_taint(arch: Architecture,
             continue
         mapped.append((r.name, vn))
         interp.init_reg(vn, in_values.get(r.name, 0), in_taint.get(r.name, 0))
-    ops = ctx.translate(code, 0x1000).ops
+    ops = sctx.translate(code, 0x1000).ops
     interp.run(ops)
     return {name: interp.out_taint(vn) for name, vn in mapped}
 
@@ -556,9 +556,9 @@ def perop_floors_slicewise(arch: Architecture,
     key = _arch_key(arch)
     if not _ARCH_LE.get(key, False):
         raise Unsupported(f'BE arch {key}')
-    ctx = get_context(key)
-    reg_vn = ctx.registers
-    interp = PerOpFloors(ctx, _ARCH_LE[key])
+    sctx = get_context(key)
+    reg_vn = sctx.registers
+    interp = PerOpFloors(sctx, _ARCH_LE[key])
     mapped = []
     for r in regs:
         vn = _resolve_vn(reg_vn, r.name)
@@ -566,7 +566,7 @@ def perop_floors_slicewise(arch: Architecture,
             continue
         mapped.append((r.name, vn))
         interp.init_reg(vn, in_values.get(r.name, 0), in_taint.get(r.name, 0))
-    ops = ctx.translate(code, 0x1000).ops
+    ops = sctx.translate(code, 0x1000).ops
     interp.run(ops, strict=False)          # may raise NeedsMonolithic on control flow
     contaminated = _reconv_contaminated(ops)
     taint = {name: interp.out_taint(vn) for name, vn in mapped}

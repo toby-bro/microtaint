@@ -80,7 +80,7 @@ def _eval(
     """Run circuit.evaluate() and return the full output_state dict."""
     bs = bytes.fromhex(hex_bytes)
     circuit = generate_static_rule(Architecture.AMD64, bs, X64)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=reg_taint,
         input_values=reg_values,
         simulator=sim,
@@ -89,7 +89,7 @@ def _eval(
         mem_reader=lambda addr, sz: 0,
     )
     print(circuit)
-    return circuit.evaluate(ctx)
+    return circuit.evaluate(ectx)
 
 
 def _mem_keys(output_state: dict[str, int]) -> dict[str, int]:

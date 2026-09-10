@@ -126,8 +126,8 @@ def _assert_sound(
 ) -> None:
     gt = _brute_force_gt(bytestring, state, taint)
     rule = generate_static_rule(Architecture.AMD64, bytestring, _REGS_GP)
-    ctx = EvalContext(input_values=state, input_taint=taint, simulator=_SIM)
-    mt = rule.evaluate(ctx)
+    ectx = EvalContext(input_values=state, input_taint=taint, simulator=_SIM)
+    mt = rule.evaluate(ectx)
     for reg, gt_bits in gt.items():
         mt_bits = mt.get(reg, 0)
         missed = gt_bits & ~mt_bits

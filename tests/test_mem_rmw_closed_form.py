@@ -104,9 +104,9 @@ def test_sound_and_exact_vs_true(label: str, hexs: str, size: int, cells, exact,
             mt |= (1 << rng.randrange(size * 8))
         taint[mk] = mt
         base = {**{r: rv[r] & ~taint[r] & M64 for r in REG_NAMES}, mk: mv & ~mt}
-        ctx = EvalContext(input_values={**base}, input_taint=taint, simulator=sim,
+        ectx = EvalContext(input_values={**base}, input_taint=taint, simulator=sim,
                           implicit_policy=ImplicitTaintPolicy.IGNORE)
-        got = circ.evaluate(ctx)
+        got = circ.evaluate(ectx)
         # Only the outputs THIS change closes (CF) are asserted here.  The other
         # flags of a memory RMW (SF/ZF of a memory shift) stay on the pre-existing
         # ICE differential, which has a path-dependent memory-flag soundness gap of

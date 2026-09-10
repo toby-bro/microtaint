@@ -1099,12 +1099,12 @@ cdef class InstructionHook:
                     if _DIFF_CMEM and output_state is not None:
                         # Soundness gate: prove evaluate_c_mem == do_evaluate for
                         # every memory instruction the suite exercises.
-                        ref_ctx = self.eval_context_cls(
+                        ref_ectx = self.eval_context_cls(
                             input_taint=pre_taint, input_values=pre_regs,
                             simulator=self.sim, implicit_policy=self.policy,
                             shadow_memory=self.shadow_mem, mem_reader=self.read_live_memory,
                         )
-                        ref = circuit.evaluate(ref_ctx)
+                        ref = circuit.evaluate(ref_ectx)
                         if ref != output_state:
                             raise AssertionError(
                                 f'evaluate_c_mem mismatch @ {address:#x} '
@@ -1113,7 +1113,7 @@ cdef class InstructionHook:
                 # Only the fallback path needs an EvalContext; evaluate_c reads
                 # pre_taint / pre_regs directly, so for the common register-only
                 # case we skip building (and discarding) a per-instruction object.
-                ctx = self.eval_context_cls(
+                ectx = self.eval_context_cls(
                     input_taint=pre_taint,
                     input_values=pre_regs,
                     simulator=self.sim,
@@ -1121,7 +1121,7 @@ cdef class InstructionHook:
                     shadow_memory=self.shadow_mem,
                     mem_reader=self.read_live_memory,
                 )
-                output_state = circuit.evaluate(ctx)
+                output_state = circuit.evaluate(ectx)
         except BaseException as e:
             if isinstance(e, ImplicitTaintError):
                 self._handle_implicit_taint(instruction_bytes, address, e)
@@ -1804,7 +1804,7 @@ cdef class InstructionHook:
                     pre_taint, pre_regs, self.sim._pcode,
                     self.shadow_mem, self.read_live_memory)
         if output_state is None:
-            ctx = self.eval_context_cls(
+            ectx = self.eval_context_cls(
                 input_taint=pre_taint,
                 input_values=pre_regs,
                 simulator=self.sim,
@@ -1812,7 +1812,7 @@ cdef class InstructionHook:
                 shadow_memory=self.shadow_mem,
                 mem_reader=self.read_live_memory,
             )
-            output_state = circuit.evaluate(ctx)
+            output_state = circuit.evaluate(ectx)
         return output_state
 
     cdef void _apply_output_state_to_arr(self, object output_state, list mem_writes):

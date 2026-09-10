@@ -36,13 +36,13 @@ def test_amd64_32bit_mov_zero_extends_clearing_taint(simulator: CellSimulator, a
     bytestring = bytes.fromhex('89D8')
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0xFFFFFFFFFFFFFFFF, 'RBX': 0x0000000011112222},
         # Top 32-bits of RAX are highly tainted. Lower 32-bits of EBX are tainted.
         input_taint={'RAX': 0xFFFFFFFF00000000, 'RBX': 0x00000000AABBCCDD},
         simulator=simulator,
     )
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
 
     # The upper 32 bits of RAX must be cleared of taint (0x00000000).
     # The lower 32 bits of RAX perfectly inherit EBX's taint.
@@ -58,12 +58,12 @@ def test_amd64_16bit_mov_preserves_upper_taint(simulator: CellSimulator, amd64_r
     bytestring = bytes.fromhex('6689D8')
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0, 'RBX': 0},
         input_taint={'RAX': 0xFFFFFFFFFFFF0000, 'RBX': 0x000000000000BBBB},
         simulator=simulator,
     )
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
 
     # Upper 48 bits of RAX are preserved (0xFFFFFFFFFFFF).
     # Lower 16 bits are overwritten with BX taint (0xBBBB).
@@ -78,12 +78,12 @@ def test_amd64_8bit_mov_preserves_upper_taint(simulator: CellSimulator, amd64_re
     bytestring = bytes.fromhex('88D8')
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0, 'RBX': 0},
         input_taint={'RAX': 0xFFFFFFFFFFFFFF00, 'RBX': 0x00000000000000CC},
         simulator=simulator,
     )
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
 
     # Only the lowest byte gets overwritten by BL's taint.
     assert output.get('RAX', 0) == 0xFFFFFFFFFFFFFFCC
@@ -108,13 +108,13 @@ def test_amd64_32bit_load_from_untainted_mem_clears_taint(
     shadow = BitPreciseShadowMemory()  # entirely untainted
     circuit = generate_static_rule(Architecture.AMD64, bytes.fromhex('8B45F8'), regs)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0, 'RBP': 0x7FFFF000},
         input_taint={'RAX': 0x00000000FFFFFFFF},  # stale low-32 taint on the destination
         simulator=simulator,
         shadow_memory=shadow,
     )
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
 
     assert output.get('RAX', 0) == 0x0, (
         'load from untainted memory must clear the destination register (strong '
@@ -133,12 +133,12 @@ def test_amd64_32bit_xor_zeroing_idiom_clears_64bit_taint(
     bytestring = bytes.fromhex('31C0')
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RAX': 0},
         input_taint={'RAX': 0xFFFFFFFFFFFFFFFF},  # 100% tainted
         simulator=simulator,
     )
-    output = circuit.evaluate(ctx)
+    output = circuit.evaluate(ectx)
 
     # Taint completely neutralized by identical-register XOR + zero extension
     assert output.get('RAX', 0) == 0x0

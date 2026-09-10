@@ -62,8 +62,8 @@ def _compile(bs_hex: str) -> CompiledCircuit:
     regs = [Register(name=n, bits=b) for n, b in X86_64_STATE]
     iv = {r.name: 0 for r in regs}
     it = {r.name: 0 for r in regs}
-    ctx = EvalContext(input_values=iv, input_taint=it, simulator=sim)
-    c.evaluate(ctx)
+    ectx = EvalContext(input_values=iv, input_taint=it, simulator=sim)
+    c.evaluate(ectx)
     compiled = c._compiled
     # The evaluate above forces compilation, so this is never the
     # not-yet-compiled False nor None.

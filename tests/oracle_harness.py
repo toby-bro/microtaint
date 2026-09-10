@@ -62,13 +62,13 @@ def reference_taint(arch: Architecture, code: bytes, regs: list[Register],
     if circuit is None:
         circuit = build_circuit(arch, code, regs)
     sim = CellSimulator(arch)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=dict(in_taint),
         input_values=dict(in_values),
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    out: TaintState = circuit.evaluate(ctx)
+    out: TaintState = circuit.evaluate(ectx)
     return out
 
 
@@ -605,9 +605,9 @@ def _compile_and_mem(circuit: LogicCircuit, arch: Architecture,
     zero = {r.name: 0 for r in regs}
     sim = CellSimulator(arch)
     try:
-        ctx = EvalContext(input_taint=zero, input_values=zero, simulator=sim,
+        ectx = EvalContext(input_taint=zero, input_values=zero, simulator=sim,
                           implicit_policy=ImplicitTaintPolicy.IGNORE)
-        circuit.evaluate(ctx)
+        circuit.evaluate(ectx)
     except Exception:
         pass
     c = getattr(circuit, '_compiled', None)

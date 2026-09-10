@@ -41,10 +41,10 @@ def check_property_vs_golden_model(
     """
     # 1. Evaluate AST Logic
     rule = generate_static_rule(Architecture.X86, bytestring, state_format)
-    ctx = EvalContext(input_taint=t_dict.copy(), input_values=v_dict.copy(), simulator=simulator)
+    ectx = EvalContext(input_taint=t_dict.copy(), input_values=v_dict.copy(), simulator=simulator)
 
     # Read the raw dictionary output
-    ast_output = rule.evaluate(ctx)
+    ast_output = rule.evaluate(ectx)
 
     # Flags are individual named registers (CF/PF/ZF/SF/OF), read directly like
     # any other register -- no x86 packed-EFLAGS bit knowledge in the test.

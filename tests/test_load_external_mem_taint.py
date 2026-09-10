@@ -86,10 +86,10 @@ def test_external_load_taints_destination(
     regs = _regs(arch, _GPRS[arch])
     circ = generate_static_rule(arch, bs, regs)
     sim = CellSimulator(arch)
-    ctx = EvalContext(input_values={base: BASE}, input_taint={}, simulator=sim,
+    ectx = EvalContext(input_values={base: BASE}, input_taint={}, simulator=sim,
                       implicit_policy=ImplicitTaintPolicy.KEEP,
                       shadow_memory=_shadow(), mem_reader=_reader)
-    res = {k: v for k, v in circ.evaluate(ctx).items() if v}
+    res = {k: v for k, v in circ.evaluate(ectx).items() if v}
     assert dest in res, f'{arch.name} {asm!r}: {dest} got no taint (external memory taint dropped): {res}'
     assert bin(res[dest]).count('1') >= min_pop, (
         f'{arch.name} {asm!r}: {dest} taint {res[dest]:#x} popcount '

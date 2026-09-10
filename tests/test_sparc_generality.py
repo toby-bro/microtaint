@@ -87,9 +87,9 @@ def test_sparc_taint_and_generality(asm: str,
 
     vals = {r.name: 0x12345670 + 7 * i for i, r in enumerate(sparc_regs)}
     taint = {'G1': 0xFFFFFFFFFFFFFFFF, 'G2': 0x0000FFFF}
-    ctx = EvalContext(input_values=vals, input_taint=taint, simulator=sim,
+    ectx = EvalContext(input_values=vals, input_taint=taint, simulator=sim,
                       implicit_policy=ImplicitTaintPolicy.KEEP)
-    res = {k: v for k, v in circ.evaluate(ctx).items() if v}
+    res = {k: v for k, v in circ.evaluate(ectx).items() if v}
 
     # Destination must carry taint (no silent under-taint of a tainted input).
     assert dest in res, f'{asm}: {dest} untainted, got {res}'

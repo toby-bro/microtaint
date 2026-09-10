@@ -65,12 +65,12 @@ def _eval(hexbytes: str, *, rax_tainted: bool) -> tuple[int, int, bool]:
     taint = {r.name: 0 for r in _REGS}
     if rax_tainted:
         taint['RAX'] = FULL
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values=values, input_taint=taint, simulator=sim,
         implicit_policy=ImplicitTaintPolicy.KEEP,
         shadow_memory=_Shadow(), mem_reader=_mem_reader,
     )
-    out = circ.evaluate(ctx)
+    out = circ.evaluate(ectx)
     subs = list(circ.sub_circuits) if isinstance(circ, ChainedCircuit) else [circ]
     all_compiled = all(getattr(s, '_compiled', None) not in (None, False) for s in subs)
     pyfb = 0

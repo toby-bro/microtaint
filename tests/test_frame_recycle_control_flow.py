@@ -40,13 +40,13 @@ def _eval_pc_taint() -> int:
     regs = [Register(name=r, bits=64) for r in _REGS]
     circ = generate_static_rule(Architecture.AMD64, bytes.fromhex(_BRANCH_BYTES_HEX), regs)
     sim = CellSimulator(Architecture.AMD64)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RDI': 1, 'RIP': 0x400000},
         input_taint={'RDI': 0xFFFFFFFFFFFFFFFF, 'RIP': 0},
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.KEEP,
     )
-    return circ.evaluate(ctx).get('RIP', 0)
+    return circ.evaluate(ectx).get('RIP', 0)
 
 
 def _eval_pc_taint_recycle_off() -> int:
@@ -81,10 +81,10 @@ def test_implicit_taint_stripped_under_recycle() -> None:
     regs = [Register(name=r, bits=64) for r in _REGS]
     circ = generate_static_rule(Architecture.AMD64, bytes.fromhex(_BRANCH_BYTES_HEX), regs)
     sim = CellSimulator(Architecture.AMD64)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'RDI': 1, 'RIP': 0x400000},
         input_taint={'RDI': 0xFFFFFFFFFFFFFFFF, 'RIP': 0},
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    assert 'RIP' not in circ.evaluate(ctx)
+    assert 'RIP' not in circ.evaluate(ectx)

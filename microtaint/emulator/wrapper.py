@@ -401,7 +401,7 @@ class MicrotaintWrapper:
         # Tier 3: per-instruction-address memoization cache.
         # Maps address → (taint_signature_tuple, output_state_dict).
         # On a hit, we apply the cached output_state directly without running
-        # circuit.evaluate(ctx).  Bench profile: 150 unique addresses for
+        # circuit.evaluate(ectx).  Bench profile: 150 unique addresses for
         # 1.19M callbacks (avg 7948 revisits each) — extremely cache-friendly.
         # Disabled by setting MICROTAINT_DISABLE_INSTR_CACHE=1.
         self._instr_cache_enabled: bool = os.environ.get('MICROTAINT_DISABLE_INSTR_CACHE') != '1'
@@ -683,15 +683,15 @@ class MicrotaintWrapper:
         # `_vals` has one slot per NAME and `_ids`/`_ptrs` one per uc_reg_read
         # call: a vector register is one call that fills two lanes.  So the
         # slot list is per name and the call count is separate.
-        ctx = blockpath_c.hook_new(
+        ectx = blockpath_c.hook_new(
             c_instruction_hook_ud(hook), compiler,
             ctypes.addressof(regfile._ids), ctypes.addressof(regfile._ptrs),
             ctypes.addressof(regfile._vals), regfile._n_calls, reg_slots)
-        self._block_ctx = ctx
+        self._block_ctx = ectx
         h = ctypes.c_size_t()
         err = _uc_hook_add(self._uc_handle, ctypes.byref(h), UC_HOOK_BLOCK,
                            ctypes.c_void_p(blockpath_c.hook_ptr()),
-                           ctypes.c_void_p(blockpath_c.hook_ud(ctx)), 1, 0)
+                           ctypes.c_void_p(blockpath_c.hook_ud(ectx)), 1, 0)
         if err != 0:
             logger.warning(f'block hook registration failed: {err}')
             self._block_ctx = None
@@ -1323,7 +1323,7 @@ class MicrotaintWrapper:
         self._pre_regs[self._pc_reg_name] = address
         self._pre_taint = dict(self.register_taint)
 
-        ctx = EvalContext(
+        ectx = EvalContext(
             input_taint=self._pre_taint,
             input_values=self._pre_regs,
             simulator=self.sim,
@@ -1333,14 +1333,14 @@ class MicrotaintWrapper:
         )
 
         try:
-            output_state = circuit.evaluate(ctx)
+            output_state = circuit.evaluate(ectx)
 
             # Tier 3: cache successful eval result for this address+taint_sig.
             # We only populate the cache for circuits without mem ops (gated
             # by cache_key being non-None).
             if cache_key is not None:
                 # Make a private copy of output_state — circuit.evaluate may
-                # return ctx.input_taint reference for some Cython paths.
+                # return ectx.input_taint reference for some Cython paths.
                 self._instr_cache[address] = (cache_key, dict(output_state))
 
             # Single pass over output_state: update shadow_mem, register_taint,
@@ -1374,9 +1374,9 @@ class MicrotaintWrapper:
                     self.register_taint[key] = val
 
             if self.check_aiw and self.register_taint and mem_writes:
-                live_regs = ctx.input_values
+                live_regs = ectx.input_values
                 for mem_addr, _, _ in mem_writes:
-                    for reg_name, reg_taint in ctx.input_taint.items():
+                    for reg_name, reg_taint in ectx.input_taint.items():
                         if reg_taint == 0:
                             continue
                         reg_val = live_regs.get(reg_name, 0)

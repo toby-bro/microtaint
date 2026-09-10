@@ -138,12 +138,12 @@ def test_and_monotonic_precise_taint(simulator: CellSimulator, amd64_registers: 
     bytestring = bytes.fromhex('21D8')  # AND EAX, EBX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'EAX': 0xFFFFFFFF, 'EBX': 0x0000FFFF},
         input_taint={'EAX': 0xFFFF0000, 'EBX': 0x00000000},  # Taint the top 16 bits of EAX
         simulator=simulator,
     )
-    res = circuit.evaluate(ctx)
+    res = circuit.evaluate(ectx)
 
     # Naive OR-based tracking would propagate 0xFFFF0000.
     # Precise Monotonic tracking realizes the output can't change because EBX masks it out.
@@ -160,12 +160,12 @@ def test_or_monotonic_precise_taint(simulator: CellSimulator, amd64_registers: l
     bytestring = bytes.fromhex('09D8')  # OR EAX, EBX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'EAX': 0x00000000, 'EBX': 0xFFFF0000},
         input_taint={'EAX': 0xFFFF0000, 'EBX': 0x00000000},  # Taint the top 16 bits of EAX
         simulator=simulator,
     )
-    res = circuit.evaluate(ctx)
+    res = circuit.evaluate(ectx)
 
     # Top 16 bits of EBX are already 1. Toggling top 16 bits of EAX changes nothing.
     assert res.get('EAX', 0) == 0x00000000
@@ -180,12 +180,12 @@ def test_xor_mapped_taint(simulator: CellSimulator, amd64_registers: list[Regist
     bytestring = bytes.fromhex('31D8')  # XOR EAX, EBX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'EAX': 0x00000000, 'EBX': 0xFFFFFFFF},
         input_taint={'EAX': 0x0F0F0F0F, 'EBX': 0x00000000},
         simulator=simulator,
     )
-    res = circuit.evaluate(ctx)
+    res = circuit.evaluate(ectx)
 
     # XOR simply ORs the taints.
     assert res.get('EAX', 0) == 0x0F0F0F0F
@@ -201,12 +201,12 @@ def test_add_transportable_taint(simulator: CellSimulator, amd64_registers: list
     bytestring = bytes.fromhex('01D8')  # ADD EAX, EBX
     circuit = generate_static_rule(Architecture.AMD64, bytestring, amd64_registers)
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'EAX': 0x00000001, 'EBX': 0x00000002},
         input_taint={'EAX': 0x00000001, 'EBX': 0x00000004},
         simulator=simulator,
     )
-    res = circuit.evaluate(ctx)
+    res = circuit.evaluate(ectx)
 
     # Taint should strictly be the combination of both input taints (transportability term),
     # since no cascading carry overlaps with the tainted bits in this specific addition.
@@ -227,12 +227,12 @@ def test_signed_comparison_sless_msb_taint(simulator: CellSimulator, amd64_regis
     # SF (Sign Flag) should evaluate to 0 initially (Positive result).
     # If the MSB of EAX is tainted, it means EAX *could* be negative,
     # meaning the SF flag output SHOULD be tainted.
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values={'EAX': 0x7FFFFFFF, 'EBX': 0x00000000},
         input_taint={'EAX': 0x80000000, 'EBX': 0x00000000},  # Taint ONLY the MSB
         simulator=simulator,
     )
-    res = circuit.evaluate(ctx)
+    res = circuit.evaluate(ectx)
 
     # SF is dependent on the MSB (signed evaluation)
     sf_taint = extract_flag(res, 'SF')
@@ -254,9 +254,9 @@ def test_signed_comparison_sless_msb_no_taint_if_masked(
     # 0x00000001 - 0 = Positive (SF=0)
     # 0x80000001 - 0 = Negative (SF=1)
     # Therefore, flipping the MSB DOES flip SF, so SF should be tainted.
-    ctx1 = EvalContext(
+    ectx1 = EvalContext(
         input_values={'EAX': 0x00000001, 'EBX': 0x00000000},
         input_taint={'EAX': 0x80000000, 'EBX': 0x00000000},
         simulator=simulator,
     )
-    assert extract_flag(circuit.evaluate(ctx1), 'SF') == 1
+    assert extract_flag(circuit.evaluate(ectx1), 'SF') == 1

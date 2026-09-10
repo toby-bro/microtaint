@@ -58,7 +58,7 @@ def _propagates(pc: int) -> bool:
     shadow = BitPreciseShadowMemory()
     shadow.write_mask(pc + DISP_FROM_PC, 0xFF, 1)   # the byte the load reads
 
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_values=values,
         input_taint={r.name: 0 for r in regs},
         simulator=sim,
@@ -69,7 +69,7 @@ def _propagates(pc: int) -> bool:
         # time once already.
         mem_reader=lambda a, s: sum(((0x11 * (i + 1)) & 0xFF) << (8 * i) for i in range(s)),
     )
-    return any(v for v in circ.evaluate(ctx).values())
+    return any(v for v in circ.evaluate(ectx).values())
 
 
 def test_pc_relative_load_at_lift_base_propagates() -> None:

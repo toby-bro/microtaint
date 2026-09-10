@@ -70,14 +70,14 @@ def _eval(
     """Evaluate a rule with human-keyed taint/values and return a human-keyed
     output (whole XMM registers recombined from their lanes)."""
     circuit = generate_static_rule(Architecture.AMD64, bytestring, regs)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=_A.to_engine(taint),
         input_values=_A.to_engine(values),
         simulator=simulator,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
         shadow_memory=None,
     )
-    return _A.from_engine(circuit.evaluate(ctx))
+    return _A.from_engine(circuit.evaluate(ectx))
 
 
 # ---------------------------------------------------------------------------

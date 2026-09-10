@@ -104,11 +104,11 @@ _METRICS = ('cells', 'assigns', 'nodes')
 
 
 class _Case:
-    __slots__ = ('asm', 'circ', 'ctx', 'isa', 'sim')
+    __slots__ = ('asm', 'circ', 'ectx', 'isa', 'sim')
 
-    def __init__(self, isa: str, asm: str, circ: LogicCircuit, ctx: EvalContext,
+    def __init__(self, isa: str, asm: str, circ: LogicCircuit, ectx: EvalContext,
                  sim: CellSimulator) -> None:
-        self.isa, self.asm, self.circ, self.ctx, self.sim = isa, asm, circ, ctx, sim
+        self.isa, self.asm, self.circ, self.ectx, self.sim = isa, asm, circ, ectx, sim
 
 
 @lru_cache(maxsize=1)
@@ -124,13 +124,13 @@ def _cases() -> tuple[_Case, ...]:
         taint = {r.name: FULL for r in spec.regs[1:4]}
         for ins in spec.instructions:
             circ = generate_static_rule(spec.arch, ins.bytes, spec.regs)
-            ctx = EvalContext(
+            ectx = EvalContext(
                 input_values=vals,
                 input_taint=taint,
                 simulator=sim,
                 implicit_policy=ImplicitTaintPolicy.KEEP,
             )
-            cases.append(_Case(spec.name, ins.label, circ, ctx, sim))
+            cases.append(_Case(spec.name, ins.label, circ, ectx, sim))
     return tuple(cases)
 
 
@@ -163,11 +163,11 @@ def _count_nodes(expr: object, depth: int = 0) -> int:
 def _work(case: _Case) -> tuple[int, int, int]:
     """Deterministic work per evaluate: (cells, assigns, nodes). Machine-independent."""
     for _ in range(3):  # warm any per-call memoization
-        case.circ.evaluate(case.ctx)
+        case.circ.evaluate(case.ectx)
     pcode = case.sim._pcode
     assert pcode is not None, 'a CellSimulator always has an evaluator'
     n0 = pcode.native_calls
-    case.circ.evaluate(case.ctx)
+    case.circ.evaluate(case.ectx)
     cells = pcode.native_calls - n0
     nodes = sum(_count_nodes(a.expression) for a in case.circ.assignments)
     return cells, len(case.circ.assignments), nodes
@@ -177,12 +177,12 @@ def _time_ns(case: _Case, reps: int = 600, batches: int = 3) -> float:
     """Steady-state ns/evaluate: min over batches of reps-call means (GC-robust).
     Modest reps because the bank is large and ns is informational, not gated."""
     for _ in range(100):
-        case.circ.evaluate(case.ctx)
+        case.circ.evaluate(case.ectx)
     best = float('inf')
     for _ in range(batches):
         t0 = time.perf_counter_ns()
         for _ in range(reps):
-            case.circ.evaluate(case.ctx)
+            case.circ.evaluate(case.ectx)
         best = min(best, (time.perf_counter_ns() - t0) / reps)
     return best
 

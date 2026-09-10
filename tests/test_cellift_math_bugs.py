@@ -38,8 +38,8 @@ def check_ast_vs_golden_taint(
     """
     # 1. Evaluate AST Logic
     rule = generate_static_rule(Architecture.X86, bytestring, state_format)
-    ctx = EvalContext(input_taint=T_dict.copy(), input_values=V_dict.copy(), simulator=simulator)
-    ast_taint = rule.evaluate(ctx).get(out_reg, 0)
+    ectx = EvalContext(input_taint=T_dict.copy(), input_values=V_dict.copy(), simulator=simulator)
+    ast_taint = rule.evaluate(ectx).get(out_reg, 0)
 
     # 2. Compute Golden Taint via 2^k state exhaustive permutations
     t_vars: list[tuple[str, int]] = []

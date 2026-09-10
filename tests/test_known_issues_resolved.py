@@ -55,13 +55,13 @@ def _eval(arch: Architecture, code: bytes, fmt: list[Register],
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(arch, code, fmt)
     zero = {r.name: 0 for r in fmt}
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={**zero, **in_taint},
         input_values={**zero, **in_vals},
         simulator=CellSimulator(arch),
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circ.evaluate(ctx)
+    return circ.evaluate(ectx)
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ differential ground truth (run instruction on V|T and V&~T, XOR) and
 cross-validated against both angr and maat.
 
 All tests use the same ``_eval`` helper as test_bit_propagation.py:
-generate the static circuit then call circuit.evaluate(ctx).
+generate the static circuit then call circuit.evaluate(ectx).
 
 Bug classes fixed
 -----------------
@@ -71,13 +71,13 @@ def _eval(
     values: dict[str, int],
 ) -> dict[str, int]:
     circuit = generate_static_rule(Architecture.AMD64, bytestring, regs)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint=taint,
         input_values=values,
         simulator=simulator,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circuit.evaluate(ctx)
+    return circuit.evaluate(ectx)
 
 
 # ---------------------------------------------------------------------------

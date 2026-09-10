@@ -130,8 +130,8 @@ def _eval_microtaint(
     circuit = generate_static_rule(Architecture.AMD64, bytestring, _REGS_GP)
     full_state = {r.name: state.get(r.name, 0) for r in _REGS_GP}
     full_taint = {r.name: taint.get(r.name, 0) for r in _REGS_GP}
-    ctx = EvalContext(input_taint=full_taint, input_values=full_state, simulator=_SIM)
-    raw = circuit.evaluate(ctx)
+    ectx = EvalContext(input_taint=full_taint, input_values=full_state, simulator=_SIM)
+    raw = circuit.evaluate(ectx)
     return {r.name: raw.get(r.name, 0) & MASK64 for r in _REGS_GP}
 
 
@@ -283,12 +283,12 @@ def test_cmovl_clean_flags_clean_output() -> None:
     condition inputs are fully concrete.
     """
     circuit = generate_static_rule(Architecture.AMD64, _XOR_CMP_MOV_CMOVL, _REGS_GP)
-    ctx = EvalContext(
+    ectx = EvalContext(
         input_taint={'RCX': 1, 'RDX': 0, 'RAX': 0, 'RBX': 0},
         input_values={'RAX': 5, 'RBX': 3, 'RCX': 1, 'RDX': 0},
         simulator=_SIM,
     )
-    out = circuit.evaluate(ctx)
+    out = circuit.evaluate(ectx)
     t_rdx = out.get('RDX', 0)
     # RAX(5) > RBX(3): L is False (concrete), CMOVL not taken, RDX stays 0.
     # T_RCX=1 is the source taint; since branch is not taken it should not flow.
