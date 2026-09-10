@@ -32,10 +32,16 @@ from __future__ import annotations
 import random
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from microtaint.taint_ir.frompcode import Emit
+from microtaint.taint_ir.ir import IRKey
+
+if TYPE_CHECKING:
+    from microtaint.taint_ir.frompcode import Builder
+    from tests.oracle_harness import UcDesc
 
 _ROOT = Path(__file__).resolve().parent.parent
 for _p in (str(_ROOT / 'benchmark'), str(_ROOT / 'tests')):
@@ -67,6 +73,20 @@ def _family(label: str) -> str:
     return ''
 
 
+def _reg_off(key: IRKey) -> int:
+    """The byte offset of a ('reg'|'regv', offset) key.
+
+    An IR key is a bare name or a tuple, and only the tuple forms carry an
+    offset.  Raising is what the `slot_of` callers below already do for a key
+    this layout cannot place: `compile_program` is documented to reject those,
+    and returning -1 instead would be an out-of-bounds index once the program
+    runs.
+    """
+    if not isinstance(key, tuple) or key[0] not in ('reg', 'regv'):
+        raise KeyError(key)
+    return key[1]
+
+
 def _is_vex(code: bytes) -> bool:
     """VEX two- and three-byte prefixes.  Unicorn mis-decodes several of these."""
     return bool(code) and code[0] in (0xC4, 0xC5)
@@ -82,7 +102,7 @@ class _Cpu:
     single-instruction run and does not accumulate.
     """
 
-    def __init__(self, desc) -> None:
+    def __init__(self, desc: UcDesc) -> None:
         import unicorn
         self.desc = desc
         self.uc = unicorn.Uc(desc.uc_arch, desc.uc_mode)
@@ -107,8 +127,8 @@ class _Cpu:
 @pytest.mark.parametrize('isa', ['AMD64', 'RISCV64'])
 def test_lowered_values_match_the_cpu(isa: str) -> None:
     import oracle_harness as OH  # type: ignore[import-not-found]
-    from instruction_bank import load_bank  # type: ignore[import-not-found]
 
+    from benchmark.instruction_bank import load_bank
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir import frompcode
     from microtaint.taint_ir.exec import compile_program
@@ -156,7 +176,7 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
             continue
         if any(k[0] != 'regv' for k, _ in prog.outputs):
             continue
-        def slot_of(key, builder=builder):
+        def slot_of(key: IRKey, builder: Builder = builder) -> int:
             # 'reg' is the INPUT namespace for both frames (the serializer
             # decides which array to read from), 'regv' is a published value
             # output.  Both land in the same slot here, so the run returns the
@@ -165,9 +185,7 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
             # Raise rather than return -1 for anything this layout cannot
             # place: compile_program is documented to reject those, and a -1
             # slot is an out-of-bounds index once the program runs.
-            if key[0] not in ('reg', 'regv'):
-                raise KeyError(key)
-            name = builder.name_by_off.get(key[1])
+            name = builder.name_by_off.get(_reg_off(key))
             if name is None or name not in layout:
                 raise KeyError(key)
             return layout[name]
@@ -177,7 +195,8 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
         except KeyError:
             continue                       # a name this layout cannot place
         lowered += 1
-        written = [builder.name_by_off.get(k[1]) for k, _ in prog.outputs if k[0] == 'regv']
+        written = [builder.name_by_off.get(_reg_off(k))
+                   for k, _ in prog.outputs if k[0] == 'regv']
         skip = _UNDEFINED.get(_family(ins.label), ())
 
         for _ in range(2):
@@ -218,8 +237,7 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
 
 def test_value_mode_does_not_change_the_taint_program() -> None:
     """The shipped path must be untouched: same instruction, same taint program."""
-    from instruction_bank import load_bank  # type: ignore[import-not-found]
-
+    from benchmark.instruction_bank import load_bank
     from microtaint.taint_ir import frompcode
 
     spec = load_bank()['AMD64']
@@ -241,8 +259,7 @@ def test_both_mode_agrees_with_each_alone() -> None:
     registers once per block instead of once per instruction.  What it must not
     do is answer either question differently from the single-purpose program.
     """
-    from instruction_bank import load_bank  # type: ignore[import-not-found]
-
+    from benchmark.instruction_bank import load_bank
     from microtaint.taint_ir import frompcode
 
     spec = load_bank()['AMD64']
@@ -282,8 +299,7 @@ def test_publishing_values_is_nearly_free() -> None:
     """
     import statistics
 
-    from instruction_bank import load_bank  # type: ignore[import-not-found]
-
+    from benchmark.instruction_bank import load_bank
     from microtaint.taint_ir import frompcode
     from microtaint.taint_ir.exec import serialize_for_c
 
@@ -301,10 +317,9 @@ def test_publishing_values_is_nearly_free() -> None:
             names = sorted(set(builder.name_by_off.values()))
             layout = {n: i for i, n in enumerate(names)}
 
-            def slot_of(k, layout=layout, builder=builder):
-                if k[0] not in ('reg', 'regv'):
-                    raise KeyError(k)
-                nm = builder.name_by_off.get(k[1])
+            def slot_of(k: IRKey, layout: dict[str, int] = layout,
+                        builder: Builder = builder) -> int:
+                nm = builder.name_by_off.get(_reg_off(k))
                 if nm is None or nm not in layout:
                     raise KeyError(k)
                 return layout[nm] + (len(layout) if k[0] == 'regv' else 0)

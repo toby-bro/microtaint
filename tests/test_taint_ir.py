@@ -12,12 +12,19 @@ Three claims, each of which has already been wrong at least once:
     rather than something run once.
 """
 # ruff: noqa: PLC0415
+from __future__ import annotations
+
 import random
+from typing import TYPE_CHECKING
 
 import pytest
 
-from microtaint.taint_ir.ir import IRProg
-from tests.perop_c_bank import Ref, TaintState
+if TYPE_CHECKING:
+    from microtaint.types import Architecture
+
+from microtaint.taint_ir.frompcode import PointerPolicy
+from microtaint.taint_ir.ir import IRKey, IRProg
+from tests.perop_c_bank import Ref
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
@@ -43,27 +50,32 @@ _CASES = [
 ]
 
 
-def _arch(name: str):
+def _arch(name: str) -> Architecture:
     from microtaint.types import Architecture
-    return getattr(Architecture, name)
+    arch: Architecture = getattr(Architecture, name)
+    return arch
 
 
-def _prog(isa: str, hexcode):
+def _prog(isa: str, hexcode: str) -> IRProg:
     from microtaint.taint_ir.frompcode import build_ir
     return build_ir(_arch(isa), bytes.fromhex(hexcode))
 
 
+#: One input state as `IRProg.run` wants it: keyed by IR key, not by name.
+IRState = dict[IRKey, int]
+
+
 def _states(prog: IRProg, n: int,
-            seed: str | int) -> list[tuple[TaintState, TaintState]]:
+            seed: str | int) -> list[tuple[IRState, IRState]]:
     rng = random.Random(seed)
-    keys = sorted({k for (_kind, k) in prog.inputs})
+    keys = sorted({k for (_kind, k) in prog.inputs}, key=repr)
     return [({k: rng.getrandbits(64) for k in keys},
              {k: rng.getrandbits(64) for k in keys}) for _ in range(n)]
 
 
-@pytest.mark.parametrize('isa,label,code', _CASES,
-                         ids=[f'{i}:{l}' for i, l, _c in _CASES])
-def test_finalize_preserves_meaning(isa: str, label: str, code: bytes) -> None:
+@pytest.mark.parametrize(('isa', 'label', 'code'), _CASES,
+                         ids=[f'{i}:{lb}' for i, lb, _c in _CASES])
+def test_finalize_preserves_meaning(isa: str, label: str, code: str) -> None:
     """Expanding the one-bit cones and compacting must not change any answer."""
     prog = _prog(isa, code)
     fin = prog.finalize()
@@ -71,9 +83,9 @@ def test_finalize_preserves_meaning(isa: str, label: str, code: bytes) -> None:
         assert prog.run(vals, tnts) == fin.run(vals, tnts), label
 
 
-@pytest.mark.parametrize('isa,label,code', _CASES,
-                         ids=[f'{i}:{l}' for i, l, _c in _CASES])
-def test_backends_agree(isa: str, label: str, code: bytes) -> None:
+@pytest.mark.parametrize(('isa', 'label', 'code'), _CASES,
+                         ids=[f'{i}:{lb}' for i, lb, _c in _CASES])
+def test_backends_agree(isa: str, label: str, code: str) -> None:
     """The C interpreter, the host emitter and the Python reference agree."""
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir.exec import compile_program
@@ -81,7 +93,7 @@ def test_backends_agree(isa: str, label: str, code: bytes) -> None:
     prog = _prog(isa, code)
     keys = sorted({k for (_kind, k) in prog.inputs} | {k for k, _n in prog.outputs})
     slot = {k: i for i, k in enumerate(keys)}
-    cap, _d = compile_program(prog, lambda n: slot.get(n))
+    cap, _d = compile_program(prog, slot.get)
 
     rng = random.Random(f'be:{label}')
     for _ in range(120):
@@ -121,9 +133,10 @@ def test_ir_never_under_taints_vs_ground_truth(isa: str, request: pytest.Fixture
                     f'current engine does not:\n{detail}')
 
 
-@pytest.mark.parametrize('policy', ['concrete', 'avalanche'])
+@pytest.mark.parametrize('policy', list(PointerPolicy))
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64'])
-def test_memory_taint_matches_ground_truth(isa: str, policy):
+def test_memory_taint_matches_ground_truth(isa: str,
+                                           policy: PointerPolicy) -> None:
     """Loads and stores, against Unicorn per-bit truth over a real data page.
 
     Both pointer policies are checked.  'avalanche' is the sound one and what
@@ -176,7 +189,7 @@ def test_uc_desc_carries_its_own_isa_tag(isa: str) -> None:
     assert cases, f'{isa}: no memory cases to drive the ground truth'
     truth = ground_truth_mem(desc, cases[0].code,
                              {}, {}, [0] * 64, [0] * 64)
-    assert '@mem' in truth, sorted(truth)
+    assert len(truth.mem) == 64, len(truth.mem)
 
 
 def test_vector_lanes_match_ground_truth() -> None:

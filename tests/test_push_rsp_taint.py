@@ -15,7 +15,13 @@ test_rsp_output_depends_on_rsp_not_on_the_pushed_register for the root cause.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from pypcode import PcodeOp, Varnode
 
 CODE_ADDR = 0x1000
 STACK = 0x50000
@@ -32,7 +38,8 @@ def _uc_push(rsp: int, rbp: int) -> int:
     uc.reg_write(ux.UC_X86_REG_RSP, rsp)
     uc.reg_write(ux.UC_X86_REG_RBP, rbp)
     uc.emu_start(CODE_ADDR, CODE_ADDR + len(PUSH_RBP))
-    return uc.reg_read(ux.UC_X86_REG_RSP)
+    out: int = uc.reg_read(ux.UC_X86_REG_RSP)
+    return out
 
 
 def test_ground_truth_rsp_depends_on_rsp_not_rbp() -> None:
@@ -46,7 +53,8 @@ def test_ground_truth_rsp_depends_on_rsp_not_rbp() -> None:
         'RSP_out depends on RBP -- premise is wrong'
 
 
-def _answers(taint: dict[str, int]):
+def _answers(taint: dict[str, int],
+             ) -> tuple[dict[str, int], dict[str, int]]:
     from benchmark.instruction_bank import isa_registers
     from microtaint.types import Architecture
     from tests.oracle_harness import _uc_desc_amd64, build_circuit, reference_taint
@@ -96,22 +104,45 @@ def test_differential_does_not_invent_rsp_taint() -> None:
     assert diff['RSP'] == 0
 
 
-def _rsp_dep_set():
+def _dep_names(deps: Iterable[object]) -> set[str]:
+    """Dependency keys as the names a test can assert on.
+
+    A key is a RegMapping (which has a `name`) or a MemMapping (which does not);
+    the fallback keeps a memory dependency visible in the failure message rather
+    than dropping it.
+    """
+    return {getattr(k, 'name', None) or repr(k) for k in deps}
+
+
+def _rsp_vn(ops: list[PcodeOp]) -> Varnode:
+    """The varnode `push`'s INT_SUB writes: RSP_out.
+
+    `PcodeOp.output` is None for the ops that write nothing, so the search has
+    to state that it found one; a None here would mean the encoding no longer
+    lowers the way the docstring says.
+    """
+    out = next(o.output for o in ops if o.opcode.name == 'INT_SUB')
+    assert out is not None, 'the INT_SUB of `push` writes no output'
+    return out
+
+
+def _rsp_dep_set() -> tuple[set[str], set[str]]:
     """`extract_dependencies` for the RSP output of `push %rbp`."""
     from microtaint.emulator import archregs
-    from microtaint.sleigh import engine as E
+    from microtaint.sleigh.engine import StateMapper, extract_dependencies
     from microtaint.sleigh.lifter import get_context
+    from microtaint.sleigh.polarity import compute_polarity
+    from microtaint.sleigh.slicer import slice_backward
     from microtaint.types import Architecture
 
     sctx = get_context('AMD64')
     ops = sctx.translate(PUSH_RBP, CODE_ADDR).ops
     # RSP_out is written by the INT_SUB: `RSP = RSP - 8`.
-    rsp_vn = next(o.output for o in ops if o.opcode.name == 'INT_SUB')
-    sl = E.slice_backward(ops, rsp_vn)
-    mapper = E.StateMapper(sctx, 'AMD64', list(archregs.state_format(Architecture.AMD64)))
-    ds = E.extract_dependencies(rsp_vn, sl, E.compute_polarity(sl), ops, mapper)
-    return ({getattr(k, 'name', k) for k in ds.value_deps},
-            {getattr(k, 'name', k) for k in ds.addr_deps})
+    rsp_vn = _rsp_vn(ops)
+    sl = slice_backward(ops, rsp_vn)
+    mapper = StateMapper(sctx, 'AMD64', list(archregs.state_format(Architecture.AMD64)))
+    ds = extract_dependencies(rsp_vn, sl, compute_polarity(sl), ops, mapper)
+    return _dep_names(ds.value_deps), _dep_names(ds.addr_deps)
 
 
 def test_the_rsp_slice_contains_only_the_subtraction() -> None:
@@ -120,12 +151,11 @@ def test_the_rsp_slice_contains_only_the_subtraction() -> None:
     If this ever stops holding, the dependency expectations below are about a
     different program and mean nothing.
     """
-    from microtaint.sleigh import engine as E
     from microtaint.sleigh.lifter import get_context
+    from microtaint.sleigh.slicer import slice_backward
 
     ops = get_context('AMD64').translate(PUSH_RBP, CODE_ADDR).ops
-    rsp_vn = next(o.output for o in ops if o.opcode.name == 'INT_SUB')
-    names = [o.opcode.name for o in E.slice_backward(ops, rsp_vn)]
+    names = [o.opcode.name for o in slice_backward(ops, _rsp_vn(ops))]
     assert names == ['INT_SUB'], f'the RSP slice is no longer just the subtract: {names}'
 
 

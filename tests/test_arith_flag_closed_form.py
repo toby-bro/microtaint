@@ -21,10 +21,11 @@ computed with a small taint mask so the cube is cheap:
 """
 import itertools
 import random
+from collections.abc import Iterator
 
 import pytest
 
-from microtaint.instrumentation.ast import EvalContext, InstructionCellExpr
+from microtaint.instrumentation.ast import EvalContext, InstructionCellExpr, LogicCircuit, TaintAssignment
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, Register
@@ -64,9 +65,10 @@ def sim() -> CellSimulator:
     return CellSimulator(ARCH, use_unicorn=False, use_c=True)
 
 
-def _assignments(hexs: str):
+def _assignments(hexs: str,
+                 ) -> tuple[LogicCircuit, dict[str, TaintAssignment]]:
     circ = generate_static_rule(ARCH, bytes.fromhex(hexs), REGS)
-    out = {}
+    out: dict[str, TaintAssignment] = {}
     for a in circ.assignments:
         nm = getattr(a.target, 'name', None)
         if nm is not None and not hasattr(a.target, 'address_expr'):
@@ -74,11 +76,22 @@ def _assignments(hexs: str):
     return circ, out
 
 
-def _cells(expr) -> int:
+def _cells(expr: object) -> int:
     return repr(expr).count('InstructionCellExpr')
 
 
-def _true_taint(sim: CellSimulator, hexs: str, name: str, bit_end, base_vals, taint: dict[str, int]) -> int:
+def _target_bits(a: TaintAssignment) -> int:
+    """The width of the slice an assignment writes, as a top bit index.
+
+    `TaintAssignment.target` is a register OR a memory operand, and only the
+    register form carries a bit range; every assignment collected here came
+    through the register filter in `_assignments`.
+    """
+    return int(a.target.bit_end) - int(a.target.bit_start)   # type: ignore[union-attr]
+
+
+def _true_taint(sim: CellSimulator, hexs: str, name: str, bit_end: int,
+                base_vals: dict[str, int], taint: dict[str, int]) -> int:
     """Non-constancy of the output over the FULL taint cube: OR of per-bit XORs of
     the output as the tainted input bits range over all 2^n assignments.  `base_vals`
     already has the tainted bits cleared.  Small taint keeps the cube cheap."""
@@ -96,7 +109,7 @@ def _true_taint(sim: CellSimulator, hexs: str, name: str, bit_end, base_vals, ta
     return acc
 
 
-def _small_taints(rng: random.Random):
+def _small_taints(rng: random.Random) -> Iterator[dict[str, int]]:
     for _ in range(24):
         taint = dict.fromkeys(REG_NAMES, 0)
         for _ in range(rng.randint(1, 6)):
@@ -106,7 +119,8 @@ def _small_taints(rng: random.Random):
 
 @pytest.mark.parametrize(('label', 'hexs', 'expected'),
                          [(k, v[0], v[1]) for k, v in CLOSED.items()], ids=list(CLOSED))
-def test_outputs_are_cell_free(label: str, hexs: str, expected):
+def test_outputs_are_cell_free(label: str, hexs: str,
+                               expected: dict[str, int]) -> None:
     _circ, outs = _assignments(hexs)
     for name, want in expected.items():
         assert name in outs, f'{label}: no {name} output'
@@ -123,7 +137,8 @@ def test_cf_declines_on_dependent_operands(label: str, hexs: str) -> None:
 
 @pytest.mark.parametrize(('label', 'hexs', 'exact'),
                          [(k, v[0], v[2]) for k, v in CLOSED.items()], ids=list(CLOSED))
-def test_sound_and_exact(label: str, hexs: str, exact, sim: CellSimulator):
+def test_sound_and_exact(label: str, hexs: str, exact: dict[str, int],
+                         sim: CellSimulator) -> None:
     circ, outs = _assignments(hexs)
     rng = random.Random(hash(hexs) & 0xFFFF)
     for taint in _small_taints(rng):
@@ -131,9 +146,9 @@ def test_sound_and_exact(label: str, hexs: str, exact, sim: CellSimulator):
         base = {r: values[r] & ~taint[r] & M64 for r in REG_NAMES}
         got = circ.evaluate(EvalContext(input_taint=taint, input_values=base, simulator=sim))
         for name, a in outs.items():
-            w = a.target.bit_end - a.target.bit_start + 1
-            mask = (1 << w) - 1
-            true = _true_taint(sim, hexs, name, a.target.bit_end - a.target.bit_start, base, taint) & mask
+            bit_end = _target_bits(a)
+            mask = (1 << (bit_end + 1)) - 1
+            true = _true_taint(sim, hexs, name, bit_end, base, taint) & mask
             g = got.get(name, 0) & mask
             # Soundness: the emitted taint must contain the true taint (never under-taint).
             assert (true & ~g) == 0, f'{label} {name} UNDER-taint: true={true:#x} got={g:#x}'

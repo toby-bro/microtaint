@@ -68,8 +68,12 @@ Run with:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from qiling import Qiling
 
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import (
@@ -527,7 +531,7 @@ class TestSipHashAvalanche:
         msg = bytes(range(16))
 
         class _S:
-            def read(self, n: int):
+            def read(self, n: int) -> bytes:
                 return msg[:n]
 
         ql.os.stdin = _S()
@@ -544,7 +548,7 @@ class TestSipHashAvalanche:
 
         captured = [0]
 
-        def _read_hook(ql, fd: int, buf: int, count: int):
+        def _read_hook(ql: Qiling, fd: int, buf: int, count: int) -> int:
             if fd != 0:
                 return 0
             data = msg[:count]
@@ -556,7 +560,8 @@ class TestSipHashAvalanche:
 
         ql.os.set_syscall(0, _read_hook, QL_INTERCEPT.CALL)
 
-        def _write_hook(ql, fd: int, buf: int, count: int, *_: object):
+        def _write_hook(ql: Qiling, fd: int, buf: int, count: int,
+                        *_: object) -> int:
             if fd == 1 and count == 8 and captured[0] == 0:
                 captured[0] = wrapper.shadow_mem.read_mask(buf, 8)
             return count

@@ -1,5 +1,5 @@
 from microtaint.emulator.wrapper import RegReadDescriptor
-from microtaint.instrumentation.ast import InstructionCellExpr
+from microtaint.instrumentation.ast import CellLike, InstructionCellExpr
 from microtaint.types import Architecture
 
 class PCodeFallbackNeeded(Exception):
@@ -76,7 +76,7 @@ class PCodeCellEvaluator:
     _sizes: dict[str, int]
 
     def __init__(self, arch: Architecture) -> None: ...
-    def evaluate_concrete(self, cell: InstructionCellExpr, flat_inputs: dict[str, int]) -> int:
+    def evaluate_concrete(self, cell: CellLike, flat_inputs: dict[str, int]) -> int:
         """
         Evaluate a single concrete instruction.
         'cell' is expected to have attributes: instruction (hex), out_reg, out_bit_start, out_bit_end.
@@ -84,7 +84,7 @@ class PCodeCellEvaluator:
 
     def evaluate_differential(
         self,
-        cell: InstructionCellExpr,
+        cell: CellLike,
         or_inputs: dict[str, int],
         and_inputs: dict[str, int],
     ) -> int:

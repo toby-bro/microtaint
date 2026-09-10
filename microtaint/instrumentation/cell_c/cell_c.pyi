@@ -11,7 +11,7 @@ without going through the Python C-API at all.
 """
 
 
-from microtaint.instrumentation.ast import InstructionCellExpr
+from microtaint.instrumentation.ast import CellLike, InstructionCellExpr
 from microtaint.types import Architecture
 
 # CellCAPI PyCapsule. Imported by circuit_c at module init via
@@ -54,7 +54,7 @@ class PCodeCellEvaluatorC:
         """
     def evaluate_concrete(
         self,
-        cell: InstructionCellExpr,
+        cell: CellLike,
         flat_inputs: dict[str, int],
     ) -> int:
         """
@@ -67,7 +67,7 @@ class PCodeCellEvaluatorC:
 
     def evaluate_concrete_state(
         self,
-        cell: InstructionCellExpr,
+        cell: CellLike,
         regs: dict[str, int],
         mem: dict[int, int],
     ) -> int:
@@ -75,14 +75,14 @@ class PCodeCellEvaluatorC:
 
     def evaluate_concrete_flat(
         self,
-        cell: InstructionCellExpr,
+        cell: CellLike,
         flat_inputs: dict[str, int],
     ) -> int:
         """Flat-input variant of evaluate_concrete (no register splitting)."""
 
     def evaluate_differential(
         self,
-        cell: InstructionCellExpr,
+        cell: CellLike,
         or_inputs: dict[str, int],
         and_inputs: dict[str, int],
     ) -> int:

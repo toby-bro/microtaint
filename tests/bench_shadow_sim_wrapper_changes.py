@@ -190,7 +190,7 @@ class TestSimulator:
         t_state = MachineState(regs={'RAX': 0xAAAA, 'RBX': 0x5555})
         state = {'i': 0}
 
-        def run():
+        def run() -> int:
             bs = instrs[state['i'] & 1]
             state['i'] += 1
             return amd64_sim.evaluate_cell_differential(bs, 'RAX', v_state, t_state)
@@ -272,7 +272,7 @@ class TestWrapperPrimitives:
         address = 0x405000
 
         # New implementation — direct int comparison
-        def check_new():
+        def check_new() -> bool:
             return base <= address < end
 
         benchmark(check_new)
@@ -282,7 +282,7 @@ class TestWrapperPrimitives:
         base, end = 0x400000, 0x410000
         address = 0x7FFFF7A00000  # libc address
 
-        def check_new():
+        def check_new() -> bool:
             return base <= address < end
 
         benchmark(check_new)
@@ -295,7 +295,7 @@ class TestWrapperPrimitives:
         bounds = [(0x400000, 0x410000)]
         address = 0x405000
 
-        def check_old():
+        def check_old() -> bool:
             return any(s <= address < e for s, e in bounds)
 
         benchmark(check_old)
@@ -314,7 +314,7 @@ class TestWrapperPrimitives:
         ]
         source = {k: i * 0x100 for i, k in enumerate(_CANONICAL)}
 
-        def read_18():
+        def read_18() -> dict[str, int]:
             return {k: source[k] for k in _CANONICAL}
 
         benchmark(read_18)
@@ -332,7 +332,7 @@ class TestWrapperPrimitives:
         ]
         source = {k: i * 0x100 for i, k in enumerate(_ALL)}
 
-        def read_23():
+        def read_23() -> dict[str, int]:
             return {k: source[k] for k in _ALL}
 
         benchmark(read_23)
@@ -343,7 +343,7 @@ class TestWrapperPrimitives:
         """
         eflags = 0x246  # ZF=1, PF=1, CF=0, SF=0, OF=0
 
-        def unpack():
+        def unpack() -> dict[str, int]:
             return {
                 'CF': (eflags >> 0)  & 1,
                 'PF': (eflags >> 2)  & 1,

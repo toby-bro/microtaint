@@ -34,13 +34,22 @@ for _p in (str(_ROOT / 'benchmark'), str(_ROOT / 'tests')):
 from microtaint.taint_ir import frompcode  # noqa: E402
 from microtaint.taint_ir.frompcode import Emit, PointerPolicy, Unsupported  # noqa: E402
 from microtaint.types import Architecture  # noqa: E402
+from collections.abc import Callable  # noqa: E402
+from pypcode import PcodeOp  # noqa: E402
+from microtaint.taint_ir.ir import IRKey, IRProg  # noqa: E402
+from microtaint.taint_ir.ir import IRKey, IRProg
+from pypcode import PcodeOp
 
 _CODE = 0x1000
 _DATA = 0x40000
 _ARCHES = {'MIPS64BE': Architecture.MIPS64BE, 'PPC32BE': Architecture.PPC32BE}
 
 
-def _kit(isa: str):
+#: A region runner: taint out, for one lowered program.
+RunRegion = Callable[[IRProg, dict[str, int], dict[str, int]], dict[str, int]]
+
+
+def _kit(isa: str) -> tuple[Architecture, frompcode.Builder, RunRegion]:
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir.exec import compile_program
 
@@ -50,7 +59,9 @@ def _kit(isa: str):
     layout = {n: i for i, n in enumerate(names)}
     width = 2 * len(layout)
 
-    def slot_of(key):
+    def slot_of(key: IRKey) -> int:
+        if not isinstance(key, tuple):
+            raise KeyError(key)
         if key[0] not in ('reg', 'regv'):
             raise KeyError(key)
         name = builder.name_by_off.get(key[1])
@@ -58,7 +69,7 @@ def _kit(isa: str):
             raise KeyError(key)
         return layout[name] + (len(layout) if key[0] == 'regv' else 0)
 
-    def run(prog, values: dict[str, int], taints: dict[str, int]):
+    def run(prog: IRProg, values: dict[str, int], taints: dict[str, int]) -> dict[str, int]:
         capsule, _ = compile_program(prog, slot_of)
         v = [0] * width
         t = [0] * width
@@ -71,7 +82,7 @@ def _kit(isa: str):
     return arch, builder, run
 
 
-def _pcode(isa: str, code: bytes, base: int):
+def _pcode(isa: str, code: bytes, base: int) -> list[PcodeOp]:
     from microtaint.sleigh.lifter import get_context
     return get_context(isa).translate(code, base).ops
 

@@ -11,6 +11,21 @@ class ShadowLike(Protocol):
 
     def read_mask(self, address: int, size: int) -> int: ...
 
+class CellLike(Protocol):
+    """What the native evaluators need of a cell: an instruction and a slice.
+
+    `InstructionCellExpr` is what the engine passes, but the C and Cython
+    evaluators read these four attributes and nothing else, so tests that
+    exercise the attribute parsing build a minimal stand-in.  Stating the
+    contract as a Protocol keeps that legitimate and keeps a fifth attribute
+    from being read without the stub saying so.
+    """
+
+    instruction: str
+    out_reg: str
+    out_bit_start: int
+    out_bit_end: int
+
 from microtaint.instrumentation.cell_c.circuit_c import CompiledCircuit
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register

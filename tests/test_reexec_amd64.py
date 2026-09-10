@@ -9,16 +9,17 @@ this is an exact gate.  Skipped off x86_64 or when a C compiler is unavailable.
 from __future__ import annotations
 
 import random
-import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from microtaint.reexec import AVAILABLE, FLAG_BITS, NativeReExec
 
-pytestmark = pytest.mark.skipif(not AVAILABLE, reason='native re-exec needs an x86_64 host with cc')
+if TYPE_CHECKING:
+    from benchmark.instruction_bank import ISASpec
+    from microtaint.simulator import CellSimulator
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
+pytestmark = pytest.mark.skipif(not AVAILABLE, reason='native re-exec needs an x86_64 host with cc')
 
 # Curated register-only AMD64 instructions with FULLY-DEFINED OSZAPC flags
 # (no count-dependent shifts, so no undefined OF).  (label, bytes, out_reg)
@@ -37,21 +38,22 @@ _CASES = [
 
 
 @pytest.fixture(scope='module')
-def rx():
+def rx() -> NativeReExec:
     return NativeReExec()
 
 
 @pytest.fixture(scope='module')
-def bank_sim():
-    from instruction_bank import load_bank  # type: ignore[import-not-found]  # noqa: PLC0415
-
+def bank_sim() -> tuple[ISASpec, CellSimulator]:
+    from benchmark.instruction_bank import load_bank  # noqa: PLC0415
     from microtaint.simulator import CellSimulator  # noqa: PLC0415
-    bank = load_bank(isas=['AMD64'])['AMD64']
+    bank = load_bank(isas={'AMD64'})['AMD64']
     return bank, CellSimulator(bank.arch)
 
 
 @pytest.mark.parametrize(('label', 'code', 'out_reg'), _CASES)
-def test_reexec_matches_sleigh(rx, bank_sim, label: str, code: bytes, out_reg: str):
+def test_reexec_matches_sleigh(rx: NativeReExec,
+                               bank_sim: tuple[ISASpec, CellSimulator],
+                               label: str, code: bytes, out_reg: str) -> None:
     from microtaint.instrumentation.ast import InstructionCellExpr  # noqa: PLC0415
     from microtaint.simulator import MachineState  # noqa: PLC0415
     from microtaint.sleigh.engine import generate_static_rule  # noqa: PLC0415
@@ -59,8 +61,8 @@ def test_reexec_matches_sleigh(rx, bank_sim, label: str, code: bytes, out_reg: s
     bank, sim = bank_sim
     reg_names = [r.name for r in bank.regs]
     circ = generate_static_rule(bank.arch, code, bank.regs)
-    flag_outs = [a.target.name for a in circ.assignments
-                 if getattr(a.target, 'name', None) in FLAG_BITS]
+    flag_outs = [nm for a in circ.assignments
+                 if (nm := getattr(a.target, 'name', None)) in FLAG_BITS]
 
     rng = random.Random(hash(label) & 0xFFFF)
     for _ in range(20):
@@ -83,7 +85,7 @@ def test_reexec_matches_sleigh(rx, bank_sim, label: str, code: bytes, out_reg: s
             )
 
 
-def bank_reg_names(bank):
+def bank_reg_names(bank: ISASpec) -> list[str]:
     from microtaint.reexec import REG_ORDER  # noqa: PLC0415
     have = {r.name for r in bank.regs}
     return [n for n in REG_ORDER if n in have]

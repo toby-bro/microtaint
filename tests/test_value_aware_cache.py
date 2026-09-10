@@ -22,6 +22,8 @@ import platform
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
+from typing import TypedDict
 
 import pytest
 
@@ -33,18 +35,30 @@ FULL = 0xFFFFFFFFFFFFFFFF
 _STUB = r'void _start(){ __asm__ volatile("syscall"::"a"(60),"D"(0):"rcx","r11"); }'
 
 
-def _run_seq_subprocess(code_hex: str, seq, rax_taint: int, rax_val: int):
+class SeqRun(TypedDict):
+    """What the subprocess entry point below prints: one row per rbx value,
+    plus the cache counters it moved."""
+
+    taints: list[int]
+    hits: int
+    misses: int
+
+
+def _run_seq_subprocess(code_hex: str, seq: Sequence[int], rax_taint: int,
+                        rax_val: int) -> list[int]:
     """Return the list of RAX out-taints (one per rbx value in seq)."""
     return _run_seq_full(code_hex, seq, rax_taint, rax_val)['taints']
 
 
-def _run_seq_full(code_hex: str, seq, rax_taint: int, rax_val: int, rbx_taint: int = 0):
+def _run_seq_full(code_hex: str, seq: Sequence[int], rax_taint: int,
+                  rax_val: int, rbx_taint: int = 0) -> SeqRun:
     out = subprocess.run(
         [sys.executable, __file__, code_hex, hex(rax_taint), hex(rax_val),
          ','.join(hex(v) for v in seq), hex(rbx_taint)],
         capture_output=True, text=True, check=True,
     ).stdout
-    return json.loads(out.strip().splitlines()[-1])
+    run: SeqRun = json.loads(out.strip().splitlines()[-1])
+    return run
 
 
 def test_and_cache_is_value_aware() -> None:
@@ -76,11 +90,7 @@ def test_value_stable_still_hits() -> None:
 def test_classifier_flags_mov_vi_and_add_vd() -> None:
     # Pure structural check (no emulation): mov/not/movzx are value-INDEPENDENT;
     # flag-setting / arithmetic ops are value-DEPENDENT.
-    import sys as _sys
-    from pathlib import Path
-    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
-    from instruction_bank import isa_registers  # type: ignore[import-not-found]
-
+    from benchmark.instruction_bank import isa_registers
     from microtaint.instrumentation.ast import EvalContext
     from microtaint.simulator import CellSimulator
     from microtaint.sleigh.engine import generate_static_rule
@@ -95,7 +105,18 @@ def test_classifier_flags_mov_vi_and_add_vd() -> None:
             input_values={r.name: 0x55 for r in regs},
             input_taint={**{r.name: 0 for r in regs}, 'RAX': 0xFF},
             simulator=sim, implicit_policy=ImplicitTaintPolicy.KEEP))
-        return bool(circ._compiled.value_independent)
+        compiled = circ._compiled
+        # `_compiled` is False before a compile is attempted and None when one
+        # was refused; either way there is no classification to read, and the
+        # test would otherwise silently report `bool(None)` as "not value
+        # independent" for a circuit that was never classified at all.
+        assert not isinstance(compiled, bool), (
+            f'{hx}: the circuit was never compiled, so the value-independence '
+            f'classification does not exist')
+        assert compiled is not None, (
+            f'{hx}: compilation was refused, so the value-independence '
+            f'classification does not exist')
+        return bool(compiled.value_independent)
 
     assert vi('4889d8') is True, 'mov rax,rbx should be value-independent'
     assert vi('48f7d0') is True, 'not rax should be value-independent'

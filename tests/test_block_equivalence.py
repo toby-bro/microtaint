@@ -25,6 +25,9 @@ import pytest
 from microtaint.taint_ir import frompcode
 from microtaint.taint_ir.frompcode import Emit, PointerPolicy, Unsupported
 from microtaint.types import Architecture
+from microtaint.taint_ir.ir import IRKey, IRProg
+from pypcode import PcodeOp
+from collections.abc import Callable
 
 _ARCH, _KEY = Architecture.AMD64, 'AMD64'
 
@@ -139,13 +142,18 @@ _SEEDS = (
 _TAINTS = ({'RBX': 0xFF}, {'RCX': 0xFF00}, {'RAX': 0x1})
 
 
-def _ops(code: bytes, base: int):
+def _ops(code: bytes, base: int) -> list[PcodeOp]:
     from microtaint.sleigh.lifter import get_context
     return get_context(_KEY).translate(code, base).ops
 
 
+#: A region runner: (taint out, values out) for one lowered program.  The
+#: values matter because a region hands the NEXT one its register state.
+RunRegion = Callable[[IRProg, dict[str, int], dict[str, int]], tuple[dict[str, int], dict[str, int]]]
+
+
 @pytest.fixture(scope='module')
-def kit():
+def kit() -> tuple[frompcode.Builder, dict[str, int], RunRegion]:
     """Builder, register layout, slot mapping and a compiled-program runner."""
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir.exec import compile_program
@@ -154,7 +162,10 @@ def kit():
     names = sorted(set(builder.name_by_off.values()))
     layout = {n: i for i, n in enumerate(names)}
 
-    def slot_of(key):
+    def slot_of(key: IRKey) -> int:
+        # only the tuple keys are placed here; a bare name never arrives
+        if not isinstance(key, tuple):
+            raise KeyError(key)
         if key[0] not in ('reg', 'regv'):
             raise KeyError(key)
         name = builder.name_by_off.get(key[1])
@@ -163,7 +174,7 @@ def kit():
         # Taint in the low half, published values in the high half.
         return layout[name] + (len(layout) if key[0] == 'regv' else 0)
 
-    def run(prog, values: dict[str, int], taints: dict[str, int]):
+    def run(prog: IRProg, values: dict[str, int], taints: dict[str, int]) -> tuple[dict[str, int], dict[str, int]]:
         capsule, _ = compile_program(prog, slot_of)
         n = 2 * len(layout)
         v = [0] * n
@@ -180,7 +191,7 @@ def kit():
 
 
 def _unicorn_states(seq: list[bytes], seed: dict[str, int],
-                    names) -> list[dict[str, int]] | None:
+                    names: list[str]) -> list[dict[str, int]] | None:
     """Register state before each instruction, from a real execution."""
     import unicorn
     import unicorn.x86_const as ux
@@ -214,12 +225,14 @@ def _unicorn_states(seq: list[bytes], seed: dict[str, int],
 @pytest.mark.parametrize('name', sorted(_SEQUENCES))
 @pytest.mark.parametrize('seed_i', range(len(_SEEDS)))
 @pytest.mark.parametrize('taint_i', range(len(_TAINTS)))
-def test_block_program_matches_the_sequence(kit, name: str, seed_i, taint_i) -> None:
+def test_block_program_matches_the_sequence(
+        kit: tuple[frompcode.Builder, dict[str, int], RunRegion],
+        name: str, seed_i: int, taint_i: int) -> None:
     builder, layout, run = kit
     seq = _SEQUENCES[name]
     seed, taint_in = _SEEDS[seed_i], _TAINTS[taint_i]
 
-    states = _unicorn_states(seq, seed, layout)
+    states = _unicorn_states(seq, seed, list(layout))
     if states is None:
         pytest.skip('Unicorn declined this sequence')
 
@@ -257,7 +270,9 @@ def test_block_program_matches_the_sequence(kit, name: str, seed_i, taint_i) -> 
 
 
 @pytest.mark.parametrize('name', sorted(_SEQUENCES))
-def test_a_clean_input_stays_clean_through_a_block(name: str, kit) -> None:
+def test_a_clean_input_stays_clean_through_a_block(
+        name: str,
+        kit: tuple[frompcode.Builder, dict[str, int], RunRegion]) -> None:
     """The untainted-input exit's premise, at block scale: no block may
     manufacture taint out of nothing."""
     builder, _layout, run = kit

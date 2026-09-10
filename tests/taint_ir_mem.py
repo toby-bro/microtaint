@@ -20,19 +20,33 @@ from __future__ import annotations
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from microtaint.taint_ir.frompcode import PointerPolicy
+from microtaint.taint_ir.ir import IRKey
 from microtaint.types import Architecture
 
 if TYPE_CHECKING:                    # deferred: unicorn and the engine are
-    from tests.oracle_harness import UcDesc  # slow to import
+    import keystone  # slow to import
 
-#: The IR keys a register by (kind, byte offset, size).
-IRKey = tuple[Any, ...]
+    from tests.oracle_harness import UcDesc
+
+#: One input state as the IR keys it: ('reg', offset, size) / ('mem', k).
 IRState = dict[IRKey, int]
-#: A ground-truth row: register/flag masks, plus '@mem' as per-byte taint.
-MemTruth = dict[str, Any]
+
+
+@dataclass
+class MemTruth:
+    """Per-bit ground truth for one instruction: registers and the data page.
+
+    Memory is its own field rather than an '@mem' entry among the register
+    masks: the two carry different things (a mask per register, a byte of taint
+    per address), and a sentinel key every caller has to remember to skip is
+    how a byte list ends up being OR-ed as though it were a mask.
+    """
+
+    regs: dict[str, int] = field(default_factory=dict[str, int])
+    mem: list[int] = field(default_factory=list[int])
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 CODE_ADDR = 0x1000
@@ -115,32 +129,26 @@ def _uc_run_mem(desc: UcDesc, code: bytes, reg_vals: dict[str, int],
         ef = uc.reg_read(desc.eflags_reg)
         for fname, bit in desc.flags.items():
             out[fname] = (ef >> bit) & 1
-    out['@mem'] = list(uc.mem_read(DATA_ADDR, DATA_LEN))
-    return out
+    return MemTruth(regs=out, mem=list(uc.mem_read(DATA_ADDR, DATA_LEN)))
 
 
 def ground_truth_mem(desc: UcDesc, code: bytes, reg_taint: dict[str, int],
                      reg_vals: dict[str, int], mem_taint: Sequence[int],
                      mem_vals: Sequence[int]) -> MemTruth:
-    """Per-bit sensitivity over registers and the data page.
-
-    Returns a dict of register/flag masks plus '@mem', a list of per-byte taint.
-    """
+    """Per-bit sensitivity over registers and the data page."""
     base_regs = {n: (reg_vals.get(n, 0) & ~reg_taint.get(n, 0) & desc.mask)
                  for n in desc.gp}
     base_regs[_PTR[desc.tag]] = DATA_ADDR
     base_mem = [mem_vals[i] & ~mem_taint[i] & 0xFF for i in range(DATA_LEN)]
     base = _uc_run_mem(desc, code, base_regs, base_mem)
 
-    result: MemTruth = {k: (0 if k != '@mem' else [0] * DATA_LEN) for k in base}
+    result = MemTruth(regs=dict.fromkeys(base.regs, 0), mem=[0] * DATA_LEN)
 
     def accumulate(out: MemTruth) -> None:
-        for k in base:
-            if k == '@mem':
-                for i in range(DATA_LEN):
-                    result['@mem'][i] |= base['@mem'][i] ^ out['@mem'][i]
-            else:
-                result[k] |= base[k] ^ out[k]
+        for k, v in base.regs.items():
+            result.regs[k] |= v ^ out.regs[k]
+        for i in range(DATA_LEN):
+            result.mem[i] |= base.mem[i] ^ out.mem[i]
 
     for src in desc.gp:
         # The pointer is NOT held fixed: a tainted address bit is the case the
@@ -282,7 +290,7 @@ def run_mem_bank(isa: str = 'AMD64', n_vec: int = 4, seed: int = 7,
             # A few tainted bits: on one non-pointer register and in memory.
             others = [n for n in desc.gp if n != _PTR[isa]]
             reg_taint[rng.choice(others)] = 1 << rng.randint(0, 63)
-            if policy == 'avalanche' and rng.random() < 0.35:
+            if policy is PointerPolicy.AVALANCHE and rng.random() < 0.35:
                 # A secret-dependent address: bits 3..5 keep every reachable
                 # address inside the 64-byte window, so the oracle can still
                 # enumerate it.
@@ -316,18 +324,19 @@ def run_mem_bank(isa: str = 'AMD64', n_vec: int = 4, seed: int = 7,
                 written = written_registers(arch, case.code)
             except Exception:
                 written = None
-            under, over = {}, {}
+            under: dict[str, int] = {}
+            over: dict[str, int] = {}
             for k in list(desc.gp) + list(desc.flags):
                 if written is not None and k in desc.flags and k not in written:
                     continue
                 g = int(got_reg.get(alias[k], 0))
-                r = int(truth.get(k, 0))
+                r = int(truth.regs.get(k, 0))
                 if r & ~g:
                     under[k] = r & ~g
                 if g & ~r:
                     over[k] = g & ~r
             for i in range(DATA_LEN):
-                g, r = got_mem[i] & 0xFF, truth['@mem'][i] & 0xFF
+                g, r = got_mem[i] & 0xFF, truth.mem[i] & 0xFF
                 if r & ~g:
                     under[f'mem[{i}]'] = r & ~g
                 if g & ~r:
@@ -353,8 +362,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--isas', nargs='*', default=['AMD64'])
     ap.add_argument('--vectors', type=int, default=4)
-    ap.add_argument('--policy', default='avalanche',
-                    choices=['avalanche', 'concrete'])
+    ap.add_argument('--policy', default=PointerPolicy.AVALANCHE,
+                    type=PointerPolicy, choices=list(PointerPolicy))
     args = ap.parse_args(argv)
     for isa in args.isas:
         rep = run_mem_bank(isa, n_vec=args.vectors, policy=args.policy)
