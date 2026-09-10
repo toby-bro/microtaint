@@ -7,9 +7,12 @@ OP_CALL_CELL bytecode dispatches directly to cell_c's C entry point,
 bypassing all Python boundaries inside the hot loop.
 """
 
-from typing import Any
+from collections.abc import Callable
 
+from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext, LogicCircuit
+from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
+from microtaint.types import ImplicitTaintPolicy
 
 def cell_capi_loaded() -> bool:
     """True if the cell_c fast-path CAPI is loaded, so OP_CALL_CELL reaches
@@ -62,10 +65,10 @@ class CompiledCircuit:
         self,
         input_taint: dict[str, int],
         input_values: dict[str, int],
-        pcode: Any,
-        implicit_policy: Any = ...,
-        shadow_memory: Any = ...,
-        mem_reader: Any = ...,
+        pcode: PCodeCellEvaluatorC,
+        implicit_policy: ImplicitTaintPolicy = ...,
+        shadow_memory: BitPreciseShadowMemory = ...,
+        mem_reader: Callable[[int, int], int] | None = ...,
     ) -> dict[str, int]:
         """
         Faster variant of evaluate() that takes context fields directly.
@@ -79,9 +82,9 @@ class CompiledCircuit:
         self,
         taint_list: list[int],
         val_list: list[int],
-        pcode: Any,
+        pcode: PCodeCellEvaluatorC,
         name_to_slot: dict[str, int],
-    ) -> Any:
+    ) -> dict[str, int] | None:
         """Array-gather register taint eval over slot-indexed lists; None when
         the circuit is not c_evaluable."""
 
@@ -90,9 +93,9 @@ class CompiledCircuit:
         taint_addr: int,
         val_addr: int,
         n_slots: int,
-        pcode: Any,
+        pcode: PCodeCellEvaluatorC,
         name_to_slot: dict[str, int],
-    ) -> Any:
+    ) -> dict[str, int] | None:
         """Array-gather register eval over raw uint64 C arrays, given by
         ADDRESS.  Writes the result directly and atomically."""
 
@@ -101,8 +104,8 @@ class CompiledCircuit:
         taint_addr: int,
         val_addr: int,
         n_slots: int,
-        *args: Any,
-    ) -> Any:
+        *args: object,
+    ) -> dict[str, int] | None:
         """Memory eval over raw uint64 C arrays; atomic.  Returns the memory
         writes as (addr, size, taint)."""
 
@@ -110,7 +113,7 @@ class CompiledCircuit:
         self,
         input_taint: dict[str, int],
         input_values: dict[str, int],
-        pcode: Any,
+        pcode: PCodeCellEvaluatorC,
     ) -> dict[str, int] | None:
         """
         C-array taint eval for register-only, non-PC circuits.  Bit-identical to
@@ -123,9 +126,9 @@ class CompiledCircuit:
         self,
         input_taint: dict[str, int],
         input_values: dict[str, int],
-        pcode: Any,
-        shadow_memory: Any,
-        mem_reader: Any,
+        pcode: PCodeCellEvaluatorC,
+        shadow_memory: BitPreciseShadowMemory,
+        mem_reader: Callable[[int, int], int] | None,
     ) -> dict[str, int] | None:
         """
         C-array taint eval for memory circuits (loads/stores/mem-ALU): register
@@ -147,7 +150,7 @@ class CompiledCircuit:
 
 def compile_circuit(
     circuit: LogicCircuit,
-    pcode: Any = ...,
+    pcode: PCodeCellEvaluatorC = ...,
 ) -> CompiledCircuit:
     """
     Compile a LogicCircuit AST to bytecode.

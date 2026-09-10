@@ -21,7 +21,7 @@ are interchangeable and can be diff-tested against each other.
 # ruff: noqa: PLC0415, S603
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from microtaint.taint_ir.exec import SlotOf
@@ -33,6 +33,7 @@ import subprocess
 import tempfile
 
 from microtaint.taint_ir import ir as _ir
+from microtaint.taint_ir.ir import IRKey
 
 _BIN = {
     _ir.AND: '&', _ir.OR: '|', _ir.XOR: '^', _ir.ADD: '+', _ir.SUB: '-',
@@ -40,7 +41,7 @@ _BIN = {
 }
 
 
-def _slot(slot_of: SlotOf, key: Any) -> int:
+def _slot(slot_of: SlotOf, key: IRKey) -> int:
     s = slot_of(key)
     if s is None:
         raise KeyError(f'no state slot for register {key!r}')
@@ -146,7 +147,7 @@ void mt_call(int idx, const uint64_t *v, const uint64_t *t, uint64_t *o) {{
 
 
 def compile_batch(sources: list[str], *, opt: str = '-O3', cc: str | None = None,
-                  workdir: str | None = None) -> tuple[Any, float]:
+                  workdir: str | None = None) -> tuple[ctypes.CDLL, float]:
     """Compile many generated functions into one shared object and dlopen it.
 
     Returns (ctypes.CDLL, compile_seconds).  Batching matters: the compiler's
@@ -174,18 +175,21 @@ _FN = ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint64),
                        ctypes.POINTER(ctypes.c_uint64))
 
 
-def bind_driver(lib: Any) -> tuple[Any, Any]:
+def bind_driver(lib: ctypes.CDLL) -> tuple[ctypes._FuncPointer,
+                                          ctypes._FuncPointer]:
     """(bench, call) bound to the compiled batch."""
     lib.mt_bench.restype = ctypes.c_double
     lib.mt_bench.argtypes = [ctypes.c_int] + [ctypes.POINTER(ctypes.c_uint64)] * 3 \
         + [ctypes.c_long]
     lib.mt_call.restype = None
     lib.mt_call.argtypes = [ctypes.c_int] + [ctypes.POINTER(ctypes.c_uint64)] * 3
-    return lib.mt_bench, lib.mt_call
+    bench: ctypes._FuncPointer = lib.mt_bench
+    call: ctypes._FuncPointer = lib.mt_call
+    return bench, call
 
 
-def bind(lib: Any, name: str) -> Any:
-    fn = getattr(lib, name)
+def bind(lib: ctypes.CDLL, name: str) -> ctypes._FuncPointer:
+    fn: ctypes._FuncPointer = getattr(lib, name)
     fn.restype = None
     fn.argtypes = [ctypes.POINTER(ctypes.c_uint64)] * 3
     return fn

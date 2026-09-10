@@ -1,5 +1,4 @@
-from typing import Any
-
+from microtaint.emulator.wrapper import RegReadDescriptor
 from microtaint.instrumentation.ast import InstructionCellExpr
 from microtaint.types import Architecture
 
@@ -37,8 +36,10 @@ class DecodedOps:
     #: `next_instr_addr -> n_ops` entry so a forward skip to the end resolves.
     imark_to_pc: dict[int, int]
     #: The SP_REGISTER input offsets this instruction reads.
-    input_reg_offsets: Any
-    _uc_arrays: Any
+    input_reg_offsets: set[int]
+    #: The cached uc_reg_read_batch descriptor for this instruction's
+    #: inputs; see wrapper.RegReadDescriptor.
+    _uc_arrays: RegReadDescriptor | None
 
     def get_buf_bytes(self) -> bytes: ...
 
@@ -56,8 +57,9 @@ class PCodeCellEvaluator:
         """Arm (or disarm) per-evaluate frame sharing, emptying the cache and
         pool.  Called once per top-level evaluate."""
 
-    def evaluate_concrete_state_shared(self, cell: Any, regs: dict[str, int],
-                                       mem: dict[int, int]) -> Any:
+    def evaluate_concrete_state_shared(self, cell: InstructionCellExpr,
+                                       regs: dict[str, int],
+                                       mem: dict[int, int]) -> int:
         """Frame-sharing variant of evaluate_concrete_state: run the whole
         instruction once per distinct (instruction, register inputs) and read
         each output's slice off the cached frame."""

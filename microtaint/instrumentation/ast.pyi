@@ -1,5 +1,15 @@
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable
+from typing import Protocol
+
+class ShadowLike(Protocol):
+    """What an EvalContext needs of a taint memory: the mask at an address.
+
+    Both BitPreciseShadowMemory (the emulator's) and TaintMemory (the
+    standalone API's) are passed here, and ast.pyx reads only this.
+    """
+
+    def read_mask(self, address: int, size: int) -> int: ...
 
 from microtaint.instrumentation.cell_c.circuit_c import CompiledCircuit
 from microtaint.simulator import CellSimulator, MachineState
@@ -22,7 +32,7 @@ class EvalContext:
     input_values: dict[str, int]
     simulator: CellSimulator | None
     implicit_policy: ImplicitTaintPolicy
-    shadow_memory: Any | None
+    shadow_memory: ShadowLike | None
     mem_reader: Callable[[int, int], int] | None
     #: `str(simulator.arch)`, cached for the TaintOperand fast path.
     arch_str: str
@@ -35,7 +45,7 @@ class EvalContext:
         input_values: dict[str, int],
         simulator: CellSimulator | None = ...,
         implicit_policy: ImplicitTaintPolicy = ...,
-        shadow_memory: Any | None = ...,
+        shadow_memory: ShadowLike | None = ...,
         mem_reader: Callable[[int, int], int] | None = ...,
     ) -> None: ...
 

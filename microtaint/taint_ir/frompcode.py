@@ -23,7 +23,6 @@ instruction in one basic block: see `_predicated_write`.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
 
 from pypcode import PcodeOp, Varnode
 
@@ -50,6 +49,7 @@ from microtaint.taint_ir.ir import (
     ULT,
     UREM,
     XOR,
+    Access,
     IRProg,
 )
 from microtaint.types import ArchLike
@@ -81,7 +81,7 @@ class Unsupported(Exception):
     there, instead of searching for the boundary by lowering repeatedly.
     """
 
-    def __init__(self, *args: Any, cut_at: int | None = None) -> None:
+    def __init__(self, *args: object, cut_at: int | None = None) -> None:
         super().__init__(*args)
         self.cut_at = cut_at
 
@@ -151,14 +151,14 @@ class SymFrame:
         #: so a read has to resolve them through the parent instead.
         self.killed: set[tuple[str, int]] = set()
 
-    def _space(self, sp: Any) -> dict[int, tuple[int, int]]:
+    def _space(self, sp: str) -> dict[int, tuple[int, int]]:
         if sp == 'register':
             return self.reg
         if sp == 'unique':
             return self.uniq
         raise Unsupported(f'space {sp}')
 
-    def _cell(self, sp: Any, off: int) -> tuple[int, int] | None:
+    def _cell(self, sp: str, off: int) -> tuple[int, int] | None:
         """The (node, size) at `off`, materialising a declared register's input
         node the first time it is read."""
         d = self._space(sp)
@@ -183,7 +183,7 @@ class SymFrame:
                 return c
         return None
 
-    def read(self, sp: Any, off: int, size: int) -> int:
+    def read(self, sp: str, off: int, size: int) -> int:
         p = self.p
         if size > 8:
             raise Unsupported('wide varnode')
@@ -225,7 +225,7 @@ class SymFrame:
                 k += 1
         return p.mask(base, size * 8)
 
-    def write(self, sp: Any, off: int, size: int, node: int) -> None:
+    def write(self, sp: str, off: int, size: int, node: int) -> None:
         p = self.p
         if size > 8:
             raise Unsupported('wide varnode')
@@ -365,7 +365,7 @@ class Builder:
         self.be = be
         self.arch = arch
 
-    def build(self, ops: list[Any], end_addr: int, *, emit: Emit = Emit.TAINT,
+    def build(self, ops: list[PcodeOp], end_addr: int, *, emit: Emit = Emit.TAINT,
               block: bool = False) -> IRProg:
         """Lower `ops`.  `emit` selects which frame becomes the program's
         outputs: 'taint' (the shipped behaviour) or 'value'.
@@ -399,7 +399,7 @@ class Builder:
         #: SLEIGH re-emits the same LOAD once per flag that reads it, so
         #: de-duplicating here turns `add rax, [rbx+16]`'s three identical
         #: loads into one access.
-        self.accesses: list[dict[str, Any]] = []
+        self.accesses: list[Access] = []
         self.access_map: dict[tuple[str, int, int], int] = {}
         # Predicate stack: (until_pc, saved_pred_value, saved_pred_taint).
         self.pred_v = p.const(1)
@@ -562,7 +562,7 @@ class Builder:
                      self.p.mask(tnt, self.pc_size * 8))
 
     # -- opaque operations ---------------------------------------------
-    def _emit_callother(self, ops: list[Any], pc: int, op: PcodeOp) -> None:
+    def _emit_callother(self, ops: list[PcodeOp], pc: int, op: PcodeOp) -> None:
         """An operation p-code does not model (crc32, aes, a fence).
 
         Its VALUE is unknowable here, so the only safe thing is to make sure
@@ -621,7 +621,8 @@ class Builder:
     #: opaque-result check follow it instead of refusing at the first reader.
     _MOVEMENT_OPS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'PIECE'}
 
-    def _invention_stays_opaque(self, ops: list[Any], pc: int, out: Any) -> bool:
+    def _invention_stays_opaque(self, ops: list[PcodeOp], pc: int,
+                                out: Varnode) -> bool:
         """Can this opaque result reach the end of the instruction unread?
 
         The value written for a CALLOTHER is a fabrication -- p-code does not

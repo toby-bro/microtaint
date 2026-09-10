@@ -4,6 +4,7 @@ import ctypes
 import logging
 import os
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from typing import TYPE_CHECKING
 
 import unicorn.unicorn_py3.unicorn as _uu
@@ -261,11 +262,13 @@ class _RegisterFile:
         )
 
     # -- per-instruction ------------------------------------------------
-    def offsets_arrays(self, offsets: frozenset[int]) -> RegReadDescriptor:
+    def offsets_arrays(self, offsets: AbstractSet[int]) -> RegReadDescriptor:
         """Build and cache the arrays for one instruction's input offsets.
 
         Keyed first on ``id(offsets)``, because the caller hands back the same
-        frozenset object every time and identity is cheaper than hashing it.
+        set object every time (DecodedOps holds it) and identity is cheaper
+        than hashing it.  A plain `set`, despite what this said before: the
+        parameter is typed as the abstract kind so both spellings fit.
         """
         oid = id(offsets)
         cached = self._cache.get(oid)
@@ -279,7 +282,7 @@ class _RegisterFile:
         cached = self._cache[key] = self._cache[oid] = self._build(offsets)
         return cached
 
-    def _build(self, offsets: frozenset[int]) -> RegReadDescriptor:
+    def _build(self, offsets: AbstractSet[int]) -> RegReadDescriptor:
         uc_names: list[str] = []      # one per vals slot
         uc_ids: list[int] = []        # one per uc_reg_read call
         call_slots: list[int] = []    # first vals slot each call writes
@@ -1343,7 +1346,7 @@ class MicrotaintWrapper:
             # (This Python fallback keeps the ctypes call path; the trailing raw
             # addresses are for the Cython hook's C-level path only.)
             _ids, _vals, _ptrs, _n, _names, _need_ef, _n_calls = _uc_arrs[:7]
-            if _ids is None:
+            if _ids is None or _vals is None:
                 self._pre_regs = {}
             else:
                 # _n_calls = number of uc_reg_read calls (one per UC reg id);

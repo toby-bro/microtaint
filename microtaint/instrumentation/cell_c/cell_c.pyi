@@ -10,7 +10,6 @@ extensions (notably circuit_c) import to call into the cell evaluator
 without going through the Python C-API at all.
 """
 
-from typing import Any
 
 from microtaint.instrumentation.ast import InstructionCellExpr
 from microtaint.types import Architecture
@@ -18,7 +17,7 @@ from microtaint.types import Architecture
 # CellCAPI PyCapsule. Imported by circuit_c at module init via
 # PyCapsule_Import("cell_c._cell_capi"). Not intended for Python use;
 # typed as Any because PyCapsule has no useful Python interface.
-_cell_capi: Any
+_cell_capi: object
 
 class PCodeCellEvaluatorC:
     """

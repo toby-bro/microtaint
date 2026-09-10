@@ -18,13 +18,16 @@ expressions, so the first expression found for a truth table is a cheapest one.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 #: A synthesised one-bit expression.  Recursive, so a `type` statement:
 #:   ('const', 0|1) and ('leaf', i)  -- the two nullary forms
 #:   ('not', expr)                   -- negation
 #:   (op, lhs, rhs)                  -- and / or / xor
-type BoolExpr = (tuple[str, int]
-                 | tuple[str, BoolExpr]
-                 | tuple[str, BoolExpr, BoolExpr])
+type BoolExpr = (tuple[Literal['const'], int]
+                 | tuple[Literal['leaf'], int]
+                 | tuple[Literal['not'], BoolExpr]
+                 | tuple[Literal['and', 'or', 'xor'], BoolExpr, BoolExpr])
 
 #: A cone's leaves, identified by the caller's own node indices.
 Leaves = tuple[int, ...]

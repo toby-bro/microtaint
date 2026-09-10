@@ -4,7 +4,7 @@ import functools
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 import unicorn.arm64_const as uc_arm64_const
 import unicorn.mips_const as uc_mips_const
@@ -39,6 +39,9 @@ from unicorn import (
 from microtaint.instrumentation.cell import PCodeCellEvaluator, PCodeFallbackNeeded
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
 from microtaint.types import Architecture
+
+if TYPE_CHECKING:                    # ast imports this module back
+    from microtaint.instrumentation.ast import InstructionCellExpr
 
 logger = logging.getLogger(__name__)
 
@@ -376,7 +379,10 @@ class CellSimulator:
             use_c = False
         self.use_c = use_c
         self._pcode: PCodeCellEvaluator | PCodeCellEvaluatorC | None = None
-        self._pcode_fallback_exc: Any = None
+        #: The fallback exception CLASS, cached so the hot path's `except`
+        #: needs no per-call import.  PCodeFallbackNeeded until an
+        #: evaluator says otherwise.
+        self._pcode_fallback_exc: type[BaseException] = PCodeFallbackNeeded
         # Native Cython evaluator used on a BIG-ENDIAN target to evaluate
         # register-only instructions, which `_pcode` is disabled for (the native
         # register file is byte-offset indexed and therefore wrong for BE memory
@@ -517,7 +523,7 @@ class CellSimulator:
         address: int,
         _size: int,
         _value: int,
-        _user_data: Any,
+        _user_data: object,
     ) -> bool:
         if type_ == UC_MEM_FETCH_UNMAPPED:
             return False  # Do not map on instruction fetch unmapped
@@ -642,7 +648,7 @@ class CellSimulator:
             self._be_native = PCodeCellEvaluator(self.arch)
         return self._be_native
 
-    def _use_native_be(self, cell: Any) -> bool:
+    def _use_native_be(self, cell: InstructionCellExpr) -> bool:
         """True iff `cell`'s instruction should be evaluated by the native kernel
         on this (big-endian) target: only native-BE-safe instructions qualify, and
         only when Unicorn is the active concrete engine (the native `_pcode` path,
@@ -892,7 +898,8 @@ class CellSimulator:
 
             self._dirtied_memory.add(addr)
 
-    def evaluate_concrete(self, cell: Any, v_state: MachineState) -> int:
+    def evaluate_concrete(self, cell: InstructionCellExpr,
+                          v_state: MachineState) -> int:
         # --- P-code native path (use_unicorn=False) ---
         # Pass MachineState dicts directly to the pcode evaluator —
         # no flat-dict copy, no 'MEM_<hex>_<size>' key construction per call.
@@ -926,7 +933,9 @@ class CellSimulator:
         mask = (1 << (cell.out_bit_end - cell.out_bit_start + 1)) - 1
         return int((val >> cell.out_bit_start) & mask)
 
-    def evaluate_differential(self, cell: Any, or_inputs: dict[str, int], and_inputs: dict[str, int]) -> int:
+    def evaluate_differential(self, cell: InstructionCellExpr,
+                              or_inputs: dict[str, int],
+                              and_inputs: dict[str, int]) -> int:
         """
         Evaluate the differential of `cell` given two flat input dicts:
         `or_inputs`  is the high-polarity image  (V | T) of every input,

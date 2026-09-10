@@ -31,11 +31,22 @@ import types
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent / 'microtaint'
 
-#: A stub class whose name starts with `_` is deliberate type-checking fiction
-#: -- `_Capsule` names an opaque PyCapsule handle so signatures can talk about
-#: it -- and has no runtime counterpart by design.
-def _is_fiction(name: str) -> bool:
-    return name.startswith('_')
+def _is_fiction(node: ast.ClassDef) -> bool:
+    """Is this stub class deliberately without a runtime counterpart?
+
+    Two kinds are:
+
+      * an underscore-prefixed name -- `_Capsule` gives signatures a word
+        for an opaque PyCapsule handle;
+      * a Protocol -- it describes a SHAPE that several unrelated classes
+        satisfy, which is the entire point of writing one, so demanding a
+        class of that name at runtime asks for the opposite.
+    """
+    if node.name.startswith('_'):
+        return True
+    return any(isinstance(b, ast.Name) and b.id == 'Protocol'
+               or isinstance(b, ast.Attribute) and b.attr == 'Protocol'
+               for b in node.bases)
 
 
 def _stubs() -> list[tuple[pathlib.Path, types.ModuleType, ast.Module]]:
@@ -61,7 +72,7 @@ def _declared(node: ast.ClassDef) -> set[str]:
 
 def _classes(tree: ast.Module) -> list[ast.ClassDef]:
     return [n for n in tree.body
-            if isinstance(n, ast.ClassDef) and not _is_fiction(n.name)]
+            if isinstance(n, ast.ClassDef) and not _is_fiction(n)]
 
 
 def _module_names(tree: ast.Module) -> set[str]:

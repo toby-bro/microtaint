@@ -641,17 +641,15 @@ class IRProg:
         m: dict[int, int] = {}
 
         def expand(tree: BoolExpr, leaves: Sequence[int]) -> int:
-            kind = tree[0]
-            if kind == 'leaf':
-                node: int = m[leaves[tree[1]]]
-                return node
-            if kind == 'const':
+            if tree[0] == 'leaf':
+                return m[leaves[tree[1]]]
+            if tree[0] == 'const':
                 return out.const(tree[1])
-            if kind == 'not':
+            if tree[0] == 'not':
                 return out.op(XOR, expand(tree[1], leaves), out.const(1))
             lhs = expand(tree[1], leaves)
             rhs = expand(tree[2], leaves)
-            return out.op({'and': AND, 'or': OR, 'xor': XOR}[kind], lhs, rhs)
+            return out.op({'and': AND, 'or': OR, 'xor': XOR}[tree[0]], lhs, rhs)
 
         for n, (op, a, b, c, imm) in enumerate(self.nodes):
             if not self.live[n]:

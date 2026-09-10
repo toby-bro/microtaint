@@ -5,7 +5,6 @@ declared here is either the COMPILER handing over a finished plan (once per
 distinct block) or a test entry point; none of it runs per block execution.
 """
 from collections.abc import Callable
-from typing import Any
 
 class _Capsule: ...
 
@@ -21,7 +20,7 @@ def mem_mask(mem: _Capsule, addr: int, size: int) -> int: ...
 def plan_new(
     size: int,
     regions: list[tuple[int, int, list[tuple[int, int, int]], int]],
-    keepalive: Any,
+    keepalive: object,
     ids_addr: int = ...,
     ptrs_addr: int = ...,
     vals_addr: int = ...,
@@ -48,7 +47,7 @@ def runner_on_block(runner: _Capsule, plan: _Capsule, address: int,
                     reg_val: list[int]) -> int: ...
 def runner_finish(runner: _Capsule, completed: bool) -> None: ...
 def runner_abandon(runner: _Capsule) -> None: ...
-def runner_stats(runner: _Capsule) -> dict[str, Any]: ...
+def runner_stats(runner: _Capsule) -> dict[str, int]: ...
 def runner_reports(runner: _Capsule) -> list[tuple[int, int]]: ...
 
 # ---------------------------------------------------------------------------
@@ -57,8 +56,9 @@ def runner_reports(runner: _Capsule) -> list[tuple[int, int]]: ...
 # keep the hook alive for as long as it is registered.
 # ---------------------------------------------------------------------------
 
-def hook_new(fastctx: int, compiler: Callable[..., Any], ids: int, ptrs: int,
-             vals: int, n_calls: int, reg_slots: Any) -> _Capsule:
+def hook_new(fastctx: int, compiler: Callable[[int, int], object | None],
+             ids: int, ptrs: int, vals: int, n_calls: int,
+             reg_slots: list[int]) -> _Capsule:
     """The block hook's C context.
 
     `fastctx` is the InstructionHook's C context (from
