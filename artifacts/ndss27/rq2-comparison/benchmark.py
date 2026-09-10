@@ -4054,6 +4054,10 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
             'latency_p95_per_instr_ms': round(pct(per_instr_lats, 95), 4),
             'latency_p99_per_instr_ms': round(pct(per_instr_lats, 99), 4),
             'latency_p99_single_instr_ms': round(pct(single_instr_lats, 99), 4),
+            # p100: the worst single propagation step in the whole corpus.  The
+            # tail is what the engine's hard cases cost, and a percentile hides
+            # the one case that is 10x the rest.
+            'latency_p100_per_instr_ms': round(max(per_instr_lats), 4),
             'throughput_per_s': round(1e9 / median_lat_non_pe, 1) if median_lat_non_pe > 0 else 0,
             'throughput_per_s_all': round(1e9 / median_lat_all, 1) if median_lat_all > 0 else 0,
             'throughput_per_s_mean': round(1e9 / mean_lat, 1) if mean_lat > 0 else 0,

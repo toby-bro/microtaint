@@ -76,6 +76,7 @@ def add_per_step_metrics(report):
         m['latency_p95_per_instr_ms'] = round(_pct(per_step, 95), 4)
         m['latency_p99_per_instr_ms'] = round(_pct(per_step, 99), 4)
         m['latency_p99_single_instr_ms'] = round(_pct(single, 99), 4)
+        m['latency_p100_per_instr_ms'] = round(max(per_step) if per_step else 0.0, 4)
 
 
 def main() -> int:

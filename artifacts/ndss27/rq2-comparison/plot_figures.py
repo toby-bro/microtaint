@@ -173,17 +173,24 @@ def plot_perf_latency():
     # per-test tail measures sequence length rather than propagation cost.
     p50_us = [_pt(t)['latency_p50_per_instr_ms'] * 1000.0 for t in tool_keys]
     p99_us = [_pt(t)['latency_p99_per_instr_ms'] * 1000.0 for t in tool_keys]
+    p100_us = [_pt(t)['latency_p100_per_instr_ms'] * 1000.0 for t in tool_keys]
 
     x = np.arange(len(engines))
-    width = 0.35
+    # Three bars where there were two, each two-thirds as wide, so the group
+    # occupies the same space.
+    width = 0.35 * 2 / 3
 
     fig, ax = plt.subplots(figsize=(5.5, 3.0 * PLOT_SCALE))
     colors = bar_colors(engines)
 
-    ax.bar(x - width / 2, p50_us, width, label='p50 latency (per step)', color=colors, edgecolor='black', linewidth=0.6)
+    ax.bar(x - width, p50_us, width, label='p50 (per step)', color=colors, edgecolor='black', linewidth=0.6)
     ax.bar(
-        x + width / 2, p99_us, width, label='p99 latency (per step)',
+        x, p99_us, width, label='p99 (per step)',
         color=colors, edgecolor='black', linewidth=0.6, hatch='//',
+    )
+    ax.bar(
+        x + width, p100_us, width, label='p100 (per step)',
+        color=colors, edgecolor='black', linewidth=0.6, hatch='xx',
     )
 
     ax.set_ylabel('Latency (µs, log scale)', fontsize=11)
