@@ -86,7 +86,9 @@ def test_the_compiled_path_does_not_under_taint_the_differential(
         answers[path] = out.get(dest, 0)
     missing = answers[TaintPath.DIFFERENTIAL] & ~answers[TaintPath.COMPILED]
     # The compiled path is allowed to be TIGHTER only above the loaded word.
-    assert answers[TaintPath.COMPILED], f'{label}: compiled says clean, differential says {answers[TaintPath.DIFFERENTIAL]:#x}'
+    assert answers[TaintPath.COMPILED], (
+        f'{label}: compiled says clean, differential says '
+        f'{answers[TaintPath.DIFFERENTIAL]:#x}')
     assert missing == 0 or (missing & 0xFF) == 0, (
         f'{label}: compiled path drops bits the differential keeps: '
         f'differential={answers[TaintPath.DIFFERENTIAL]:#x} compiled={answers[TaintPath.COMPILED]:#x}')

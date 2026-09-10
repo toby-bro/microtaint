@@ -24,6 +24,7 @@ parity tests compare against.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
+import functools
 import os
 from typing import TYPE_CHECKING
 
@@ -64,14 +65,14 @@ _CACHE: dict[ProgramKey, Compiled | None] = {}
 _PENDING: dict[ProgramKey, tuple[IRProg, int]] = {}
                            # last failed), for one awaiting a slot that does not
                            # exist yet
-_ENABLED = None
-
-
+@functools.cache
 def enabled() -> bool:
-    global _ENABLED
-    if _ENABLED is None:
-        _ENABLED = os.environ.get('MICROTAINT_TAINT_IR') != '0'
-    return _ENABLED
+    """Is the compiled taint path on?  Read once, then remembered.
+
+    The environment is sampled on the first call rather than at import, so a
+    test that sets the variable before touching the engine still decides.
+    """
+    return os.environ.get('MICROTAINT_TAINT_IR') != '0'
 
 
 def _arch_key(arch: ArchLike) -> str:
@@ -120,7 +121,7 @@ def _lift(key: ProgramKey, arch: ArchLike, code: bytes,
         return None
 
 
-def program_for(arch: ArchLike, code: bytes, name_to_slot: dict[str, int], *,
+def program_for(arch: ArchLike, code: bytes, name_to_slot: dict[str, int], *,  # noqa: C901
                 force: bool = False) -> Compiled | None:
     """-> (capsule, function address) for the engine's layout, or None.
 
@@ -169,14 +170,14 @@ def program_for(arch: ArchLike, code: bytes, name_to_slot: dict[str, int], *,
     # Two caller names at one offset would make the write ambiguous: the IR
     # names registers by offset, so only one of them could receive it.
     seen: dict[int, int] = {}
-    for nm in name_to_slot:
+    for nm, slot in name_to_slot.items():
         off = name_offset(arch, nm)
         if off is not None and off in touched:
-            if off in seen and seen[off] != name_to_slot[nm]:
+            if off in seen and seen[off] != slot:
                 _CACHE[key] = None
                 _PENDING.pop(key, None)
                 return None
-            seen[off] = name_to_slot[nm]
+            seen[off] = slot
     for (_kind, k) in prog.inputs:
         if slot_of(k) is None:
             # A slot may appear later; keep the lift so the retry is a slot

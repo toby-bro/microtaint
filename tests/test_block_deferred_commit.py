@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415, S110, S603, S607, ARG005
 """A block's taint must not take effect until the block has completed.
 
 A block hook fires BEFORE the block executes, so its taint is speculative.  That

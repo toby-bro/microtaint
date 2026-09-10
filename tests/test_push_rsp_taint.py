@@ -12,7 +12,6 @@ because it extracted dependencies per INSTRUCTION rather than per TARGET, so
 `push`'s two outputs -- whose dependencies are disjoint -- shared one set; see
 test_rsp_output_depends_on_rsp_not_on_the_pushed_register for the root cause.
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 from collections.abc import Iterable

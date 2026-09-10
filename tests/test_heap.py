@@ -15,7 +15,7 @@ Usage
     uv run pytest test_heap.py -v
 """
 
-# ruff: noqa: PLC0415, S110, PLW1510, S603
+# ruff: noqa: PLW1510
 
 from __future__ import annotations
 

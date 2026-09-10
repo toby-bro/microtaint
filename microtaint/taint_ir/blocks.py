@@ -25,11 +25,11 @@ from pypcode import PcodeOp
 
 from microtaint.taint_ir.frompcode import LIFT_BASE, Builder, Emit, Unsupported
 from microtaint.taint_ir.ir import IRProg
+from microtaint.types import ArchLike
 
 #: Lower instructions [i, j) of the block: the program, and the index it
 #: had to cut at (None when it lowered the whole run).
 Lower = Callable[[int, int], tuple[IRProg | None, int | None]]
-from microtaint.types import ArchLike
 
 __all__ = ['Region', 'instruction_starts', 'plan_block']
 

@@ -48,7 +48,6 @@ Usage
     uv run pytest test_bit_propagation.py -v
 """
 
-# ruff: noqa: ARG001, PLC0415
 
 from __future__ import annotations
 

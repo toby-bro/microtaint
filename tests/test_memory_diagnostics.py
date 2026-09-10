@@ -14,7 +14,7 @@ Covers:
  10. pop rbp from tainted memory
 """
 
-# ruff: noqa: B007, RUF059, F841, ARG002, PLC0415, ARG005
+# ruff: noqa: B007, RUF059, F841
 
 from __future__ import annotations
 

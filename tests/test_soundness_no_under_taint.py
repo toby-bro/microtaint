@@ -39,7 +39,6 @@ tainted input bit, XOR outputs, OR the results).  This is the operational
 definition of "the bits whose values genuinely depend on tainted inputs".
 """
 
-# ruff: noqa: PLC0415
 
 from __future__ import annotations
 

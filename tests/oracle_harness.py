@@ -23,7 +23,7 @@ This module is import-only (no test_ prefix); tests/test_oracle_harness.py runs 
 bounded gate, and it can be driven standalone for full-bank sweeps:
     .venv/bin/python -m tests.oracle_harness --isas AMD64 --vectors 8
 """
-# ruff: noqa: PLC0415  (deferred imports: unicorn and the engine are
+
 # optional at collection time and expensive to import eagerly)
 from __future__ import annotations
 

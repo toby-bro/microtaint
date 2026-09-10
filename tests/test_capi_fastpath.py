@@ -26,7 +26,7 @@ def test_cell_capi_loaded_without_cell_c_on_syspath() -> None:
         print('CAPI_LOADED' if c.cell_capi_loaded() else 'CAPI_SLOW')
         """,
     )
-    out = subprocess.run(  # noqa: S603
+    out = subprocess.run(
         [sys.executable, '-c', code], capture_output=True, text=True, timeout=120, check=False,
     )
     assert 'CAPI_LOADED' in out.stdout, (

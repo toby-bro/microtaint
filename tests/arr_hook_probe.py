@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415, S110
 """Run one guest under the engine and print its taint outcome as JSON.
 
 A separate process on purpose: MICROTAINT_ARR_HOOK is read once, at import, so

@@ -142,7 +142,7 @@ def _J(imm21: int, rd: int, opcode: int) -> int:
 # ---------------------------------------------------------------------------
 
 
-def encode(asm_line: str) -> bytes:  # noqa: C901
+def encode(asm_line: str) -> bytes:
     """
     Encode one RISC-V assembly line and return its 4-byte LE bytes.
 

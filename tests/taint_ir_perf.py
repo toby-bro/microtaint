@@ -13,7 +13,6 @@ that diff is reported rather than averaged away.
     .venv/bin/python -m tests.taint_ir_perf --isas AMD64 --top 15
     .venv/bin/python -m tests.taint_ir_perf --update        # rewrite baseline
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 import ctypes
@@ -160,28 +159,28 @@ def measure_isa(isa: str, spec: ISASpec, *, iters: int = 200000,
     tnts = tnts + [0] * (total - len(tnts))
     V = (ctypes.c_uint64 * total)(*vals)
     T = (ctypes.c_uint64 * total)(*tnts)
-    O = (ctypes.c_uint64 * total)()
+    OUT = (ctypes.c_uint64 * total)()
 
     rows: list[PerfRow] = []
     mismatches: list[Mismatch] = []
     n_jit, jit_compile_total = [0], [0.0]
-    for i, (label, p) in enumerate(zip(labels, progs)):
+    for i, (label, p) in enumerate(zip(labels, progs, strict=True)):
         try:
             cap, _d = compile_program(p, slot_of)
         except KeyError:
             continue
         got_i = taint_ir_c.run(cap, list(vals), list(tnts))
         for i_slot in range(total):
-            O[i_slot] = tnts[i_slot]
-        call(i, V, T, O)
+            OUT[i_slot] = tnts[i_slot]
+        call(i, V, T, OUT)
         bad: list[IRKey] = []
         for k, _n in p.outputs:
             sl = slot_of(k)
-            if sl is not None and O[sl] != got_i[sl]:
+            if sl is not None and OUT[sl] != got_i[sl]:
                 bad.append(k)
         if bad:
             mismatches.append((label, bad))
-        ns_c = bench(i, V, T, O, iters)
+        ns_c = bench(i, V, T, OUT, iters)
         ns_i, _sink = taint_ir_c.bench(cap, list(vals), list(tnts), max(2000, iters // 20))
         # The host emitter is checked against the interpreter on the same state
         # before it is timed: a code-generation bug that only shows on some

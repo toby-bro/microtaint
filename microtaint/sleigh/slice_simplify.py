@@ -96,7 +96,7 @@ def _const(value: int, size: int) -> _Vn:
     return _Vn('const', value & ((1 << (size * 8)) - 1) if size else value, size)
 
 
-def _algebraic_src(name: str, outp: SliceVn, ins: list[SliceVn],
+def _algebraic_src(name: str, outp: SliceVn, ins: list[SliceVn],  # noqa: C901
                    boolean: set[VNKey]) -> SliceVn | None:
     """The varnode `outp` provably equals under an algebraic identity on the
     (const-resolved) inputs `ins`, or None to keep the op.  The boolean-only

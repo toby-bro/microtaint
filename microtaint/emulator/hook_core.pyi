@@ -18,6 +18,10 @@ from typing import TypeAlias
 
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
+
+# The wrapper imports this module, so naming its type here would be a cycle at
+# runtime; in a stub the import is only ever read by the checker.
+from microtaint.emulator.wrapper import MicrotaintWrapper
 from microtaint.instrumentation.ast import LogicCircuit
 from microtaint.instrumentation.cell import DecodedOps
 from microtaint.simulator import CellSimulator
@@ -29,10 +33,6 @@ UcMemRead: TypeAlias = Callable[[ctypes.c_void_p, int, ctypes.Array[ctypes.c_uby
 UcRegReadBatch: TypeAlias = Callable[[ctypes.c_void_p, object, object, int], int]
 #: The engine's state_format: (name, bits) per register, in slot order.
 FormatKey: TypeAlias = tuple[tuple[str, int], ...]
-
-# The wrapper imports this module, so naming its type here would be a cycle
-# at runtime; in a stub the import is only ever read by the checker.
-from microtaint.emulator.wrapper import MicrotaintWrapper
 
 class InstructionHook:
     """

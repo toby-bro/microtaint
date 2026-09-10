@@ -80,7 +80,7 @@ _STACK_BASE = 0x500000
 # ---------------------------------------------------------------------------
 
 
-def _brute_force_gt(  # noqa: C901
+def _brute_force_gt(
     bytestring: bytes,
     state: dict[str, int],
     taint: dict[str, int],
@@ -193,7 +193,7 @@ def test_cmovl_sequence_uses_chained_circuit() -> None:
     CMOVcc skips are recognised as intra-instruction and the sequence is correctly
     wrapped in a ChainedCircuit.
     """
-    from microtaint.instrumentation.ast import ChainedCircuit as CC  # local import for clarity  # noqa: PLC0415
+    from microtaint.instrumentation.ast import ChainedCircuit as CC  # local import for clarity
 
     circuit = generate_static_rule(Architecture.AMD64, _XOR_CMP_MOV_CMOVL, _REGS_GP)
     assert isinstance(circuit, CC), (

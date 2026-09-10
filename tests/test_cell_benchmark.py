@@ -24,7 +24,6 @@ Structure
                                     simulating a real taint-analysis trace
 """
 
-# ruff: noqa: ARG001
 
 from __future__ import annotations
 

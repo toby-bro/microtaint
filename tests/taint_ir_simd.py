@@ -19,7 +19,6 @@ Unicorn is executing something else, and the form is skipped and named.  A hand
 written list of prefixes goes stale the moment the bank grows, and it went stale
 here: it named four forms and there were eight.
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 import random

@@ -53,7 +53,7 @@ class _Shadow:
             self._m[addr + i] = (mask >> (8 * i)) & 0xFF
 
 
-def _mem_reader(addr: int, size: int) -> int:  # noqa: ARG001 - concrete mem reads all-zero here
+def _mem_reader(addr: int, size: int) -> int:
     return 0
 
 

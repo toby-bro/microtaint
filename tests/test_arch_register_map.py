@@ -64,7 +64,7 @@ def _bank_offsets() -> dict[str, collections.Counter[int]]:
             continue
         try:
             decoded = _get_decoded(arch, rec.bytes)
-        except Exception:  # noqa: S112 - a form that will not lift is not the subject
+        except Exception:
             continue
         for off in decoded.input_reg_offsets:
             per[rec.isa][off] += 1

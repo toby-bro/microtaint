@@ -14,13 +14,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from microtaint.taint_ir import ir as _ir
-from microtaint.taint_ir.ir import IRProg, Serialized
-from microtaint.taint_ir.ir import SlotOf as SlotOf  # re-exported: the IR
-
-                                                      # defines what a key is
+from microtaint.taint_ir.ir import IRProg, Serialized, SlotOf
 
 if TYPE_CHECKING:                    # stub-only: an opaque PyCapsule handle
     from microtaint.instrumentation.cell_c.taint_ir_c import _Capsule
+
+#: `SlotOf` is re-exported on purpose: every caller that compiles a program
+#: also has to write one, and the IR is what defines what a key is.  Naming it
+#: here is what makes the re-export explicit to the checker.
+__all__ = ['SerializedForC', 'SlotOf', 'compile_program', 'serialize_for_c']
 
 
 class SerializedForC(Serialized):

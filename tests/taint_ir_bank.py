@@ -12,7 +12,6 @@ AFTER constant folding and dead-code elimination.  Unlike the interpreted count
 this includes the value computation the taint rules depend on, so it is the
 honest total a compiled taint circuit would have to execute.
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 from typing import Literal
@@ -79,7 +78,7 @@ def ir_step(arch: Architecture, code: bytes, regs: list[Register],
         raise Declined(prog[1])
     from microtaint.taint_ir.frompcode import builder_for
     declared = builder_for(arch).declared
-    size_of = {nm: sz for nm, sz in declared.values()}
+    size_of = dict(declared.values())
     from microtaint.instrumentation.cell import _build_reg_maps
     size_of.update(_build_reg_maps(arch)[1])
 

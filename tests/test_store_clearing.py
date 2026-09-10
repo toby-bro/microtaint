@@ -19,7 +19,6 @@ Expected behaviour after the fix:
     calls shadow.write_mask(addr, val, size) which clears or sets taint correctly.
 """
 
-# ruff: noqa: ARG005
 
 from __future__ import annotations
 

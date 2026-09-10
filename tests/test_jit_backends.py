@@ -41,13 +41,13 @@ _ITERS = '3000'
 
 
 def _build(cc: str, extra: list[str], out: str) -> str:
-    subprocess.run([cc, '-O2', *extra, f'-I{_INC}', '-o', out, _SRC],  # noqa: S603
+    subprocess.run([cc, '-O2', *extra, f'-I{_INC}', '-o', out, _SRC],
                    check=True, capture_output=True)
     return out
 
 
 def _run(argv: list[str]) -> str:
-    proc = subprocess.run(argv, capture_output=True, text=True, check=False)  # noqa: S603
+    proc = subprocess.run(argv, capture_output=True, text=True, check=False)
     assert proc.returncode == 0, (
         f'{argv[0]} reported a disagreement between the emitter and the '
         f'interpreter:\n{proc.stdout}\n{proc.stderr}')

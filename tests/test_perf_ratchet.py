@@ -297,7 +297,7 @@ def _throughput(ns_vals: list[float]) -> dict[str, float]:
 
 def _git(git: str, *args: str) -> str:
     # args are all controlled literals (git subcommands); git is a resolved abs path.
-    out = subprocess.check_output([git, *args], cwd=_HERE, stderr=subprocess.DEVNULL)  # noqa: S603
+    out = subprocess.check_output([git, *args], cwd=_HERE, stderr=subprocess.DEVNULL)
     return out.decode().strip()
 
 
@@ -501,7 +501,9 @@ def test_perf_timing_bench() -> None:
     per_isa = {}
     for isa, rs in by_isa.items():
         ns_i = [_number(r, 'ns') for r in rs]
-        per_isa[isa] = {'ns': _stats(ns_i), 'throughput': _throughput(ns_i), 'cells': _stats([_number(r, 'cells') for r in rs])}
+        per_isa[isa] = {'ns': _stats(ns_i),
+                        'throughput': _throughput(ns_i),
+                        'cells': _stats([_number(r, 'cells') for r in rs])}
 
     rec = _base_record('timing', rows)
     rec['summary'] = summary

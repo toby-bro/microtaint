@@ -19,7 +19,6 @@ Run directly for a report:
 The pytest gate lives in tests/test_perop_c_soundness.py; this module is the
 harness both it and the ratchet import.
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 import random

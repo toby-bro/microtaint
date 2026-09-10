@@ -90,7 +90,7 @@ def _true_taint(sim: CellSimulator, hexs: str, name: str, bit_end: int,
 @pytest.mark.parametrize(('label', 'hexs', 'size', 'cells', 'exact'),
                          [(k, *v) for k, v in CASES.items()], ids=list(CASES))
 def test_cell_free(label: str, hexs: str, size: int, cells: dict[str, int],
-                   exact: dict[str, int]) -> None:  # noqa: ARG001
+                   exact: dict[str, int]) -> None:
     _cached_generate_static_rule.cache_clear()
     circ = generate_static_rule(ARCH, bytes.fromhex(hexs), REGS)
     outs = {_target_name(a): a for a in _reg_targets(circ)}

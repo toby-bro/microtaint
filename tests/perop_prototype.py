@@ -261,7 +261,8 @@ if __name__ == '__main__':
         try:
             got = engine_scheme_b(A.AMD64, code, regs, it, iv)
         except Unsupported as e:
-            print(f'{label}: UNSUPPORTED {e}'); continue
+            print(f'{label}: UNSUPPORTED {e}')
+            continue
         ref = reference_taint(A.AMD64, code, regs, it, iv)
         v = classify(got, ref, [r for r in rn if r in got])
         print(f'{label}: exact={v.exact} under={v.under} over={v.over}')

@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415, S603, S607
 """The C block hook, against the per-instruction path, on a real guest.
 
 `blockpath.h` is gated in isolation by tests/test_block_runtime_c.py, which is

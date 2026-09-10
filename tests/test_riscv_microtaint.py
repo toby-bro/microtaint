@@ -45,10 +45,8 @@ Run
     pytest test_riscv_microtaint.py -v --benchmark-warmup=on --benchmark-min-rounds=20
 """
 
-# ruff: noqa: ARG001
 
 from __future__ import annotations
-
 
 import pytest
 import unicorn
@@ -951,7 +949,7 @@ def test_pcode_fallback_rate(
     for asm in ARITHMETIC_PRIMITIVES:
         try:
             _run_microtaint(sim_pcode, asm, {'T1': 1, 'T2': 1}, {'T1': FULL_TAINT_64}, circuit_cache)
-        except Exception:  # noqa: S110
+        except Exception:
             pass
     pcode = sim_pcode._pcode
     if pcode is None:

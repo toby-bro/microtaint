@@ -29,7 +29,6 @@ the per-bit output sensitivity.  This is the strongest possible ground
 truth short of a formal proof.
 """
 
-# ruff: noqa: PLC0415
 
 from __future__ import annotations
 

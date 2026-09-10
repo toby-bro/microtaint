@@ -1,4 +1,3 @@
-# ruff: noqa: S603, S607, S110, PLC0415
 """The UAF read callback is armed by the first poison, not at startup.
 
 Unicorn calls a UC_HOOK_MEM_READ callback on every guest load.  Registering one

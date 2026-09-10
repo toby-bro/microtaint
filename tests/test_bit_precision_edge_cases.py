@@ -22,7 +22,6 @@ G-F  AVALANCHE with concrete-zero operand: not a fixable precision issue
 ARM64 cases are also included.
 """
 
-# ruff: noqa: ARG002
 
 from __future__ import annotations
 

@@ -9,7 +9,6 @@ phase is measured against:
     Phases 1-2 must preserve);
   * the CURRENT engine is SOUND vs Unicorn per-bit ground truth (no under-taint).
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 import pytest

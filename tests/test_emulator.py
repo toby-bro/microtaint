@@ -1,4 +1,4 @@
-# ruff: noqa: S110, F841, PLC0415
+# ruff: noqa: F841
 import os
 import platform
 import subprocess
@@ -18,7 +18,7 @@ def compile_c_code(source_code: str) -> str:
     os.close(fd)
     # -nostdlib removes ALL glibc overhead and crashes
     cmd = ['gcc', '-nostdlib', '-O0', '-fno-stack-protector', '-o', path, '-x', 'c', '-']
-    subprocess.run(cmd, input=source_code.encode(), check=True)  # noqa: S603
+    subprocess.run(cmd, input=source_code.encode(), check=True)
     return path
 
 

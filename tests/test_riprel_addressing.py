@@ -93,7 +93,7 @@ def test_riprel_store_resolves_against_runtime_pc(simulator: CellSimulator, regs
         input_taint={'RAX': 0xFF},  # AL tainted
         simulator=simulator,
         shadow_memory=BitPreciseShadowMemory(),
-        mem_reader=lambda addr, sz: 0,  # noqa: ARG005
+        mem_reader=lambda addr, sz: 0,
     )
     out = circuit.evaluate(ectx)
     mem = {k: v for k, v in out.items() if k.startswith('MEM') and v}
@@ -118,7 +118,7 @@ def test_riprel_arith_flows_memory_operand(simulator: CellSimulator, regs: list[
         input_taint={},
         simulator=simulator,
         shadow_memory=shadow,
-        mem_reader=lambda addr, sz: 0,  # noqa: ARG005
+        mem_reader=lambda addr, sz: 0,
     )
     out = circuit.evaluate(ectx)
     assert out.get('RAX', 0) != 0, (
@@ -145,7 +145,7 @@ def test_arm64_pcrel_literal_load_reads_tainted() -> None:
         input_taint={},
         simulator=arm_sim,
         shadow_memory=shadow,
-        mem_reader=lambda addr, sz: 0,  # noqa: ARG005
+        mem_reader=lambda addr, sz: 0,
     )
     out = circuit.evaluate(ectx)
     assert out.get('x0', 0) != 0, (

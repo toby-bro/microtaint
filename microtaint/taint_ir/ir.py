@@ -37,6 +37,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import TypedDict
 
+from microtaint.taint_ir import boolsynth as bs
 from microtaint.taint_ir.boolsynth import BoolExpr
 
 #: What a program keys an input or an output by: a register NAME, or a
@@ -88,8 +89,6 @@ class Serialized(TypedDict):
     outputs: list[tuple[int, int]]
     n_nodes: int
     cost: int
-
-from microtaint.taint_ir import boolsynth as bs
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
@@ -146,7 +145,7 @@ def _s64(v: int) -> int:
     return v - (1 << 64) if v >> 63 else v
 
 
-def eval_op(op: str, a: int, b: int, c: int, imm: int) -> int:
+def eval_op(op: str, a: int, b: int, c: int, imm: int) -> int:  # noqa: C901
     """Evaluate one node from its already-evaluated inputs.
 
     Shared by constant folding and the reference interpreter so the two can
@@ -284,7 +283,7 @@ class IRProg:
     def known_bits(self, n: int) -> int:
         return self.kbits.get(n, 64)
 
-    def _set_bits(self, n: int, op: str, a: int, b: int, c: int) -> None:
+    def _set_bits(self, n: int, op: str, a: int, b: int) -> None:  # noqa: C901
         """Propagate the significant-bit bound through the ops where it is
         cheap and exact to do so."""
         kb = self.kbits
@@ -339,7 +338,7 @@ class IRProg:
             self.kbits[n] = bits
         return n
 
-    def op(self, op: str, a: int = -1, b: int = -1, c: int = -1) -> int:
+    def op(self, op: str, a: int = -1, b: int = -1, c: int = -1) -> int:  # noqa: C901
         """Emit `op`, folding when every operand is constant and applying the
         algebraic identities that make the folded program small."""
         nodes = self.nodes
@@ -355,7 +354,7 @@ class IRProg:
                 if r is not None:
                     return r
             n = self._emit(op, a, b)
-            self._set_bits(n, op, a, b, -1)
+            self._set_bits(n, op, a, b)
             return n
         if op in _UNARY:
             if nodes[a][0] == CONST:
@@ -366,7 +365,7 @@ class IRProg:
             if op == NOT and nodes[a][0] == NOT:
                 return nodes[a][1]
             n = self._emit(op, a)
-            self._set_bits(n, op, a, -1, -1)
+            self._set_bits(n, op, a, -1)
             return n
         if op == SEL:
             if nodes[c][0] == CONST:
@@ -377,11 +376,11 @@ class IRProg:
             if r is not None:
                 return r
             n = self._emit(SEL, a, b, c)
-            self._set_bits(n, SEL, a, b, c)
+            self._set_bits(n, SEL, a, b)
             return n
         raise ValueError(f'unknown IR op {op}')
 
-    def _simplify_binary(self, op: str, a: int, b: int,
+    def _simplify_binary(self, op: str, a: int, b: int,  # noqa: C901
                          ca: int | None, cb: int | None) -> int | None:
         """Identities worth having: masks and shifts by lift-time constants are
         everywhere in flag macros, and folding them is most of the win."""
@@ -578,7 +577,7 @@ class IRProg:
             if live[n]:
                 continue
             live[n] = True
-            op, a, b, c, _imm = self.nodes[n]
+            _op, a, b, c, _imm = self.nodes[n]
             for x in (a, b, c):
                 if x >= 0 and not live[x]:
                     stack.append(x)
@@ -624,7 +623,7 @@ class IRProg:
                    if self.live[n] and op not in (CONST, INV, INT))
 
     # -- finalisation --------------------------------------------------
-    def finalize(self) -> IRProg:
+    def finalize(self) -> IRProg:  # noqa: C901
         """A compact, contiguous program with every one-bit cone expanded.
 
         Two things happen here that the backends should not have to know about:

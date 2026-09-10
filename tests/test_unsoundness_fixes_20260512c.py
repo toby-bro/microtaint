@@ -93,7 +93,7 @@ _STACK_BASE = 0x500000
 # ---------------------------------------------------------------------------
 
 
-def _brute_force_gt(  # noqa: C901
+def _brute_force_gt(
     bytestring: bytes,
     state: dict[str, int],
     taint: dict[str, int],

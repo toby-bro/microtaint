@@ -14,7 +14,6 @@ The protocol is what keeps the emitted program straight-line and call-free, and
 it is only valid while no address depends on a value the same instruction
 loaded, which the builder checks.
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 import random

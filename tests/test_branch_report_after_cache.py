@@ -1,4 +1,3 @@
-# ruff: noqa: S603, S607
 """A branch that becomes tainted only on a LATER visit must still be reported.
 
 The hot path caches an instruction's taint answer per address: the whole input

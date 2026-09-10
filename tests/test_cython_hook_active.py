@@ -1,4 +1,3 @@
-# ruff: noqa: S603, S607, PLC0415
 """The Cython fast-path instruction hook must actually build and arm.
 
 The emulator's hot path is the Cython ``InstructionHook``.  When its

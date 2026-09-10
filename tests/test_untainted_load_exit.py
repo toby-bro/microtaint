@@ -61,7 +61,7 @@ def _build(body: str) -> str:
         f.write(src)
     r = subprocess.run(
         ['gcc', '-O1', '-static', '-nostdlib', '-fno-stack-protector', '-o', elf, c],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     if r.returncode != 0:
         pytest.skip(f'cannot build test guest: {r.stderr[:200]}')
@@ -100,7 +100,7 @@ print('LEAK' if ('[sc]' in low or 'side-channel' in low or 'side_channel' in low
                  or '[bof]' in low or 'implicit' in low) else 'NOLEAK')
 """
     r = subprocess.run([sys.executable, '-c', code, elf, payload.hex()],
-                       capture_output=True, text=True, timeout=600)
+                       capture_output=True, text=True, timeout=600, check=False)
     if r.returncode != 0:
         pytest.skip(f'guest run failed: {r.stderr[-300:]}')
     return r.stdout.strip().splitlines()[-1] == 'LEAK'

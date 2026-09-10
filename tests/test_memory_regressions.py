@@ -63,7 +63,7 @@ Run with:
     uv run pytest test_regressions.py -v
 """
 
-# ruff: noqa: ARG001, ARG002, PLC0415, S110, S607, PLW1510, S603, ARG005
+# ruff: noqa: PLW1510
 
 from __future__ import annotations
 

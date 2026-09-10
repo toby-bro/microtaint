@@ -32,7 +32,7 @@ def _check_isa(isa: str) -> tuple[int, int, list[tuple[str, str, str, str]]]:
     for ins in spec.instructions:
         try:
             circ = generate_static_rule(spec.arch, ins.bytes, spec.regs)
-        except Exception:  # noqa: S112
+        except Exception:
             continue
         vals = dict.fromkeys(rn, 0)
         taint = dict.fromkeys(rn, 0)
@@ -40,7 +40,7 @@ def _check_isa(isa: str) -> tuple[int, int, list[tuple[str, str, str, str]]]:
             taint[r] = (1 << min(16, rbits[r])) - 1
         try:
             normal = circ.evaluate(EvalContext(input_values=vals, input_taint=taint, simulator=sim))
-        except Exception:  # noqa: S112
+        except Exception:
             continue
         comp = getattr(circ, '_compiled', None)
         if comp is None or comp is False:

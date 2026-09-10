@@ -37,7 +37,7 @@ store time) in every Tier-4 entry.  On a version hit, additionally verify
 ``register_taint == input_snapshot`` before adopting the cached output.
 """
 
-# ruff: noqa: S603,PLW1510,PLC0415,C901,S607,ARG001,S110
+# ruff: noqa: PLW1510
 
 # ---------------------------------------------------------------------------
 # Imports

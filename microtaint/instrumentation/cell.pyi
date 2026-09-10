@@ -1,5 +1,5 @@
 from microtaint.emulator.wrapper import RegReadDescriptor
-from microtaint.instrumentation.ast import CellLike, InstructionCellExpr
+from microtaint.instrumentation.ast import CellLike
 from microtaint.types import Architecture
 
 class PCodeFallbackNeeded(Exception):

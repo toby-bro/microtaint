@@ -64,7 +64,7 @@ _BASE_ADDR = 0x400000
 _PAGE_SIZE = 0x1000
 
 
-def _brute_force_gt(  # noqa: C901
+def _brute_force_gt(
     bytestring: bytes,
     state: dict[str, int],
     taint: dict[str, int],
@@ -97,7 +97,7 @@ def _brute_force_gt(  # noqa: C901
             uc.reg_write(_UC_REGS[reg], s[reg])
         # RSP at top of stack page so we don't fault on push/pop or
         # implicit stack writes from any tested sequence.
-        from unicorn.x86_const import UC_X86_REG_RSP  # noqa: PLC0415
+        from unicorn.x86_const import UC_X86_REG_RSP
         uc.reg_write(UC_X86_REG_RSP, stack_base + _PAGE_SIZE - 0x100)
         uc.emu_start(_BASE_ADDR, _BASE_ADDR + len(bytestring))
         results.append({reg: uc.reg_read(_UC_REGS[reg]) for reg in ('RAX', 'RBX', 'RCX', 'RDX')})

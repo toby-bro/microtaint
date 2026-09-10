@@ -53,7 +53,7 @@ def _agrees(arch: Architecture, instr_hex: str, out_reg: str, out_bits: int,
             state = MachineState(regs=dict(regs), mem={})
             uc._execute(bytes.fromhex(instr_hex), state)
             ref = uc._read_reg(out_reg) & out_mask
-        except Exception:  # noqa: S112 -- Unicorn rejected this state, not a kernel concern
+        except Exception:
             continue
         checked += 1
         assert nat == ref, f'{instr_hex} regs={regs}: native={nat:#x} unicorn={ref:#x}'

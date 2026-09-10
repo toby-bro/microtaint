@@ -1,4 +1,3 @@
-# ruff: noqa: S603, S607, PLC0415
 """The C-level register-read path must be bit-identical to the ctypes path.
 
 _read_pre_regs can read the instruction's live input registers either through

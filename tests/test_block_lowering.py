@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 """A basic block can be lowered as ONE program, and the branch rule that allows it.
 
 Lowering a whole block beats chaining per-instruction programs, because

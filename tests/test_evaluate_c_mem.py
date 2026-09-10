@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 """evaluate_c_mem must be bit-identical to circuit.evaluate (do_evaluate).
 
 Memory circuits (loads, stores, mem-ALU) can run the C-array interior via
@@ -105,14 +104,15 @@ def _run_case(arch: Architecture, hx: str, *, rax_taint: int,
     compiled = circ._compiled
     # `_compiled` is False until the first evaluate forces compilation,
     # which every one of these sites has already done.
-    assert compiled is not None and not isinstance(compiled, bool)
+    assert not isinstance(compiled, bool), 'the circuit was never compiled'
+    assert compiled is not None, 'compilation was refused'
 
     cmem = compiled.evaluate_c_mem(dict(taint), dict(values), _c_kernel(sim),
                                    shadow, mem_reader)
     return ref, cmem, compiled
 
 
-@pytest.mark.parametrize('label,hx', [(c[1], c[2]) for c in CASES])
+@pytest.mark.parametrize(('label', 'hx'), [(c[1], c[2]) for c in CASES])
 @pytest.mark.parametrize('rax_taint', [0x00, 0xFF, FULL, 0xF0F0])
 @pytest.mark.parametrize('mem_taint', [
     {},                         # clean memory
@@ -171,7 +171,8 @@ def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int,
     compiled = circ._compiled
     # `_compiled` is False until the first evaluate forces compilation,
     # which every one of these sites has already done.
-    assert compiled is not None and not isinstance(compiled, bool)
+    assert not isinstance(compiled, bool), 'the circuit was never compiled'
+    assert compiled is not None, 'compilation was refused'
 
     # Engine on an identically-seeded fresh shadow, via the pointer path.
     shadow = BitPreciseShadowMemory()
@@ -192,7 +193,7 @@ def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int,
     return ref, got_reg, got_mem
 
 
-@pytest.mark.parametrize('label,hx', [(c[1], c[2]) for c in CASES])
+@pytest.mark.parametrize(('label', 'hx'), [(c[1], c[2]) for c in CASES])
 @pytest.mark.parametrize('rax_taint', [0x00, 0xFF, FULL, 0xF0F0])
 @pytest.mark.parametrize('mem_taint', [
     {}, {0: 0xFF},
@@ -268,7 +269,8 @@ def test_c_mem_arms_per_evaluate_frame_recycle() -> None:
     compiled = circ._compiled
     # `_compiled` is False until the first evaluate forces compilation,
     # which every one of these sites has already done.
-    assert compiled is not None and not isinstance(compiled, bool)
+    assert not isinstance(compiled, bool), 'the circuit was never compiled'
+    assert compiled is not None, 'compilation was refused'
     assert getattr(compiled, 'has_mem_ops', 0), 'expected a memory circuit with cells'
 
     kernel = _c_kernel(sim)
@@ -327,7 +329,8 @@ def test_c_mem_persistent_kernel_sequence() -> None:
         )
         ref = circ.evaluate(ectx)
         compiled = circ._compiled
-        assert compiled is not None and not isinstance(compiled, bool)
+        assert not isinstance(compiled, bool), 'the circuit was never compiled'
+        assert compiled is not None, 'compilation was refused'
         cmem = compiled.evaluate_c_mem(dict(taint), dict(values), _c_kernel(sim),
                                        shadow, reader)
         if cmem is None:

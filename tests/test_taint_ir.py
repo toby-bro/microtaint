@@ -11,7 +11,6 @@ Three claims, each of which has already been wrong at least once:
     against it on many random states, so that comparison is a permanent test
     rather than something run once.
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 import random

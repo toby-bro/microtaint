@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 import pytest
 
 from microtaint.debug.reg_aliases import RegisterAliases
@@ -107,7 +106,7 @@ def arm64_registers() -> list[Register]:
     ]
 
 
-def extract_flag(ast_output: dict[str, int], flag_name: str) -> int:  # noqa: C901
+def extract_flag(ast_output: dict[str, int], flag_name: str) -> int:
     if flag_name in ast_output:
         return ast_output[flag_name]
     # ARM friendly flags resolve to their Sleigh names (N -> ng) via the helper.

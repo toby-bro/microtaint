@@ -188,10 +188,10 @@ def _cell_wide_native(evaluator: Evaluator, arch: Architecture, instr: str,
     or_in: dict[str, int] = {}
     and_in: dict[str, int] = {}
     mask = (1 << (nbytes * 8)) - 1
-    for base in in_vals:
+    for base, value in in_vals.items():
         key = f'VW_{base:#x}_{nbytes}'
-        or_in[key] = (in_vals[base] | in_taints[base]) & mask
-        and_in[key] = (in_vals[base] & ~in_taints[base]) & mask
+        or_in[key] = (value | in_taints[base]) & mask
+        and_in[key] = (value & ~in_taints[base]) & mask
     cell = types.SimpleNamespace(instruction=instr, out_reg=f'VW_{out_base:#x}_{nbytes}',
                                  out_bit_start=0, out_bit_end=nbytes * 8 - 1)
     diff = ev.evaluate_differential(cell, dict(or_in), dict(and_in))

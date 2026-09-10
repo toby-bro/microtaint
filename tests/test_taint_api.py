@@ -29,7 +29,7 @@ Run
     uv run pytest test_taint_api.py -v
 """
 
-# ruff: noqa: ARG001, ARG002, PLC0415, S110, S607, PLW1510, S603
+# ruff: noqa: PLW1510
 
 from __future__ import annotations
 

@@ -7,7 +7,6 @@ under-taints (soundness bugs -- must be zero).
 
   python -m tests.perop_floors_study [ISA ...] [--n N]
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 import random

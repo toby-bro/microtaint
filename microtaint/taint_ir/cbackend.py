@@ -48,7 +48,7 @@ def _slot(slot_of: SlotOf, key: IRKey) -> int:
     return s
 
 
-def emit_c(prog: IRProg, slot_of: SlotOf, name: str) -> str:
+def emit_c(prog: IRProg, slot_of: SlotOf, name: str) -> str:  # noqa: C901
     """C source for one finalized program."""
     p = prog.finalize() if any(op == _ir.BOOLSYM for op, *_r in prog.nodes) else prog
     inv = {n: k for (kind, k), n in p.inputs.items() if kind == 'v'}

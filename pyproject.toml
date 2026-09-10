@@ -297,6 +297,24 @@ select = [
     "PLW0603", # module-level state shared with an emulator callback
     "PLW1510", # subprocess.run where the caller inspects returncode itself
 ]
+# tests/ drives emulators, assemblers and compilers, and the rules below are
+# wrong for that in the same way they are wrong for artifacts/ rather than
+# merely inconvenient.  Everything else in the lint config still applies, and
+# the mypy config does not relax for tests at all.
+"tests/**" = [
+    "PLC0415", # unicorn / qiling / keystone are imported inside the test that
+               # needs them, so a suite that does not touch the emulator does
+               # not pay to load it (and is not skipped when it is missing)
+    "S110",    # a bank sweep must not abort on the one instruction that will
+    "S112",    # ... not lift; it counts the decline and carries on
+    "S603",    # every subprocess call here is a command line written in-repo
+    "S607",    # ... and gcc / qemu are meant to come from PATH
+    "ARG001",  # Unicorn and Qiling hook callbacks have fixed signatures, so a
+    "ARG002",  # ... hook that ignores an argument still has to declare it
+    "ARG005",
+    "C901",    # a bank driver is a sweep a reader follows top to bottom, and
+               # splitting it to satisfy a complexity budget hides that
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

@@ -41,7 +41,7 @@ def _mem_outputs(hex_bytes: str, shadow: BitPreciseShadowMemory, sim: CellSimula
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.KEEP,
         shadow_memory=shadow,
-        mem_reader=lambda addr, sz: 0,  # noqa: ARG005
+        mem_reader=lambda addr, sz: 0,
     )
     out = circuit.evaluate(ectx)
     return {k: v for k, v in out.items() if k.startswith('MEM_')}

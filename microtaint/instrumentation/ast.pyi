@@ -2,6 +2,12 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Protocol
 
+# ast.pyx imports these modules back, so at runtime the import would be a
+# cycle; in a stub it is only ever read by the checker.
+from microtaint.instrumentation.cell_c.circuit_c import CompiledCircuit
+from microtaint.simulator import CellSimulator, MachineState
+from microtaint.types import Architecture, ImplicitTaintPolicy, Register
+
 class ShadowLike(Protocol):
     """What an EvalContext needs of a taint memory: the mask at an address.
 
@@ -25,10 +31,6 @@ class CellLike(Protocol):
     out_reg: str
     out_bit_start: int
     out_bit_end: int
-
-from microtaint.instrumentation.cell_c.circuit_c import CompiledCircuit
-from microtaint.simulator import CellSimulator, MachineState
-from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 def _build_machine_state(input_dict: dict[str, int], context: EvalContext) -> MachineState: ...
 

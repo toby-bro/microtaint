@@ -18,7 +18,6 @@ model behaves, WITHOUT needing the per-op floors (that is Phase 3b):
 The distribution says how much of the corpus is exact-for-free, how much needs a
 differential at all, and how often the window has to fire.
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 from collections import Counter

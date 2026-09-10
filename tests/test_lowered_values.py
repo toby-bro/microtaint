@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415, S112, C901
 """The lowering can publish the CPU's register VALUES, not just their taint.
 
 Block-level tainting needs the register values BETWEEN the instructions of a

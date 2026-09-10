@@ -24,13 +24,14 @@ depends on the p-code program and the taint rules, not on which random values a
 run happened to draw.  Values matter (the rules are value-aware), so they are
 drawn once per label and pinned.
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 import json
 import random
 from pathlib import Path
 from typing import Literal, TypedDict
+
+from tests.perop_c_bank import Declined, perop_c_step
 
 
 class IsaOps(TypedDict):
@@ -46,8 +47,6 @@ Measured = dict[str, IsaOps]
 Change = tuple[str, str, int | Literal['declined'], int]
 #: (isa, label, baseline op count).  A decline has no 'now' to report.
 NewDecline = tuple[str, str, int]
-
-from tests.perop_c_bank import Declined, perop_c_step
 
 BASELINE = Path(__file__).parent / 'perop_op_baseline.json'
 MASK64 = 0xFFFFFFFFFFFFFFFF

@@ -51,7 +51,12 @@ def _search(max_cost: int = 5) -> dict[int, tuple[int, BoolExpr]]:
     for cost in range(1, max_cost + 1):
         new: dict[int, tuple[int, BoolExpr]] = {}
 
-        def offer(tt: int, expr: BoolExpr) -> None:
+        # `new` and `cost` are bound as defaults, not captured: the closure is
+        # called only within this iteration, and binding says so rather than
+        # leaving it to be read as a late-binding bug.
+        def offer(tt: int, expr: BoolExpr,
+                  new: dict[int, tuple[int, BoolExpr]] = new,
+                  cost: int = cost) -> None:
             tt &= _ALL
             if tt in best or tt in new:
                 return

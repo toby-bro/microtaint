@@ -39,9 +39,10 @@ def test_both_paths_answer(label: str,
                            code: str,
                            path: TaintPath) -> None:
     out = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path=path)
-    assert isinstance(out, dict) and out, f'{label}: {path} returned nothing'
+    assert isinstance(out, dict), f'{label}: {path} returned {type(out).__name__}'
+    assert out, f'{label}: {path} returned nothing'
     # The post-state, so a register nobody touched keeps what it had.
-    for name, mask in TAINT.items():
+    for name in TAINT:
         if name in out:
             assert out[name] >= 0
     assert all(isinstance(v, int) and v >= 0 for v in out.values())

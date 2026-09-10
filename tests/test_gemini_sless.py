@@ -102,7 +102,7 @@ def arm64_registers() -> list[Register]:
     ]
 
 
-def extract_flag(ast_output: dict[str, int], flag_name: str) -> int:  # noqa: C901
+def extract_flag(ast_output: dict[str, int], flag_name: str) -> int:
     if flag_name in ast_output:
         return ast_output[flag_name]
     eflags = ast_output.get('EFLAGS', 0)

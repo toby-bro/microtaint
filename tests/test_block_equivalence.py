@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 """A block program must compute what its instructions compute in sequence.
 
 This is the correctness question block-level tainting rests on.  Lowering a
@@ -20,14 +19,15 @@ belongs with the runtime that implements it.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
+from pypcode import PcodeOp
 
 from microtaint.taint_ir import frompcode
 from microtaint.taint_ir.frompcode import Emit, PointerPolicy, Unsupported
-from microtaint.types import Architecture
 from microtaint.taint_ir.ir import IRKey, IRProg
-from pypcode import PcodeOp
-from collections.abc import Callable
+from microtaint.types import Architecture
 
 _ARCH, _KEY = Architecture.AMD64, 'AMD64'
 

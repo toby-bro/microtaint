@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 """Memory across a block region: a store must not be invisible to a later load.
 
 The two-pass memory protocol resolves EVERY load against guest memory and the

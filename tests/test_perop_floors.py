@@ -23,7 +23,6 @@ These tests prove the model is SOUND before any of it is wired into the engine:
 Bounded here for CI; the full multi-thousand-case sweep runs standalone via
 `python -m tests.perop_floors_study` (see __main__ below).
 """
-# ruff: noqa: PLC0415
 from __future__ import annotations
 
 import random
@@ -189,7 +188,7 @@ def test_perop_no_new_undertaint_vs_engine_amd64() -> None:
     whole-instruction differential catches (vs Unicorn ground truth).  Bounded
     corpus; the standalone sweep covers the full bank."""
     pytest.importorskip('unicorn')
-    n_cases, n_exact, n_new_under, examples = soundness_report('AMD64', n_per=3)
+    n_cases, _n_exact, n_new_under, examples = soundness_report('AMD64', n_per=3)
     assert n_cases > 500, f'too few cases exercised: {n_cases}'
     assert n_new_under == 0, f'NEW under-taints (soundness bugs): {examples}'
 
@@ -200,7 +199,7 @@ def test_perop_no_new_undertaint_vs_engine_arm64() -> None:
     Unicorn ground truth.  Exercises the register-name resolver (bank X0/N-Z-C-V
     -> pypcode x0/NG-ZR-CY-OV)."""
     pytest.importorskip('unicorn')
-    n_cases, n_exact, n_new_under, examples = soundness_report('ARM64', n_per=3)
+    n_cases, _n_exact, n_new_under, examples = soundness_report('ARM64', n_per=3)
     assert n_cases > 400, f'too few cases exercised: {n_cases}'
     assert n_new_under == 0, f'NEW under-taints (soundness bugs): {examples}'
 

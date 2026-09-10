@@ -44,8 +44,8 @@ def rx() -> NativeReExec:
 
 @pytest.fixture(scope='module')
 def bank_sim() -> tuple[ISASpec, CellSimulator]:
-    from benchmark.instruction_bank import load_bank  # noqa: PLC0415
-    from microtaint.simulator import CellSimulator  # noqa: PLC0415
+    from benchmark.instruction_bank import load_bank
+    from microtaint.simulator import CellSimulator
     bank = load_bank(isas={'AMD64'})['AMD64']
     return bank, CellSimulator(bank.arch)
 
@@ -54,9 +54,9 @@ def bank_sim() -> tuple[ISASpec, CellSimulator]:
 def test_reexec_matches_sleigh(rx: NativeReExec,
                                bank_sim: tuple[ISASpec, CellSimulator],
                                label: str, code: bytes, out_reg: str) -> None:
-    from microtaint.instrumentation.ast import InstructionCellExpr  # noqa: PLC0415
-    from microtaint.simulator import MachineState  # noqa: PLC0415
-    from microtaint.sleigh.engine import generate_static_rule  # noqa: PLC0415
+    from microtaint.instrumentation.ast import InstructionCellExpr
+    from microtaint.simulator import MachineState
+    from microtaint.sleigh.engine import generate_static_rule
 
     bank, sim = bank_sim
     reg_names = [r.name for r in bank.regs]
@@ -86,6 +86,6 @@ def test_reexec_matches_sleigh(rx: NativeReExec,
 
 
 def bank_reg_names(bank: ISASpec) -> list[str]:
-    from microtaint.reexec import REG_ORDER  # noqa: PLC0415
+    from microtaint.reexec import REG_ORDER
     have = {r.name for r in bank.regs}
     return [n for n in REG_ORDER if n in have]

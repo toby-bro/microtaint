@@ -123,7 +123,7 @@ def _run(arch: ArchDesc, code: bytes, gpr: dict[str, int], flag: dict[str, int])
     return out
 
 
-def _brute_gt(arch: ArchDesc, code: bytes, state: dict[str, int], taint: dict[str, int]) -> dict[str, int]:  # noqa: C901
+def _brute_gt(arch: ArchDesc, code: bytes, state: dict[str, int], taint: dict[str, int]) -> dict[str, int]:
     flagset = {f.name for f in arch.flags}
     positions: list[tuple[str, int]] = []
     for reg, mask in taint.items():

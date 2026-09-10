@@ -1,4 +1,3 @@
-# ruff: noqa: S603, S607, S110, PLC0415
 """The address-keyed decode cache must be active AND bit-exact.
 
 On a repeat visit to an address the Cython instruction hook reuses the
@@ -97,7 +96,7 @@ def test_decode_cache_is_active_and_hit() -> None:
 
     binary = _compile(_SRC)
     try:
-        wrapper, labels = _run(binary, b'A' * 64)
+        wrapper, _labels = _run(binary, b'A' * 64)
         hook = wrapper._instr_hook_obj
         assert isinstance(hook, InstructionHook), 'fast Cython hook not armed'
         assert len(hook.decode_cache) > 0, (

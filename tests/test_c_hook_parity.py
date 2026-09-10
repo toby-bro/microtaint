@@ -1,4 +1,3 @@
-# ruff: noqa: S603, S607, S110, PLC0415
 """The pure-C UC_HOOK_CODE trampoline (MICROTAINT_C_HOOK) must produce IDENTICAL
 detection results to the ctypes CFUNCTYPE(python) path.
 

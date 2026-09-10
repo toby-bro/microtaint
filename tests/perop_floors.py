@@ -474,8 +474,8 @@ class PerOpFloors:
         out = op.output
         assert out is not None    # reached only for ops that write
         try:
-            hi = _apply(name, op, [(v | t) for v, t in zip(in_v, in_t)])
-            lo = _apply(name, op, [(v & ~t) for v, t in zip(in_v, in_t)])
+            hi = _apply(name, op, [(v | t) for v, t in zip(in_v, in_t, strict=True)])
+            lo = _apply(name, op, [(v & ~t) for v, t in zip(in_v, in_t, strict=True)])
         except Unsupported:
             return _mask(out.size)
         return (hi ^ lo) & _mask(out.size)
@@ -615,7 +615,8 @@ if __name__ == '__main__':
         try:
             got = engine_perop_floors(A.AMD64, code, regs, it, iv)
         except Unsupported as e:
-            print(f'{label:16s}: UNSUPPORTED {e}'); continue
+            print(f'{label:16s}: UNSUPPORTED {e}')
+            continue
         ref = reference_taint(A.AMD64, code, regs, it, iv)
         v = classify(got, ref, [r for r in rn if r in got])
         print(f'{label:16s}: exact={v.exact} under={v.under} over={v.over}')

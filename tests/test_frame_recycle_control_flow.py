@@ -17,7 +17,6 @@ bank has no branches; this test pins the invariant directly.
 The fix seeds ``arch_pc_off`` / ``arch_pc_sz`` on every pool frame, so a
 recycled branch computes the same PC as the unshared path.
 """
-# ruff: noqa: S603
 
 from __future__ import annotations
 

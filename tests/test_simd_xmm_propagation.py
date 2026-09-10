@@ -25,7 +25,6 @@ Coverage
 - Register zeroing idiom (PXOR xmm0, xmm0): zero taint even if XMM0 was tainted
 """
 
-# ruff: noqa: ARG002
 
 from __future__ import annotations
 

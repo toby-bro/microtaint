@@ -56,7 +56,7 @@ sys.exit(2 if over else 0)
 
 
 def _run(code: str, taint: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603
+    return subprocess.run(
         [sys.executable, '-c', _CHILD, code, str(taint)],
         capture_output=True, text=True, check=False, timeout=300,
     )

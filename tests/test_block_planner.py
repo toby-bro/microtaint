@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415
 """The block planner: maximal regions that lower as one program, covering all of it.
 
 A block hook fires once per basic block, so the taint of a block wants to be one

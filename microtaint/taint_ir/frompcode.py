@@ -23,6 +23,7 @@ instruction in one basic block: see `_predicated_write`.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import ClassVar
 
 from pypcode import PcodeOp, Varnode
 
@@ -365,7 +366,7 @@ class Builder:
         self.be = be
         self.arch = arch
 
-    def build(self, ops: list[PcodeOp], end_addr: int, *, emit: Emit = Emit.TAINT,
+    def build(self, ops: list[PcodeOp], end_addr: int, *, emit: Emit = Emit.TAINT,  # noqa: C901
               block: bool = False) -> IRProg:
         """Lower `ops`.  `emit` selects which frame becomes the program's
         outputs: 'taint' (the shipped behaviour) or 'value'.
@@ -619,7 +620,8 @@ class Builder:
     #: reads only taint, never a value.  An invented value can pass through one
     #: of these and stay a lie of exactly the same shape, which is what lets the
     #: opaque-result check follow it instead of refusing at the first reader.
-    _MOVEMENT_OPS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'PIECE'}
+    _MOVEMENT_OPS: ClassVar[frozenset[str]] = frozenset(
+        {'COPY', 'INT_ZEXT', 'INT_SEXT', 'SUBPIECE', 'PIECE'})
 
     def _invention_stays_opaque(self, ops: list[PcodeOp], pc: int,
                                 out: Varnode) -> bool:
@@ -888,8 +890,9 @@ class Builder:
     #: 8-byte lane at a time with no loss.  Carry-coupled and position-sensitive
     #: opcodes are deliberately absent: splitting those would drop the coupling
     #: between lanes and under-taint.
-    _LANE_OPS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'INT_NEGATE',
-                 'INT_AND', 'INT_OR', 'INT_XOR'}
+    _LANE_OPS: ClassVar[frozenset[str]] = frozenset(
+        {'COPY', 'INT_ZEXT', 'INT_SEXT', 'INT_NEGATE',
+         'INT_AND', 'INT_OR', 'INT_XOR'})
 
     def _read_lane(self, vn: Varnode, lane: int, lsz: int) -> tuple[int, int]:
         """One 8-byte lane of a varnode, as (value, taint)."""
@@ -1061,7 +1064,7 @@ class Builder:
         ibits = isz * 8
         om = _mask_of(osz)
 
-        val, tnt = self._rule(name, op, av, at, bv, bt, osz, isz, obits, ibits, om)
+        val, tnt = self._rule(name, op, av, at, bv, bt, isz, obits, ibits, om)
         self._predicated_write(self._out(op), val, tnt)
 
     def _sext(self, node: int, bits: int) -> int:
@@ -1071,8 +1074,9 @@ class Builder:
         sh = p.const(64 - bits)
         return p.op(SAR, p.op(SHL, node, sh), sh)
 
-    def _rule(self, name: str, op: PcodeOp, av: int, at: int, bv: int, bt: int,
-              osz: int, isz: int, obits: int, ibits: int,
+    def _rule(self, name: str, op: PcodeOp, av: int, at: int,  # noqa: C901
+              bv: int, bt: int,
+              isz: int, obits: int, ibits: int,
               om: int) -> tuple[int, int]:
         p = self.p
         M = p.const(om)
@@ -1117,7 +1121,7 @@ class Builder:
 
         # ---- shifts ----
         if name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT'):
-            return self._shift(name, av, at, bv, bt, obits, ibits, om)
+            return self._shift(name, av, at, bv, bt, ibits, om)
 
         # ---- carry-coupled: the differential, inlined and exact ----
         if name in ('INT_ADD', 'INT_SUB', 'INT_2COMP'):
@@ -1202,7 +1206,7 @@ class Builder:
                 p.op(AND, p.op(SUB, a_hi, b_lo), M))
 
     def _shift(self, name: str, av: int, at: int, bv: int, bt: int,
-               obits: int, ibits: int, om: int) -> tuple[int, int]:
+               ibits: int, om: int) -> tuple[int, int]:
         p = self.p
         M = p.const(om)
         amt = bv

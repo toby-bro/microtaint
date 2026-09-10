@@ -1,4 +1,3 @@
-# ruff: noqa: S603, S607
 """The GIL-free paths must produce EXACTLY the state the GIL paths do.
 
 `mt_fast_step_nogil` answers an instruction without acquiring the GIL, from

@@ -75,7 +75,7 @@ def _input_keys(ops: Sequence[SliceOp]) -> set[VNKey]:
 @pytest.mark.parametrize(('label', 'hexbytes', 'off', 'size'), _CASES)
 def test_simplify_preserves_semantics(label: str, hexbytes: str, off: int, size: int) -> None:
     ops = _CTX.translate(bytes.fromhex(hexbytes), 0x1000).ops
-    from microtaint.sleigh.slice_simplify import _Vn  # noqa: PLC0415
+    from microtaint.sleigh.slice_simplify import _Vn
     target = _Vn('register', off, size)
     sl = slice_backward(ops, target)
     simp = simplify_slice(sl)
@@ -91,7 +91,7 @@ def test_simplify_preserves_semantics(label: str, hexbytes: str, off: int, size:
 def test_simplify_collapses_constant_shift_flag() -> None:
     """A constant-count shift's flag select must shrink (dead branch removed)."""
     ops = _CTX.translate(bytes.fromhex('c1e007'), 0x1000).ops  # shl eax,7
-    from microtaint.sleigh.slice_simplify import _Vn  # noqa: PLC0415
+    from microtaint.sleigh.slice_simplify import _Vn
     def real(ops: Sequence[SliceOp]) -> int:
         # COPY is pure routing (determine_category ignores it); count real work.
         return sum(1 for o in ops if o.opcode.name != 'COPY')

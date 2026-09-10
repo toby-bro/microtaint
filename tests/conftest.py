@@ -24,7 +24,7 @@ if os.environ.get('MICROTAINT_USE_C') == '1':
 
     def _patched_init(self: CellSimulator, arch: Architecture,
                       use_unicorn: bool = False,
-                      use_c: bool | None = False) -> None:  # noqa: ARG001
+                      use_c: bool | None = False) -> None:
         _original_init(self, arch, use_unicorn=use_unicorn, use_c=True)
 
     # Deliberate: this conftest exists to force the C evaluator for a run.

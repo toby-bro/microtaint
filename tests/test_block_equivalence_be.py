@@ -1,4 +1,3 @@
-# ruff: noqa: PLC0415, C901
 """Block equivalence on the big-endian architectures, on the ANSWER.
 
 `test_block_equivalence` proves a block program computes what its instructions
@@ -21,24 +20,15 @@ version of it report success while comparing nothing:
 from __future__ import annotations
 
 import random
-import sys
-from pathlib import Path
+from collections.abc import Callable
 
 import pytest
-
-_ROOT = Path(__file__).resolve().parent.parent
-for _p in (str(_ROOT / 'benchmark'), str(_ROOT / 'tests')):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-from microtaint.taint_ir import frompcode  # noqa: E402
-from microtaint.taint_ir.frompcode import Emit, PointerPolicy, Unsupported  # noqa: E402
-from microtaint.types import Architecture  # noqa: E402
-from collections.abc import Callable  # noqa: E402
-from pypcode import PcodeOp  # noqa: E402
-from microtaint.taint_ir.ir import IRKey, IRProg  # noqa: E402
-from microtaint.taint_ir.ir import IRKey, IRProg
 from pypcode import PcodeOp
+
+from microtaint.taint_ir import frompcode
+from microtaint.taint_ir.frompcode import Emit, PointerPolicy, Unsupported
+from microtaint.taint_ir.ir import IRKey, IRProg
+from microtaint.types import Architecture
 
 _CODE = 0x1000
 _DATA = 0x40000
@@ -91,7 +81,8 @@ def _pcode(isa: str, code: bytes, base: int) -> list[PcodeOp]:
 def test_block_equivalence_big_endian(isa: str) -> None:
     import oracle_harness as OH  # type: ignore[import-not-found]
     import unicorn
-    from instruction_bank import load_bank  # type: ignore[import-not-found]
+
+    from benchmark.instruction_bank import load_bank
 
     bank = load_bank()
     if isa not in bank:

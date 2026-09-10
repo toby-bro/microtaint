@@ -27,12 +27,11 @@ from microtaint.taint_ir.blocks import Region
 from microtaint.taint_ir.frompcode import Builder
 from microtaint.taint_ir.ir import IRKey, IRProg
 from microtaint.taint_ir.ir import SlotOf as _SlotOf
+from microtaint.types import ArchLike
 
 #: Builds one block's minimal register-read descriptor, or None when the
 #: block reads no register value at all.
 Descriptor = Callable[[frozenset[int]], 'tuple[int, int, int, int, list[int], bool, object] | None']
-
-from microtaint.types import ArchLike
 
 __all__ = ['block_slot_resolver', 'compile_block']
 

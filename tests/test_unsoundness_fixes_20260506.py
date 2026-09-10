@@ -55,7 +55,7 @@ _BASE_ADDR = 0x400000
 _PAGE_SIZE = 0x1000
 
 
-def _brute_force_gt(  # noqa: C901
+def _brute_force_gt(
     bytestring: bytes,
     state: dict[str, int],
     taint: dict[str, int],

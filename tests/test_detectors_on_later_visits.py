@@ -1,4 +1,3 @@
-# ruff: noqa: S603, S607, PLC0415, S110
 """Every detector must still fire on a site it has already seen behave.
 
 The engine caches per address, and the implicit-taint detector was found

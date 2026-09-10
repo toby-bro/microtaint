@@ -1,4 +1,3 @@
-# ruff: noqa: S603, S607, PLC0415
 """The instruction taint cache must be VALUE-aware, not just taint-aware.
 
 The taint transfer is value-dependent: `and rax, rbx` with rax fully tainted

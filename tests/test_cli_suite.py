@@ -14,7 +14,7 @@ Unit tests for Reporter and the _split_argv / _resolve_rootfs helpers run
 in-process because they have no Qiling dependency.
 """
 
-# ruff: noqa: RUF059, ARG002, PLC0415, F841
+# ruff: noqa: RUF059, F841
 
 from __future__ import annotations
 
@@ -167,7 +167,7 @@ def compile_c(source: str, extra_flags: list[str] | None = None) -> str:
     ]
     if extra_flags:
         cmd.extend(extra_flags)
-    result = subprocess.run(cmd, input=source.encode(), capture_output=True, check=True)  # noqa: S603
+    result = subprocess.run(cmd, input=source.encode(), capture_output=True, check=True)
     if result.returncode != 0:
         raise RuntimeError(
             f'gcc failed:\n{result.stderr.decode()}',
@@ -203,7 +203,7 @@ def run_cli(
         cmd = CLI + flags + ['--input', payload_path, '--quiet', '--', binary]
         if binary_args:
             cmd.extend(binary_args)
-        return subprocess.run(  # noqa: S603
+        return subprocess.run(
             cmd,
             capture_output=True,
             text=True,
@@ -872,7 +872,7 @@ void _start(void) {
     def test_input_file_flag_feeds_taint(self, binary: str) -> None:
         payload_path = write_payload(b'B' * 48)
         try:
-            result = subprocess.run(  # noqa: S603
+            result = subprocess.run(
                 [*CLI, '--check-bof', '--json', '--input', payload_path, '--quiet', '--', binary],
                 capture_output=True,
                 text=True,
@@ -886,7 +886,7 @@ void _start(void) {
             os.unlink(payload_path)
 
     def test_missing_binary_exits_nonzero(self) -> None:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [*CLI, '--check-bof', '--', '/nonexistent/binary'],
             capture_output=True,
             text=True,
@@ -898,7 +898,7 @@ void _start(void) {
 
     def test_no_check_flag_exits_nonzero(self, binary: str) -> None:
         """Calling with no detection mode must produce a usage error."""
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [*CLI, '--', binary],
             capture_output=True,
             text=True,
@@ -1104,7 +1104,7 @@ def compile_c_libc(source: str, extra_flags: list[str] | None = None) -> str:
     ]
     if extra_flags:
         cmd.extend(extra_flags)
-    result = subprocess.run(cmd, input=source.encode(), capture_output=True, check=True)  # noqa: S603
+    result = subprocess.run(cmd, input=source.encode(), capture_output=True, check=True)
     if result.returncode != 0:
         raise RuntimeError(f'gcc failed:\n{result.stderr.decode()}')
     return path
