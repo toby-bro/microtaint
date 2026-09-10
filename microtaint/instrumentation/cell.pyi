@@ -55,3 +55,11 @@ class PCodeCellEvaluator:
         """Return performance statistics."""
 
     def evaluate_concrete_state(self, cell: InstructionCellExpr, regs: dict[str, int], mem: dict[int, int]) -> int: ...
+
+#: (offset, size) per SLEIGH register name, keyed by upper-case name.  Declared
+#: here because the module is Cython and callers outside it -- the emulator's
+#: register file, the block compiler -- read it as a normal import.
+def _build_reg_maps(
+    arch: Architecture | str,
+) -> tuple[dict[str, int], dict[str, int]]: ...
+

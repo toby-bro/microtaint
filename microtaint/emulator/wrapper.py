@@ -162,6 +162,20 @@ _VECTOR_LANES: dict[Architecture, dict[int, tuple[str, str, int]]] = {
 # demand from the geometry (see archregs) and held here because the ctypes
 # arrays it hands to Unicorn have to stay alive for as long as their addresses
 # are cached.
+#: What `_RegisterFile._build` returns: the ctypes arrays for one register set
+#: plus the raw addresses the C hot path reads them through.  Named because two
+#: methods hand it around and an 11-tuple in a signature says nothing.
+RegReadDescriptor = tuple[
+    Any, Any, Any,          # ids / vals / ptrs ctypes arrays (kept alive by the cache)
+    int,                    # how many value slots the read fills
+    list[str],              # the register name each slot carries
+    bool,                   # the packed flags register is among them
+    Any,                    # n_calls pre-wrapped as ctypes.c_int
+    int, int, int,          # ids / ptrs / vals addresses
+    int,                    # n_calls
+]
+
+
 class _RegisterFile:
     """The ctypes arrays that carry one guest's registers across the boundary.
 
@@ -195,7 +209,7 @@ class _RegisterFile:
         self.arch = arch
         self.regs = archregs.for_arch(arch)
         self.vectors = _VECTOR_LANES.get(arch, {})
-        self._cache: dict = {}
+        self._cache: dict[Any, RegReadDescriptor] = {}
 
         # The whole-file read, for the snapshot fallbacks.  Vector lanes are
         # appended after the scalars so a lane pair stays contiguous.
@@ -218,7 +232,7 @@ class _RegisterFile:
         )
 
     # -- per-instruction ------------------------------------------------
-    def offsets_arrays(self, offsets: frozenset[int]):
+    def offsets_arrays(self, offsets: frozenset[int]) -> RegReadDescriptor:
         """Build and cache the arrays for one instruction's input offsets.
 
         Keyed first on ``id(offsets)``, because the caller hands back the same
@@ -236,7 +250,7 @@ class _RegisterFile:
         cached = self._cache[key] = self._cache[oid] = self._build(offsets)
         return cached
 
-    def _build(self, offsets: frozenset[int]):
+    def _build(self, offsets: frozenset[int]) -> RegReadDescriptor:
         uc_names: list[str] = []      # one per vals slot
         uc_ids: list[int] = []        # one per uc_reg_read call
         call_slots: list[int] = []    # first vals slot each call writes
@@ -428,7 +442,7 @@ class MicrotaintWrapper:
         self._any_taint: bool = False  # set True on first _taint_bytes call
         self._mem_write_hook_registered: bool = False  # set True when hook registered
         # Armed lazily, on the first poison; see _arm_uaf_read_hook.
-        self._mem_read_hook = None
+        self._mem_read_hook: MemAccessHook | None = None
         self._instr_hook_registered: bool = False  # set True when instr hook registered
         #: Block-at-a-time taint (MICROTAINT_BLOCK=1).  Opt-in; the
         #: per-instruction path is untouched when it is off.  The runtime is
@@ -545,7 +559,7 @@ class MicrotaintWrapper:
                 uc_handle=self._uc_handle,
                 uc_mem_read=_uc_mem_read,
                 uc_reg_read_batch=_uc_reg_read_batch,
-                uc_reg_read_batch_addr=ctypes.cast(_uc_reg_read_batch, ctypes.c_void_p).value,
+                uc_reg_read_batch_addr=ctypes.cast(_uc_reg_read_batch, ctypes.c_void_p).value or 0,
                 mem_buf=_MEM_BUF,
                 arch=self.arch,
                 cached_gen_rule=_cached_generate_static_rule,
@@ -553,7 +567,7 @@ class MicrotaintWrapper:
                 get_decoded=_get_decoded,
                 build_offsets_arrs=self._regfile.offsets_arrays,
                 eflags_bits=self._regs.flag_bits,
-                flag_parent=self._regs.flag_parent,
+                flag_parent=self._regs.flag_parent or 'EFLAGS',
                 pc_reg_name=self._pc_reg_name,
                 eval_context_cls=EvalContext,
             )
@@ -839,11 +853,12 @@ class MicrotaintWrapper:
                 try:
                     if mapper(num) == want:
                         return num
-                except Exception:
+                except Exception:  # noqa: S112 - a number this guest does not map
                     continue
         return None
 
-    def _set_syscall_hook(self, name: str, handler, intercept) -> None:
+    def _set_syscall_hook(self, name: str, handler: Callable[..., Any],
+                          intercept: Any) -> None:
         """Hook a syscall by name, registered under its number on this guest.
 
         Registering the NUMBER rather than the name is deliberate.  Qiling
@@ -866,11 +881,9 @@ class MicrotaintWrapper:
         """Register the UAF read callback, now that something is poisoned."""
         if self._mem_read_hook is not None or not self.check_uaf:
             return
-        self._mem_read_hook = MemAccessHook(self)
-        self._register_cython_mem_hook(
-            self._mem_read_hook,
-            _UC_HOOK_MEM_READ_CONST,
-        )
+        hook = MemAccessHook(self)
+        self._mem_read_hook = hook
+        self._register_cython_mem_hook(hook, _UC_HOOK_MEM_READ_CONST)
         logger.debug('armed the UAF read hook on first poison')
 
     def _register_cython_mem_hook(

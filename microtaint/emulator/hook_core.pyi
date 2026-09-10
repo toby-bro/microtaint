@@ -120,7 +120,20 @@ class InstructionHook:
         build_offsets_arrs: Callable[..., Any],
         eflags_bits: dict[str, int],
         eval_context_cls: type,
+        uc_reg_read_batch_addr: int = ...,
+        flag_parent: str = ...,
+        pc_reg_name: str = ...,
     ) -> None: ...
+    def prepare_block_mode(self, names: Any) -> int:
+        """Resolve what the per-instruction path would resolve lazily.
+
+        Block mode never runs that path, so the engine handle, the C memory
+        read context and a slot per register are all still unset when the first
+        block arrives.  Setup, not the hot path.
+        """
+
+    slot_map: dict[str, int]
+    """Register name -> slot index in the taint and value arrays."""
     def __call__(
         self,
         uc: Any,
@@ -243,14 +256,17 @@ class LiveMemReader:
         uc_mem_read: Callable[..., int],
         mem_buf: Any,
         mem_ptrs: dict[int, Any],
+        uc_mem_read_addr: int = ...,
+        mem_buf_addr: int = ...,
     ) -> None: ...
+
+    uc_handle: int
+    uc_mr_addr: int
+    mem_buf_addr: int
     def __call__(self, address: int, size: int) -> int:
         """Read `size` bytes at `address`. Returns 0 on error."""
 
-def c_instruction_hook_ptr() -> int:
-    """Address of the pure-C UC_HOOK_CODE trampoline, for uc_hook_add.
-
-    Register with the InstructionHook instance as user_data (id(hook)); the
-    caller must keep that instance alive for the hook's lifetime.
-    """
-    ...
+#: Address of the pure-C UC_HOOK_CODE trampoline, for uc_hook_add.  Register it
+#: with the InstructionHook instance as user_data (id(hook)); the caller must
+#: keep that instance alive for the hook's lifetime.
+def c_instruction_hook_ptr() -> int: ...

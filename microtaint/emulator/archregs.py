@@ -30,7 +30,7 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass
 
-from microtaint.types import Architecture
+from microtaint.types import Architecture, Register
 
 # Architecture -> (unicorn constant module, constant-name prefix).
 _CONST_MODULE: dict[Architecture, tuple[str, str]] = {
@@ -105,9 +105,11 @@ class ArchRegs:
     def is_scratch(self, offset: int) -> bool:
         return offset in self.scratch_offsets
 
-    def unpack_flags(self, values: dict) -> None:
+    def unpack_flags(self, values: dict[str, int]) -> None:
         """Expand the parent's value into the individual flag registers."""
-        if not self.flag_bits:
+        if not self.flag_bits or self.flag_parent is None:
+            # flag_bits is empty exactly when there is no parent register to
+            # unpack from; saying both keeps that tie visible.
             return
         parent = values.get(self.flag_parent, 0)
         for name, bit in self.flag_bits.items():
@@ -145,7 +147,8 @@ def _unicorn_ids(arch: Architecture) -> dict[str, int]:
     return out
 
 
-def _readable(arch, offsets, sizes) -> list[tuple[int, int, str, int]]:
+def _readable(arch: Architecture, offsets: dict[str, int],
+              sizes: dict[str, int]) -> list[tuple[int, int, str, int]]:
     """Geometry registers Unicorn also names, narrow enough for one slot."""
     uc_ids = _unicorn_ids(arch)
     alias = _ALIASES.get(arch, {})
@@ -160,7 +163,8 @@ def _readable(arch, offsets, sizes) -> list[tuple[int, int, str, int]]:
     return out
 
 
-def _cover(candidates, offsets, sizes) -> dict[int, tuple[str, int, bool]]:
+def _cover(candidates: list[tuple[int, int, str, int]], offsets: dict[str, int],
+           sizes: dict[str, int]) -> dict[int, tuple[str, int, bool]]:
     """Every byte a readable register covers, keyed to the widest read for it.
 
     Keying only the offsets the geometry names would miss the ones instructions
@@ -189,17 +193,23 @@ def _build(arch: Architecture) -> ArchRegs:
     offsets, sizes = _build_reg_maps(arch)
     candidates = _readable(arch, offsets, sizes)
 
-    flag_parent, flag_bits = _FLAGS.get(arch, (None, {}))
-    parent_id = _unicorn_ids(arch).get(flag_parent) if flag_parent else None
-    if parent_id is None:
-        flag_parent, flag_bits = None, {}
+    # The packed flags register's NAME and its Unicorn id only ever travel
+    # together: without an id there is nothing to read, and the flag map is
+    # dropped.  Carrying them as one optional pair says that once, instead of
+    # leaving every later use to re-derive it.
+    _fp, flag_bits = _FLAGS.get(arch, (None, {}))
+    _pid = _unicorn_ids(arch).get(_fp) if _fp else None
+    flags_reg: tuple[str, int] | None = None if (_fp is None or _pid is None) else (_fp, _pid)
+    if flags_reg is None:
+        flag_bits = {}
 
     offset_to_uc = _cover(candidates, offsets, sizes)
     # Flags override: their own offsets read the parent and unpack.
-    for name in flag_bits:
-        off = offsets.get(name)
-        if off is not None:
-            offset_to_uc[off] = (flag_parent, parent_id, True)
+    if flags_reg is not None:
+        for name in flag_bits:
+            off = offsets.get(name)
+            if off is not None:
+                offset_to_uc[off] = (flags_reg[0], flags_reg[1], True)
 
     prefixes = _SCRATCH.get(arch, ())
     scratch_offsets = frozenset(
@@ -216,8 +226,8 @@ def _build(arch: Architecture) -> ArchRegs:
         if is_flag:
             continue
         seen.setdefault(uc_id, name)
-    if flag_parent is not None:
-        seen.setdefault(parent_id, flag_parent)
+    if flags_reg is not None:
+        seen.setdefault(flags_reg[1], flags_reg[0])
     all_names = tuple(seen.values())
     all_uc_ids = tuple(seen.keys())
 
@@ -228,13 +238,13 @@ def _build(arch: Architecture) -> ArchRegs:
         all_uc_ids=all_uc_ids,
         pc_name=pc_name,
         pc_offset=pc_offset,
-        flag_parent=flag_parent,
+        flag_parent=flags_reg[0] if flags_reg else None,
         flag_bits=dict(flag_bits),
         scratch_offsets=scratch_offsets,
     )
 
 
-def state_format(arch: Architecture) -> list:
+def state_format(arch: Architecture) -> list[Register]:
     """The register set this architecture's taint state tracks.
 
     A register missing from the format gets no assignment at all -- its taint
