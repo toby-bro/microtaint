@@ -17,6 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "taint_ir_c_api.h"
+
 #include "blockpath.h"
 #include "fastpath.h"
 
@@ -336,14 +338,20 @@ static PyObject *py_plan_new(PyObject *self, PyObject *args) {
     for (Py_ssize_t i = 0; i < n; i++) {
         PyObject *item = PySequence_Fast_GET_ITEM(seq, i);
         unsigned long long fn_addr, region_addr, addr_fn = 0;
+        unsigned long long prog = 0, addr_prog = 0;
         PyObject *accs;
-        if (!PyArg_ParseTuple(item, "KKO|K", &fn_addr, &region_addr, &accs,
-                              &addr_fn)) goto fail;
+        if (!PyArg_ParseTuple(item, "KKO|KKK", &fn_addr, &region_addr, &accs,
+                              &addr_fn, &prog, &addr_prog)) goto fail;
         MtBlkRegion *r = &plan->regions[i];
         r->fn = (void *)(uintptr_t)fn_addr;
         r->addr_fn = (void *)(uintptr_t)addr_fn;
+        r->prog = (void *)(uintptr_t)prog;
+        r->addr_prog = (void *)(uintptr_t)addr_prog;
         r->addr = region_addr;
-        if (!r->fn) plan->handleable = 0;
+        /* A region is handleable when it can be RUN, by an emitted function or
+         * by the interpreter.  Requiring an emitted one turned a program the
+         * emitter merely declined into a skipped block. */
+        if (!r->fn && !(r->prog && mt_blk_interp)) plan->handleable = 0;
         PyObject *aseq = PySequence_Fast(accs, "accesses must be a sequence");
         if (!aseq) goto fail;
         const Py_ssize_t na = PySequence_Fast_GET_SIZE(aseq);
@@ -944,4 +952,31 @@ static struct PyModuleDef Module = {
     -1, Methods, NULL, NULL, NULL, NULL,
 };
 
-PyMODINIT_FUNC PyInit_blockpath_c(void) { return PyModule_Create(&Module); }
+PyMODINIT_FUNC PyInit_blockpath_c(void) {
+    PyObject *m = PyModule_Create(&Module);
+    if (!m) return NULL;
+    /* The taint-IR interpreter, for a region whose program the host emitter
+     * declined.  Without it such a region cannot run and the block is skipped,
+     * so this is imported by the full dotted name too: PyCapsule_Import needs
+     * the module importable as a TOP-LEVEL one, which only happens when its
+     * directory is on sys.path (tests do that; the emulator does not). */
+    TaintIrCAPI *api = (TaintIrCAPI *)PyCapsule_Import(
+        "taint_ir_c._taint_ir_capi", 0);
+    if (!api) {
+        PyErr_Clear();
+        PyObject *mod = PyImport_ImportModule(
+            "microtaint.instrumentation.cell_c.taint_ir_c");
+        if (mod) {
+            PyObject *cap = PyObject_GetAttrString(mod, "_taint_ir_capi");
+            if (cap) {
+                api = (TaintIrCAPI *)PyCapsule_GetPointer(
+                    cap, "taint_ir_c._taint_ir_capi");
+                Py_DECREF(cap);
+            }
+            Py_DECREF(mod);
+        }
+        if (!api) PyErr_Clear();
+    }
+    if (api) mt_blk_interp = api->run;
+    return m;
+}

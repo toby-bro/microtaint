@@ -19,6 +19,21 @@ def jit(program: _Capsule) -> bool:
 def fn_addr(program: _Capsule) -> int:
     """Address of the emitted function, or 0 if it was not emitted."""
 
+#: The interpreter, for another native extension to call.  Imported by the
+#: block runtime at module init via PyCapsule_Import("taint_ir_c._taint_ir_capi")
+#: so a region whose program the emitter declined can still be RUN rather than
+#: making the whole block unhandleable.  Not intended for Python use.
+_taint_ir_capi: object
+
+def prog_addr(program: _Capsule) -> int:
+    """Address of the program itself, for the interpreter capsule.
+
+    The block runtime runs a region this way when the host emitter declined
+    the program (it declines division and count-leading-zeros deliberately).
+    The capsule owns the program, so a caller holding this address has to keep
+    the capsule alive.
+    """
+
 def jit_size(program: _Capsule) -> int:
     """Bytes of native code, or 0."""
 

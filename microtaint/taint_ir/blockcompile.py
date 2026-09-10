@@ -85,8 +85,11 @@ def block_slot_resolver(arch: ArchLike, name_to_slot: dict[str, int]) -> SlotOf:
 
 
 #: One region as the C runtime wants it: (function address, guest address,
-#: [(kind, size, needs the loaded value)], address-slice function address).
-RegionSpec = tuple[int, int, list[tuple[int, int, int]], int]
+#: [(kind, size, needs the loaded value)], address-slice function address,
+#: program address, address-slice program address).  The program addresses are
+#: what the runtime interprets when the emitter declined to emit a function;
+#: a region with neither is one that did not lower at all.
+RegionSpec = tuple[int, int, list[tuple[int, int, int]], int, int, int]
 
 
 def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str, int],
@@ -176,11 +179,12 @@ def _compile_regions(regions: list[Region], slot_of: SlotOf,
             cap, _ser = compile_program(prog, slot_of)
         except Exception:                # an unplaceable slot is a refusal
             return None
-        if not taint_ir_c.jit(cap):
-            return None
-        addr = taint_ir_c.fn_addr(cap)
-        if not addr:
-            return None
+        # The emitter declines division and count-leading-zeros on purpose and
+        # the contract is that the caller keeps the interpreter for those.  So
+        # a decline is not a refusal here: the region carries its PROGRAM and
+        # the runtime interprets it.  Refusing instead skipped the whole block.
+        addr = taint_ir_c.fn_addr(cap) if taint_ir_c.jit(cap) else 0
+        prog_addr = taint_ir_c.prog_addr(cap)
         keep.append(cap)
         # Whether the program actually READS the word a load brings in.  A
         # block publishes values, so more loads are live here than on the
@@ -204,16 +208,17 @@ def _compile_regions(regions: list[Region], slot_of: SlotOf,
         # addresses.  Re-rooting the SAME program on its address outputs and
         # letting dead-code elimination run again gives the slice that computes
         # just those -- no re-lift, no second lowering, only another emit.
-        addr_fn = 0
+        addr_fn = addr_prog = 0
         if any(a['kind'] == 'load' for a in accesses):
             got = _address_slice(prog, slot_of, taint_ir_c)
             if got is not None:
-                addr_cap, addr_fn = got
+                addr_cap, addr_fn, addr_prog = got
                 keep.append(addr_cap)
         specs.append((addr, region.addr,
                       [(0 if a['kind'] == 'load' else 1, a['size'],
                         1 if k in live_mem else 0)
-                       for k, a in enumerate(accesses)], addr_fn))
+                       for k, a in enumerate(accesses)],
+                      addr_fn, prog_addr, addr_prog))
 
     return specs, keep, reads
 
@@ -250,7 +255,7 @@ def _keep_only_needed_values(prog: IRProg, needed: set[int]) -> None:
 
 def _address_slice(prog: IRProg, slot_of: SlotOf,
                    taint_ir_c: ModuleType,
-                   ) -> tuple[CompiledProgram, int] | None:
+                   ) -> tuple[CompiledProgram, int, int] | None:
     """The part of `prog` that computes its load addresses, compiled.
 
     Returns (capsule, function address) or None if it will not compile, in
@@ -273,10 +278,8 @@ def _address_slice(prog: IRProg, slot_of: SlotOf,
         prog.outputs = addr_outputs
         prog.live = []
         cap, _ser = compile_program(prog, slot_of)
-        if not taint_ir_c.jit(cap):
-            return None
-        fn = taint_ir_c.fn_addr(cap)
-        return (cap, fn) if fn else None
+        fn = taint_ir_c.fn_addr(cap) if taint_ir_c.jit(cap) else 0
+        return cap, fn, taint_ir_c.prog_addr(cap)
     except Exception:                    # a slice that will not compile is not fatal
         return None
     finally:

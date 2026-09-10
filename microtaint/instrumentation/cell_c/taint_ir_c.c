@@ -22,6 +22,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "taint_ir_c_api.h"
+
 /* Opcodes.  Order is arbitrary but must match _OP_ID in taint_ir/exec.py. */
 enum {
     IR_CONST = 0, IR_INV, IR_INT,
@@ -94,6 +96,18 @@ static void irprog_destructor(PyObject *cap) {
  * construction, so a node's operands are always already in scratch and no
  * dependence tracking is needed at run time.
  */
+static void ir_run(const IRProgC *p, const uint64_t *values,
+                   const uint64_t *taints, uint64_t *out_taints);
+
+/* The capsule shim: same call, with the program as an opaque pointer so the
+ * block runtime does not need this module's private struct. */
+static void ir_run_capi(const void *prog, const uint64_t *values,
+                        const uint64_t *taints, uint64_t *out_taints) {
+    ir_run((const IRProgC *)prog, values, taints, out_taints);
+}
+
+static TaintIrCAPI _taint_ir_capi = { ir_run_capi };
+
 static void ir_run(const IRProgC *p, const uint64_t *values,
                    const uint64_t *taints, uint64_t *out_taints) {
     uint64_t *s = p->scratch;
@@ -349,6 +363,18 @@ static PyObject *py_fn_addr(PyObject *self, PyObject *args) {
     return PyLong_FromVoidPtr((void *)p->jit_fn);
 }
 
+/* The program itself, for a caller that will run it through the interpreter
+ * capsule instead of an emitted function.  The capsule owns it, so the caller
+ * has to keep the capsule alive for as long as it holds this. */
+static PyObject *py_prog_addr(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    IRProgC *p = (IRProgC *)PyCapsule_GetPointer(cap, "microtaint.taint_ir.prog");
+    if (!p) return NULL;
+    return PyLong_FromVoidPtr((void *)p);
+}
+
 static PyObject *py_n_nodes(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *cap;
@@ -366,6 +392,8 @@ static PyMethodDef methods[] = {
     {"jit", py_jit, METH_VARARGS, "emit native code; True if the host emitter took it"},
     {"jit_size", py_jit_size, METH_VARARGS, "bytes of native code, or 0"},
     {"fn_addr", py_fn_addr, METH_VARARGS, "address of the emitted function, or 0"},
+    {"prog_addr", py_prog_addr, METH_VARARGS,
+     "address of the program itself, for the interpreter capsule"},
     {NULL, NULL, 0, NULL}
 };
 
@@ -374,5 +402,13 @@ static struct PyModuleDef moduledef = {
 };
 
 PyMODINIT_FUNC PyInit_taint_ir_c(void) {
-    return PyModule_Create(&moduledef);
+    PyObject *m = PyModule_Create(&moduledef);
+    if (!m) return NULL;
+    /* The interpreter, for modules that cannot link against this one.  The
+     * block runtime uses it for a program the emitter declined, which is the
+     * difference between running that region slowly and skipping the block. */
+    PyObject *cap = PyCapsule_New(&_taint_ir_capi, "taint_ir_c._taint_ir_capi",
+                                  NULL);
+    if (cap) PyModule_AddObject(m, "_taint_ir_capi", cap);
+    return m;
 }

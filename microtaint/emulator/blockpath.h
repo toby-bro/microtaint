@@ -87,9 +87,32 @@ typedef void (*MtBlkFn)(
   const uint64_t *values, const uint64_t *taint, uint64_t *out
 );
 
+/* The taint-IR interpreter, for a program the host emitter declined.  It
+ * declines division and count-leading-zeros deliberately -- both want fixed
+ * registers or a CPU feature check out of proportion to how rarely a taint
+ * rule reaches them -- and the contract is that the caller keeps the
+ * interpreter for those.  Without one here, a declined program meant a
+ * REFUSED block, and a refused block is skipped, so its taint was never
+ * computed at all. */
+typedef void (*MtBlkInterp)(const void *prog, const uint64_t *values,
+                            const uint64_t *taint, uint64_t *out);
+static MtBlkInterp mt_blk_interp = NULL;
+
+/* Run one region, however it is carried. */
+static inline void mt_blk_call(const void *fn, const void *prog,
+                               const uint64_t *values, const uint64_t *taint,
+                               uint64_t *out) {
+  if (fn) { ((MtBlkFn)fn)(values, taint, out); return; }
+  mt_blk_interp(prog, values, taint, out);
+}
+
 /* One lowered run of consecutive instructions. */
 typedef struct {
-  void *fn;      /* MtBlkFn, NULL if this region did not lower */
+  void *fn;      /* MtBlkFn, NULL when the emitter declined this program */
+  /* The program itself, for the interpreter.  Non-NULL whenever the region
+   * lowered, so `fn == NULL && prog == NULL` is the only unplanned region. */
+  void *prog;
+  void *addr_prog;   /* the address slice's program, same idea */
   /* The slice of `fn` that computes only the load addresses.  Pass 1 wants
    * nothing else, and the whole program is far larger: measured, 82.7 ops to
    * produce 1.93 addresses.  NULL means run `fn` for pass 1, which is correct
@@ -244,7 +267,7 @@ static int mt_blk_compute(
 
   for (int r = 0; r < plan->n_regions; r++) {
     const MtBlkRegion *reg = &plan->regions[r];
-    if (!reg->fn) {
+    if (!reg->fn && !(reg->prog && mt_blk_interp)) {
       mt_blk_miss(env, MT_BLK_MISS_UNPLANNED);
       return MT_BLK_DECLINED;
     }
@@ -271,7 +294,11 @@ static int mt_blk_compute(
       memcpy(so, st, nb);
       memcpy(so + MT_BLK_VAL_BASE, st + MT_BLK_VAL_BASE, nb);
       memset(so + MT_BLK_MEM_BASE, 0, accb);
-      ((MtBlkFn)(reg->addr_fn ? reg->addr_fn : reg->fn))(sv, st, so);
+      if (reg->addr_fn || reg->addr_prog) {
+        mt_blk_call(reg->addr_fn, reg->addr_prog, sv, st, so);
+      } else {
+        mt_blk_call(reg->fn, reg->prog, sv, st, so);
+      }
 
       if (env->stop_after == 5) { continue; }
       for (int k = 0; k < reg->n_acc; k++) {
@@ -299,7 +326,7 @@ static int mt_blk_compute(
     /* Pass 2: the answer, in place.  `st` is both the taint input and the
      * output, so afterwards it IS the region's post-state and nothing has to
      * be copied back. */
-    ((MtBlkFn)reg->fn)(sv, st, st);
+    mt_blk_call(reg->fn, reg->prog, sv, st, st);
 
     for (int k = 0; k < reg->n_acc; k++) {
       if (reg->acc_kind[k] != 1) { continue; }

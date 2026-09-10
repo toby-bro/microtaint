@@ -1069,6 +1069,16 @@ class Builder:
         osz = self._out(op).size
         isz = op.inputs[0].size if op.inputs else osz
 
+        # A divide whose wide dividend has a PROVABLY ZERO high half is a
+        # narrow divide.  x86's `div r64` always lifts to a 128-by-64 divide
+        # because RDX:RAX is the dividend, and a compiler emitting a 64-bit
+        # division clears RDX first (`xor %edx,%edx`, or `cqto` for the signed
+        # form), so the high lane folds to a constant zero right here.  Without
+        # this the block is refused and then skipped.
+        if name in ('INT_DIV', 'INT_REM', 'INT_SDIV', 'INT_SREM') \
+                and self._emit_wide_divide(name, op):
+            return True
+
         # A lane-aligned slice of a wide value is just that lane.
         if name == 'SUBPIECE' and isz > 8 and osz <= 8:
             off = op.inputs[1].offset
@@ -1175,6 +1185,52 @@ class Builder:
                 v = p.op(OR, p.op(SHL, lo[0], sh), p.op(SHR, hi[0], back))
                 t = p.op(OR, p.op(SHL, lo[1], sh), p.op(SHR, hi[1], back))
             self._write_lane(out, i * 8, 8, p.mask(v, 64), p.mask(t, 64))
+        return True
+
+    def _emit_wide_divide(self, name: str, op: PcodeOp) -> bool:
+        """A wide divide that is really a narrow one, exactly.
+
+        Only when every lane above the first has a VALUE that folds to zero on
+        both operands: then the quotient and remainder are the 64-bit ones, and
+        the lanes above the first are zero too.  Anything else returns False,
+        because guessing a value here would put a wrong number in a register a
+        later instruction may turn into an address.
+
+        The lane's TAINT is deliberately not required to be zero.  A value that
+        folds to a constant is that constant for every input, so nothing about
+        it can depend on a secret; a non-zero taint there is the XOR rule's
+        over-approximation (`xor %edx,%edx` zeroes the value exactly while
+        `OR(at, at)` keeps the taint), and discarding it is a precision gain,
+        not a soundness loss.  That idiom is exactly how a compiler sets up a
+        64-bit division.
+        """
+        p = self.p
+        out = self._out(op)
+        if out.size % 8 or len(op.inputs) < 2:
+            return False
+        n_lanes = out.size // 8
+        if n_lanes < 2:
+            return False
+        args = []
+        for src in op.inputs[:2]:
+            if src.size != out.size:
+                return False
+            lanes = [self._read_lane(src, i * 8, 8) for i in range(n_lanes)]
+            for v, _t in lanes[1:]:
+                if not p.is_const(v) or p.const_val(v) != 0:
+                    return False       # a genuinely wide operand
+            args.append(lanes[0])
+        (av, at), (bv, bt) = args
+        narrow = {'INT_DIV': UDIV, 'INT_REM': UREM,
+                  'INT_SDIV': SDIV, 'INT_SREM': SREM}[name]
+        v = p.op(narrow, av, bv)
+        # Division mixes every bit of both operands, so a tainted bit anywhere
+        # in either taints the whole result.  That is what the narrow path
+        # does too.
+        t = p.splat(p.op(NEZ, p.op(OR, at, bt)))
+        self._write_lane(out, 0, 8, v, t)
+        for i in range(1, n_lanes):
+            self._write_lane(out, i * 8, 8, p.const(0), p.const(0))
         return True
 
     def _write_lane(self, vn: Varnode, lane: int, lsz: int, val: int, tnt: int) -> None:
