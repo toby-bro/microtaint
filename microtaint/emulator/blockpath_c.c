@@ -103,6 +103,29 @@ static int blk_read_regs(MtBlkCtx *b, const MtBlkPlan *plan) {
     MtFastCtx *c = b->fc;
     if (!c->use_cregs || !c->uc_reg_read_batch) return -1;
     if (*c->uc_handle_addr == 0) return -1;
+    /* MICROTAINT_BLOCK_FULLREGS=1 forces the whole-file read back on.  Kept as
+     * an escape hatch: it is the difference between "a register this block
+     * needed was not read" and every other kind of divergence, and it found
+     * exactly that once. */
+    static int full = -1;
+    if (full < 0) {
+        const char *v = getenv("MICROTAINT_BLOCK_FULLREGS");
+        full = (v && *v && *v != '0') ? 1 : 0;
+    }
+    if (full) {
+        c->uc_reg_read_batch((void *)(uintptr_t)*c->uc_handle_addr,
+                             (void *)(uintptr_t)b->ids_addr,
+                             (void *)(uintptr_t)b->ptrs_addr, b->n_calls);
+        const uint64_t *av = (const uint64_t *)(uintptr_t)b->vals_addr;
+        uint64_t *gv = *c->g_val;
+        const int ns = *c->n_slots;
+        for (int i = 0; i < b->n_regs; i++) {
+            const int slot = b->reg_slots[i];
+            if (slot >= 0 && slot < ns) gv[slot] = av[i];
+        }
+        if (*c->eflags_slot >= 0) mt_explode_eflags(c);
+        return 0;
+    }
     /* The BLOCK's own register set, not the whole file.  See MtBlkPlan. */
     if (plan->n_calls <= 0) return 0;         /* reads nothing: nothing to do */
     c->uc_reg_read_batch((void *)(uintptr_t)*c->uc_handle_addr,
@@ -436,7 +459,6 @@ static PyObject *py_runner_new(PyObject *self, PyObject *args) {
     r->env.shadow_write = arena_write_mask;
     r->env.shadow = m;
     r->env.sv = r->sv; r->env.st = r->st; r->env.so = r->so;
-    r->env.cur_val = r->cur_val;
     r->env.pc_slot = pc_slot;
     r->env.miss = r->miss;
     r->guest_writes = guest_writes;
@@ -492,8 +514,10 @@ static PyObject *py_runner_values(PyObject *self, PyObject *args) {
     if (!r) return NULL;
     PyObject *out = PyList_New(r->n_slots);
     if (!out) return NULL;
+    /* The values the block left, which live in `sv`: the runtime threads them
+     * there in place rather than into a separate array. */
     for (int i = 0; i < r->n_slots; i++)
-        PyList_SET_ITEM(out, i, PyLong_FromUnsignedLongLong(r->cur_val[i]));
+        PyList_SET_ITEM(out, i, PyLong_FromUnsignedLongLong(r->sv[i]));
     return out;
 }
 
@@ -723,7 +747,6 @@ static PyObject *py_hook_new(PyObject *self, PyObject *args) {
     b->env.shadow_write = blk_shadow_write;
     b->env.shadow = c;
     b->env.sv = b->sv; b->env.st = b->st; b->env.so = b->so;
-    b->env.cur_val = b->cur_val;
     b->env.pc_slot = -1;
     b->env.miss = b->miss;
     (void)g_shadow_ctx;

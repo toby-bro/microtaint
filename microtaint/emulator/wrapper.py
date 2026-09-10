@@ -567,6 +567,69 @@ class MicrotaintWrapper:
     def _block_mode_enabled(self) -> bool:
         return os.environ.get('MICROTAINT_BLOCK', '') not in ('', '0')
 
+    def _block_read_descriptor(self, offsets: frozenset[int],
+                           slot_map: dict[str, int],
+                           cache: dict[frozenset[int], Any]) -> Any:
+        """A minimal uc_reg_read_batch descriptor for one block's reads.
+
+        The whole-file read was 90% of block mode's cost when it was first
+        wired, so a block asks only for what its regions read.
+
+        Every call gets TWO 8-byte slots even when it fills one.  Unicorn
+        writes a register's natural width, and some are wider than eight
+        bytes; the whole-file layout hides that by putting every wide
+        register last, but a FILTERED layout interleaves them, and a wide
+        read then overwrites the next register's slot.  Measured: with one
+        slot per call, asking for more registers made the answer WORSE (one
+        diverging word became thirty-six), which is the signature of a
+        neighbour being clobbered rather than of a register being missed.
+        The padding costs 8 bytes per register and removes the hazard.
+        """
+        hit = cache.get(offsets)
+        if hit is not None:
+            return hit
+        offset_to_uc = self._regfile.regs.offset_to_uc
+        uc_ids: list[int] = []
+        slots: list[int] = []
+        needs_flags = False
+        seen: set[int] = set()
+        for off in sorted(offsets):
+            lanes = self._regfile.vectors.get(off)
+            if lanes is not None:
+                lo, hi, uc_id = lanes
+                if uc_id in seen:
+                    continue
+                seen.add(uc_id)
+                uc_ids.append(uc_id)
+                slots.extend((slot_map.get(lo, -1), slot_map.get(hi, -1)))
+                continue
+            entry = offset_to_uc.get(off)
+            if entry is None:
+                continue
+            name, uc_id, is_flag = entry
+            if is_flag:
+                needs_flags = True
+            if uc_id in seen:
+                continue
+            seen.add(uc_id)
+            uc_ids.append(uc_id)
+            slots.extend((slot_map.get(name, -1), -1))
+        n_calls = len(uc_ids)
+        got: tuple[int, int, int, int, list[int], bool, Any]
+        if n_calls == 0:
+            got = (0, 0, 0, 0, [], False, None)
+            cache[offsets] = got
+            return got
+        ids_arr = (ctypes.c_int * n_calls)(*uc_ids)
+        vals_arr = (ctypes.c_uint64 * (2 * n_calls))()
+        base = ctypes.addressof(vals_arr)
+        ptrs_arr = (ctypes.c_void_p * n_calls)(
+            *[base + 16 * i for i in range(n_calls)])
+        got = (ctypes.addressof(ids_arr), ctypes.addressof(ptrs_arr), base,
+               n_calls, slots, needs_flags, (ids_arr, vals_arr, ptrs_arr))
+        cache[offsets] = got
+        return got
+
     def _install_block_hook(self, hook: InstructionHook) -> bool:
         """Register the pure-C UC_HOOK_BLOCK trampoline.  -> did it install?
 
@@ -588,25 +651,10 @@ class MicrotaintWrapper:
         slot_map = dict(hook.slot_map)
         reg_slots = [slot_map.get(n, -1) for n in regfile.all_names]
 
-        def descriptor(offsets: frozenset[int]) -> Any:
-            """A minimal uc_reg_read_batch descriptor for one block's reads.
+        desc_cache: dict[frozenset[int], Any] = {}
 
-            The whole-file read was 90% of block mode's cost when it was first
-            wired.  `offsets_arrays` already builds and caches exactly this for
-            the per-instruction path; a block is the same question asked of a
-            bigger register set.
-            """
-            built = regfile.offsets_arrays(offsets)
-            (ids_arr, vals_arr, ptrs_arr, _n_vals, uc_names, needs_flags,
-             _n_calls_c, ids_addr, ptrs_addr, vals_addr, n_calls) = built
-            if n_calls == 0:
-                return None
-            slots = [slot_map.get(n, -1) for n in uc_names]
-            # The ctypes arrays are cached by the register file, but hold a
-            # reference anyway: the C plan keeps only their addresses.
-            hold = (ids_arr, vals_arr, ptrs_arr)
-            return (ids_addr, ptrs_addr, vals_addr, n_calls, slots,
-                    bool(needs_flags), hold)
+        def descriptor(offsets: frozenset[int]) -> Any:
+            return self._block_read_descriptor(offsets, slot_map, desc_cache)
 
         def compiler(address: int, size: int) -> Any:
             """Plan one block.  Called once per DISTINCT block, with the GIL,

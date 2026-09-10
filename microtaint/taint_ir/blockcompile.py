@@ -128,6 +128,7 @@ def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int
         reads |= {k[1] for (kind, k), n in prog.inputs.items()
                   if kind == 'v' and isinstance(k, tuple) and k[0] == 'reg'
                   and prog.live[n]}
+
         specs.append((addr, region.addr,
                       [(0 if a['kind'] == 'load' else 1, a['size'],
                         1 if k in live_mem else 0)

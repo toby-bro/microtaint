@@ -147,9 +147,6 @@ typedef struct {
   /* Scratch, MT_BLK_SLOTS entries each.  Owned by the caller so a block does
    * not allocate. */
   uint64_t *sv, *st, *so;
-  /* The register values threaded from one region to the next, MT_BLK_VAL_BASE
-   * entries.  Also caller-owned. */
-  uint64_t *cur_val;
   int pc_slot;         /* -1 when the program counter has no slot */
   unsigned long *miss; /* MT_BLK_N_MISS counters, may be NULL */
   /* The address a declined memory read wanted.  "The read declined" is not
@@ -224,10 +221,18 @@ static int mt_blk_compute(
   }
 
   const size_t nb = (size_t)n_slots * sizeof(uint64_t);
-  /* pend->taint IS the working taint: it is threaded region to region and
-   * ends up being exactly the post-state the commit wants. */
-  memcpy(pend->taint, reg_taint, nb);
-  memcpy(env->cur_val, reg_val, nb);
+  /* The working state is `sv` (values) and `st` (taint), held ACROSS the
+   * block's regions rather than rebuilt for each one.  Copying the whole slot
+   * array per region was over half the cost of computing a block: nine copies
+   * of it, where two suffice.
+   *
+   * `st` doubles as the taint output, which is sound because a compiled
+   * program reads every input before it stores any output -- the same
+   * guarantee taint_ir_c.run already relies on when it passes one array as
+   * both.  So pass 2 runs in place and `st` simply IS the answer. */
+  uint64_t *sv = env->sv, *st = env->st, *so = env->so;
+  memcpy(st, reg_taint, nb);
+  memcpy(sv, reg_val, nb);
   pend->n_taint = n_slots;
 
   for (int r = 0; r < plan->n_regions; r++) {
@@ -241,38 +246,21 @@ static int mt_blk_compute(
       return MT_BLK_DECLINED;
     }
 
-    uint64_t *sv = env->sv, *st = env->st, *so = env->so;
-    memcpy(sv, env->cur_val, nb);
-    memcpy(st, pend->taint, nb);
-    /* The program's output array is its taint input array, so a slot the
-     * program does not write reads back whatever was seeded there.  Seeding
-     * the VALUE slot with the register's current value is what makes "not
-     * written" and "written zero" distinguishable; without it the only way
-     * to tell them apart is to read an output of zero as "untouched", and
-     * then a register the block legitimately zeroes keeps a stale value.
+    /* A slot the program does not write reads back whatever was seeded in the
+     * output array.  Seeding the VALUE half with the register's current value
+     * is what makes "not written" and "written zero" distinguishable; without
+     * it a register the block legitimately zeroes keeps a stale value.
      * Nothing reads these slots as inputs, so seeding them is free. */
-    memcpy(st + MT_BLK_VAL_BASE, env->cur_val, nb);
-    memset(
-      sv + MT_BLK_MEM_BASE,
-      0,
-      (size_t)MT_BLK_PER_ACC * (size_t)reg->n_acc * sizeof(uint64_t)
-    );
-    memset(
-      st + MT_BLK_MEM_BASE,
-      0,
-      (size_t)MT_BLK_PER_ACC * (size_t)reg->n_acc * sizeof(uint64_t)
-    );
+    memcpy(st + MT_BLK_VAL_BASE, sv, nb);
+    const size_t accb = (size_t)MT_BLK_PER_ACC * (size_t)reg->n_acc
+                        * sizeof(uint64_t);
+    memset(sv + MT_BLK_MEM_BASE, 0, accb);
+    memset(st + MT_BLK_MEM_BASE, 0, accb);
 
     if (reg->n_acc > 0) {
-      /* Pass 1: the addresses.  Outputs land on a copy of the inputs so a
-       * slot the program does not write keeps its value. */
       memcpy(so, st, nb);
       memcpy(so + MT_BLK_VAL_BASE, st + MT_BLK_VAL_BASE, nb);
-      memset(
-        so + MT_BLK_MEM_BASE,
-        0,
-        (size_t)MT_BLK_PER_ACC * (size_t)reg->n_acc * sizeof(uint64_t)
-      );
+      memset(so + MT_BLK_MEM_BASE, 0, accb);
       ((MtBlkFn)reg->fn)(sv, st, so);
 
       for (int k = 0; k < reg->n_acc; k++) {
@@ -296,10 +284,10 @@ static int mt_blk_compute(
       }
     }
 
-    /* Pass 2: the answer, now that the loaded words are known. */
-    memcpy(so, st, nb);
-    memcpy(so + MT_BLK_VAL_BASE, st + MT_BLK_VAL_BASE, nb);
-    ((MtBlkFn)reg->fn)(sv, st, so);
+    /* Pass 2: the answer, in place.  `st` is both the taint input and the
+     * output, so afterwards it IS the region's post-state and nothing has to
+     * be copied back. */
+    ((MtBlkFn)reg->fn)(sv, st, st);
 
     for (int k = 0; k < reg->n_acc; k++) {
       if (reg->acc_kind[k] != 1) { continue; }
@@ -309,33 +297,36 @@ static int mt_blk_compute(
       }
       const int base = MT_BLK_MEM_BASE + MT_BLK_PER_ACC * k;
       MtBlkWrite *w = &pend->writes[pend->n_writes++];
-      w->addr = so[base + MT_BLK_A_ADDR];
-      w->mask = so[base + MT_BLK_A_STTAINT];
-      w->value = so[base + MT_BLK_A_STVAL];
+      w->addr = st[base + MT_BLK_A_ADDR];
+      w->mask = st[base + MT_BLK_A_STTAINT];
+      w->value = st[base + MT_BLK_A_STVAL];
       w->size = reg->acc_size[k];
     }
 
-    /* Thread this region's answer into the next one. */
-    memcpy(pend->taint, so, nb);
-    memcpy(env->cur_val, so + MT_BLK_VAL_BASE, nb);
+    /* Thread this region's answer into the next.  `st` already holds the new
+     * taint (pass 2 ran in place); the values it published move into `sv`,
+     * which is where the next region reads them from. */
+    memcpy(sv, st + MT_BLK_VAL_BASE, nb);
 
     /* A region that made the program counter secret-dependent.  The report
      * carries the REGION's address, so a finding still names where the leak
      * is even though it is emitted a block late. */
-    if (
-      env->pc_slot >= 0 && env->pc_slot < n_slots && pend->taint[env->pc_slot]
-    ) {
+    if (env->pc_slot >= 0 && env->pc_slot < n_slots && st[env->pc_slot]) {
       if (pend->n_reports >= MT_BLK_MAX_REPORTS) {
         mt_blk_miss(env, MT_BLK_MISS_REPORTS);
         return MT_BLK_DECLINED;
       }
       pend->rep_addr[pend->n_reports] = reg->addr;
-      pend->rep_mask[pend->n_reports] = pend->taint[env->pc_slot];
+      pend->rep_mask[pend->n_reports] = st[env->pc_slot];
       pend->n_reports++;
-      pend->taint[env->pc_slot] = 0;
+      st[env->pc_slot] = 0;
     }
   }
 
+  /* The block's answer, for the commit to apply once the NEXT block proves
+   * this one finished.  One copy per block, where there used to be two per
+   * region. */
+  memcpy(pend->taint, st, nb);
   pend->valid = 1;
   return MT_BLK_OK;
 }
