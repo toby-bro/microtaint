@@ -30,7 +30,6 @@ truth short of a formal proof.
 """
 
 # ruff: noqa: PLC0415
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,import-untyped,attr-defined,no-any-return"
 
 from __future__ import annotations
 
@@ -199,7 +198,7 @@ def _assert_sound(
 _BLSI_RAX_RBX = bytes.fromhex('c4e2f8f3db')
 
 
-def test_blsi_all_tainted_full_avalanche(regs, sim):
+def test_blsi_all_tainted_full_avalanche(regs: list[Register], sim: CellSimulator) -> None:
     """Report case 574 — T = MASK64 in all four registers.
 
     True output: MASK64 (the lowest set bit of an unknown value can be
@@ -215,7 +214,7 @@ def test_blsi_all_tainted_full_avalanche(regs, sim):
     _assert_sound(_BLSI_RAX_RBX, state, taint, 'RAX', regs, sim)
 
 
-def test_blsi_only_rbx_fully_tainted(regs, sim):
+def test_blsi_only_rbx_fully_tainted(regs: list[Register], sim: CellSimulator) -> None:
     """Report case 576 — only RBX is tainted, fully.
 
     Same diagnosis as the previous test but with a clean RAX in input;
@@ -231,7 +230,7 @@ def test_blsi_only_rbx_fully_tainted(regs, sim):
     _assert_sound(_BLSI_RAX_RBX, state, taint, 'RAX', regs, sim)
 
 
-def test_blsi_partial_rbx_taint(regs, sim):
+def test_blsi_partial_rbx_taint(regs: list[Register], sim: CellSimulator) -> None:
     """Report case 577 — RBX partially tainted; small but specific true mask.
 
     True output: 0xb (bits 0, 1, 3) — only positions where the lowest set
@@ -273,7 +272,7 @@ def test_blsi_partial_rbx_taint(regs, sim):
 _SEQ_BLSI_ANDN = bytes.fromhex('c4e2f8f3dbc4e2f8f2ca')
 
 
-def test_blsi_andn_chain_case_204(regs, sim):
+def test_blsi_andn_chain_case_204(regs: list[Register], sim: CellSimulator) -> None:
     """Report case 204 — chained blsi+andn, target RCX.
 
     Old microtaint missed 15 bits because BLSI under-tainted RAX, and the
@@ -295,7 +294,7 @@ def test_blsi_andn_chain_case_204(regs, sim):
     _assert_sound(_SEQ_BLSI_ANDN, state, taint, 'RCX', regs, sim)
 
 
-def test_blsi_andn_chain_case_237(regs, sim):
+def test_blsi_andn_chain_case_237(regs: list[Register], sim: CellSimulator) -> None:
     """Report case 237 — same sequence, different state, RCX target.
 
     Old microtaint missed 14 bits and over-tainted 1.  New version is
@@ -351,7 +350,7 @@ def test_blsi_andn_chain_case_237(regs, sim):
 _SEQ_MOVZX_SUB_MOVSX = bytes.fromhex('480fb6c8480fb6d34829d1480fbec1')
 
 
-def test_movzx_sub_movsx_chain_case_626(regs, sim):
+def test_movzx_sub_movsx_chain_case_626(regs: list[Register], sim: CellSimulator) -> None:
     """Report case 626 — strcmp-like byte-difference chain, target RCX.
 
     Old microtaint missed 55 bits; the whole upper part of the difference
@@ -407,7 +406,7 @@ _SEQ_BASE64_PACK = bytes.fromhex(
 )
 
 
-def test_base64_pack_chain_case_629(regs, sim):
+def test_base64_pack_chain_case_629(regs: list[Register], sim: CellSimulator) -> None:
     """Report case 629 — base64-decode pack, target RAX.
 
     Old microtaint missed 10 bits in the packed result; new engine is sound.
@@ -452,7 +451,7 @@ def test_base64_pack_chain_case_629(regs, sim):
 _SEQ_BSWAP_MASK = bytes.fromhex('480fc848bb00ff00ff00ff00ff4821d8')
 
 
-def test_bswap_mask_chain_case_225(regs, sim):
+def test_bswap_mask_chain_case_225(regs: list[Register], sim: CellSimulator) -> None:
     """Report case 225 — bswap + masked AND, target RAX.
 
     Old microtaint missed 6 bits and over-tainted 4.  New engine is sound;
@@ -473,7 +472,7 @@ def test_bswap_mask_chain_case_225(regs, sim):
     _assert_sound(_SEQ_BSWAP_MASK, state, taint, 'RAX', regs, sim)
 
 
-def test_bswap_mask_chain_case_244(regs, sim):
+def test_bswap_mask_chain_case_244(regs: list[Register], sim: CellSimulator) -> None:
     """Report case 244 — same sequence, fully-tainted RBX/RDX inputs."""
     state = {
         'RAX': 9805563300297832242,
@@ -525,7 +524,9 @@ def _assemble(asm_lines: list[str]) -> bytes:
 
 
 @pytest.mark.parametrize(('asm_lines', 'n_seeds'), _FUZZ_CASES)
-def test_random_soundness(regs, sim, asm_lines, n_seeds, request):
+def test_random_soundness(regs: list[Register], sim: CellSimulator,
+                          asm_lines: list[str], n_seeds: int,
+                          request: pytest.FixtureRequest) -> None:
     """Random soundness fuzz over BMI / lea / chain patterns.
 
     For each pattern we draw a small number of random concrete states and

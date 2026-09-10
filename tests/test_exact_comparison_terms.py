@@ -7,13 +7,12 @@ non-constancy for small widths and (2) check the packed-comparison builder makes
 real instructions exact.
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,union-attr"
 
 from __future__ import annotations
 
-from tests.conftest import slow_tier_enabled
-
 import itertools
+from collections.abc import Callable
+from typing import Any
 
 import microtaint.sleigh.engine as engine
 from microtaint.debug.reg_aliases import RegisterAliases
@@ -25,13 +24,15 @@ from microtaint.instrumentation.ast import (
 )
 from microtaint.simulator import CellSimulator
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
+from tests.conftest import slow_tier_enabled
 
 
-def _ctx():
+def _ctx() -> EvalContext:
     return EvalContext(input_taint={}, input_values={}, simulator=None, implicit_policy=ImplicitTaintPolicy.IGNORE)
 
 
-def _true_taint(pred, a, ta, b, tb):
+def _true_taint(pred: Callable[[int, int], int], a: int, ta: int,
+                b: int, tb: int) -> int:
     """Non-constancy of pred over the taint cube (a and b vary independently)."""
     abits = [i for i in range(64) if (ta >> i) & 1]
     bbits = [i for i in range(64) if (tb >> i) & 1]
@@ -48,7 +49,8 @@ def _true_taint(pred, a, ta, b, tb):
     return 1 if len(seen) > 1 else 0
 
 
-def test_comparison_taint_expr_exhaustive(request):
+def test_comparison_taint_expr_exhaustive(
+        request: pytest.FixtureRequest) -> None:
     """ComparisonTaintExpr == true non-constancy of [a OP b], all a,b,Ta,Tb, w=2..4,
     every variant (signed x {<, <=})."""
     # w=4 is most of the cost and no new shape: the widths are independent
@@ -60,7 +62,8 @@ def test_comparison_taint_expr_exhaustive(request):
         sb = 1 << (w - 1)
         for is_signed in (False, True):
             for or_equal in (False, True):
-                def pred(a, b, w=w, is_signed=is_signed, or_equal=or_equal, sb=sb):
+                def pred(a: int, b: int, w: int = w, is_signed: bool = is_signed,
+                 or_equal: bool = or_equal, sb: Any = sb) -> int:
                     if is_signed:
                         a = a - (1 << w) if a & sb else a
                         b = b - (1 << w) if b & sb else b
@@ -77,7 +80,8 @@ def test_comparison_taint_expr_exhaustive(request):
                                 assert e.evaluate(_ctx()) & 1 == _true_taint(pred, a, ta, b, tb)
 
 
-def test_equality_taint_expr_exhaustive(request):
+def test_equality_taint_expr_exhaustive(
+        request: pytest.FixtureRequest) -> None:
     """EqualityTaintExpr == true non-constancy of [a == b], all a,b,Ta,Tb, w=2..4."""
     # w=4 is most of the cost and no new shape: the widths are independent
     # exhaustive proofs, so the fast tier does the small ones and release
@@ -107,7 +111,7 @@ _PPC_ZERO = {r.name: 0 for r in _PPC_FMT}
 _CMPW_MFCR = bytes.fromhex('7c0428007c600026')  # cmpw 0,4,5 ; mfcr 3
 
 
-def _ppc_r3(vals, taint):
+def _ppc_r3(vals: dict[str, int], taint: dict[str, int]) -> int:
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(_PPC, _CMPW_MFCR, _PPC_FMT)
     ctx = EvalContext(
@@ -161,7 +165,8 @@ _CSET_LT = b'\xe0\xa7\x9f\x9a'  # cset x0, lt = ZEXT(N != V)
 _CSET_GE = b'\xe0\xb7\x9f\x9a'  # cset x0, ge = ZEXT(N == V)
 
 
-def _arm_x0(code, vals, taint):
+def _arm_x0(code: bytes, vals: dict[str, int],
+            taint: dict[str, int]) -> int:
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(_ARM, code, _ARM_FMT)
     ctx = EvalContext(

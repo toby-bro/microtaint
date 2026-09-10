@@ -40,7 +40,7 @@ def _gt_vectors(gp_names, rng, n, max_bits=4):
     """Vectors tainting only GP regs with few TOTAL bits (ground-truth friendly:
     per-bit enumeration stays cheap and exact)."""
     for _ in range(n):
-        t = {r: 0 for r in gp_names}
+        t = dict.fromkeys(gp_names, 0)
         for _b in range(rng.randint(1, max_bits)):
             t[rng.choice(gp_names)] |= 1 << rng.randint(0, 63)
         vals = {r: rng.randint(1, MASK64) for r in gp_names}
@@ -77,7 +77,7 @@ def soundness_report(isa, n_per, seed=7, instr_limit=None):
         for ins in instrs:
             try:
                 circuit = build_circuit(spec.arch, ins.bytes, spec.regs)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             rng = random.Random(f'{seed}:{ins.label}')
             for t, vals in _gt_vectors(gp, rng, n_per):
@@ -87,13 +87,13 @@ def soundness_report(isa, n_per, seed=7, instr_limit=None):
                     got = engine_perop_floors(spec.arch, ins.bytes, regs, in_taint, in_values)
                 except Unsupported:
                     continue
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 try:
                     gtd = ground_truth(ud, ins.bytes, t, vals)
                     engd = reference_taint(spec.arch, ins.bytes, regs, in_taint,
                                            in_values, circuit=circuit)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 n_cases += 1
                 if classify(got, gtd, keys).exact:
@@ -127,7 +127,7 @@ def slicewise_report(isa, n_per, seed=11):
         for ins in spec.instructions:
             try:
                 circuit = build_circuit(spec.arch, ins.bytes, spec.regs)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             rng = random.Random(f'{seed}:{ins.label}')
             for t, vals in _gt_vectors(gp, rng, n_per):
@@ -137,12 +137,12 @@ def slicewise_report(isa, n_per, seed=11):
                     taint, clean = perop_floors_slicewise(spec.arch, ins.bytes, regs, it, iv)
                 except (NeedsMonolithic, Unsupported):
                     continue
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 try:
                     gtd = ground_truth(ud, ins.bytes, t, vals)
                     engd = reference_taint(spec.arch, ins.bytes, regs, it, iv, circuit=circuit)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 n_cases += 1
                 for k in keys:
@@ -244,7 +244,7 @@ def test_perop_core_alu_exact_vs_ground_truth() -> None:
                  'or rax, rbx', 'mov rax, rbx'):
         code = bytes(ks.asm(mnem)[0])
         for _ in range(8):
-            t = {r: 0 for r in gp}
+            t = dict.fromkeys(gp, 0)
             for _b in range(rng.randint(1, 3)):
                 t[rng.choice(gp)] |= 1 << rng.randint(0, 63)
             vals = {r: rng.randint(1, MASK64) for r in gp}

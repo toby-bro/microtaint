@@ -79,7 +79,7 @@ def measure(isas: list[str] | None = None) -> Measured:
             except Declined:
                 declined.append(ins.label)
                 continue
-            except Exception:  # noqa: BLE001
+            except Exception:
                 declined.append(ins.label)
                 continue
             ops[ins.label] = cost['ops']

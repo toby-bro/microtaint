@@ -18,11 +18,10 @@ MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
 def sweep(isa, n_per=40, seed=7):
-    from tests.oracle_harness import (UC_DESCS, build_circuit, classify,
-                                      ground_truth, reference_taint)
+    from benchmark.instruction_bank import load_bank
+    from tests.oracle_harness import UC_DESCS, build_circuit, classify, ground_truth, reference_taint
     from tests.perop_floors import NeedsMonolithic, Unsupported, engine_perop_floors
     from tests.test_perop_floors import _gt_vectors, _under_bits
-    from benchmark.instruction_bank import load_bank
 
     if isa not in UC_DESCS:
         print(f'{isa}: no ground-truth UcDesc; skipping')
@@ -40,7 +39,7 @@ def sweep(isa, n_per=40, seed=7):
         for ins in spec.instructions:
             try:
                 circuit = build_circuit(spec.arch, ins.bytes, spec.regs)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             rng = random.Random(f'{seed}:{ins.label}')
             for t, vals in _gt_vectors(gp, rng, n_per):
@@ -54,14 +53,14 @@ def sweep(isa, n_per=40, seed=7):
                 except Unsupported:
                     n_unsup += 1
                     continue
-                except Exception:  # noqa: BLE001
+                except Exception:
                     n_unsup += 1
                     continue
                 try:
                     gtd = ground_truth(ud, ins.bytes, t, vals)
                     engd = reference_taint(spec.arch, ins.bytes, regs, in_taint,
                                            in_values, circuit=circuit)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 n_cases += 1
                 v = classify(got, gtd, keys)
@@ -97,12 +96,10 @@ def sweep_slicewise(isa, n_per=40, seed=11):
     """Per-output-slice window sweep (the integration model): report slice
     coverage (clean vs total), exactness on clean slices vs the oracle, and any
     new under-taint on clean slices (must be 0)."""
-    from tests.oracle_harness import (UC_DESCS, build_circuit, ground_truth,
-                                      reference_taint)
-    from tests.perop_floors import (NeedsMonolithic, Unsupported,
-                                    perop_floors_slicewise)
-    from tests.test_perop_floors import _gt_vectors
     from benchmark.instruction_bank import load_bank
+    from tests.oracle_harness import UC_DESCS, build_circuit, ground_truth, reference_taint
+    from tests.perop_floors import NeedsMonolithic, Unsupported, perop_floors_slicewise
+    from tests.test_perop_floors import _gt_vectors
 
     if isa not in UC_DESCS:
         return 0
@@ -118,7 +115,7 @@ def sweep_slicewise(isa, n_per=40, seed=11):
         for ins in spec.instructions:
             try:
                 circuit = build_circuit(spec.arch, ins.bytes, spec.regs)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             rng = random.Random(f'{seed}:{ins.label}')
             for t, vals in _gt_vectors(gp, rng, n_per):
@@ -129,12 +126,12 @@ def sweep_slicewise(isa, n_per=40, seed=11):
                 except NeedsMonolithic:
                     ctrl_mono += 1
                     continue
-                except (Unsupported, Exception):  # noqa: BLE001
+                except (Unsupported, Exception):
                     continue
                 try:
                     gtd = ground_truth(ud, ins.bytes, t, vals)
                     engd = reference_taint(spec.arch, ins.bytes, regs, it, iv, circuit=circuit)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 for k in keys:
                     tot += 1

@@ -27,16 +27,12 @@ to claim every source is clean; see test_guard_is_not_vacuous.
 
 from __future__ import annotations
 
-import io
 import os
 import subprocess
 import sys
 import tempfile
 
 import pytest
-
-from microtaint.emulator.reporter import Reporter
-from microtaint.emulator.wrapper import MicrotaintWrapper
 
 SYSCALLS = r"""
 static long sys_read(int fd, void *buf, unsigned long n) {
@@ -80,7 +76,7 @@ def _leak_reported(elf: str, payload: bytes) -> bool:
     dependency is erased and this goes False -- which is exactly the
     under-taint the exit must never cause.
     """
-    code = r'''
+    code = r"""
 import io, os, sys
 from qiling import Qiling
 from qiling.const import QL_VERBOSE
@@ -102,7 +98,7 @@ t = buf.getvalue()
 low = t.lower()
 print('LEAK' if ('[sc]' in low or 'side-channel' in low or 'side_channel' in low
                  or '[bof]' in low or 'implicit' in low) else 'NOLEAK')
-'''
+"""
     r = subprocess.run([sys.executable, '-c', code, elf, payload.hex()],
                        capture_output=True, text=True, timeout=600)
     if r.returncode != 0:
@@ -196,5 +192,5 @@ void _start(void){ sys_read(0,t,64); for(int i=0;i<64;i++) u[i]=(char)i;
 """
     assert not _leak_reported(_build(clean), PAYLOAD), (
         'branching on a value loaded from CLEAN memory was reported as a leak; '
-        'these tests would then pass regardless of the exit\'s correctness'
+        "these tests would then pass regardless of the exit's correctness"
     )

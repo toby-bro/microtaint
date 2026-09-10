@@ -126,10 +126,9 @@ def _main() -> None:
     seq = [int(v, 16) for v in sys.argv[4].split(',')]
     rbx_taint = int(sys.argv[5], 16) if len(sys.argv) > 5 else 0
 
-    from unicorn.x86_const import UC_X86_REG_RAX, UC_X86_REG_RBX
-
     from qiling import Qiling
     from qiling.const import QL_VERBOSE
+    from unicorn.x86_const import UC_X86_REG_RAX, UC_X86_REG_RBX
 
     from microtaint.emulator.hook_core import InstructionHook
     from microtaint.emulator.reporter import Reporter

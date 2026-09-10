@@ -30,7 +30,6 @@ import io
 import os
 import platform
 import subprocess
-import sys
 import tempfile
 
 import pytest
@@ -95,7 +94,7 @@ def _run(binary: str, poison: bool):
     os.dup2(devnull, 1)
     try:
         ql.run()
-    except Exception:  # noqa: BLE001 - a detection stops the emulator
+    except Exception:
         pass
     finally:
         os.dup2(saved, 1)

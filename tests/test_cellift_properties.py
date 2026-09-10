@@ -26,7 +26,7 @@ def state_format() -> list[Register]:
     ]
 
 
-def check_property_vs_golden_model(  # noqa: C901
+def check_property_vs_golden_model(
     simulator: CellSimulator,
     bytestring: bytes,
     out_reg: str,

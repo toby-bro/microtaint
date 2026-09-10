@@ -1,4 +1,4 @@
-# ruff: noqa: S101, PLC0415
+# ruff: noqa: PLC0415
 """evaluate_c_mem must be bit-identical to circuit.evaluate (do_evaluate).
 
 Memory circuits (loads, stores, mem-ALU) can run the C-array interior via

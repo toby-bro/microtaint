@@ -14,14 +14,10 @@ the bad one, and fails these.
 """
 from __future__ import annotations
 
-import io
-import logging
 import platform
 import subprocess
 import tempfile
-import textwrap
 from io import StringIO
-from pathlib import Path
 
 import pytest
 
@@ -79,7 +75,7 @@ def _run_freestanding(binary: str, stdin_data: bytes, **checks: bool) -> list[st
                       check_aiw=checks.get('aiw', False), reporter=reporter)
     try:
         ql.run()
-    except Exception:  # noqa: BLE001 - the guest exits via a syscall
+    except Exception:
         pass
     reporter.finalize()
     return stream.getvalue().splitlines()
@@ -167,7 +163,7 @@ def test_use_after_free_read_at_a_site_already_seen_live() -> None:
         # the site has already been visited twice against live memory.
         poisoned: list[int] = []
 
-        def on_write(ql_, fd_, buf, count, *rest):  # noqa: ANN001
+        def on_write(ql_, fd_, buf, count, *rest):
             if not poisoned:
                 wrapper.shadow_mem.poison(blob, 64)
                 poisoned.append(1)
@@ -175,7 +171,7 @@ def test_use_after_free_read_at_a_site_already_seen_live() -> None:
         ql.os.set_syscall('write', on_write)
         try:
             ql.run()
-        except Exception:  # noqa: BLE001 - the guest exits via a syscall
+        except Exception:
             pass
 
         assert poisoned, 'the marker syscall never ran; the guest did not reach the free point'

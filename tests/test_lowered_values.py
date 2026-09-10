@@ -251,7 +251,7 @@ def test_both_mode_agrees_with_each_alone() -> None:
             only_t = frompcode.build_ir(spec.arch, ins.bytes, emit='taint')
             only_v = frompcode.build_ir(spec.arch, ins.bytes, emit='value')
             both = frompcode.build_ir(spec.arch, ins.bytes, emit='both')
-        except Exception:  # noqa: BLE001 - unliftable forms are not the subject
+        except Exception:
             continue
         # A memory form also publishes addr / addrt / sttaint, which are the
         # two-pass protocol's business and identical in every mode; compare the
@@ -292,7 +292,7 @@ def test_publishing_values_is_nearly_free() -> None:
         for mode in ('taint', 'both'):
             try:
                 prog = frompcode.build_ir(spec.arch, ins.bytes, emit=mode)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 counts = None
                 break
             builder = frompcode.builder_for(spec.arch)

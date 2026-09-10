@@ -48,7 +48,7 @@ Step = Callable[[Architecture, bytes, list[Register], TaintState, TaintState],
                 tuple[TaintState, TaintState, Cost]]
 
 
-class Declined(Exception):  # noqa: N818
+class Declined(Exception):
     """The per-op pass does not model this instruction's p-code shape."""
 
 
@@ -310,7 +310,7 @@ def gt_vectors(desc: Any, reg_names: list[str], rng: random.Random,
     gp = list(desc.gp)
     init = uc_initial_state(desc)
     for i in range(n):
-        t = {r: 0 for r in reg_names}
+        t = dict.fromkeys(reg_names, 0)
         # 1..3 tainted bits spread over 1..2 of the tracked registers, plus one
         # whole-byte case so byte-granular routing (SUBPIECE/PIECE) is covered.
         if i % 4 == 3:
@@ -338,7 +338,6 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
     the old comparison for measuring how the two answers differ.
     """
     from benchmark.instruction_bank import load_bank
-
     from tests import oracle_harness as oh
 
     if step is None:
@@ -361,7 +360,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
         for ins in spec.instructions:
             try:
                 circuit = oh.build_circuit(spec.arch, ins.bytes, spec.regs)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 rep.errors.append((ins.label, f'build: {e!r}'))
                 continue
             if skip_mem and oh._compile_and_mem(circuit, spec.arch, spec.regs):
@@ -372,7 +371,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                 assert desc is not None   # set above, or the ISA was skipped
                 try:
                     written = written_registers(spec.arch, ins.bytes)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     written = None
                 # GP registers stay in scope even when untouched: their taint
                 # must pass through unchanged, which is a real claim to check.
@@ -410,7 +409,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                                             in_taint, in_values)
                 except Declined:
                     break
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     rep.errors.append((ins.label, f'eval: {e!r}'))
                     break
                 if not answered:
@@ -426,7 +425,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                                                   in_taint, in_values, circuit=circuit)
                     oracle = oh.reference_taint(spec.arch, ins.bytes, spec.regs,
                                                 in_taint, in_values, circuit=circuit)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     rep.errors.append((ins.label, f'ref: {e!r}'))
                     continue
                 v = oh.classify(got, refd, keys)

@@ -83,7 +83,7 @@ def test_pc_relative_load_at_lift_base_propagates() -> None:
 @pytest.mark.parametrize('pc', [0x401018, 0x400000, 0x1001, 0x8000, 0x555555555000])
 def test_pc_relative_load_propagates_at_real_addresses(pc: int) -> None:
     assert _propagates(pc), (
-        f'PC={pc:#x}: a byte tainted at the operand\'s effective address '
+        f"PC={pc:#x}: a byte tainted at the operand's effective address "
         f'({pc + DISP_FROM_PC:#x}) did not taint the destination. Every value '
         f'a real program loads from a global through a RIP-relative operand '
         f'arrives untainted.'

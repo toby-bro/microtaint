@@ -59,10 +59,9 @@ def _main() -> None:
     import os
     import tempfile
 
-    from unicorn.x86_const import UC_X86_REG_RAX, UC_X86_REG_RBX
-
     from qiling import Qiling
     from qiling.const import QL_VERBOSE
+    from unicorn.x86_const import UC_X86_REG_RAX, UC_X86_REG_RBX
 
     from microtaint.emulator.hook_core import InstructionHook
     from microtaint.emulator.reporter import Reporter

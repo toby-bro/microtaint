@@ -52,7 +52,6 @@ Fix
 These tests would FAIL on the pre-fix engine and PASS on the fixed one.
 """
 
-# mypy: disable-error-code="no-untyped-def, no-untyped-call,import-untyped"
 # ruff: noqa: PT018
 
 from __future__ import annotations
@@ -117,7 +116,7 @@ class TestResolvePtrTemporalOrdering:
     and check the resolved (register, offset) pair.
     """
 
-    def test_rep_stosb_store_addr_is_rdi_with_zero_offset(self, regs) -> None:
+    def test_rep_stosb_store_addr_is_rdi_with_zero_offset(self, regs: list[Register]) -> None:
         """STORE in rep stosb must resolve to (RDI, 0), not (RDI, +1).
 
         The buggy resolver returned (RDI, 1) because it picked up the
@@ -159,7 +158,7 @@ class TestResolvePtrTemporalOrdering:
             f'resolve_ptr_with_offset is missing or incomplete.'
         )
 
-    def test_rep_movsb_store_addr_is_rdi_with_zero_offset(self, regs) -> None:
+    def test_rep_movsb_store_addr_is_rdi_with_zero_offset(self, regs: list[Register]) -> None:
         """Same bug shape for rep movsb (f3 a4): post-store updates RDI."""
         ctx = get_context('AMD64')
         mapper = StateMapper(ctx, 'AMD64', regs)
@@ -187,7 +186,7 @@ class TestResolvePtrTemporalOrdering:
         assert base_reg.name == 'RDI'
         assert const_offset == 0, f'rep movsb STORE address resolved to RDI + {const_offset}, expected RDI + 0.'
 
-    def test_rep_movsq_store_addr_is_rdi_with_zero_offset(self, regs) -> None:
+    def test_rep_movsq_store_addr_is_rdi_with_zero_offset(self, regs: list[Register]) -> None:
         """rep movsq (f3 48 a5) — qword version, same bug pattern."""
         ctx = get_context('AMD64')
         mapper = StateMapper(ctx, 'AMD64', regs)
@@ -228,7 +227,7 @@ class TestRepStosbStaticRule:
     artefact used by the runtime hook.
     """
 
-    def test_rep_stosb_writes_to_rdi_not_rdi_plus_one(self, regs) -> None:
+    def test_rep_stosb_writes_to_rdi_not_rdi_plus_one(self, regs: list[Register]) -> None:
         """The static rule's STORE target must be T_MEM[V_RDI, size=1].
 
         Pre-fix: T_MEM[(V_RDI[63:0] ADD 0x1), size=1].
@@ -252,7 +251,7 @@ class TestRepStosbStaticRule:
             f'This is the rep-stosb post-store-update leak.  Got: {target_str}'
         )
 
-    def test_rep_stosb_value_taint_is_or_of_rcx_and_rax_taints(self, regs) -> None:
+    def test_rep_stosb_value_taint_is_or_of_rcx_and_rax_taints(self, regs: list[Register]) -> None:
         """The store value's taint expression should depend on T_RAX (AL is
         the bottom byte of RAX). Sanity check that we haven't broken the
         unrelated value-side propagation while fixing the address side.
@@ -285,26 +284,26 @@ class TestOrdinaryStoresStillWork:
         assert mem_assigns, f'no memory write produced for {asm!r}'
         return str(mem_assigns[0].target)
 
-    def test_mov_rbp_minus_16(self, ks, regs) -> None:
+    def test_mov_rbp_minus_16(self, ks: Ks, regs: list[Register]) -> None:
         t = self._store_target(ks, regs, 'mov [rbp - 0x10], rax')
         assert 'V_RBP' in t and 'ADD -0x10' in t, t
 
-    def test_mov_rsp_plus_8(self, ks, regs) -> None:
+    def test_mov_rsp_plus_8(self, ks: Ks, regs: list[Register]) -> None:
         t = self._store_target(ks, regs, 'mov [rsp + 8], rax')
         assert 'V_RSP' in t and 'ADD 0x8' in t, t
 
-    def test_mov_rdi_no_offset(self, ks, regs) -> None:
+    def test_mov_rdi_no_offset(self, ks: Ks, regs: list[Register]) -> None:
         """Plain [RDI] — must still resolve to V_RDI with no offset."""
         t = self._store_target(ks, regs, 'mov [rdi], al')
         assert 'V_RDI' in t, t
         assert 'ADD 0x1' not in t and ' ADD 1' not in t, f'plain mov [rdi], al got a spurious +1 offset: {t}'
 
-    def test_mov_rdi_plus_4(self, ks, regs) -> None:
+    def test_mov_rdi_plus_4(self, ks: Ks, regs: list[Register]) -> None:
         """[RDI + 4] is the legitimate +4 case — must keep its real offset."""
         t = self._store_target(ks, regs, 'mov [rdi + 4], eax')
         assert 'V_RDI' in t and 'ADD 0x4' in t, t
 
-    def test_push_rax_resolves_to_rsp_minus_8(self, ks, regs) -> None:
+    def test_push_rax_resolves_to_rsp_minus_8(self, ks: Ks, regs: list[Register]) -> None:
         """``push rax`` lifts to (RSP -= 8; mem[RSP] = RAX).  The STORE
         address is RSP AFTER the predecrement, which is RSP - 8.  This
         is the case most architecturally similar to the rep-stosb shape
@@ -314,7 +313,7 @@ class TestOrdinaryStoresStillWork:
         t = self._store_target(ks, regs, 'push rax')
         assert 'V_RSP' in t and 'ADD -0x8' in t, t
 
-    def test_mov_rsp_minus_64(self, ks, regs) -> None:
+    def test_mov_rsp_minus_64(self, ks: Ks, regs: list[Register]) -> None:
         """The exact opening of the rep-stosb test sequence in the
         benchmark — must resolve to V_RSP - 0x40.
         """

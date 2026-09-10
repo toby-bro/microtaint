@@ -33,7 +33,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from qiling import Qiling
 from qiling.const import QL_VERBOSE
 
@@ -70,16 +69,16 @@ def _counters(elf: Path):
     os.dup2(devnull, 1)
     try:
         ql.run()
-    except Exception:  # noqa: BLE001 - a guest crash still leaves valid counters
+    except Exception:
         pass
     finally:
         os.dup2(saved, 1)
         os.close(devnull)
         os.close(saved)
-    h = w._instr_hook_obj  # noqa: SLF001
+    h = w._instr_hook_obj
     if h is None:
         pytest.skip('Cython instruction hook not installed')
-    return h, w.sim._pcode.native_calls  # noqa: SLF001
+    return h, w.sim._pcode.native_calls
 
 
 @pytest.mark.skipif(

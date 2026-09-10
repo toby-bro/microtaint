@@ -51,7 +51,7 @@ def _clean_cases():
         for ins in spec.instructions:
             try:
                 circ = generate_static_rule(spec.arch, ins.bytes, spec.regs)
-            except Exception:  # noqa: BLE001 - unliftable forms are not our concern
+            except Exception:
                 continue
             ctx = EvalContext(
                 input_values=vals,
@@ -80,7 +80,7 @@ def test_clean_inputs_produce_no_taint(isa: str) -> None:
         checked += 1
         try:
             out = circ.evaluate(ctx)
-        except Exception:  # noqa: BLE001 - needs Unicorn / unsupported: not this test's subject
+        except Exception:
             continue
         dirty = {k: hex(int(v)) for k, v in (out or {}).items() if int(v) != 0}
         if dirty:

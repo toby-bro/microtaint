@@ -113,7 +113,7 @@ def measure_isa(isa: str, spec: ISASpec, *, iters: int = 200000,
         except (Unsupported, ValueError, KeyError):
             declined += 1
             continue
-        except Exception:  # noqa: BLE001
+        except Exception:
             declined += 1
             continue
         fnames.append(f'tf_{len(progs)}')

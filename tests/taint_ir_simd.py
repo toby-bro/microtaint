@@ -97,7 +97,7 @@ def ground_truth(code: bytes, taint: dict[str, int],
                  vals: dict[str, int]) -> dict[str, int]:
     base = {n: vals[n] & ~taint[n] & MASK64 for n in LANES}
     b = _run(code, base)
-    res = {n: 0 for n in LANES}
+    res = dict.fromkeys(LANES, 0)
     for src in LANES:
         tm = taint[src]
         bit = 0
@@ -157,11 +157,11 @@ def run_simd_bank(n_vec: int = 5, seed: int = 99,
             continue
         try:
             build_ir(spec.arch, ins.bytes)
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
         for _ in range(n_vec):
             vals = {k: rng.getrandbits(64) for k in LANES}
-            taint = {k: 0 for k in LANES}
+            taint = dict.fromkeys(LANES, 0)
             for _ in range(2):
                 taint[rng.choice(list(LANES))] |= 1 << rng.randint(0, 63)
             try:

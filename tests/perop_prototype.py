@@ -30,7 +30,6 @@ oracle.  Three propagation schemes over the lifted p-code, one forward pass:
 Only the register/flag corpus (LE ISAs) is covered here; that is where the
 compaction precision question lives.  Memory + BE come with the corpus extension.
 """
-# ruff: noqa: PLC0415
 # mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,import-untyped,var-annotated"
 from __future__ import annotations
 
@@ -232,9 +231,9 @@ def engine_scheme_b(arch, code, regs, in_taint, in_values, *, circuit=None):
 
 if __name__ == '__main__':
     # quick single-instruction sanity vs the differential oracle
-    from tests.oracle_harness import classify, reference_taint
     from benchmark.instruction_bank import isa_registers
     from microtaint.types import Architecture as A
+    from tests.oracle_harness import classify, reference_taint
     regs = list(isa_registers('AMD64'))
     rn = [r.name for r in regs]
     cases = [

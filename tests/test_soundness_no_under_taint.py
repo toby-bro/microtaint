@@ -43,10 +43,6 @@ definition of "the bits whose values genuinely depend on tainted inputs".
 
 from __future__ import annotations
 
-# Full budget at release, a deterministic prefix otherwise -- so a failure
-# found in the fast tier reproduces at the same seed under --slow.
-from tests.conftest import fuzz_budget
-
 import pytest
 import unicorn
 import unicorn.x86_const as ux
@@ -56,6 +52,10 @@ from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import _cached_generate_static_rule, generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
+
+# Full budget at release, a deterministic prefix otherwise -- so a failure
+# found in the fast tier reproduces at the same seed under --slow.
+from tests.conftest import fuzz_budget
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 REGS = ('RAX', 'RBX', 'RCX', 'RDX')

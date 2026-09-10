@@ -1,4 +1,4 @@
-# ruff: noqa: S603, S607, S110, PLC0415
+# ruff: noqa: S603, S607
 """The GIL-free paths must produce EXACTLY the state the GIL paths do.
 
 `mt_fast_step_nogil` answers an instruction without acquiring the GIL, from
@@ -61,7 +61,7 @@ void work(void){
 void _start(void){ work(); sys_exit(0); }
 """
 
-_CHILD = r'''
+_CHILD = r"""
 import hashlib, io, json, os, sys
 from qiling import Qiling
 from qiling.const import QL_VERBOSE
@@ -109,7 +109,7 @@ print("@@RESULT@@" + json.dumps({
     "express_done": int(getattr(hook, "express_done", 0) or 0),
     "fast_done": int(getattr(hook, "fast_done", 0) or 0),
 }))
-'''
+"""
 
 
 def _compile(src: str) -> str:

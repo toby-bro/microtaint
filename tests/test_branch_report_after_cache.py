@@ -96,7 +96,7 @@ def _side_channel_reports(binary: str, secret_bit: int) -> list[int]:
         for i in range(size):
             wrapper.taint_region(address + i, bytes([1 << secret_bit]) if i == 0 else b'\x00')
 
-    wrapper._taint_bytes = one_bit  # noqa: SLF001
+    wrapper._taint_bytes = one_bit
 
     seen: list[int] = []
     report = wrapper.reporter.side_channel
@@ -108,7 +108,7 @@ def _side_channel_reports(binary: str, secret_bit: int) -> list[int]:
     wrapper.reporter.side_channel = record  # type: ignore[method-assign]
     try:
         ql.run()
-    except Exception:  # noqa: BLE001 - the guest exits via a syscall
+    except Exception:
         pass
     return seen
 

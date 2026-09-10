@@ -17,7 +17,7 @@ bank has no branches; this test pins the invariant directly.
 The fix seeds ``arch_pc_off`` / ``arch_pc_sz`` on every pool frame, so a
 recycled branch computes the same PC as the unshared path.
 """
-# ruff: noqa: S101, PLC0415, S603
+# ruff: noqa: S603
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 # test rdi, 1 ; jz +3  -- ZF (hence the branch target / PC) depends on RDI.
 _BRANCH_BYTES_HEX = '48f7c7010000007403'
-_REGS = ("RDI", "RIP")
+_REGS = ('RDI', 'RIP')
 
 
 def _eval_pc_taint() -> int:

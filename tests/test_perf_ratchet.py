@@ -54,7 +54,6 @@ Regenerate the baseline after a genuine optimization (ratchets DOWN only)::
     # refuses to RAISE any baseline value unless PERF_ALLOW_REGRESSION=1 too.
 """
 
-# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 
 from __future__ import annotations
 
@@ -70,6 +69,7 @@ import time
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -106,7 +106,8 @@ _METRICS = ('cells', 'assigns', 'nodes')
 class _Case:
     __slots__ = ('asm', 'circ', 'ctx', 'isa', 'sim')
 
-    def __init__(self, isa, asm, circ, ctx, sim):
+    def __init__(self, isa: str, asm: str, circ: Any, ctx: Any,
+                 sim: CellSimulator) -> None:
         self.isa, self.asm, self.circ, self.ctx, self.sim = isa, asm, circ, ctx, sim
 
 
@@ -163,9 +164,11 @@ def _work(case: _Case) -> tuple[int, int, int]:
     """Deterministic work per evaluate: (cells, assigns, nodes). Machine-independent."""
     for _ in range(3):  # warm any per-call memoization
         case.circ.evaluate(case.ctx)
-    n0 = case.sim._pcode.native_calls
+    pcode = case.sim._pcode
+    assert pcode is not None, 'a CellSimulator always has an evaluator'
+    n0 = pcode.native_calls
     case.circ.evaluate(case.ctx)
-    cells = case.sim._pcode.native_calls - n0
+    cells = pcode.native_calls - n0
     nodes = sum(_count_nodes(a.expression) for a in case.circ.assignments)
     return cells, len(case.circ.assignments), nodes
 
@@ -264,14 +267,14 @@ def _git_sha() -> tuple[str, bool]:
         return 'unknown', False
 
 
-def _load_baseline() -> dict:
+def _load_baseline() -> dict[str, Any]:
     if not BASELINE_PATH.exists():
         return {}
-    data: dict = json.loads(BASELINE_PATH.read_text())
+    data: dict[str, Any] = json.loads(BASELINE_PATH.read_text())
     return data
 
 
-def _write_log(record: dict) -> Path | None:
+def _write_log(record: dict[str, Any]) -> Path | None:
     """One JSON file per run in perf.log.d/, timestamp-sortable name. Best effort."""
     try:
         LOG_DIR.mkdir(exist_ok=True)
@@ -306,12 +309,12 @@ def _base_record(kind: str, rows: list[dict]) -> dict:
 # ===========================================================================
 
 
-def _deterministic_rows() -> tuple[list[dict], dict]:
+def _deterministic_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Measure (cells, assigns) per instruction; return rows + a log record."""
     cases = _cases()
     assert cases, 'no instructions assembled -- corpus/keystone broken'
-    rows: list[dict] = []
-    by_isa: dict[str, list[dict]] = {}
+    rows: list[dict[str, Any]] = []
+    by_isa: dict[str, list[dict[str, Any]]] = {}
     for c in cases:
         cells, assigns, nodes = _work(c)
         row = {'isa': c.isa, 'asm': c.asm, 'cells': cells, 'assigns': assigns, 'nodes': nodes}
@@ -420,8 +423,8 @@ def test_instruction_cost_ratchet() -> None:
 def test_perf_timing_bench() -> None:
     cases = _cases()
     assert cases
-    rows: list[dict] = []
-    by_isa: dict[str, list[dict]] = {}
+    rows: list[dict[str, Any]] = []
+    by_isa: dict[str, list[dict[str, Any]]] = {}
     for c in cases:
         cells, assigns, nodes = _work(c)
         ns = _time_ns(c)
