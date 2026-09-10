@@ -21,11 +21,15 @@ stopped committing stores at all, would still pass a decline-only test.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
+from pypcode import PcodeOp
 
 from microtaint.taint_ir import frompcode
 from microtaint.taint_ir.blocks import plan_block
 from microtaint.taint_ir.frompcode import Emit, Unsupported
+from microtaint.taint_ir.ir import IRKey, IRProg
 from microtaint.types import Architecture
 
 _ARCH, _KEY = Architecture.AMD64, 'AMD64'
@@ -69,8 +73,14 @@ class _Machine:
             self.mem[addr + i] = (value >> (8 * i)) & 0xFF
 
 
+#: A region runner: (taint out, values out) for one lowered region, given
+#: the machine it reads and writes memory through.
+RunRegion = Callable[[IRProg, dict[str, int], dict[str, int], _Machine],
+                     tuple[dict[str, int], dict[str, int]]]
+
+
 @pytest.fixture(scope='module')
-def kit():
+def kit() -> tuple[frompcode.Builder, RunRegion]:
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir.exec import compile_program
 
@@ -78,7 +88,11 @@ def kit():
     names = sorted(set(builder.name_by_off.values()))
     layout = {n: i for i, n in enumerate(names)}
 
-    def slot_of(key):
+    def slot_of(key: IRKey) -> int:
+        # this layout only places the tuple keys; a bare register name
+        # never reaches it
+        if not isinstance(key, tuple):
+            raise KeyError(key)
         if key[0] in ('reg', 'regv'):
             name = builder.name_by_off.get(key[1])
             if name is None or name not in layout:
@@ -88,7 +102,8 @@ def kit():
             return _MEMBASE + _PER_ACC * key[1] + _OFF[key[0]]
         raise KeyError(key)
 
-    def run(prog, values: dict[str, int], taints: dict[str, int], machine):
+    def run(prog: IRProg, values: dict[str, int], taints: dict[str, int],
+            machine: _Machine) -> tuple[dict[str, int], dict[str, int]]:
         """The two-pass protocol, as fastpath.h::mt_ir_mem_step performs it.
 
         Returns (taint, values): a region hands the NEXT region its register
@@ -127,7 +142,7 @@ def kit():
     return builder, run
 
 
-def _pcode(code: bytes, base: int):
+def _pcode(code: bytes, base: int) -> list[PcodeOp]:
     from microtaint.sleigh.lifter import get_context
     return get_context(_KEY).translate(code, base).ops
 
@@ -148,7 +163,9 @@ _CASES = {
 
 @pytest.mark.parametrize('name', sorted(_CASES))
 @pytest.mark.parametrize('tainted', ['RAX', 'RDX'])
-def test_regions_agree_with_the_sequence_through_memory(kit, name: str, tainted) -> None:
+def test_regions_agree_with_the_sequence_through_memory(kit: tuple[frompcode.Builder, RunRegion],
+                                                        name: str,
+                                                        tainted: str) -> None:
     builder, run = kit
     seq = [bytes.fromhex(h) for h in _CASES[name]]
     seed_taint = {tainted: 0xFF}
@@ -256,7 +273,8 @@ _ADDR_SEQ = ['8855ef',      # mov  [rbp-0x11], dl
              '0fb60c03']    # movzx ecx, byte [rbx+rax]
 
 
-def test_a_stored_value_reaches_a_later_load_that_uses_it_as_an_address(kit) -> None:
+def test_a_stored_value_reaches_a_later_load_that_uses_it_as_an_address(
+        kit: tuple[frompcode.Builder, RunRegion]) -> None:
     """The shape that cost a byte on bench_dense.
 
     The swap loop in that guest stores `idx`, reloads it two instructions later
@@ -281,7 +299,9 @@ def test_a_stored_value_reaches_a_later_load_that_uses_it_as_an_address(kit) -> 
         m.mem[want_addr] = 0x5A
         return m
 
-    ref_machine, ref, ref_values = machine(), {}, dict(_SEED)
+    ref_machine = machine()
+    ref: dict[str, int] = {}
+    ref_values = dict(_SEED)
     base = frompcode.LIFT_BASE
     for code in seq:
         prog = builder.build(_pcode(code, base), base + len(code), emit=Emit.BOTH)
@@ -291,7 +311,9 @@ def test_a_stored_value_reaches_a_later_load_that_uses_it_as_an_address(kit) -> 
         'the per-instruction sequence did not taint RCX either, so this test '
         'cannot tell a stale value from a correct one')
 
-    got_machine, got, got_values = machine(), {}, dict(_SEED)
+    got_machine = machine()
+    got: dict[str, int] = {}
+    got_values = dict(_SEED)
     for region in plan_block(_ARCH, b''.join(seq), builder=builder):
         assert region.prog is not None, 'a region did not lower'
         got, got_values = run(region.prog, got_values, got, got_machine)

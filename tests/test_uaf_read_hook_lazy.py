@@ -31,8 +31,13 @@ import os
 import platform
 import subprocess
 import tempfile
+from collections.abc import Iterator
 
 import pytest
+from qiling import Qiling
+
+from microtaint.emulator.reporter import Reporter
+from microtaint.emulator.wrapper import MicrotaintWrapper
 
 pytestmark = pytest.mark.skipif(
     platform.system() != 'Linux', reason='emulator tests require Linux',
@@ -54,7 +59,7 @@ _POISON_AT = 200
 
 
 @pytest.fixture(scope='module')
-def binary():
+def binary() -> Iterator[str]:
     fd, path = tempfile.mkstemp(suffix='.elf')
     os.close(fd)
     subprocess.run(
@@ -65,7 +70,8 @@ def binary():
     os.unlink(path)
 
 
-def _run(binary: str, poison: bool):
+def _run(binary: str, poison: bool,
+         ) -> tuple[MicrotaintWrapper, Reporter, dict[str, object]]:
     from qiling import Qiling
     from qiling.const import QL_VERBOSE
 
@@ -77,12 +83,18 @@ def _run(binary: str, poison: bool):
     reporter = Reporter(json_mode=False, stream=io.StringIO())
     wrapper = MicrotaintWrapper(ql, check_uaf=True, check_bof=False,
                                 check_sc=False, reporter=reporter)
-    seen = {'before': wrapper._mem_read_hook, 'poisoned': None, 'n': 0}
+    #: 'before' is the read hook as it stood before the run, 'poisoned'
+    #: what it became, and 'n' counts the callbacks.
+    seen: dict[str, object] = {'before': wrapper._mem_read_hook,
+                               'poisoned': None, 'n': 0}
 
     if poison:
-        def poison_once(_ql, _addr, _size, _ud=None):
-            seen['n'] += 1
-            if seen['n'] != _POISON_AT:
+        def poison_once(_ql: Qiling, _addr: int, _size: int,
+                        _ud: object = None) -> None:
+            n = seen['n']
+            assert isinstance(n, int)
+            seen['n'] = n = n + 1
+            if n != _POISON_AT:
                 return
             sp = _ql.arch.regs.arch_sp
             wrapper.shadow_mem.poison(sp, 0x40)
@@ -103,7 +115,8 @@ def _run(binary: str, poison: bool):
     return wrapper, reporter, seen
 
 
-def test_read_hook_is_not_registered_until_something_is_poisoned(binary):
+def test_read_hook_is_not_registered_until_something_is_poisoned(
+        binary: str) -> None:
     """The optimisation: no poison in the run, so no read callback at all."""
     wrapper, reporter, seen = _run(binary, poison=False)
     assert seen['before'] is None, \
@@ -115,7 +128,8 @@ def test_read_hook_is_not_registered_until_something_is_poisoned(binary):
     assert not [f for f in reporter.findings if f.kind.name == 'UAF']
 
 
-def test_first_poison_arms_the_read_hook_and_the_read_is_reported(binary):
+def test_first_poison_arms_the_read_hook_and_the_read_is_reported(
+        binary: str) -> None:
     """The safety property: poisoning still detects a subsequent read."""
     wrapper, reporter, seen = _run(binary, poison=True)
     assert seen['poisoned'] is not None, 'the run ended before poisoning'
