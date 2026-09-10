@@ -119,7 +119,7 @@ def _ppc_r3(vals, taint):
     return circ.evaluate(ctx).get('R3', 0)
 
 
-def test_cmpw_mfcr_exact_via_packed_comparison():
+def test_cmpw_mfcr_exact_via_packed_comparison() -> None:
     """cmpw packs LT(r4<r5)<<3 | GT(r5<r4)<<2 | EQ<<1 | SO; mfcr moves CR0 into R3[31:28].
     The packed-comparison builder gives each LT/GT/EQ leaf its exact term, so:
 
@@ -132,7 +132,7 @@ def test_cmpw_mfcr_exact_via_packed_comparison():
     assert _ppc_r3({'R4': 0x10, 'R5': 0x5678}, {'R4': 0x1}) & 0xF0000000 == 0
 
 
-def test_cmpw_builder_falls_through_without_xer():
+def test_cmpw_builder_falls_through_without_xer() -> None:
     """Soundness guard: if a leaf operand (SO=xer_so) does not map, the builder must
     return None and fall through to the (sound) differential+floor rather than emit a
     partial term.  With no XER in the state format the CR0 field is still tainted when
@@ -173,7 +173,7 @@ def _arm_x0(code, vals, taint):
     return _ARM_A.read(circ.evaluate(ctx), 'X0')
 
 
-def test_cset_lt_ge_exact_via_equality_term():
+def test_cset_lt_ge_exact_via_equality_term() -> None:
     """cset lt = ZEXT(N!=V), ge = ZEXT(N==V): with N,V tainted DIRECTLY the equality
     term is exact.  Determinate equality must NOT taint (N==N is constant when the
     tainted flags are forced equal by fixing), varying must taint bit 0 only."""

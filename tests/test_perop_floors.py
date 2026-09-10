@@ -179,7 +179,7 @@ def test_perop_slicewise_sound_and_covers(request):
         assert cov > 0.85, f'{isa}: slice coverage too low: {cov:.2f}'
 
 
-def test_perop_no_new_undertaint_vs_engine_amd64():
+def test_perop_no_new_undertaint_vs_engine_amd64() -> None:
     """Per-op-with-floors must not UNDER-taint anything the engine's own
     whole-instruction differential catches (vs Unicorn ground truth).  Bounded
     corpus; the standalone sweep covers the full bank."""
@@ -189,7 +189,7 @@ def test_perop_no_new_undertaint_vs_engine_amd64():
     assert n_new_under == 0, f'NEW under-taints (soundness bugs): {examples}'
 
 
-def test_perop_no_new_undertaint_vs_engine_arm64():
+def test_perop_no_new_undertaint_vs_engine_arm64() -> None:
     """ISA-generality: the same per-op model (p-code is the contract) is sound on
     AArch64 too -- no under-taint beyond what the engine's differential has vs
     Unicorn ground truth.  Exercises the register-name resolver (bank X0/N-Z-C-V
@@ -200,7 +200,7 @@ def test_perop_no_new_undertaint_vs_engine_arm64():
     assert n_new_under == 0, f'NEW under-taints (soundness bugs): {examples}'
 
 
-def test_perop_control_flow_routes_to_monolithic():
+def test_perop_control_flow_routes_to_monolithic() -> None:
     """cmov lifts to an intra-instruction CBRANCH; the per-op model must defer to
     the monolithic window (NeedsMonolithic) rather than execute the move
     unconditionally and drop the not-taken side's taint."""
@@ -219,7 +219,7 @@ def test_perop_control_flow_routes_to_monolithic():
         perop_floors_taint(Architecture.AMD64, code, regs, it, iv)
 
 
-def test_perop_core_alu_exact_vs_ground_truth():
+def test_perop_core_alu_exact_vs_ground_truth() -> None:
     """add/sub/and/or/mov take the per-op fast path: the destination register and
     the carry/overflow flags (CF/OF) are bit-exact vs Unicorn ground truth -- the
     value-aware carry ripple recovers the interior carry bits the bare two-corner
@@ -257,7 +257,7 @@ def test_perop_core_alu_exact_vs_ground_truth():
             assert v.exact, f'{mnem}: destination not exact: over={v.over} taint={t}'
 
 
-def test_perop_reconvergence_routes_to_monolithic():
+def test_perop_reconvergence_routes_to_monolithic() -> None:
     """xor rax,rax (input used twice, cancels) and imul rax,rbx (OF compares the
     result against the full product -> shared source) are reconvergent: the per-op
     window widens to the monolithic differential rather than over-taint."""

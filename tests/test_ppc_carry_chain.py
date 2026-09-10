@@ -70,7 +70,7 @@ def _taint(code: str, values: dict[str, int], taint: dict[str, int], out: str = 
     return circ.evaluate(ctx).get(out, 0)
 
 
-def test_native_be_safe_predicate():
+def test_native_be_safe_predicate() -> None:
     """PPC register arithmetic is native-BE-safe: whole-GPR ops (`adde`, `subfc`,
     `subfe`) and sub-register ops (`extsb` reads a byte of a 32-bit GPR -- a
     sub-window of a <=4-byte, always-defined parent, handled by the kernel's
@@ -82,7 +82,7 @@ def test_native_be_safe_predicate():
     assert _native_be_safe(ARCH, _LWZ) is False  # LOAD
 
 
-def test_native_be_safe_routes_register_only_ops():
+def test_native_be_safe_routes_register_only_ops() -> None:
     """Register-only instructions route to the (byte-order-aware) native kernel --
     including MIPS64 32-bit ops that read sub-register aliases (`register[GPR+4:4]`),
     which the kernel now handles byte-correctly; on non-canonical inputs it
@@ -93,7 +93,7 @@ def test_native_be_safe_routes_register_only_ops():
     assert _native_be_safe(mips, '0085102d') is True  # daddu
 
 
-def test_native_be_safe_excludes_overlapping_unique_windows():
+def test_native_be_safe_excludes_overlapping_unique_windows() -> None:
     """The native kernel maps each distinct `unique` offset to its own slot, so an
     instruction that reads a byte-window of a wider unique at a DIFFERENT base
     offset (SPARC `umul` reads `unique[p+4:4]` of the 8-byte product `unique[p:8]`)
@@ -105,7 +105,7 @@ def test_native_be_safe_excludes_overlapping_unique_windows():
     assert _native_be_safe(sparc, '86004002') is True   # add  (register-only)
 
 
-def test_adde_consumes_concrete_carry_in():
+def test_adde_consumes_concrete_carry_in() -> None:
     """adde's differential must reflect the concrete carry-in.  With
     ``R4=0xd48dd9f3`` (bit 2 clear) and bit 2 tainted, flipping it ripples one
     place further when carry-in is 1 than when it is 0."""
@@ -114,7 +114,7 @@ def test_adde_consumes_concrete_carry_in():
     assert _taint(_ADDE, {**st, 'XER_CA': 1}, {'R4': 0x4}) == 0xC
 
 
-def test_addc_adde_chain_propagates_carry_taint():
+def test_addc_adde_chain_propagates_carry_taint() -> None:
     """The carry produced by ``addc`` must be threaded into ``adde`` -- both the
     concrete carry-out and its consumption in the differential -- so a single
     tainted low bit ripples through the extended add."""
@@ -122,14 +122,14 @@ def test_addc_adde_chain_propagates_carry_taint():
     assert _taint(_ADDC_ADDE, st, {'R4': 0x4}) == 0xC
 
 
-def test_subfc_subfe_borrow_chain_ripples():
+def test_subfc_subfe_borrow_chain_ripples() -> None:
     """The borrow chain must propagate: tainting bit 0 of R4 in ``R5 - R4``
     ripples to bit 1 for ``R4=0xf, R5=0x10`` (0x10-0xf=1, 0x10-0xe=2, XOR=0x3).
     Before the fix the borrow was dropped and only bit 0 was tainted."""
     assert _taint(_SUBFC_SUBFE, {'R4': 0xF, 'R5': 0x10}, {'R4': 0x1}) == 0x3
 
 
-def test_subfe_borrow_in_polarity():
+def test_subfe_borrow_in_polarity() -> None:
     """subfe r3,r4,r5 = r5 - r4 - !xer_ca = r5 - r4 - 1 + xer_ca -- the borrow-in is
     an EFFECTIVELY POSITIVE operand (double negation via BOOL_NEGATE).
     compute_polarity must flip xer_ca's polarity through the BOOL_NEGATE, or the
@@ -140,7 +140,7 @@ def test_subfe_borrow_in_polarity():
     assert _taint(_SUBFC_SUBFE[8:], {'R4': 0, 'R5': 0}, {'XER_CA': 1}) == 0xFFFFFFFF
 
 
-def test_extsb_not_regressed_by_native_routing():
+def test_extsb_not_regressed_by_native_routing() -> None:
     """``extsb`` reads only R4's low byte; the fix must NOT route it through the
     native kernel (which would read the wrong byte under BE).  Tainting the low
     byte propagates through the sign extension; tainting only the high bytes
@@ -151,7 +151,7 @@ def test_extsb_not_regressed_by_native_routing():
     assert _taint(_EXTSB, {'R4': 0x1036311D}, {'R4': 0xC9462C56}) == 0x56
 
 
-def test_little_endian_target_never_uses_native_be_path():
+def test_little_endian_target_never_uses_native_be_path() -> None:
     """The BE native routing is gated on ``_is_big_endian``; a little-endian
     simulator must never take it (x86/ARM64 keep their existing paths)."""
     x86 = CellSimulator(Architecture.X86)
@@ -170,7 +170,7 @@ _MFCR = '7c600026'  # mfcr 3  -> r3 = pack(cr0..cr7 nibbles); cr0 -> r3[31:28]
 _FMT_CR4 = [Register(f'R{i}', 32) for i in range(8)] + [Register(f'CR{i}', 4) for i in range(8)]
 
 
-def test_mfcr_consumes_condition_register_into_gpr():
+def test_mfcr_consumes_condition_register_into_gpr() -> None:
     """mfcr packs the CR0..CR7 4-bit condition fields into R3.  Unicorn PPC cannot
     seed the condition register, so mfcr's differential collapsed to 0 and R3
     under-tainted its condition-derived bits; the native kernel models CR, so
@@ -191,7 +191,7 @@ def test_mfcr_consumes_condition_register_into_gpr():
 _CMPW_MFCR = '7c0428007c600026'  # cmpw 0,4,5 ; mfcr 3
 
 
-def test_cmpw_mfcr_packed_lt_gt_comparison():
+def test_cmpw_mfcr_packed_lt_gt_comparison() -> None:
     """cmpw writes CR0 = LT(r4<r5)<<3 | GT(r5<r4)<<2 | EQ<<1 | SO -- two
     OPPOSITE-polarity signed comparisons packed into one field.  A single polarity
     split makes the differential exact for LT or GT but not both, so with the two

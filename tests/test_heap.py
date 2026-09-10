@@ -97,13 +97,13 @@ def _findings_of_kind(reporter, kind: str) -> list:
 class TestPoisonLayer:
     """The raw layer HeapTracker uses to mark freed regions."""
 
-    def test_freshly_allocated_region_not_poisoned(self):
+    def test_freshly_allocated_region_not_poisoned(self) -> None:
         from microtaint.emulator.shadow import BitPreciseShadowMemory
 
         s = BitPreciseShadowMemory()
         assert not s.is_poisoned(0x1000, 16)
 
-    def test_poison_then_is_poisoned(self):
+    def test_poison_then_is_poisoned(self) -> None:
         from microtaint.emulator.shadow import BitPreciseShadowMemory
 
         s = BitPreciseShadowMemory()
@@ -111,7 +111,7 @@ class TestPoisonLayer:
         assert s.is_poisoned(0x1000, 16)
         assert s.is_poisoned(0x1008, 1)  # any byte in the range
 
-    def test_poison_does_not_overflow_into_neighbor(self):
+    def test_poison_does_not_overflow_into_neighbor(self) -> None:
         from microtaint.emulator.shadow import BitPreciseShadowMemory
 
         s = BitPreciseShadowMemory()
@@ -119,7 +119,7 @@ class TestPoisonLayer:
         assert not s.is_poisoned(0x1010, 1)  # right after the poisoned range
         assert not s.is_poisoned(0x0FFF, 1)  # right before
 
-    def test_unpoison_after_realloc_pattern(self):
+    def test_unpoison_after_realloc_pattern(self) -> None:
         """
         Realloc-in-place: the same region is unpoisoned because it's reused.
         """
@@ -287,7 +287,7 @@ class TestHeapTrackerStateMachine:
     correctly via direct manipulation (no Qiling).
     """
 
-    def test_initial_state_empty(self):
+    def test_initial_state_empty(self) -> None:
         from microtaint.emulator.heap import HeapTracker
         from microtaint.emulator.shadow import BitPreciseShadowMemory
 

@@ -56,7 +56,7 @@ def _check_isa(isa: str) -> tuple[int, int, list]:
     return ran, len(mism), mism[:10]
 
 
-def test_evaluate_c_matches_evaluate_amd64():
+def test_evaluate_c_matches_evaluate_amd64() -> None:
     ran, n_mism, examples = _check_isa('AMD64')
     assert ran > 300, f'too few c_evaluable AMD64 circuits exercised: {ran}'
     assert n_mism == 0, f'evaluate_c != evaluate on {n_mism} circuits, e.g. {examples}'

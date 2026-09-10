@@ -145,7 +145,7 @@ def test_memory_taint_matches_ground_truth(isa, policy):
                     f'\n{detail}')
 
 
-def test_vector_lanes_match_ground_truth():
+def test_vector_lanes_match_ground_truth() -> None:
     """Lane splitting, against per-bit truth read straight out of XMM.
 
     The bank's Unicorn descriptors cover general-purpose registers only, so

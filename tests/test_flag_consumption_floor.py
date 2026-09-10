@@ -56,7 +56,7 @@ def _x0_taint(code: bytes, taint: dict[str, int]) -> int:
     return _A.read(circ.evaluate(ctx), 'X0')
 
 
-def test_cset_lt_taints_wide_output_from_its_flags():
+def test_cset_lt_taints_wide_output_from_its_flags() -> None:
     """cset x0,lt = ZEXT(N!=V): tainting N, V, or BOTH must taint X0 bit 0."""
     assert _x0_taint(_CSET_LT, {'N': 1}) & 1
     assert _x0_taint(_CSET_LT, {'V': 1}) & 1
@@ -68,7 +68,7 @@ def test_cset_lt_taints_wide_output_from_its_flags():
     assert _x0_taint(_CSET_LT, {'N': 1}) == 1
 
 
-def test_cset_hi_taints_wide_output_from_its_flags():
+def test_cset_hi_taints_wide_output_from_its_flags() -> None:
     """cset x0,hi = C && !Z reads Z,C (not N,V).
 
     Mixed-polarity BOOL_AND: with C at +polarity and Z at -polarity (BOOL_NEGATE),
@@ -84,7 +84,7 @@ def test_cset_hi_taints_wide_output_from_its_flags():
     assert _x0_taint(_CSET_HI, {'Z': 1, 'C': 1}) == 1
 
 
-def test_cset_hi_is_exact_not_floored():
+def test_cset_hi_is_exact_not_floored() -> None:
     """Precision lock: `cset hi` = C & !Z is now EXACT, so a determinate tainted
     condition must NOT taint the result.  With Z=1 concrete, X0 = C & !1 = 0 for
     every value of C, so tainting C alone leaves X0 untainted.  The old blanket
@@ -111,7 +111,7 @@ _FMT_SEL = _A.state_format([
 _ZERO_SEL = dict.fromkeys(('X0', 'X1', 'X2', 'N', 'Z', 'C', 'V'), 0)
 
 
-def test_csel_tainted_condition_uses_isa_general_passthrough():
+def test_csel_tainted_condition_uses_isa_general_passthrough() -> None:
     """The cmov/select gated-passthrough resolves its condition flags through the
     mapper (ISA-general), not a hardcoded x86 flag-offset table -- so a tainted
     ARM64 NZCV condition OR-s in the operand union.  With x1==x2 in value the
@@ -130,7 +130,7 @@ def test_csel_tainted_condition_uses_isa_general_passthrough():
     assert _A.read(circ.evaluate(ctx), 'X0') & 0xF == 0xF
 
 
-def test_csel_tainted_condition_taints_operand_value_difference():
+def test_csel_tainted_condition_taints_operand_value_difference() -> None:
     """csel x0,x1,x2,cc = cond ? x1 : x2.  When the condition is TAINTED, flipping
     it switches the output between x1 and x2, so every bit where the two operand
     VALUES differ becomes tainted -- even on positions neither operand taints.  The
@@ -187,7 +187,7 @@ def _v0_taint_vals(code: bytes, values: dict[str, int], taint: dict[str, int]) -
     return circ.evaluate(ctx).get('V0', 0)
 
 
-def test_mips_slt_comparison_into_wide_register():
+def test_mips_slt_comparison_into_wide_register() -> None:
     """MIPS `slt`/`sltu` = zext(a0 < a1): a comparison of two WIDE operands consumed
     into a 64-bit GPR (INT_SLESS/INT_LESS + INT_ZEXT -> MONOTONIC).  With correct
     comparison polarity (LHS inverted) the two replicas become [min(a0)<max(a1)] and
@@ -201,7 +201,7 @@ def test_mips_slt_comparison_into_wide_register():
         assert _v0_taint(code, {}) == 0
 
 
-def test_mips_slt_is_exact_not_floored():
+def test_mips_slt_is_exact_not_floored() -> None:
     """Precision lock: `slt` is now EXACT via comparison polarity.  a0 in [0,0xff]
     is always < a1 in [0x7fffff00,0x7fffffff], so tainting the low byte of BOTH
     operands does NOT change a0<a1 -> V0 must be untainted.  The old symmetric-

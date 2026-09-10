@@ -207,7 +207,7 @@ def test_self_modifying_code_redecodes_after_write() -> None:
             pass
         ql.uc.mem_write(X, A)
 
-        def seed():
+        def seed() -> None:
             wrapper.register_taint.clear()
             wrapper.register_taint['RAX'] = FULL
             wrapper._any_taint = True

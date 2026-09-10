@@ -35,7 +35,7 @@ def _uc_push(rsp: int, rbp: int) -> int:
     return uc.reg_read(ux.UC_X86_REG_RSP)
 
 
-def test_ground_truth_rsp_depends_on_rsp_not_rbp():
+def test_ground_truth_rsp_depends_on_rsp_not_rbp() -> None:
     """The premise, measured: flipping RSP moves RSP_out; RBP does not."""
     base = STACK + 0x8000
     moved = 0
@@ -67,17 +67,17 @@ def _answers(taint):
     return diff, lowered
 
 
-def test_lowered_program_keeps_rsp_taint():
+def test_lowered_program_keeps_rsp_taint() -> None:
     _diff, lowered = _answers({'RSP': 0xF0F0F0F0F0F0F0F0})
     assert lowered['RSP'], "push must not clear the stack pointer's own taint"
 
 
-def test_lowered_program_does_not_invent_rsp_taint_from_the_pushed_register():
+def test_lowered_program_does_not_invent_rsp_taint_from_the_pushed_register() -> None:
     _diff, lowered = _answers({'RBP': 0xFF})
     assert lowered['RSP'] == 0, 'RSP_out does not depend on the pushed register'
 
 
-def test_differential_keeps_rsp_taint():
+def test_differential_keeps_rsp_taint() -> None:
     diff, _lowered = _answers({'RSP': 0xF0F0F0F0F0F0F0F0})
     assert diff['RSP'], "push must not clear the stack pointer's own taint"
 
@@ -91,7 +91,7 @@ def test_differential_keeps_rsp_taint():
     "sub-borrow and signed compare: 9 tests, on both MICROTAINT_TAINT_IR "
     "settings.  Over-tainting is the acceptable direction, so the narrow fix "
     "waits until the flag and memory cases are handled."))
-def test_differential_does_not_invent_rsp_taint():
+def test_differential_does_not_invent_rsp_taint() -> None:
     diff, _lowered = _answers({'RBP': 0xFF})
     assert diff['RSP'] == 0
 
@@ -114,7 +114,7 @@ def _rsp_dep_set():
             {getattr(k, 'name', k) for k in ds.addr_deps})
 
 
-def test_the_rsp_slice_contains_only_the_subtraction():
+def test_the_rsp_slice_contains_only_the_subtraction() -> None:
     """The premise: RSP_out's backward slice is `RSP = RSP - 8` and nothing else.
 
     If this ever stops holding, the dependency expectations below are about a
@@ -129,7 +129,7 @@ def test_the_rsp_slice_contains_only_the_subtraction():
     assert names == ['INT_SUB'], f'the RSP slice is no longer just the subtract: {names}'
 
 
-def test_rsp_output_depends_on_rsp_not_on_the_pushed_register():
+def test_rsp_output_depends_on_rsp_not_on_the_pushed_register() -> None:
     """The ROOT CAUSE, one level below the two xfails above.
 
     Dependencies were extracted per INSTRUCTION rather than per TARGET, so every

@@ -23,7 +23,7 @@ def measured():
     return measure()
 
 
-def test_baseline_exists():
+def test_baseline_exists() -> None:
     assert load_baseline() is not None, (
         'no op-count baseline; run: '
         '.venv/bin/python -m tests.perop_op_ratchet --update')

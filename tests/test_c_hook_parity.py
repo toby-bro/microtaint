@@ -85,7 +85,7 @@ def _norm(lines: list[str]) -> list[str]:
     return sorted(set(out))
 
 
-def test_c_hook_matches_ctypes_path_on_bof():
+def test_c_hook_matches_ctypes_path_on_bof() -> None:
     binary = _compile(_SRC)
     payload = b'A' * 32
     logs_c, used_c = _run(binary, payload, use_c_hook=True)

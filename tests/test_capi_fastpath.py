@@ -17,7 +17,7 @@ import sys
 import textwrap
 
 
-def test_cell_capi_loaded_without_cell_c_on_syspath():
+def test_cell_capi_loaded_without_cell_c_on_syspath() -> None:
     code = textwrap.dedent(
         """
         import sys

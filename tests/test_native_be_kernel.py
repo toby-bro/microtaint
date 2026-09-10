@@ -61,7 +61,7 @@ def _agrees(arch: Architecture, instr_hex: str, out_reg: str, out_bits: int,
     assert checked > 0, 'no comparable states -- Unicorn rejected all inputs'
 
 
-def test_ppc_subregister_reads_match_unicorn():
+def test_ppc_subregister_reads_match_unicorn() -> None:
     """PPC sign/shift ops read a sub-register byte of a GPR (`register[r4+N:1]`)."""
     ppc = Architecture.PPC32BE
     _agrees(ppc, '7c830774', 'R3', 32, ['R4'], canonical=False)  # extsb 3,4 (low byte)
@@ -69,7 +69,7 @@ def test_ppc_subregister_reads_match_unicorn():
     _agrees(ppc, '7c832670', 'R3', 32, ['R4'], canonical=False)  # srawi 3,4,4
 
 
-def test_mips_subregister_ops_match_unicorn():
+def test_mips_subregister_ops_match_unicorn() -> None:
     """MIPS64 32-bit ops read/write `register[GPR+4:4]` -- the low word under BE."""
     mips = Architecture.MIPS64BE
     _agrees(mips, '00041100', 'V0', 64, ['A0'], canonical=True)        # sll  $2,$4,4
@@ -77,7 +77,7 @@ def test_mips_subregister_ops_match_unicorn():
     _agrees(mips, '00851021', 'V0', 64, ['A0', 'A1'], canonical=True)  # addu $2,$4,$5
 
 
-def test_mips_full_width_op_match_unicorn():
+def test_mips_full_width_op_match_unicorn() -> None:
     """A 64-bit (maximal-register) op has no sub-register / canonical precondition."""
     _agrees(Architecture.MIPS64BE, '0085102d', 'V0', 64, ['A0', 'A1'], canonical=False)  # daddu
 

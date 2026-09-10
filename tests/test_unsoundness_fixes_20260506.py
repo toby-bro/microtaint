@@ -246,7 +246,7 @@ def test_pext_rcx_rdx_rax_sound(state, taint):
     _assert_sound('pext rcx,rdx,rax', _PEXT_RCX_RDX_RAX, state, taint)
 
 
-def test_pdep_avalanche_basic():
+def test_pdep_avalanche_basic() -> None:
     """PDEP is the inverse of PEXT and uses the same software-loop structure.
     Same software-loop detection should apply — any tainted source/mask bit
     must avalanche to the full output mask."""
@@ -275,7 +275,7 @@ def test_pdep_avalanche_basic():
 _ADCX_RAX_RBX = bytes.fromhex('66480f38f6c3')
 
 
-def test_adcx_carry_chain_sound():
+def test_adcx_carry_chain_sound() -> None:
     """ADCX must propagate carry through tainted operands soundly."""
     state = {'RAX': 0xE64B9B37AE01A122, 'RBX': 0x16DC5A6EA7890770, 'RCX': 0x4E9D23E9DF162EC3, 'RDX': 0xE3082DDCC9C04B7D}
     taint = {'RAX': 0x1000001008000000, 'RBX': 0x800000000, 'RCX': 0x400000, 'RDX': 0x3200000000000}
@@ -299,7 +299,7 @@ def test_adcx_carry_chain_sound():
 _MULX_RAX_RBX_RCX = bytes.fromhex('c4e2e3f6c1')
 
 
-def test_mulx_low_half_sound():
+def test_mulx_low_half_sound() -> None:
     """The 128-bit product's low half (RBX) must avalanche from any tainted
     multiplicand bit, including high bits that affect carries."""
     state = {'RAX': 0x548E2DF49A2F8623, 'RBX': 0x700D5278B081391C, 'RCX': 0xE42390236C597F2E, 'RDX': 0xF0A4F07E43036244}
@@ -327,7 +327,7 @@ def test_mulx_low_half_sound():
 _SIMD_PADDQ_ROUNDTRIP = bytes.fromhex('66480f6ec066480f6ecb660fd4c166480f7ec0')
 
 
-def test_simd_paddq_xmm_roundtrip_sound():
+def test_simd_paddq_xmm_roundtrip_sound() -> None:
     """Taint MUST survive a GP→XMM→PADDQ→GP roundtrip when XMM regs are
     tracked in state_format."""
     state = {'RAX': 0xE4723A97A7178558, 'RBX': 0x34F5B8EBAEE5B68C, 'RCX': 0xF2128A487A6D9868, 'RDX': 0xF16DA24334DEF7EE}
@@ -342,7 +342,7 @@ def test_simd_paddq_xmm_roundtrip_sound():
     )
 
 
-def test_simd_paddq_without_xmm_state_format_now_tracked():
+def test_simd_paddq_without_xmm_state_format_now_tracked() -> None:
     """SIMD taint is now tracked across the GP<->XMM boundary even when XMM regs
     are NOT in the state_format.  The width-native cell kernel stores the full
     XMM register natively, so a ``movq xmm0,rax; movq xmm1,rbx; paddq; movq

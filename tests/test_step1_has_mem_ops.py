@@ -94,7 +94,7 @@ def test_has_mem_ops_set_for_memory_reading_instruction(bs_hex, desc):
     )
 
 
-def test_has_mem_ops_zero_for_pure_register_instruction():
+def test_has_mem_ops_zero_for_pure_register_instruction() -> None:
     """Sanity: pure-register instructions correctly report has_mem_ops=0."""
     # movzbl %al, %edx — no memory access
     compiled = _compile('0fb6d0')

@@ -138,7 +138,7 @@ def test_callother_classified_avalanche(label, hexbytes):
 # --------------------------------------------------------------------------- #
 # Fix 2 — subtraction borrow-chain through memory                             #
 # --------------------------------------------------------------------------- #
-def test_sub_borrow_through_memory_sound():
+def test_sub_borrow_through_memory_sound() -> None:
     """`mov [rsp-16],rbx; sub rax,[rsp-16]` with overlapping tainted bits: the
     D^{+-} borrow chain must be captured (pre-fix D^{++} cancels and drops it)."""
     bs = bytes.fromhex('48895c24f0482b4424f0')
@@ -153,7 +153,7 @@ def test_sub_borrow_through_memory_sound():
 _BRANCH_N2 = bytes.fromhex('4831c048f7c30100000074034801d848d1eb48f7c30100000074034801d848d1eb')
 
 
-def test_forward_skip_branch_sound():
+def test_forward_skip_branch_sound() -> None:
     """Boundary bits (bit 0 / bit 63) that the monolithic multi-CBRANCH
     differential dropped must now be tainted. RBX bit0=1 keeps every branch
     not-taken so the adds execute."""
@@ -162,7 +162,7 @@ def test_forward_skip_branch_sound():
                   {'RAX': 0, 'RBX': 0x8000000000000001, 'RCX': 0, 'RDX': 0})
 
 
-def test_forward_skip_branch_deterministic():
+def test_forward_skip_branch_deterministic() -> None:
     """Taint must be a pure function of (bytes,state,taint): evaluating other
     sequences in between must not perturb the branch result (the shared-simulator
     non-determinism the monolithic path exhibited)."""
@@ -179,7 +179,7 @@ def test_forward_skip_branch_deterministic():
 # --------------------------------------------------------------------------- #
 # Fix 4 — COND_TRANSPORTABLE flags must OR in the 2-replica differential       #
 # --------------------------------------------------------------------------- #
-def test_shl_cf_bit_extract_reaches_setc():
+def test_shl_cf_bit_extract_reaches_setc() -> None:
     """`shl rax,4; setc dl` — CF is bit 60 of RAX, a monotone bit-copy.
 
     COND_TRANSPORTABLE derives a flag from a SINGLE masked replica (C_eval on
@@ -212,14 +212,14 @@ _SUB_OF_STATE = {'RAX': 2678491694169162878, 'RBX': 9449111174765093383, 'RCX': 
 _SUB_OF_TAINT = {'RAX': 9225623836668592128, 'RBX': 4611686018427387904, 'RCX': 0, 'RDX': 0}
 
 
-def test_sub_signed_overflow_sound_when_differential_cancels():
+def test_sub_signed_overflow_sound_when_differential_cancels() -> None:
     """OF must be tainted even though both differential corners agree."""
     _assert_sound('sub-of-sign-decomp', _SUB_OF_BYTES, _SUB_OF_STATE, _SUB_OF_TAINT)
     out = _eval(_SUB_OF_BYTES, _SUB_OF_STATE, _SUB_OF_TAINT)
     assert out['RDX'] & 1, 'OF must reach DL[0] on inputs where the differential cancels'
 
 
-def test_sub_signed_overflow_is_exact_not_a_floor():
+def test_sub_signed_overflow_is_exact_not_a_floor() -> None:
     """The sign decomposition is EXACT, not a soundness floor: the taint must
     EQUAL ground truth.  An avalanche/any-taint floor would over-taint here."""
     gt = _brute_force_gt(_SUB_OF_BYTES, _SUB_OF_STATE, _SUB_OF_TAINT)
@@ -245,7 +245,7 @@ _BT_STATE = {'RAX': 0b0010, 'RBX': 0, 'RCX': 0, 'RDX': 0}
 _BT_TAINT = {'RAX': 0, 'RBX': 0b0011, 'RCX': 0, 'RDX': 0}  # only the index is tainted
 
 
-def test_bt_variable_index_sound_when_extremal_indices_agree():
+def test_bt_variable_index_sound_when_extremal_indices_agree() -> None:
     """CF must be tainted even though both extremal indices select equal bits."""
     _assert_sound('bt-variable-index', _BT_BYTES, _BT_STATE, _BT_TAINT)
     assert _eval(_BT_BYTES, _BT_STATE, _BT_TAINT)['RDX'] & 1, (
@@ -257,7 +257,7 @@ def test_bt_variable_index_sound_when_extremal_indices_agree():
 # --------------------------------------------------------------------------- #
 # Fix 7 — cmpxchg conditional select; software loops must stay excluded        #
 # --------------------------------------------------------------------------- #
-def test_cmpxchg_conditional_select_sound():
+def test_cmpxchg_conditional_select_sound() -> None:
     """`cmpxchg rbx, rcx` is a data-dependent select:
 
         RBX_out = ZF ? RCX : RBX_old        ZF = (RAX == RBX_old)
@@ -274,7 +274,7 @@ def test_cmpxchg_conditional_select_sound():
     _assert_sound('cmpxchg-select', bs, state, taint)
 
 
-def test_tzcnt_software_loop_no_old_dest_leak():
+def test_tzcnt_software_loop_no_old_dest_leak() -> None:
     """Guard for the discriminator that makes fix 7 safe.
 
     tzcnt/bsf/bsr also emit a forward CONST CBRANCH -- but theirs is the loop
@@ -291,7 +291,7 @@ def test_tzcnt_software_loop_no_old_dest_leak():
     )
 
 
-def test_signed_compare_through_memory_sound():
+def test_signed_compare_through_memory_sound() -> None:
     """`mov [rsp-16],rbx; cmp rax,[rsp-16]; setl cl` — CL = [rax <s mem].
 
     A signed comparison is monotone only in the SIGN-BIASED representation, which
@@ -308,7 +308,7 @@ def test_signed_compare_through_memory_sound():
     _assert_sound('signed-cmp-through-memory', bs, state, taint)
 
 
-def test_signed_compare_through_memory_both_operands_tainted():
+def test_signed_compare_through_memory_both_operands_tainted() -> None:
     """`mov [rsp-16],rbx; cmp rax,[rsp-16]; setl cl` with BOTH operands tainted.
 
     Two polarity bugs conspired here, and only showed up once the MEMORY value was
@@ -334,7 +334,7 @@ def test_signed_compare_through_memory_both_operands_tainted():
     _assert_sound('signed-cmp-mem-both-tainted', bs, state, taint)
 
 
-def test_signed_compare_memory_matches_register_form():
+def test_signed_compare_memory_matches_register_form() -> None:
     """The memory and register forms of the same signed compare must agree:
     routing an operand through memory must not lose the sign-split polarity."""
     state = {'RAX': 6985654534196529349, 'RBX': 2912746707901123493, 'RCX': 0, 'RDX': 0}
@@ -347,7 +347,7 @@ def test_signed_compare_memory_matches_register_form():
     )
 
 
-def test_bt_variable_index_is_exact_not_a_floor():
+def test_bt_variable_index_is_exact_not_a_floor() -> None:
     """The reachable-index rule is EXACT: an avalanche over the index would
     over-taint CF whenever every reachable index selects the same bit value."""
     # RAX = 0 -> every reachable index selects 0, so CF is CONSTANT despite the

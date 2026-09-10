@@ -28,7 +28,7 @@ pytestmark = pytest.mark.skipif(
 _REEXEC = Path(__file__).resolve().parent.parent / 'microtaint' / 'reexec'
 
 
-def test_arm64_reexec_selftest_under_qemu():
+def test_arm64_reexec_selftest_under_qemu() -> None:
     tmp = Path(tempfile.mkdtemp(prefix='reexec_arm64_'))
     exe = tmp / 'rx_arm64'
     subprocess.run(
