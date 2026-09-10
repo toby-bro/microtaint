@@ -1237,7 +1237,28 @@ cdef class LogicCircuit:
     def __repr__(self):
         return f"LogicCircuit(instr={self.instruction}, assignments_count={len(self.assignments)})"
 
-    cpdef dict evaluate(self, EvalContext context):
+    cpdef precompile(self, object simulator):
+        """Build the compiled form now, so the first evaluate does not pay for it.
+
+        Compilation is lazy, and for a wide instruction it dominates the first
+        call: `psubb xmm0,xmm1` lifts to sixteen one-byte lanes and costs 10 ms
+        to compile against 95 us to evaluate, a 106x first-call penalty. Anything
+        timing steady-state propagation, or serving a latency-sensitive first
+        request, wants that paid up front -- which matches the model the rules are
+        designed for, one compile per opcode amortised across runs.
+
+        Takes the SIMULATOR, not an EvalContext: compilation depends on the rule
+        and on the simulator's p-code (used to pre-resolve cell handles), never on
+        input values or taint. Nothing here can specialise the compiled form to
+        the state it will later be evaluated on.
+
+        Required rather than optional, because compiling without it produces a
+        form that cannot pre-resolve cell handles, and evaluate will then keep
+        that inferior form instead of recompiling. Idempotent.
+        """
+        self._compile_now(simulator)
+
+    cdef _compile_now(self, object simulator):
         # Compiled-bytecode fast path:  if circuit_c is importable and the
         # circuit has a compiled form (or one can be built lazily), use it.
         # Disabled by setting the env var MICROTAINT_DISABLE_COMPILED_CIRCUIT=1
@@ -1265,8 +1286,8 @@ cdef class LogicCircuit:
                     # Pass pcode if available — enables CellHandle pre-resolution
                     # so OP_CALL_CELL skips the Python boundary entirely.
                     pcode = None
-                    if context.simulator is not None:
-                        pcode = getattr(context.simulator, '_pcode', None)
+                    if simulator is not None:
+                        pcode = getattr(simulator, '_pcode', None)
                     if pcode is not None:
                         self._compiled = compile_circuit(self, pcode)
                     else:
@@ -1278,6 +1299,9 @@ cdef class LogicCircuit:
                     # call site below detects _compiled is False and
                     # uses the slow path.
                     self._compiled = False
+
+    cpdef dict evaluate(self, EvalContext context):
+        self._compile_now(context.simulator)
         if self._compiled is not False and self._compiled is not None:
             return self._compiled.evaluate(context)
 

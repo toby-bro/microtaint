@@ -37,4 +37,6 @@ cdef class LogicCircuit:
     # then keys on the taint signature alone.  Default False (value-dependent).
     cdef public bint value_independent
 
+    cpdef precompile(self, object simulator)
+    cdef _compile_now(self, object simulator)
     cpdef dict evaluate(self, EvalContext context)

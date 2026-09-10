@@ -182,7 +182,8 @@ def plot_perf_latency():
 
     ax.bar(x - width / 2, p50_us, width, label='p50 latency (per step)', color=colors, edgecolor='black', linewidth=0.6)
     ax.bar(
-        x + width / 2, p99_us, width, label='p99 latency (per step)', color=colors, edgecolor='black', linewidth=0.6, hatch='//',
+        x + width / 2, p99_us, width, label='p99 latency (per step)',
+        color=colors, edgecolor='black', linewidth=0.6, hatch='//',
     )
 
     ax.set_ylabel('Latency (µs, log scale)', fontsize=11)

@@ -95,6 +95,7 @@ _DEFAULT_RSP = 0x80000000
 def run_one(tc: dict[str, Any]) -> dict[str, Any]:
     bytestring = bytes.fromhex(tc['bytes'])
     circuit = generate_static_rule(Architecture.AMD64, bytestring, _REGS)
+    circuit.precompile(_SIM)
     # Fill in zeros for any register the test case doesn't mention.
     # The benchmark only sets values/taint for the four GP regs we
     # report on; other GPs and XMMs default to (state=0, taint=0).

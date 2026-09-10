@@ -336,6 +336,9 @@ class LogicCircuit:
         instruction: str,
         state_format: list[Register],
     ) -> None: ...
+    def precompile(self, simulator: CellSimulator | None) -> None:
+        """Build the compiled form now, so the first evaluate does not pay for it."""
+
     def evaluate(self, context: EvalContext) -> dict[str, int]: ...
 
 class ChainedCircuit(LogicCircuit):
