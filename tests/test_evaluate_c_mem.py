@@ -18,6 +18,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
+from collections.abc import Callable
+from typing import Any
+
 from instruction_bank import isa_registers  # type: ignore[import-not-found]
 
 from microtaint.emulator.shadow import BitPreciseShadowMemory
@@ -46,13 +49,14 @@ CASES = [
 ]
 
 
-def _mem_reader_factory(mem: dict[int, int]):
+def _mem_reader_factory(mem: dict[int, int]) -> Callable[[int, int], int]:
     def reader(addr: int, size: int) -> int:
         return sum((mem.get(addr + i, 0) & 0xFF) << (8 * i) for i in range(size))
     return reader
 
 
-def _run_case(arch: Architecture, hx: str, *, rax_taint: int, mem_taint_bytes: dict[int, int]):
+def _run_case(arch: Architecture, hx: str, *, rax_taint: int,
+              mem_taint_bytes: dict[int, int]) -> tuple[Any, Any, Any]:
     regs = list(isa_registers(arch))
     sim = CellSimulator(arch)
     circ = generate_static_rule(arch, bytes.fromhex(hx), regs)
@@ -83,7 +87,9 @@ def _run_case(arch: Architecture, hx: str, *, rax_taint: int, mem_taint_bytes: d
     )
     ref = circ.evaluate(ctx)
     compiled = circ._compiled
-    assert compiled not in (None, False), f'{hx} did not compile'
+    # `_compiled` is False until the first evaluate forces compilation,
+    # which every one of these sites has already done.
+    assert compiled is not None and not isinstance(compiled, bool)
 
     cmem = compiled.evaluate_c_mem(dict(taint), dict(values), sim._pcode, shadow, mem_reader)
     return ref, cmem, compiled
@@ -97,7 +103,8 @@ def _run_case(arch: Architecture, hx: str, *, rax_taint: int, mem_taint_bytes: d
     {0: 0xFF, 1: 0xFF, 2: 0xFF, 3: 0xFF, 4: 0xFF, 5: 0xFF, 6: 0xFF, 7: 0xFF},  # fully tainted
     {2: 0x0F, 5: 0xF0},         # scattered partial
 ])
-def test_c_mem_matches_do_evaluate(label: str, hx: str, rax_taint: int, mem_taint) -> None:
+def test_c_mem_matches_do_evaluate(label: str, hx: str, rax_taint: int,
+                                   mem_taint: dict[int, int]) -> None:
     ref, cmem, _ = _run_case(Architecture.AMD64, hx, rax_taint=rax_taint, mem_taint_bytes=mem_taint)
     if cmem is None:
         pytest.skip(f'{label}: evaluate_c_mem bailed (falls back to do_evaluate)')
@@ -108,7 +115,9 @@ def test_c_mem_matches_do_evaluate(label: str, hx: str, rax_taint: int, mem_tain
     )
 
 
-def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int, mem_taint_bytes: dict[int, int]):
+def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int,
+                  mem_taint_bytes: dict[int, int],
+                  ) -> tuple[Any, Any, Any, Any]:
     """Mirror of _run_case for evaluate_c_mem_ptr: register taint/values live in
     raw uint64 C arrays (ctypes) indexed by slot; the eval writes reg targets to
     the taint array and mem targets to the shadow, returning the mem writes.
@@ -140,7 +149,9 @@ def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int, mem_taint_byte
                       shadow_memory=shadow_ref, mem_reader=mem_reader)
     ref = circ.evaluate(ctx)
     compiled = circ._compiled
-    assert compiled not in (None, False), f'{hx} did not compile'
+    # `_compiled` is False until the first evaluate forces compilation,
+    # which every one of these sites has already done.
+    assert compiled is not None and not isinstance(compiled, bool)
 
     # Engine on an identically-seeded fresh shadow, via the pointer path.
     shadow = BitPreciseShadowMemory()
@@ -167,7 +178,8 @@ def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int, mem_taint_byte
     {0: 0xFF, 1: 0xFF, 2: 0xFF, 3: 0xFF, 4: 0xFF, 5: 0xFF, 6: 0xFF, 7: 0xFF},
     {2: 0x0F, 5: 0xF0},
 ])
-def test_c_mem_ptr_matches_do_evaluate(label: str, hx: str, rax_taint: int, mem_taint) -> None:
+def test_c_mem_ptr_matches_do_evaluate(label: str, hx: str, rax_taint: int,
+                                       mem_taint: dict[int, int]) -> None:
     """evaluate_c_mem_ptr's array+shadow output must equal the differential."""
     ref, got_reg, got_mem, bailed = _run_case_ptr(
         Architecture.AMD64, hx, rax_taint=rax_taint, mem_taint_bytes=mem_taint)
@@ -222,7 +234,7 @@ def test_c_mem_arms_per_evaluate_frame_recycle() -> None:
     shadow.write_mask(BASE, 0xFF, 1)
     reader = _mem_reader_factory({BASE + i: 0x11 for i in range(8)})
 
-    def make_ctx():
+    def make_ctx() -> EvalContext:
         return EvalContext(
             input_values=dict(values), input_taint=dict(taint),
             simulator=sim, implicit_policy=ImplicitTaintPolicy.KEEP,
@@ -231,11 +243,13 @@ def test_c_mem_arms_per_evaluate_frame_recycle() -> None:
 
     circ.evaluate(make_ctx())  # warm / compile
     compiled = circ._compiled
-    assert compiled not in (None, False)
+    # `_compiled` is False until the first evaluate forces compilation,
+    # which every one of these sites has already done.
+    assert compiled is not None and not isinstance(compiled, bool)
     assert getattr(compiled, 'has_mem_ops', 0), 'expected a memory circuit with cells'
 
     kernel = sim._pcode
-    if getattr(kernel, 'native_calls', None) is None:
+    if kernel is None or getattr(kernel, 'native_calls', None) is None:
         pytest.skip('kernel does not expose a cell-execution counter')
 
     N = 15
@@ -291,7 +305,9 @@ def test_c_mem_persistent_kernel_sequence() -> None:
             shadow_memory=shadow, mem_reader=reader,
         )
         ref = circ.evaluate(ctx)
-        cmem = circ._compiled.evaluate_c_mem(dict(taint), dict(values), sim._pcode, shadow, reader)
+        compiled = circ._compiled
+        assert compiled is not None and not isinstance(compiled, bool)
+        cmem = compiled.evaluate_c_mem(dict(taint), dict(values), sim._pcode, shadow, reader)
         if cmem is None:
             continue
         assert cmem == ref, (

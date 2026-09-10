@@ -47,6 +47,7 @@ import io
 import logging
 import subprocess
 import textwrap
+from pathlib import Path
 
 import pytest
 from qiling import Qiling
@@ -83,7 +84,7 @@ int main(void) {
 
 
 @pytest.fixture(scope='session')
-def min_loop_binary(tmp_path_factory):
+def min_loop_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Compile the embedded C source; return path to the binary."""
     d = tmp_path_factory.mktemp('min_loop')
     src = d / 'min_loop.c'
@@ -99,7 +100,7 @@ def min_loop_binary(tmp_path_factory):
 
 
 @pytest.fixture(scope='session')
-def loop_addrs(min_loop_binary):
+def loop_addrs(min_loop_binary: Path) -> dict[str, int]:
     """Disassemble the binary and locate the loop body instructions.
 
     Returns a dict with keys:
@@ -284,7 +285,8 @@ def _gather_observations(binary, addrs, taint_offset):
 # ---------------------------------------------------------------------------
 
 
-def test_tier4_cache_does_not_corrupt_register_taint(min_loop_binary, loop_addrs):
+def test_tier4_cache_does_not_corrupt_register_taint(
+        min_loop_binary: Path, loop_addrs: dict[str, int]) -> None:
     """The Tier-4 cache must not replay output computed for a different state.
 
     We observe register_taint at loop_addrs['observe'] — the instruction
@@ -334,7 +336,8 @@ def test_tier4_cache_does_not_corrupt_register_taint(min_loop_binary, loop_addrs
     )
 
 
-def test_min_loop_end_to_end(min_loop_binary, loop_addrs):
+def test_min_loop_end_to_end(min_loop_binary: Path,
+                             loop_addrs: dict[str, int]) -> None:
     """Tainting any single byte (bit 0) must produce a non-zero output shadow.
 
     On the unpatched Tier-4 cache, bytes at offsets 2-15 produce shadow=0

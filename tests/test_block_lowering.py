@@ -31,6 +31,8 @@ compare against; nothing calls `block=True` yet.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from microtaint.taint_ir import frompcode
@@ -48,10 +50,11 @@ _LOOP_BODY = [
 ]
 
 
-def _ops(seq):
+def _ops(seq: list[bytes]) -> tuple[list[Any], int]:
     """Concatenated p-code for `seq`, each instruction at its own lift base."""
     from microtaint.sleigh.lifter import get_context
-    ops, base = [], frompcode.LIFT_BASE
+    ops: list[Any] = []
+    base = frompcode.LIFT_BASE
     for code in seq:
         ops.extend(get_context(_KEY).translate(code, base).ops)
         base += len(code)
@@ -59,11 +62,11 @@ def _ops(seq):
 
 
 @pytest.fixture(scope='module')
-def builder():
+def builder() -> frompcode.Builder:
     return frompcode.Builder(_ARCH, False, 'concrete')
 
 
-def test_a_blocks_loop_edge_is_an_exit_not_a_loop(builder) -> None:
+def test_a_blocks_loop_edge_is_an_exit_not_a_loop(builder: frompcode.Builder) -> None:
     ops, end = _ops(_LOOP_BODY)
     with pytest.raises(Unsupported, match='backward CBRANCH'):
         builder.build(ops, end, emit='both')
@@ -71,7 +74,7 @@ def test_a_blocks_loop_edge_is_an_exit_not_a_loop(builder) -> None:
     assert prog.outputs, 'the block lowered to a program with no outputs'
 
 
-def test_the_exit_makes_the_counter_depend_on_the_condition(builder) -> None:
+def test_the_exit_makes_the_counter_depend_on_the_condition(builder: frompcode.Builder) -> None:
     """The block's branch must still be treated as a conditional jump: the
     program counter becomes secret-dependent exactly when its condition is.
     Losing that would silently drop every implicit-flow report in a block."""
@@ -85,7 +88,7 @@ def test_the_exit_makes_the_counter_depend_on_the_condition(builder) -> None:
         'was lowered as something other than a conditional jump')
 
 
-def test_a_single_instruction_is_unaffected(builder) -> None:
+def test_a_single_instruction_is_unaffected(builder: frompcode.Builder) -> None:
     """block=True must change nothing for one instruction: same outputs, same
     program.  The per-instruction path is what ships."""
     for code in (*_LOOP_BODY, bytes.fromhex('4801d8'), bytes.fromhex('488b4508')):
@@ -101,7 +104,7 @@ def test_a_single_instruction_is_unaffected(builder) -> None:
         assert len(plain.nodes) == len(as_block.nodes), code.hex()
 
 
-def test_a_self_loop_still_declines_in_block_mode(builder) -> None:
+def test_a_self_loop_still_declines_in_block_mode(builder: frompcode.Builder) -> None:
     """A `rep` prefix lifts to a branch back into the SAME instruction.  That is
     a real p-code loop with a runtime trip count, and block mode must not
     smuggle it through as an exit.
@@ -117,7 +120,7 @@ def test_a_self_loop_still_declines_in_block_mode(builder) -> None:
         builder.build(*_ops([repne_scasb]), emit='both', block=True)
 
 
-def test_the_block_program_is_cheaper_than_the_sum_of_its_parts(builder) -> None:
+def test_the_block_program_is_cheaper_than_the_sum_of_its_parts(builder: frompcode.Builder) -> None:
     """The reason to do this at all.  Cross-instruction dead-code elimination
     has to actually happen, so a block must cost less than its instructions
     lowered separately."""
@@ -127,17 +130,17 @@ def test_the_block_program_is_cheaper_than_the_sum_of_its_parts(builder) -> None
     layout = {n: i for i, n in enumerate(names)}
     kinds = ('addr', 'addrt', 'sttaint', 'mem')
 
-    def slot_of(key):
+    def slot_of(key: Any) -> int | None:
         if key[0] in ('reg', 'regv'):
             name = builder.name_by_off.get(key[1])
             if name is None or name not in layout:
                 raise KeyError(key)
-            return layout[name] + (len(layout) if key[0] == 'regv' else 0)
+            return int(layout[name]) + (len(layout) if key[0] == 'regv' else 0)
         if key[0] in kinds:
             return 2 * len(layout) + 4 * key[1] + kinds.index(key[0])
         raise KeyError(key)
 
-    def ops_of(prog):
+    def ops_of(prog: Any) -> int:
         return len(serialize_for_c(prog, slot_of)['op_ids'])
 
     separate = 0

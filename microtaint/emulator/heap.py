@@ -75,22 +75,29 @@ class HeapTracker:
 
     def _ret_reg(self) -> int:
         """Read the architecture-appropriate return-value register."""
+        v: int
         try:
             arch = str(self.ql.arch.type).upper()
         except Exception:
             arch = 'AMD64'
 
         if 'X86' in arch or 'AMD64' in arch:
-            return int(self.ql.arch.regs.read('RAX'))
+            v = self.ql.arch.regs.read('RAX')
+            return v
         if 'ARM64' in arch or 'AARCH64' in arch:
-            return int(self.ql.arch.regs.read('X0'))
+            v = self.ql.arch.regs.read('X0')
+            return v
         if 'ARM' in arch:
-            return int(self.ql.arch.regs.read('R0'))
+            v = self.ql.arch.regs.read('R0')
+            return v
         if 'MIPS' in arch:
-            return int(self.ql.arch.regs.read('V0'))
+            v = self.ql.arch.regs.read('V0')
+            return v
         return 0
 
     def _arg(self, n: int) -> int:
+
+        v: int
         """Read the nth function argument (0-indexed) for the calling convention."""
         try:
             arch = str(self.ql.arch.type).upper()
@@ -100,7 +107,8 @@ class HeapTracker:
         if 'AMD64' in arch:
             regs: tuple[str, ...] = ('RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9')
             if n < len(regs):
-                return int(self.ql.arch.regs.read(regs[n]))
+                v = self.ql.arch.regs.read(regs[n])
+                return v
             # stack args: RSP + 8*(n - len(regs) + 1)
             sp = self.ql.arch.regs.read('RSP')
             return int.from_bytes(self.ql.mem.read(sp + 8 * (n - len(regs) + 1), 8), 'little')
@@ -112,12 +120,14 @@ class HeapTracker:
         if 'ARM64' in arch or 'AARCH64' in arch:
             regs = tuple(f'X{i}' for i in range(8))
             if n < len(regs):
-                return int(self.ql.arch.regs.read(regs[n]))
+                v = self.ql.arch.regs.read(regs[n])
+                return v
 
         if 'ARM' in arch:
             regs = ('R0', 'R1', 'R2', 'R3')
             if n < len(regs):
-                return int(self.ql.arch.regs.read(regs[n]))
+                v = self.ql.arch.regs.read(regs[n])
+                return v
 
         return 0
 

@@ -22,6 +22,7 @@ differential at all, and how often the window has to fire.
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any
 
 from microtaint.sleigh.lifter import get_context
 
@@ -33,15 +34,15 @@ _OPAQUE_PREFIX = ('FLOAT_',)
 _OPAQUE = {'CALLOTHER'}
 
 
-def _const(vn) -> bool:
-    return vn.space.name == 'const'
+def _const(vn: Any) -> bool:
+    return bool(vn.space.name == 'const')
 
 
 def _popcount(x: int) -> int:
     return bin(x).count('1')
 
 
-def is_affine(op) -> bool:
+def is_affine(op: Any) -> bool:
     n = op.opcode.name
     if n in _AFFINE_ALWAYS:
         return True
@@ -54,11 +55,15 @@ def is_affine(op) -> bool:
     return False
 
 
-def _vid(vn):
+#: A varnode's identity: (space name, offset, size).
+VId = tuple[str, int, int]
+
+
+def _vid(vn: Any) -> VId:
     return (vn.space.name, vn.offset, vn.size)
 
 
-def classify_instr(ctx, code: bytes):
+def classify_instr(ctx: Any, code: bytes) -> tuple[str, int]:
     ops = [o for o in ctx.translate(code, 0x1000).ops if o.opcode.name not in _SKIP]
     if not ops:
         return 'EMPTY', 0
@@ -68,12 +73,12 @@ def classify_instr(ctx, code: bytes):
         if n in _OPAQUE or n.startswith(_OPAQUE_PREFIX):
             return 'OPAQUE', 0
 
-    producers = {}
+    producers: dict[VId, Any] = {}
     for o in ops:
         if o.output is not None:
             producers[_vid(o.output)] = o
 
-    def reg_ancestors(vn, seen=None):
+    def reg_ancestors(vn: Any, seen: set[VId] | None = None) -> set[VId]:
         """Register-space leaf varnodes feeding `vn` (transitively)."""
         if seen is None:
             seen = set()
@@ -119,17 +124,17 @@ def classify_instr(ctx, code: bytes):
     return ('RECONVERGENT' if reconv else 'NONAFFINE'), reconv
 
 
-def run(isas=None):
+def run(isas: list[str] | None = None) -> dict[str, Any]:
     from benchmark.instruction_bank import load_bank
     specs = load_bank(isas=set(isas) if isas else None)
-    per_isa = {}
+    per_isa: dict[str, Any] = {}
     for name, spec in specs.items():
         key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
         try:
             ctx = get_context(key)
         except Exception:
             continue
-        cnt = Counter()
+        cnt: Counter[str] = Counter()
         reconv_ops = 0
         n = 0
         for ins in spec.instructions:

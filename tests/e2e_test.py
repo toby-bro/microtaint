@@ -36,11 +36,12 @@ def test_mov_register(x86_registers: list[Register]) -> None:
     rule = generate_static_rule(arch, byte_string, x86_registers)
 
     # Filter to only RAX
-    rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+    rax_assignments = [a for a in rule.assignments
+                       if hasattr(a.target, 'name') and a.target.name == 'RAX']
     assert len(rax_assignments) == 1
 
     assignment = rax_assignments[0]
-    deps = [dep.name for dep in assignment.dependencies]
+    deps = [getattr(dep, 'name', None) for dep in assignment.dependencies]
 
     assert 'RBX' in deps
 
@@ -52,16 +53,17 @@ def test_add_register(x86_registers: list[Register]) -> None:
 
     rule = generate_static_rule(arch, byte_string, x86_registers)
 
-    targets = {a.target.name for a in rule.assignments}
+    targets = {a.target.name for a in rule.assignments if hasattr(a.target, 'name')}
     assert 'RAX' in targets
     assert 'ZF' in targets
     assert 'CF' in targets
     assert 'SF' in targets
     assert 'OF' in targets
 
-    rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+    rax_assignments = [a for a in rule.assignments
+                       if hasattr(a.target, 'name') and a.target.name == 'RAX']
     assignment = rax_assignments[0]
-    deps = [dep.name for dep in assignment.dependencies]
+    deps = [getattr(dep, 'name', None) for dep in assignment.dependencies]
 
     assert 'RBX' in deps
     assert 'RAX' in deps
@@ -73,7 +75,8 @@ def test_xor_self(x86_registers: list[Register]) -> None:
     byte_string = b'\x48\x31\xc0'
 
     rule = generate_static_rule(arch, byte_string, x86_registers)
-    rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+    rax_assignments = [a for a in rule.assignments
+                       if hasattr(a.target, 'name') and a.target.name == 'RAX']
     assert len(rax_assignments) == 1
 
 
@@ -84,12 +87,13 @@ def test_load_memory(x86_registers: list[Register]) -> None:
 
     rule = generate_static_rule(arch, byte_string, x86_registers)
 
-    rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+    rax_assignments = [a for a in rule.assignments
+                       if hasattr(a.target, 'name') and a.target.name == 'RAX']
     assert len(rax_assignments) == 1
     assignment = rax_assignments[0]
 
     assert isinstance(assignment.dependencies[0], MemoryOperand)
-    assert assignment.dependencies[0].address_expr.name == 'RBX'
+    assert getattr(assignment.dependencies[0].address_expr, 'name', None) == 'RBX'
 
 
 def test_push_register(x86_registers: list[Register]) -> None:
@@ -113,7 +117,7 @@ def test_mul_register(x86_registers: list[Register]) -> None:
     byte_string = b'\x48\xf7\xe3'
 
     rule = generate_static_rule(arch, byte_string, x86_registers)
-    targets = {a.target.name for a in rule.assignments}
+    targets = {a.target.name for a in rule.assignments if hasattr(a.target, 'name')}
     assert 'RAX' in targets
     assert 'RDX' in targets
 
@@ -126,16 +130,18 @@ def test_branch_instruction(x86_registers: list[Register]) -> None:
     byte_string = b'\xff\xe0'
 
     rule = generate_static_rule(arch, byte_string, regs)
-    rip_assignments = [a for a in rule.assignments if a.target.name == 'RIP']
+    rip_assignments = [a for a in rule.assignments
+                       if hasattr(a.target, 'name') and a.target.name == 'RIP']
     assert len(rip_assignments) > 0
-    assert 'RAX' in [d.name for d in rip_assignments[0].dependencies]
+    assert 'RAX' in [getattr(d, 'name', None) for d in rip_assignments[0].dependencies]
 
     # Conditional branch: JZ +10 (74 0a)
     byte_string_jz = b'\x74\x0a'
     rule_jz = generate_static_rule(arch, byte_string_jz, regs)
-    jz_assignments = [a for a in rule_jz.assignments if a.target.name == 'RIP']
+    jz_assignments = [a for a in rule_jz.assignments
+                      if hasattr(a.target, 'name') and a.target.name == 'RIP']
     assert len(jz_assignments) > 0
-    deps = [d.name for d in jz_assignments[0].dependencies]
+    deps = [getattr(d, 'name', None) for d in jz_assignments[0].dependencies]
     assert 'ZF' in deps
 
 
@@ -150,7 +156,7 @@ def test_x86_flags_mapping() -> None:
     # ADD EAX, EBX -> \x01\xd8
     byte_string = b'\x01\xd8'
     rule = generate_static_rule(arch, byte_string, regs)
-    targets = {a.target.name for a in rule.assignments}
+    targets = {a.target.name for a in rule.assignments if hasattr(a.target, 'name')}
     assert {'CF', 'OF', 'SF', 'ZF', 'PF'} <= targets
 
 
@@ -179,7 +185,8 @@ def test_sub_polarity(x86_registers: list[Register]) -> None:
     arch = Architecture.AMD64
     byte_string = b'\x48\x29\xd8'
     rule = generate_static_rule(arch, byte_string, x86_registers)
-    rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+    rax_assignments = [a for a in rule.assignments
+                       if hasattr(a.target, 'name') and a.target.name == 'RAX']
     # This hits lines 142/143 where polarity p==0
     assert len(rax_assignments) > 0
 
@@ -200,7 +207,7 @@ def test_unknown_category() -> None:
     byte_string = b'\x0f\xa2'
     rule = generate_static_rule(arch, byte_string, regs)
     # CPUID is usually completely unmapped or heavily complex
-    t = {a.target.name for a in rule.assignments}
+    t = {a.target.name for a in rule.assignments if hasattr(a.target, 'name')}
     assert 'RAX' in t
 
 
@@ -212,7 +219,7 @@ def test_avalanche_pc(x86_registers: list[Register]) -> None:
     byte_string = b'\xc3'
     regs = [*x86_registers, Register(name='RIP', bits=64)]
     rule = generate_static_rule(arch, byte_string, regs)
-    assigned = [a.target.name for a in rule.assignments]
+    assigned = [getattr(a.target, 'name', None) for a in rule.assignments]
     assert 'RIP' in assigned
 
 
@@ -221,7 +228,7 @@ def test_imul_avalanche(x86_registers: list[Register]) -> None:
     arch = Architecture.AMD64
     byte_string = b'\x48\xf7\xe3'
     rule = generate_static_rule(arch, byte_string, x86_registers)
-    t = {a.target.name for a in rule.assignments}
+    t = {a.target.name for a in rule.assignments if hasattr(a.target, 'name')}
     assert 'RAX' in t
 
 
@@ -230,7 +237,8 @@ def test_not_polarity(x86_registers: list[Register]) -> None:
     arch = Architecture.AMD64
     byte_string = b'\x48\xf7\xd0'
     rule = generate_static_rule(arch, byte_string, x86_registers)
-    rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+    rax_assignments = [a for a in rule.assignments
+                       if hasattr(a.target, 'name') and a.target.name == 'RAX']
     assert len(rax_assignments) > 0
 
 
