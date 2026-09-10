@@ -1,39 +1,83 @@
 # End-to-end overhead (RQ5, Figure 8)
 
-What a real program costs under microtaint, emulator included: `bench.c` reads
-256 tainted bytes from stdin, runs 100 rounds of mixed XOR/SBOX/ROL/ADD (over
-1 M instructions), then overflows a 192-byte stack buffer. It is run 100 times
-in three configurations: native, Qiling with no taint, and Qiling with all four
-detectors on.
+What a real program costs under microtaint, emulator included. `bench.c` reads
+tainted bytes from stdin, runs 100 rounds of mixed XOR/SBOX/ROL/ADD, then
+overflows a 192-byte stack buffer. The workload is **3,768,369 guest
+instructions** (count it yourself with `--instr-count`).
 
 ```sh
-uv run python overhead_bench.py --build-bench bench.c --gen-input 256 --runs 100 \
-    --only native --only qiling-only --only microtaint-all \
-    --native-timeout 5 --qiling-timeout 120 --microtaint-timeout 1800 \
-    --json overhead_results.json
+uv run python overhead_bench.py --gen-input 64 --runs 5 --instr-count \
+    --native-timeout 10 --qiling-timeout 300 --microtaint-timeout 900 \
+    --json overhead_results.json bench.elf
 ```
 
-About 15 minutes. Use that invocation as written: the positional `binary`
-argument is `argparse.REMAINDER`, so `overhead_bench.py bench.elf --gen-input
-256` hands those flags to the guest program instead, runs once with no tainted
-input, and reports a time about eighty times too low.
+Roughly 5 minutes. Add `--build-bench bench.c` instead of the positional
+`bench.elf` to rebuild the guest first.
 
-`overhead_results.json` gets three entries, and the claim is two ratios:
+## Read this before trusting any number here
 
-- `microtaint-all.extra.run_s / qiling-only.extra.run_s`, the cost of taint with
-  the emulator's own cost divided out. This is the meaningful one.
-- `microtaint-all.wall_s / native.wall_s`, the overhead over native.
+The published version of this experiment measured nothing. `bench.c` opens with
 
-`run_s` is the `ql.run()` phase alone. `wall_s` on this benchmark is dominated
-by Python startup and module import, which has nothing to do with taint.
+```c
+long n = sys_read(0, state, INPUT_SIZE);
+if (n <= 0) { sys_exit(1); }
+```
 
-Absolute times are machine-dependent; the ratio against `qiling-only` is the
-figure the paper's claim is stated in.
+so with no stdin the guest exits at the first check and the 3.77 M instructions
+never run. The helpers wrap `ql.run()` in `except Exception: pass`, the recorded
+return code is the *helper's* and not the guest's, and microtaint installs its
+per-instruction hook lazily, only once taint exists. Every one of those failures
+is silent, and all of them are *fast*: the result was three clean sub-100 ms
+timings whose ratio, 1.58x, went into the paper as the end-to-end taint
+overhead. It was the ratio of two Python startup paths.
 
-The committed `overhead_results.json` reproduces Figure 8 to within 2% on every
-quantity (0.352 s against 0.360 wall for microtaint-all, 0.222 against 0.227 for
-qiling-only, 94.4 MiB against 93.7, 142 ms against 145 for `qil init`). Take the
-timings only from an otherwise idle machine: this benchmark is one Python
-process and its numbers move by more than a factor of two under load, in every
-phase including plain module import, which is why a run under contention looks
-like an engine regression and is not one.
+The arithmetic that catches it: 67.7 ms over 3.77 M instructions is 18 ns per
+instruction, and bare Unicorn alone costs about 22. A taint engine cannot run
+below the emulator it runs inside.
+
+Three checks now make that failure loud instead of silent, and the harness
+**refuses to run** rather than report a number it cannot stand behind:
+
+- **`guest_bytes`** — `bench.c` writes its 8-byte hash *after* the mix rounds
+  and *before* the overflow, so a non-empty count proves the workload ran. Each
+  helper redirects fd 1 for the duration of `ql.run()` and reports the count.
+- **`instr_hook_registered`** — false means no taint was ever propagated.
+- **empty stdin** — refused up front, with the explanation above.
+
+Use `--allow-vacuous` only to debug the harness. Results produced with it are
+not publishable, and `gen_paper_macros.py` rejects a JSON without `guest_bytes`.
+
+Note that a *timing* threshold would never have caught any of this. The check
+has to be on what the guest did, not on how long it took.
+
+## What the numbers mean
+
+`--instr-count` runs the guest once more under a counting hook (untimed, and
+deliberately so: the hook costs ~2.2 us per instruction, about a hundred times
+bare Qiling) so every `run_s` can be divided into ns per propagation step.
+
+- **`x_qiling_run`** = `microtaint-*.run_s / qiling-only.run_s`, the cost of
+  taint with the emulator's own cost divided out. This is the meaningful one,
+  and it is `run_s` over `run_s`. Do not compute it from `wall_s`: wall carries
+  0.2 to 0.4 s of Python import and Qiling init that have nothing to do with
+  taint and dilute the ratio about fivefold (5.6x against 25.8x on the same
+  data). `gen_paper_macros.py` used to divide the walls; it no longer does.
+- **`ns_per_instr`** = `run_s` per guest instruction. The number to sanity-check
+  against the ~22 ns/instr floor.
+- **`x_native_wall`** = `microtaint-all.wall_s / native.wall_s`.
+
+All six detector configurations are measured, not just `microtaint-all`, so the
+propagation cost and the detector cost are separable: `microtaint-none` is
+propagation only.
+
+Absolute times are machine-dependent. Take them only from an otherwise idle
+machine: this is one Python process and its numbers move by more than a factor
+of two under load, in every phase including plain module import.
+
+## Input size
+
+`--gen-input 64` gives a clean exit and times pure propagation. `--gen-input
+256` additionally triggers the deliberate stack overflow, which is what
+`--check-bof` detects; expect the guest to fault or spin on the corrupted return
+address afterwards, so give it a generous timeout. Either way the mix rounds run
+in full, because `state` is 256 bytes regardless of how many were read.

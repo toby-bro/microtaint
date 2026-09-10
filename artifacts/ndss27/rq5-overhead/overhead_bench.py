@@ -291,6 +291,10 @@ def _run_subprocess(
             'returncode': proc.returncode,
             'stdout_size': len(out),
             'stderr_size': len(err),
+            # For the native run the child IS the guest, so its stdout is the
+            # guest's: same workload-ran proof the emulated helpers report.
+            'guest_bytes': len(out),
+            'stdin_bytes': len(stdin_data) if stdin_data is not None else 0,
         },
     )
 
@@ -422,8 +426,12 @@ def _run_helper_subprocess(
             'import_s': breakdown.get('import_s'),
             'init_s': breakdown.get('init_s'),
             'run_s': breakdown.get('run_s'),
+            'guest_bytes': breakdown.get('guest_bytes'),
+            'stdin_bytes': breakdown.get('stdin_bytes'),
             'wrapper_stats': breakdown.get('wrapper_stats', {}),
-            'stderr_tail': err.decode('utf-8', errors='replace')[-400:] if proc.returncode else None,
+            # Kept even on success: the instruction-count helper reports through
+            # stderr precisely so the guest's own stdout cannot corrupt its JSON.
+            'stderr_tail': err.decode('utf-8', errors='replace')[-400:],
         },
     )
 
@@ -450,7 +458,28 @@ def measure_native(
 # ---------------------------------------------------------------------------
 
 QILING_ONLY_HELPER = r"""
-import json, sys, time, io
+import json, os, sys, time, io
+# --- guest stdout capture -------------------------------------------------
+# The guest writes to fd 1 directly, so its bytes land in OUR stdout next to the
+# JSON below.  Redirect fd 1 to a temp file for the duration of ql.run() and
+# report the byte count: `bench.c` writes its 8-byte hash AFTER the mix rounds
+# and BEFORE the overflow, so a non-empty count is exact proof the workload ran.
+# Without this the harness could not tell a real run from a guest that exited at
+# its first read, which is how the published RQ5 numbers came to describe two
+# process-startup paths instead of taint propagation.
+import tempfile
+def _capture_fd1():
+    tf = tempfile.TemporaryFile()
+    saved = os.dup(1)
+    os.dup2(tf.fileno(), 1)
+    return tf, saved
+def _release_fd1(tf, saved):
+    os.dup2(saved, 1)
+    os.close(saved)
+    tf.seek(0, 2)
+    n = tf.tell()
+    tf.close()
+    return n
 binary = sys.argv[1]
 rootfs = sys.argv[2]
 binary_args = sys.argv[3:]
@@ -474,17 +503,21 @@ if stdin_data:
         pass
 t_init1 = time.perf_counter()
 
+_tf, _saved = _capture_fd1()
 t_run0 = time.perf_counter()
 try:
     ql.run()
 except Exception:
     pass
 t_run1 = time.perf_counter()
+guest_bytes = _release_fd1(_tf, _saved)
 
 print(json.dumps({
     "import_s": t_import1 - t_import0,
     "init_s":   t_init1 - t_init0,
     "run_s":    t_run1 - t_run0,
+    "guest_bytes": guest_bytes,
+    "stdin_bytes": len(stdin_data),
 }))
 """
 
@@ -510,6 +543,28 @@ def measure_qiling_only(
 
 MICROTAINT_HELPER = r"""
 import json, os, sys, time, io
+# --- guest stdout capture -------------------------------------------------
+# The guest writes to fd 1 directly, so its bytes land in OUR stdout next to the
+# JSON below.  Redirect fd 1 to a temp file for the duration of ql.run() and
+# report the byte count: `bench.c` writes its 8-byte hash AFTER the mix rounds
+# and BEFORE the overflow, so a non-empty count is exact proof the workload ran.
+# Without this the harness could not tell a real run from a guest that exited at
+# its first read, which is how the published RQ5 numbers came to describe two
+# process-startup paths instead of taint propagation.
+import tempfile
+def _capture_fd1():
+    tf = tempfile.TemporaryFile()
+    saved = os.dup(1)
+    os.dup2(tf.fileno(), 1)
+    return tf, saved
+def _release_fd1(tf, saved):
+    os.dup2(saved, 1)
+    os.close(saved)
+    tf.seek(0, 2)
+    n = tf.tell()
+    tf.close()
+    return n
+
 
 binary = sys.argv[1]
 rootfs = sys.argv[2]
@@ -557,15 +612,21 @@ if "uaf" in flags:
     HeapTracker(ql, wrapper.shadow_mem).install()
 t_init1 = time.perf_counter()
 
+_tf, _saved = _capture_fd1()
 t_run0 = time.perf_counter()
 try:
     ql.run()
 except Exception:
     pass
 t_run1 = time.perf_counter()
+guest_bytes = _release_fd1(_tf, _saved)
 
 extra = {}
-for attr in ("_instr_cache_hits", "_instr_cache_misses"):
+# _instr_hook_registered is the second half of the vacuous-run check: the
+# wrapper installs the per-instruction hook LAZILY, only once taint exists, so
+# a run with no tainted input reports False and costs nothing.  A "fast"
+# microtaint number with this False is not a fast engine, it is no engine.
+for attr in ("_instr_cache_hits", "_instr_cache_misses", "_instr_hook_registered"):
     if hasattr(wrapper, attr):
         extra[attr.lstrip("_")] = getattr(wrapper, attr)
 
@@ -573,6 +634,8 @@ print(json.dumps({
     "import_s": t_import1 - t_import0,
     "init_s":   t_init1 - t_init0,
     "run_s":    t_run1 - t_run0,
+    "guest_bytes": guest_bytes,
+    "stdin_bytes": len(stdin_data),
     "wrapper_stats": extra,
 }))
 """
@@ -598,6 +661,70 @@ def measure_microtaint(
         stdin_data=stdin_data,
         timeout=timeout,
     )
+
+
+
+# ---------------------------------------------------------------------------
+# Guest instruction count (untimed)
+# ---------------------------------------------------------------------------
+
+COUNT_HELPER = r"""
+import json, sys, time, io
+binary = sys.argv[1]
+rootfs = sys.argv[2]
+binary_args = sys.argv[3:]
+from qiling import Qiling
+from qiling.const import QL_VERBOSE
+stdin_data = sys.stdin.buffer.read() if not sys.stdin.isatty() else b""
+ql = Qiling([binary, *binary_args], rootfs, verbose=QL_VERBOSE.OFF)
+if stdin_data:
+    try:
+        ql.os.stdin = io.BytesIO(stdin_data)
+    except Exception:
+        pass
+n = [0]
+ql.hook_code(lambda *a: n.__setitem__(0, n[0] + 1))
+try:
+    ql.run()
+except Exception:
+    pass
+sys.stderr.write(json.dumps({"instrs": n[0]}))
+"""
+
+
+def count_guest_instructions(
+    binary: str, binary_args: list[str], rootfs: str, stdin_data: bytes | None,
+    timeout: float = 1800.0,
+) -> int | None:
+    """Guest instructions executed, counted once under a Python code hook.
+
+    Deliberately NOT part of any timed configuration: the hook itself costs
+    ~2.2 us per instruction (about a hundred times bare Qiling), so counting and
+    timing in the same run would measure the counter. It is reported separately
+    so every run_s can be divided into ns/instr, which is what made the old
+    numbers falsifiable: `microtaint-all` at 67.7 ms over 3.77 M instructions is
+    18 ns/instr, below bare Unicorn's own per-instruction cost, so it could not
+    have been running a hook at all.
+
+    Writes to stderr, so the guest's own stdout cannot corrupt the JSON.
+    """
+    helper_path = '/tmp/_overhead_count.py'
+    with open(helper_path, 'w') as f:
+        f.write(COUNT_HELPER)
+    m = _run_helper_subprocess(
+        label='instr-count',
+        argv=[sys.executable, helper_path, binary, rootfs, *binary_args],
+        stdin_data=stdin_data,
+        timeout=timeout,
+    )
+    tail = m.extra.get('stderr_tail') or ''
+    idx = tail.rfind('{')
+    if idx < 0:
+        return None
+    try:
+        return int(json.loads(tail[idx:])['instrs'])
+    except (ValueError, KeyError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -626,6 +753,12 @@ def aggregate(measurements: list[Measurement]) -> Measurement:
             'import_s': _median_or_none(m.extra.get('import_s') for m in measurements),
             'init_s': _median_or_none(m.extra.get('init_s') for m in measurements),
             'run_s': _median_or_none(m.extra.get('run_s') for m in measurements),
+            'run_s_min': _min_or_none(m.extra.get('run_s') for m in measurements),
+            'run_s_max': _max_or_none(m.extra.get('run_s') for m in measurements),
+            # Workload-ran proof, kept per aggregate so the JSON carries it too.
+            'guest_bytes': _min_or_none(m.extra.get('guest_bytes') for m in measurements),
+            'stdin_bytes': measurements[0].extra.get('stdin_bytes'),
+            'wrapper_stats': measurements[0].extra.get('wrapper_stats', {}),
         },
     )
 
@@ -633,6 +766,54 @@ def aggregate(measurements: list[Measurement]) -> Measurement:
 def _median_or_none(it):
     vals = [v for v in it if v is not None]
     return statistics.median(vals) if vals else None
+
+
+def _min_or_none(it):
+    vals = [v for v in it if v is not None]
+    return min(vals) if vals else None
+
+
+def _max_or_none(it):
+    vals = [v for v in it if v is not None]
+    return max(vals) if vals else None
+
+
+class VacuousRunError(RuntimeError):
+    """The guest did not execute the workload, so the timing means nothing.
+
+    This exists because its absence cost a published result.  `bench.c` opens
+    with ``n = sys_read(0, state, 256); if (n <= 0) sys_exit(1);`` and the
+    helpers wrap ``ql.run()`` in ``except Exception: pass``, so with no stdin the
+    guest quit at the first check, every config recorded a clean sub-100 ms
+    ``run_s``, and the ratio of two process-startup paths was published as the
+    end-to-end taint overhead.  Nothing in the harness objected.
+
+    The check is the guest's own output: `bench.c` writes its 8-byte hash after
+    the mix rounds and before the overflow, so a non-empty count proves the
+    workload ran.  Byte counts, not wall times -- a vacuous run is FAST, which
+    is exactly why a timing threshold would never have caught it.
+    """
+
+
+def validate_not_vacuous(m: Measurement, min_guest_bytes: int) -> None:
+    """Raise unless this measurement shows the guest actually ran the workload."""
+    got = m.extra.get('guest_bytes')
+    if got is None:
+        raise VacuousRunError(
+            f'{m.label}: helper reported no guest_bytes; cannot prove the workload ran')
+    if got < min_guest_bytes:
+        stdin_n = m.extra.get('stdin_bytes')
+        raise VacuousRunError(
+            f'{m.label}: guest wrote {got} bytes, expected at least {min_guest_bytes}. '
+            f'The workload did not run (stdin was {stdin_n} bytes). '
+            f'Pass --gen-input/--stdin-file, or lower --min-guest-bytes if this '
+            f'binary legitimately writes less.')
+    stats = m.extra.get('wrapper_stats') or {}
+    if 'instr_hook_registered' in stats and not stats['instr_hook_registered']:
+        raise VacuousRunError(
+            f'{m.label}: the per-instruction hook was never registered, so no taint '
+            f'was propagated. microtaint installs it lazily, only once taint exists, '
+            f'so this timing measures an uninstrumented run.')
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +861,22 @@ def main() -> int:
         help='Generate a deterministic SIZE-byte stdin input (use 256 to trigger the BOF, 64 for clean exit)',
     )
     p.add_argument('--input-seed', type=int, default=0xC0FFEE, help='Seed for --gen-input (default: 0xC0FFEE)')
+    p.add_argument(
+        '--min-guest-bytes', type=int, default=1,
+        help='Fail a configuration whose guest wrote fewer bytes than this. bench.c writes its '
+             '8-byte hash after the mix rounds, so any non-zero count proves the workload ran; '
+             '0 disables the check (NOT recommended, see VacuousRunError).',
+    )
+    p.add_argument(
+        '--allow-vacuous', action='store_true',
+        help='Record a run that cannot be shown to have executed the workload instead of failing. '
+             'Only for debugging the harness itself; results are not publishable.',
+    )
+    p.add_argument(
+        '--instr-count', action='store_true',
+        help='Additionally run the guest once under a counting hook and report guest instructions '
+             'executed, so every timing can be expressed per propagation step (ns/instr).',
+    )
     p.add_argument('binary', nargs='?', help='Path to bench.elf (omit if --build-bench is given)')
     p.add_argument('binary_args', nargs=argparse.REMAINDER, help='Arguments to pass to bench.elf (separate with --)')
     args = p.parse_args()
@@ -716,6 +913,22 @@ def main() -> int:
     else:
         labels_to_run = [label for label in all_labels if label not in args.skip]
 
+    if not stdin_data and args.min_guest_bytes > 0 and not args.allow_vacuous:
+        raise SystemExit(
+            'refusing to run with no stdin: bench.c exits at its first read when stdin is '
+            'empty, which produces a fast, clean, and completely meaningless measurement '
+            '(that is how the published RQ5 numbers were made). Pass --gen-input 64 for a '
+            'clean-exit workload, --gen-input 256 to also trigger the BOF, or --stdin-file. '
+            'Use --allow-vacuous only to debug the harness.',
+        )
+
+    n_instrs: int | None = None
+    if args.instr_count:
+        sys.stderr.write('[instr-count] counting guest instructions (untimed)…\n')
+        n_instrs = count_guest_instructions(
+            binary, binary_args, args.rootfs, stdin_data, timeout=args.microtaint_timeout)
+        print(f'# Guest instructions executed: {n_instrs if n_instrs is not None else "unknown"}')
+
     print(f'# Bench: {binary} {" ".join(binary_args)}')
     print(f'# Configurations: {labels_to_run}')
     print(f'# Runs per config: {args.runs}')
@@ -739,7 +952,17 @@ def main() -> int:
                     m = measure_microtaint(
                         label, binary, binary_args, args.rootfs, cfg[1], stdin_data, timeout=args.microtaint_timeout,
                     )
+                if args.min_guest_bytes > 0:
+                    try:
+                        validate_not_vacuous(m, args.min_guest_bytes)
+                    except VacuousRunError as exc:
+                        if not args.allow_vacuous:
+                            raise
+                        sys.stderr.write(f'  ! VACUOUS (recorded anyway): {exc}\n')
+                        m.extra['vacuous'] = str(exc)
                 runs.append(m)
+            except VacuousRunError:
+                raise
             except RuntimeError as exc:
                 # Timeout from a single run — log and continue
                 sys.stderr.write(f'  ! {exc}  (counted as one timed-out run)\n')
@@ -754,32 +977,42 @@ def main() -> int:
 
     # ----- Print table ---------------------------------------------------
     print()
-    print('=' * 96)
+    print('=' * 116)
     print(
-        f'{"Configuration":<22} {"wall (s)":>10} {"CPU (s)":>10} {"peak RSS":>10} '
-        f'{"qil init":>10} {"ql.run":>10} {"×native":>8}',
+        f'{"Configuration":<22} {"wall (s)":>9} {"peak RSS":>10} {"qil init":>9} '
+        f'{"ql.run":>9} {"ns/instr":>10} {"×qiling":>9} {"×native":>9} {"guest B":>8}',
     )
-    print('-' * 96)
+    print('-' * 116)
 
     native_wall = all_results.get('native', Measurement('native', 0, 0, 0, 0)).wall_s
+    qiling_run = (all_results.get('qiling-only').extra.get('run_s')
+                  if all_results.get('qiling-only') else None)
 
     for label in labels_to_run:
-        summary = all_results.get(label)
-        if not summary:
+        m = all_results.get(label)
+        if not m:
             continue
-        m = summary
-        cpu = m.user_cpu_s + m.sys_cpu_s
         init_s = m.extra.get('init_s')
         run_s = m.extra.get('run_s')
-        ratio = (m.wall_s / native_wall) if native_wall > 0 else 0
-        init_str = f'{init_s:>10.3f}' if init_s is not None else f'{"—":>10}'
-        run_str = f'{run_s:>10.3f}' if run_s is not None else f'{"—":>10}'
-        ratio_str = f'{ratio:>8.1f}' if ratio else f'{"—":>8}'
-        print(f'{label:<22} {m.wall_s:>10.3f} {cpu:>10.3f} {m.peak_rss_mib:>8.1f} M {init_str} {run_str} {ratio_str}')
+        gb = m.extra.get('guest_bytes')
+        ratio_n = (m.wall_s / native_wall) if native_wall > 0 else None
+        # vs qiling-only on ql.run(), NOT on wall: wall is dominated by Python
+        # import and Qiling init, which have nothing to do with taint and dilute
+        # the ratio by ~5x. This is the number the README always meant.
+        ratio_q = (run_s / qiling_run) if (run_s and qiling_run) else None
+        ns_per = (run_s * 1e9 / n_instrs) if (run_s and n_instrs) else None
+        def _f(v, w, prec=1, suffix=''):
+            return f'{v:>{w}.{prec}f}{suffix}' if v is not None else f'{"—":>{w}}'
+        print(f'{label:<22} {m.wall_s:>9.3f} {m.peak_rss_mib:>8.1f} M {_f(init_s, 9, 3)} '
+              f'{_f(run_s, 9, 3)} {_f(ns_per, 10)} {_f(ratio_q, 9)} {_f(ratio_n, 9)} '
+              f'{(gb if gb is not None else "—"):>8}')
 
-    print('=' * 96)
+    print('=' * 116)
     print()
     print('Columns:')
+    print('  ns/instr  : ql.run() divided by guest instructions (needs --instr-count)')
+    print('  ×qiling   : ql.run() over qiling-only ql.run() — the taint cost, emulator divided out')
+    print('  guest B   : bytes the GUEST wrote; proves the workload ran (see VacuousRunError)')
     print('  wall (s)  : total wall-clock time of the subprocess')
     print('  CPU  (s)  : user_cpu + sys_cpu of the subprocess (children rusage)')
     print('  peak RSS  : max resident set size of the subprocess, MiB')
@@ -793,6 +1026,33 @@ def main() -> int:
     # ----- Save JSON if requested ---------------------------------------
     if args.json:
         out_dict = {label: asdict(m) for label, m in all_results.items()}
+        # `_meta` carries what a plot needs and what a reader needs to trust the
+        # numbers: the workload size (so any run_s can be checked against the
+        # ~22 ns/instr floor of bare Unicorn), the stdin that produced it, and
+        # the derived ratios, computed once here rather than re-derived by every
+        # consumer with a different idea of which denominator to use.
+        out_dict['_meta'] = {
+            'binary': binary,
+            'binary_args': binary_args,
+            'guest_instructions': n_instrs,
+            'stdin_bytes': len(stdin_data) if stdin_data else 0,
+            'stdin_source': stdin_path,
+            'runs_per_config': args.runs,
+            'rootfs': args.rootfs,
+            'min_guest_bytes': args.min_guest_bytes,
+            'derived': {
+                label: {
+                    'run_s': m.extra.get('run_s'),
+                    'ns_per_instr': (m.extra['run_s'] * 1e9 / n_instrs)
+                    if (m.extra.get('run_s') and n_instrs) else None,
+                    'x_qiling_run': (m.extra['run_s'] / qiling_run)
+                    if (m.extra.get('run_s') and qiling_run) else None,
+                    'x_native_wall': (m.wall_s / native_wall) if native_wall > 0 else None,
+                    'guest_bytes': m.extra.get('guest_bytes'),
+                }
+                for label, m in all_results.items()
+            },
+        }
         with open(args.json, 'w') as f:
             json.dump(out_dict, f, indent=2)
         print(f'\nFull results written to {args.json}')

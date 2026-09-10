@@ -182,10 +182,33 @@ def main():
         with open(args.overhead) as f:
             ov = json.load(f)
         nat = ov['native']['wall_s']
-        qil = ov['qiling-only']['wall_s']
         mta = ov['microtaint-all']['wall_s']
         run = ov['microtaint-all']['extra'].get('run_s') or mta
-        v['ovhSlow'] = f'{mta / qil:.2f}'
+        qil_run = ov['qiling-only']['extra'].get('run_s')
+
+        # A run in which the guest never executed the workload is FAST and clean,
+        # so no threshold on the timings can catch it -- only the guest's own
+        # output can.  The shipped 2026-05 json had `guest_bytes` absent entirely
+        # and 18 ns/instr of "taint", and its three macros went into the paper.
+        for _label in ('native', 'qiling-only', 'microtaint-all'):
+            _gb = ov[_label].get('extra', {}).get('guest_bytes')
+            if _gb is None:
+                raise SystemExit(
+                    f'{args.overhead}: {_label} has no guest_bytes, so it predates the '
+                    f'workload-ran check and cannot be trusted. Re-run overhead_bench.py '
+                    f'(it now records it) rather than publishing these numbers.')
+            if _gb <= 0:
+                raise SystemExit(
+                    f'{args.overhead}: {_label} guest wrote 0 bytes -- the workload never '
+                    f'ran, so this file measures process startup, not taint.')
+
+        # ovhSlow is run_s/run_s, NOT wall/wall.  Wall carries ~0.2-0.4 s of Python
+        # import and Qiling init that have nothing to do with taint; dividing two
+        # walls dilutes the ratio about fivefold (5.6x vs 25.8x on the same data).
+        # rq5-overhead/README.md always defined it this way; the code did not.
+        if not qil_run:
+            raise SystemExit(f'{args.overhead}: qiling-only has no run_s; cannot form ovhSlow')
+        v['ovhSlow'] = f'{run / qil_run:.1f}'
         v['ovhNativeX'] = str(round(mta / nat))
         v['ovhAmort'] = f'{run / nat:.1f}'
 

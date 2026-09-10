@@ -122,6 +122,23 @@ def main() -> int:
         if tk != rk:
             print(f'REFUSED: the timing run scored a different corpus ({len(tk)} cases)')
             return 1
+        # An ERRORED case carries `time_ns: 0`.  Splicing that in drops the error
+        # field but keeps the zero, so the case reads as a completed run that took
+        # no time -- it pulls the median down and removes the case from the tail,
+        # invisibly.  This is not hypothetical: `precompile` raised AttributeError
+        # on every ChainedCircuit, 753 of 943 sequence cases errored, and all 753
+        # zeros were merged into the report the paper's latency figures came from.
+        n_err = sum(1 for r in timed['results']
+                    if (r['tool_results'].get('microtaint') or {}).get('error'))
+        n_zero = sum(1 for r in timed['results']
+                     if (r['tool_results'].get('microtaint') or {}).get('time_ns') == 0
+                     and not (r['tool_results'].get('microtaint') or {}).get('error'))
+        if n_err or n_zero:
+            print(f'REFUSED: the timing run has {n_err} errored and {n_zero} zero-latency '
+                  f'microtaint cases out of {len(tk)}. Splicing it would publish those as '
+                  f'completed runs of zero duration. Fix the worker and re-run.')
+            return 1
+
         ref['metrics']['per_tool']['microtaint'] = timed['metrics']['per_tool']['microtaint']
         # Per-CASE timings too, not just the summary: otherwise anything that
         # recomputes a percentile from `results` silently mixes the timing run's
