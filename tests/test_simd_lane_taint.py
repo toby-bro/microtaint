@@ -27,18 +27,16 @@ The third is real, and bisecting the tags places it exactly. Ground truth is
     v0.6.15  0x0                  UNSOUND
 
 So it broke in v0.6.11, the release that also introduced the geometry lane names,
-and got worse in v0.6.13. On HEAD, truncating the sequence shows where the taint
-goes: the first four instructions return 0xe0e0e0e0e0e0e000 and inserting
-`psllq xmm0,8` before the writeback returns 0. It is marked xfail; when it is
-fixed, remove the marker rather than the test.
+and got worse in v0.6.13. Bisected to the commit that removed the x86 XMM_LO/HI
+specifics: the chain threaded vector intermediates per varnode instead of per
+lane, so `paddb`'s sixteen 1-byte sub-registers fragmented the 64-bit lane the
+SIMD path tracks. Fixed by threading them as whole lanes; all three now hold.
 
 Soundness is what is asserted -- the engine mask must CONTAIN the ground-truth
 mask. Over-taint is a precision cost the engine is allowed to pay.
 """
 
 from __future__ import annotations
-
-import pytest
 
 from microtaint.debug.reg_aliases import RegisterAliases
 from microtaint.types import Architecture
@@ -107,6 +105,5 @@ def test_pand_carries_through_the_lane() -> None:
     assert _under(_SEQUENCES['pand'], 'pand') == {}
 
 
-@pytest.mark.xfail(strict=True, reason='psllq xmm,imm8 clears the lane taint instead of shifting it')
 def test_psllq_carries_through_the_lane() -> None:
     assert _under(_SEQUENCES['psllq'], 'psllq') == {}
