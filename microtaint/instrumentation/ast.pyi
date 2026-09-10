@@ -285,6 +285,14 @@ class LogicCircuit:
     instruction: str
     state_format: list[Register]
     _compiled: CompiledCircuit | bool | None
+    # Declared in ast.pxd and set by the circuit builder; the stub was missing
+    # them, so every use read as an attribute error.
+    _pc_target: str
+    has_unicorn_cells: bool
+    input_reg_names: set[str]
+    #: True iff the taint output is a pure function of the input taints, so the
+    #: instruction cache can key on the taint signature alone.
+    value_independent: bool
 
     def __init__(
         self,

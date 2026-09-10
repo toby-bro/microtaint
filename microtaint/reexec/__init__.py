@@ -70,7 +70,11 @@ def _build_and_load() -> ctypes.CDLL:
     global _LIB_CACHE  # noqa: PLW0603
     if _LIB_CACHE is not None:
         return _LIB_CACHE
-    if not AVAILABLE:
+    if not AVAILABLE or _HOST_ASM is None:
+        # `_HOST_ASM is None` is what AVAILABLE already means, but saying it
+        # here is what makes the join below well-typed -- and it is the check
+        # that would actually fire on an unsupported host, where `_PKG_DIR /
+        # None` raises TypeError instead of this message.
         raise NativeReExecUnavailable('native re-exec needs an x86_64 host with cc')
     out = Path(tempfile.mkdtemp(prefix='mt_reexec_')) / 'reexec.so'
     cc = shutil.which('cc') or 'cc'
@@ -104,7 +108,8 @@ class NativeReExec:
     def __init__(self) -> None:
         self._lib = _build_and_load()
 
-    def run(self, code: bytes, gpr: dict[str, int], rflags: int = 0x202):
+    def run(self, code: bytes, gpr: dict[str, int],
+            rflags: int = 0x202) -> tuple[dict[str, int], int] | None:
         """Run ``code`` with the given register values + RFLAGS.
 
         Returns ``(out_gpr: dict[str,int], out_rflags: int)`` on success, or

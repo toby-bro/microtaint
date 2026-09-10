@@ -732,7 +732,7 @@ _VALUE_INDEP_OPS = frozenset({
 _VALUE_INDEP_SHIFTS = frozenset({'INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT'})
 
 
-def _ops_value_independent(ops: object) -> bool:
+def _ops_value_independent(ops: Iterable[PcodeOp]) -> bool:
     """True iff EVERY p-code op computes taint value-independently, so the whole
     instruction's taint transfer is a pure function of the input taints.  Sound
     by conservatism: any op not proven value-independent makes the result False
@@ -1625,29 +1625,29 @@ def _dep_floor_taint(dep_map: RegMapping | MemMapping, split_sign: bool = False)
     the exact non-monotone-risk condition.  A MemMapping cannot carry a bit range,
     so when `split_sign` is set (a signed/symmetric compare is present) this splits
     the memory taint into magnitude and sign TERMS here, reproducing that behaviour.
-    Returns [] only for shapes with no usable taint operand."""
+    The parameter is an exhaustive two-type union, so there is no third case and
+    no trailing fallback: a register operand returns above, and everything else
+    is the memory operand handled below."""
     if isinstance(dep_map, RegMapping):
         return [(
             _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True),
             dep_map.bit_end - dep_map.bit_start + 1,
         )]
-    if isinstance(dep_map, MemMapping):
-        addr_base = _get_taint_operand(
-            dep_map.addr_reg.name, dep_map.addr_reg.bit_start, dep_map.addr_reg.bit_end, False,
-        )
-        addr_e: Expr = (
-            BinaryExpr(Op.ADD, addr_base, Constant(dep_map.addr_const_offset, 8))
-            if dep_map.addr_const_offset != 0
-            else addr_base
-        )
-        mem_taint = MemoryOperand(addr_e, dep_map.size_bytes, is_taint=True)
-        w = dep_map.size_bytes * 8
-        if split_sign and w >= 2:
-            low = BinaryExpr(Op.AND, mem_taint, Constant((1 << (w - 1)) - 1, 8))
-            sign = BinaryExpr(Op.AND, mem_taint, Constant(1 << (w - 1), 8))
-            return [(low, w - 1), (sign, 1)]
-        return [(mem_taint, w)]
-    return []
+    addr_base = _get_taint_operand(
+        dep_map.addr_reg.name, dep_map.addr_reg.bit_start, dep_map.addr_reg.bit_end, False,
+    )
+    addr_e: Expr = (
+        BinaryExpr(Op.ADD, addr_base, Constant(dep_map.addr_const_offset, 8))
+        if dep_map.addr_const_offset != 0
+        else addr_base
+    )
+    mem_taint = MemoryOperand(addr_e, dep_map.size_bytes, is_taint=True)
+    w = dep_map.size_bytes * 8
+    if split_sign and w >= 2:
+        low = BinaryExpr(Op.AND, mem_taint, Constant((1 << (w - 1)) - 1, 8))
+        sign = BinaryExpr(Op.AND, mem_taint, Constant(1 << (w - 1), 8))
+        return [(low, w - 1), (sign, 1)]
+    return [(mem_taint, w)]
 
 
 def _build_carry_flag_taint(  # noqa: C901
