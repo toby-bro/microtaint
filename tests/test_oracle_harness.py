@@ -10,7 +10,6 @@ phase is measured against:
   * the CURRENT engine is SOUND vs Unicorn per-bit ground truth (no under-taint).
 """
 # ruff: noqa: PLC0415
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,import-untyped"
 from __future__ import annotations
 
 import pytest

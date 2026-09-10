@@ -15,7 +15,6 @@ Covers:
 """
 
 # ruff: noqa: B007, RUF059, F841, ARG002, PLC0415, ARG005
-# mypy: disable-error-code="index"
 
 from __future__ import annotations
 
@@ -428,7 +427,8 @@ class TestStoreVariantsPropagation:
         mem = _mem_keys(output)
 
         slot = STACK - 8
-        found = any(_parse_mem_key(k) is not None and _parse_mem_key(k)[0] == slot and v == 0 for k, v in mem.items())
+        found = any((p := _parse_mem_key(k)) is not None and p[0] == slot
+                    and v == 0 for k, v in mem.items())
         assert found, (
             f'push rbp (clean RBP) did not produce MEM_=0 at {hex(slot)}. '
             f'Stale shadow taint will not be cleared. MEM_ keys: {mem}'
@@ -446,7 +446,8 @@ class TestStoreVariantsPropagation:
         )
         mem = _mem_keys(output)
         slot = STACK - 8
-        found = any(_parse_mem_key(k) is not None and _parse_mem_key(k)[0] == slot and v != 0 for k, v in mem.items())
+        found = any((p := _parse_mem_key(k)) is not None and p[0] == slot
+                    and v != 0 for k, v in mem.items())
         assert found, f'push rbp (tainted) did not set MEM_ taint. MEM_: {mem}'
 
     def test_call_clears_return_address_slot(self, sim: CellSimulator) -> None:
@@ -466,7 +467,8 @@ class TestStoreVariantsPropagation:
         )
         mem = _mem_keys(output)
         slot = STACK - 8
-        found = any(_parse_mem_key(k) is not None and _parse_mem_key(k)[0] == slot and v == 0 for k, v in mem.items())
+        found = any((p := _parse_mem_key(k)) is not None and p[0] == slot
+                    and v == 0 for k, v in mem.items())
         assert found, (
             f'call rel32 did not clear shadow at return address slot {hex(slot)}. '
             f'Stale taint causes false-positive BOF at ret. MEM_: {mem}'
@@ -486,7 +488,8 @@ class TestStoreVariantsPropagation:
         )
         mem = _mem_keys(output)
         slot = STACK + 8
-        found = any(_parse_mem_key(k) is not None and _parse_mem_key(k)[0] == slot and v == 0 for k, v in mem.items())
+        found = any((p := _parse_mem_key(k)) is not None and p[0] == slot
+                    and v == 0 for k, v in mem.items())
         assert found, f'mov [rsp+8], rax (clean) did not clear shadow at {hex(slot)}. MEM_: {mem}'
 
     def test_mov_mem_rsp_offset_tainted(self, sim: CellSimulator) -> None:
@@ -501,7 +504,8 @@ class TestStoreVariantsPropagation:
         )
         mem = _mem_keys(output)
         slot = STACK + 8
-        found = any(_parse_mem_key(k) is not None and _parse_mem_key(k)[0] == slot and v != 0 for k, v in mem.items())
+        found = any((p := _parse_mem_key(k)) is not None and p[0] == slot
+                    and v != 0 for k, v in mem.items())
         assert found, f'mov [rsp+8], rax (tainted) did not set MEM_ taint. MEM_: {mem}'
 
     def test_mov_mem_rbp_minus8_clean_clears(self, sim: CellSimulator) -> None:
@@ -518,7 +522,8 @@ class TestStoreVariantsPropagation:
         )
         mem = _mem_keys(output)
         slot = RBP_VAL - 8
-        found = any(_parse_mem_key(k) is not None and _parse_mem_key(k)[0] == slot and v == 0 for k, v in mem.items())
+        found = any((p := _parse_mem_key(k)) is not None and p[0] == slot
+                    and v == 0 for k, v in mem.items())
         assert found, f'mov [rbp-8], rax (clean) did not clear shadow at {hex(slot)}. MEM_: {mem}'
 
 

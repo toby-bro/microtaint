@@ -43,7 +43,6 @@ Evaluator-level tests verify both the Cython (PCodeCellEvaluator) and C
 (PCodeCellEvaluatorC) pcode engines directly, independent of the taint circuit.
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined"
 
 from __future__ import annotations
 

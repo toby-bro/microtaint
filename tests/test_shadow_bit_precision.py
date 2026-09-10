@@ -17,7 +17,6 @@ byte-granularity here would cascade into the rule generator and the
 runtime, and a tainted nibble write would falsely taint the entire byte.
 """
 
-# mypy: disable-error-code="no-untyped-def, no-untyped-call"
 
 from __future__ import annotations
 

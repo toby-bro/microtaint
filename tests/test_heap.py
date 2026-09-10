@@ -16,7 +16,6 @@ Usage
 """
 
 # ruff: noqa: PLC0415, S110, PLW1510, S603
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,type-arg"
 
 from __future__ import annotations
 
@@ -25,6 +24,7 @@ import logging
 import subprocess
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -47,7 +47,7 @@ def _compile(c_src: str, tmp_path: Path, *, extra_flags: list[str] | None = None
     return bin_file
 
 
-def _run_with_heap_tracker(binary: Path):
+def _run_with_heap_tracker(binary: Path) -> tuple[Any, Any, Any, Any]:
     """
     Instantiate Qiling + MicrotaintWrapper(check_uaf=True) + HeapTracker.
     Returns (ql, wrapper, heap_tracker, reporter).
@@ -84,7 +84,7 @@ def _run_with_heap_tracker(binary: Path):
     return ql, wrapper, heap_tracker, reporter
 
 
-def _findings_of_kind(reporter, kind: str) -> list:
+def _findings_of_kind(reporter: Any, kind: str) -> list[Any]:
     return [f for f in getattr(reporter, 'findings', []) if str(f.kind).endswith(kind)]
 
 
@@ -144,7 +144,7 @@ class TestHeapTrackerEndToEnd:
     wrapper with HeapTracker installed.  We assert on the resulting findings.
     """
 
-    def test_malloc_use_no_uaf(self, tmp_path):
+    def test_malloc_use_no_uaf(self, tmp_path: Path) -> None:
         """
         Allocate, write into it, free at end, exit via raw SYS_exit.
 
@@ -189,7 +189,8 @@ class TestHeapTrackerEndToEnd:
         uaf_findings = _findings_of_kind(reporter, 'use_after_free')
         assert len(uaf_findings) == 0, f'False positive UAF on simple malloc/free: {uaf_findings}'
 
-    def test_malloc_free_then_normal_exit_has_libc_false_positive(self, tmp_path):
+    def test_malloc_free_then_normal_exit_has_libc_false_positive(
+            self, tmp_path: Path) -> None:
         """
         Same code as test_malloc_use_no_uaf but with a normal `return 0`.
 
@@ -225,7 +226,7 @@ class TestHeapTrackerEndToEnd:
         uaf_findings = _findings_of_kind(reporter, 'use_after_free')
         assert len(uaf_findings) == 0, f'libc cleanup produced spurious UAF: {uaf_findings}'
 
-    def test_malloc_free_use_detects_uaf(self, tmp_path):
+    def test_malloc_free_use_detects_uaf(self, tmp_path: Path) -> None:
         """Free THEN read — must report UAF.
 
         Skips if HeapTracker fails to hook libc symbols (environment-

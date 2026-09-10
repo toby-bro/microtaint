@@ -3,9 +3,10 @@ instances to use the pure-C evaluator. This validates the C module as a
 drop-in replacement for the Cython evaluator.
 """
 
-# mypy: disable-error-code="method-assign,no-untyped-def"
 import os
 import sys
+
+import pytest
 
 # Make cell_c importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'microtaint', 'instrumentation', 'cell_c'))
@@ -15,10 +16,16 @@ if os.environ.get('MICROTAINT_USE_C') == '1':
 
     _original_init = sim_mod.CellSimulator.__init__
 
-    def _patched_init(self, arch, use_unicorn=False, use_c=False):  # noqa: ARG001
-        return _original_init(self, arch, use_unicorn=use_unicorn, use_c=True)
+    from microtaint.simulator import CellSimulator
+    from microtaint.types import Architecture
 
-    sim_mod.CellSimulator.__init__ = _patched_init
+    def _patched_init(self: CellSimulator, arch: Architecture,
+                      use_unicorn: bool = False,
+                      use_c: bool | None = False) -> None:  # noqa: ARG001
+        _original_init(self, arch, use_unicorn=use_unicorn, use_c=True)
+
+    # Deliberate: this conftest exists to force the C evaluator for a run.
+    sim_mod.CellSimulator.__init__ = _patched_init  # type: ignore[method-assign]
 
 
 # ---------------------------------------------------------------------------
@@ -41,19 +48,18 @@ if os.environ.get('MICROTAINT_USE_C') == '1':
 # The rule that keeps this honest: the slow tier is MANDATORY on a release, not
 # merely available.  A marker nobody is obliged to run is a marker that quietly
 # deletes its tests.
-import pytest
 
 _SLOW_ENV = 'MICROTAINT_SLOW_TESTS'
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         '--slow', action='store_true', default=False,
         help='also run the release-grade tests: the full-bank soundness sweeps '
              'and the fuzzers at full budget.')
 
 
-def slow_tier_enabled(config=None) -> bool:
+def slow_tier_enabled(config: pytest.Config | None = None) -> bool:
     """Is this a release-grade run?
 
     Honours an environment variable as well as the flag, because the gate and
@@ -66,7 +72,7 @@ def slow_tier_enabled(config=None) -> bool:
     return bool(config is not None and config.getoption('--slow', default=False))
 
 
-def fuzz_budget(full: int, config=None) -> int:
+def fuzz_budget(full: int, config: pytest.Config | None = None) -> int:
     """How many random vectors this run should draw.
 
     Full budget at release; a small deterministic slice otherwise.  Never zero:
@@ -75,14 +81,15 @@ def fuzz_budget(full: int, config=None) -> int:
     return full if slow_tier_enabled(config) else max(1, full // 4)
 
 
-def pytest_configure(config):
+def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         'markers',
         'slow: a release-grade check (full-bank sweep or full-budget fuzz); '
         'deselected unless --slow or MICROTAINT_SLOW_TESTS=1')
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(config: pytest.Config,
+                                  items: list[pytest.Item]) -> None:
     if slow_tier_enabled(config):
         return
     skip = pytest.mark.skip(

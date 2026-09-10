@@ -17,7 +17,8 @@ attribute MUST be true.
 """
 
 # ruff: noqa: PT018
-# mypy: disable-error-code=no-untyped-def
+from typing import Any
+
 import pytest
 
 from microtaint.instrumentation.ast import EvalContext
@@ -48,7 +49,7 @@ X86_64_STATE = tuple(
 )
 
 
-def _compile(bs_hex: str):
+def _compile(bs_hex: str) -> Any:
     """Build a LogicCircuit, trigger lazy compile-to-C, return the compiled object."""
     _cached_generate_static_rule.cache_clear()
     c = _cached_generate_static_rule(
@@ -82,7 +83,8 @@ MEMORY_INSTRUCTIONS = [
 
 
 @pytest.mark.parametrize(('bs_hex', 'desc'), MEMORY_INSTRUCTIONS)
-def test_has_mem_ops_set_for_memory_reading_instruction(bs_hex, desc):
+def test_has_mem_ops_set_for_memory_reading_instruction(bs_hex: str,
+                                                       desc: str) -> None:
     compiled = _compile(bs_hex)
     assert compiled is not None and compiled is not False, f'instruction {bs_hex} ({desc}) failed to compile to C VM'
     assert compiled.has_mem_ops == 1, (

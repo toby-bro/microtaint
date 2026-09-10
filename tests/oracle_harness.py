@@ -29,6 +29,7 @@ bounded gate, and it can be driven standalone for full-bank sweeps:
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -596,8 +597,15 @@ def _compile_and_mem(circuit, arch, regs) -> bool:
     return bool(c) and getattr(c, 'has_mem_ops', False)
 
 
-def run_bank(engine_fn, *, isas=None, n_dense=5, n_sparse=8, seed=1234,
-             ref='differential', uc_desc=None, skip_mem=True, max_mismatch=25):
+#: `engine_fn(arch, code, regs, in_taint, in_values, *, circuit) -> dict`,
+#: the one shape every engine under test is adapted to.
+EngineFn = Callable[..., dict[str, int]]
+
+
+def run_bank(engine_fn: EngineFn, *, isas: list[str] | None = None,
+             n_dense: int = 5, n_sparse: int = 8, seed: int = 1234,
+             ref: str = 'differential', uc_desc: UcDesc | None = None,
+             skip_mem: bool = True, max_mismatch: int = 25) -> Report:
     """Drive `engine_fn` over the instruction bank and compare vs a reference.
 
     ref='differential' -> compare vs reference_taint (bit-exact gate).

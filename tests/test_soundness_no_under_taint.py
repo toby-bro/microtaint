@@ -40,7 +40,6 @@ definition of "the bits whose values genuinely depend on tainted inputs".
 """
 
 # ruff: noqa: PLC0415
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,import-untyped"
 
 from __future__ import annotations
 
@@ -574,7 +573,8 @@ class TestMovzxSubMovsxChain:
         'inc rax',
     ],
 )
-def test_single_instruction_soundness_fuzz(asm: str, request) -> None:
+def test_single_instruction_soundness_fuzz(
+        asm: str, request: pytest.FixtureRequest) -> None:
     """Fuzz a single instruction across a variety of taint configurations.
 
     For each of 12 random states and 6 taint patterns, assert that microtaint
@@ -620,7 +620,8 @@ def test_single_instruction_soundness_fuzz(asm: str, request) -> None:
         ['rol rax, 13', 'xor rax, rbx', 'rol rax, 7', 'xor rax, rcx', 'add rax, rdx'],
     ],
 )
-def test_chain_soundness_fuzz(seq: list[str], request) -> None:
+def test_chain_soundness_fuzz(seq: list[str],
+                              request: pytest.FixtureRequest) -> None:
     """Fuzz multi-instruction sequences for soundness across random states."""
     import random
 
@@ -943,7 +944,8 @@ class TestBenchmarkRegression20260503:
         ['adc rax, rbx', 'adc rax, rbx', 'adc rax, rbx'],
     ],
 )
-def test_worker_style_pattern_fuzz(seq: list[str], request) -> None:
+def test_worker_style_pattern_fuzz(
+        seq: list[str], request: pytest.FixtureRequest) -> None:
     """Fuzz the exact patterns the differential benchmark flagged.
 
     Uses the worker's 4-GP-only register list so the test surface matches

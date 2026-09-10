@@ -18,7 +18,6 @@ x86 `setcc` is a 1-bit-flag output and is unaffected (keeps its floor; exact via
 differential anyway).
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,union-attr"
 
 from __future__ import annotations
 
@@ -44,7 +43,6 @@ _CSET_HI = b'\xe0\x97\x9f\x9a'
 
 
 def _x0_taint(code: bytes, taint: dict[str, int]) -> int:
-    engine._SEGMENTED = False
     engine._cached_generate_static_rule.cache_clear()
     circ = engine.generate_static_rule(ARCH, code, _FMT)
     ctx = EvalContext(

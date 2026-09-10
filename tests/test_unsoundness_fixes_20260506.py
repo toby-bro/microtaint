@@ -13,7 +13,6 @@ Each test computes the brute-force ground truth by 2^k Unicorn enumeration and
 checks `microtaint_output ⊇ ground_truth` (no under-tainted bits).
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined"
 
 from __future__ import annotations
 
@@ -215,7 +214,8 @@ _PDEP_RAX_RBX_RCX = bytes.fromhex('c4e2e3f5c1')
     ],
     ids=['id181', 'id478', 'id761', 'id1978', 'id1979'],
 )
-def test_pext_rax_sound_under_random_input_taint(state, taint):
+def test_pext_rax_sound_under_random_input_taint(
+        state: dict[str, int], taint: dict[str, int]) -> None:
     """PEXT must avalanche: any tainted mask/source bit affects all output positions."""
     _assert_sound('pext rax,rbx,rcx', _PEXT_RAX_RBX_RCX, state, taint)
 
@@ -241,7 +241,8 @@ def test_pext_rax_sound_under_random_input_taint(state, taint):
     ],
     ids=['id1983', 'id1984'],
 )
-def test_pext_rcx_rdx_rax_sound(state, taint):
+def test_pext_rcx_rdx_rax_sound(state: dict[str, int],
+                                taint: dict[str, int]) -> None:
     """The other PEXT operand permutation."""
     _assert_sound('pext rcx,rdx,rax', _PEXT_RCX_RDX_RAX, state, taint)
 

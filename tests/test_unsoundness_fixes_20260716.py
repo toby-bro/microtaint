@@ -25,7 +25,6 @@ Tests brute-force ground truth via 2^k Unicorn enumeration and assert
 chosen to trigger each bug (they under-taint on the pre-fix engine).
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined"
 
 from __future__ import annotations
 
@@ -46,7 +45,8 @@ from unicorn.x86_const import (
 from microtaint.classifier.categories import InstructionCategory
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
-from microtaint.sleigh.engine import generate_static_rule, get_context
+from microtaint.sleigh.engine import generate_static_rule
+from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import determine_category
 from microtaint.types import Architecture, Register
 
@@ -122,7 +122,7 @@ def _assert_sound(label: str, bytestring: bytes, state: dict[str, int], taint: d
         ('vpshufb', 'c4e27100c2'),       # vpshufb xmm0, xmm1, xmm2
     ],
 )
-def test_callother_classified_avalanche(label, hexbytes):
+def test_callother_classified_avalanche(label: str, hexbytes: str) -> None:
     """Any slice containing a CALLOTHER (opaque intrinsic) must be AVALANCHE,
     never MAPPED (the mis-classification that dropped the soundness floor)."""
     ops = list(get_context(_ARCH).translate(bytes.fromhex(hexbytes), 0x1000).ops)

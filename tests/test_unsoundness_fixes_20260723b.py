@@ -20,7 +20,6 @@ Every case is a (state, taint) that under-tainted BEFORE the corresponding fix,
 with ground truth carrying real taint on the checked register.
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,index"
 
 from __future__ import annotations
 
@@ -55,5 +54,6 @@ _CASES = [
 
 @pytest.mark.parametrize(('arch', 'code', 'state', 'taint', 'label'), _CASES,
                          ids=[c[4].split()[0] + '-' + c[0] for c in _CASES])
-def test_no_under_taint(arch, code, state, taint, label):
+def test_no_under_taint(arch: str, code: str, state: dict[str, int],
+                        taint: dict[str, int], label: str) -> None:
     _assert_sound(arch, code, state, taint, label)

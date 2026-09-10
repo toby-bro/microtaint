@@ -5,8 +5,6 @@ Verifies that LOAD and STORE operations generate correct taint assignment ASTs
 with appropriate MemoryOperand dependencies.
 """
 
-# mypy: disable-error-code="union-attr"
-# mypy: disable-error-code="attr-defined"
 
 from __future__ import annotations
 
@@ -43,7 +41,8 @@ class TestMemoryLoadAST:
         rule = generate_static_rule(arch, bytestring, x86_64_registers)
 
         # Should have RAX assignment
-        rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+        rax_assignments = [a for a in rule.assignments
+                           if hasattr(a.target, 'name') and a.target.name == 'RAX']
         assert len(rax_assignments) == 1, 'Should have one RAX assignment'
 
         assignment = rax_assignments[0]
@@ -62,7 +61,8 @@ class TestMemoryLoadAST:
 
         rule = generate_static_rule(arch, bytestring, x86_64_registers)
 
-        rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+        rax_assignments = [a for a in rule.assignments
+                           if hasattr(a.target, 'name') and a.target.name == 'RAX']
         # May have 2 assignments: one for EAX[0:31] and one for zero-extension to RAX[0:63]
         assert len(rax_assignments) >= 1, 'Should have at least one RAX assignment'
 
@@ -74,7 +74,8 @@ class TestMemoryLoadAST:
 
         rule = generate_static_rule(arch, bytestring, x86_64_registers)
 
-        rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+        rax_assignments = [a for a in rule.assignments
+                           if hasattr(a.target, 'name') and a.target.name == 'RAX']
         assert len(rax_assignments) >= 1, 'Should have at least one RAX assignment'
 
     def test_load_byte_ast(self, x86_64_registers: list[Register]) -> None:
@@ -85,7 +86,8 @@ class TestMemoryLoadAST:
 
         rule = generate_static_rule(arch, bytestring, x86_64_registers)
 
-        rax_assignments = [a for a in rule.assignments if a.target.name == 'RAX']
+        rax_assignments = [a for a in rule.assignments
+                           if hasattr(a.target, 'name') and a.target.name == 'RAX']
         assert len(rax_assignments) >= 1, 'Should have at least one RAX assignment'
 
 
@@ -262,6 +264,9 @@ class TestMemoryOperandStructure:
 
             if len(mem_assignments) > 0:
                 mem_target = mem_assignments[0].target
+                # Filtered to MemoryOperand above; say so, so `.size` is
+                # not read off the register branch of the union.
+                assert hasattr(mem_target, 'size'), mem_target
                 assert (
                     mem_target.size == expected_size
                 ), f'Expected {expected_size}-byte size for {bytestring.hex()}, got {mem_target.size}'

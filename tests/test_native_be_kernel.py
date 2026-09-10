@@ -21,7 +21,6 @@ undefined and native/Unicorn may legitimately differ there, so the MIPS inputs a
 canonicalised.  PPC GPRs are 32-bit and have no such precondition.
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined"
 
 from __future__ import annotations
 

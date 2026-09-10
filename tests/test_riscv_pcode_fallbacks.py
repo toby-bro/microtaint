@@ -20,7 +20,6 @@ Run:
     pytest tests/test_riscv_pcode_fallbacks.py -v
 """
 
-# mypy: disable-error-code="attr-defined"
 
 from __future__ import annotations
 

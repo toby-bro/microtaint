@@ -8,7 +8,6 @@ Activate with:
 Or copy contents into tests/conftest.py for a one-shot run.
 """
 
-# mypy: disable-error-code="method-assign"
 from __future__ import annotations
 
 import microtaint.simulator as sim_mod
@@ -20,4 +19,5 @@ def _patched_init(self, arch, use_unicorn=False, use_c=False):  # type: ignore[n
     return _original_init(self, arch, use_unicorn=use_unicorn, use_c=True)
 
 
-sim_mod.CellSimulator.__init__ = _patched_init
+# Deliberate: this conftest exists to force the C evaluator for a whole run.
+sim_mod.CellSimulator.__init__ = _patched_init  # type: ignore[method-assign]

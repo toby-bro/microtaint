@@ -30,7 +30,6 @@ BE), a sub-register slice the LE-indexed kernel would read as the high byte.  It
 must stay on Unicorn, which gets byte order right.
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call"
 
 from __future__ import annotations
 

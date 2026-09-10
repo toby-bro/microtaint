@@ -30,7 +30,6 @@ benchmark suggests microtaint's string-instruction handler has a deeper
 shadow-memory issue that's out of scope for this fix.
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined"
 
 from __future__ import annotations
 

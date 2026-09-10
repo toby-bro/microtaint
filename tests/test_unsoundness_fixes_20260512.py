@@ -31,7 +31,6 @@ Each test brute-forces ground truth via 2^k Unicorn enumeration and asserts
 ``microtaint_output ⊇ ground_truth`` (no under-tainted bits).
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined"
 
 from __future__ import annotations
 

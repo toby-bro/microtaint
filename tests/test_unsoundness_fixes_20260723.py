@@ -19,7 +19,6 @@ The cases span the generalising fixes made over the two days:
     reachable-index term (x86 bts).
 """
 
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,index"
 
 from __future__ import annotations
 
@@ -157,7 +156,8 @@ def _brute_gt(arch: ArchDesc, code: bytes, state: dict[str, int], taint: dict[st
     return gt
 
 
-def _canon(arch: ArchDesc, state: dict[str, int], taint: dict[str, int]):
+def _canon(arch: ArchDesc, state: dict[str, int], taint: dict[str, int],
+           ) -> tuple[dict[str, int], dict[str, int]]:
     if arch.canon is None:
         return state, taint
     w = arch.canon
@@ -166,7 +166,7 @@ def _canon(arch: ArchDesc, state: dict[str, int], taint: dict[str, int]):
     high = MASK64 ^ low
     gpr = {n for n, _ in arch.gprs}
 
-    def sx(v):
+    def sx(v: int) -> int:
         v &= low
         return v | high if v & sign else v
     st = {k: (sx(v) if k in gpr else v) for k, v in state.items()}
@@ -254,7 +254,8 @@ _CASES = [
 
 @pytest.mark.parametrize(('arch', 'code', 'state', 'taint', 'label'), _CASES,
                          ids=[c[4].split()[0] + '-' + c[0] for c in _CASES])
-def test_no_under_taint(arch, code, state, taint, label):
+def test_no_under_taint(arch: str, code: str, state: dict[str, int],
+                        taint: dict[str, int], label: str) -> None:
     # SF/ZF/PF are architecturally UNDEFINED after IMUL/MUL (Intel SDM); Unicorn
     # invents a value, so they are excluded -- the same declared limitation the
     # benchmark's written_flags applies.
