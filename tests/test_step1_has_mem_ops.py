@@ -90,7 +90,6 @@ MEMORY_INSTRUCTIONS = [
 def test_has_mem_ops_set_for_memory_reading_instruction(bs_hex: str,
                                                        desc: str) -> None:
     compiled = _compile(bs_hex)
-    assert compiled is not None and compiled is not False, f'instruction {bs_hex} ({desc}) failed to compile to C VM'
     assert compiled.has_mem_ops == 1, (
         f'has_mem_ops must be 1 for {bs_hex} ({desc}); '
         f'this instruction reads memory and its cached taint output '

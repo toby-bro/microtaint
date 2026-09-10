@@ -18,7 +18,7 @@ The generated function takes the register state as two flat arrays and writes
 taint into a third, matching the C evaluator's convention exactly, so the two
 are interchangeable and can be diff-tested against each other.
 """
-# ruff: noqa: PLC0415, S603, S607
+# ruff: noqa: PLC0415, S603
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

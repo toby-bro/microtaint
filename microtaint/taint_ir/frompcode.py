@@ -22,7 +22,7 @@ instruction in one basic block: see `_predicated_write`.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from microtaint.taint_ir.ir import (
     ADD,
@@ -276,11 +276,17 @@ class SymFrame:
 #: bench_dense the entire 256-byte state buffer went clean at the first S-box
 #: round.  A load through a tainted address is exactly the shape a taint engine
 #: exists to follow, so the sound policy is the one that runs.
-POINTER_POLICIES = ('avalanche', 'concrete')
+#: The two spellings, as a type so a wrong one is a checker error rather
+#: than a ValueError at the first call.
+PointerPolicy = Literal['avalanche', 'concrete']
+POINTER_POLICIES: tuple[PointerPolicy, ...] = ('avalanche', 'concrete')
+
+#: What a lowering publishes: taint alone, values alone, or both.
+Emit = Literal['taint', 'value', 'both']
 
 #: What every caller gets unless it names something else.  Soundness is not an
 #: opt-in.
-DEFAULT_POINTER_POLICY = 'avalanche'
+DEFAULT_POINTER_POLICY: PointerPolicy = 'avalanche'
 
 
 class Builder:
@@ -288,7 +294,7 @@ class Builder:
     every architectural register, written or passed through."""
 
     def __init__(self, arch: Any, be: bool,
-                 pointer_policy: str = DEFAULT_POINTER_POLICY) -> None:
+                 pointer_policy: PointerPolicy = DEFAULT_POINTER_POLICY) -> None:
         if pointer_policy not in POINTER_POLICIES:
             raise ValueError(pointer_policy)
         self.pointer_policy = pointer_policy
@@ -337,7 +343,7 @@ class Builder:
         self.be = be
         self.arch = arch
 
-    def build(self, ops: list[Any], end_addr: int, *, emit: str = 'taint',
+    def build(self, ops: list[Any], end_addr: int, *, emit: Emit = 'taint',
               block: bool = False) -> IRProg:
         """Lower `ops`.  `emit` selects which frame becomes the program's
         outputs: 'taint' (the shipped behaviour) or 'value'.
@@ -1305,7 +1311,8 @@ class Builder:
 _BUILDERS: dict[tuple[str, str], Builder] = {}
 
 
-def builder_for(arch: Any, pointer_policy: str = DEFAULT_POINTER_POLICY) -> Builder:
+def builder_for(arch: Any,
+                pointer_policy: PointerPolicy = DEFAULT_POINTER_POLICY) -> Builder:
     """The shared Builder for `arch` under `pointer_policy`, made once.
 
     A Builder costs a register-map build, so callers share one; several of them
@@ -1322,8 +1329,8 @@ def builder_for(arch: Any, pointer_policy: str = DEFAULT_POINTER_POLICY) -> Buil
 
 
 def build_ir(arch: Any, code: bytes, *,
-             pointer_policy: str = DEFAULT_POINTER_POLICY,
-             emit: str = 'taint') -> IRProg:
+             pointer_policy: PointerPolicy = DEFAULT_POINTER_POLICY,
+             emit: Emit = 'taint') -> IRProg:
     """Lower one instruction to a taint IR program.  Raises Unsupported."""
     from microtaint.sleigh.lifter import get_context
     key = arch.value if hasattr(arch, 'value') else str(arch)

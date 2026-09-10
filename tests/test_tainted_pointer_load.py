@@ -23,15 +23,15 @@ for 'avalanche' -- the policy the engine did not run.
 """
 from __future__ import annotations
 
-from typing import Literal
-
 import pytest
 
-from microtaint.taint_api import explain
+from microtaint.taint_api import Path, explain
 from microtaint.taint_memory import TaintMemory
 from microtaint.types import Architecture
 
-PATHS = ['compiled', 'differential']
+#: The two implementations the API exposes, typed so a loop over them
+#: carries the API's own Literal rather than widening to str.
+PATHS: list[Path] = ['compiled', 'differential']
 TABLE = 0x402000
 FULL = (1 << 64) - 1
 
@@ -60,7 +60,7 @@ def _table() -> TaintMemory:
                          ids=[s[0] for s in SHAPES])
 def test_a_load_through_a_tainted_address_taints_the_value(
         label: str, arch: Architecture, code: bytes, taint: dict[str, int], values: dict[str, int], dest: str,
-        path: Literal['compiled', 'differential']) -> None:
+        path: Path) -> None:
     out, used = explain(arch, code, taint, values, memory=_table(), path=path)
     assert used == path, f'{label}: asked for {path}, answered by {used}'
     assert out.get(dest, 0), (

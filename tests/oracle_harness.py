@@ -31,6 +31,7 @@ import random
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from types import SimpleNamespace
+from typing import Literal
 
 from microtaint.instrumentation.ast import EvalContext, LogicCircuit
 from microtaint.simulator import CellSimulator
@@ -39,6 +40,9 @@ from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 #: A per-output mask keyed by register or flag name.
 TaintState = dict[str, int]
+
+#: Which reference a sweep judges against.
+Ref = Literal['differential', 'ground_truth']
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
@@ -621,7 +625,7 @@ EngineFn = Callable[..., dict[str, int]]
 
 def run_bank(engine_fn: EngineFn, *, isas: list[str] | None = None,
              n_dense: int = 5, n_sparse: int = 8, seed: int = 1234,
-             ref: str = 'differential', uc_desc: UcDesc | None = None,
+             ref: Ref = 'differential', uc_desc: UcDesc | None = None,
              skip_mem: bool = True, max_mismatch: int = 25) -> Report:
     """Drive `engine_fn` over the instruction bank and compare vs a reference.
 

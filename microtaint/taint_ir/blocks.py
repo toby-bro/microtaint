@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from microtaint.taint_ir.frompcode import LIFT_BASE, Builder, Unsupported
+from microtaint.taint_ir.frompcode import LIFT_BASE, Builder, Emit, Unsupported
 
 __all__ = ['Region', 'instruction_starts', 'plan_block']
 
@@ -57,7 +57,8 @@ def instruction_starts(ops: list[Any]) -> list[tuple[int, int, int]]:
 
 
 def plan_block(arch: Any, code: bytes, base: int = LIFT_BASE, *,
-               emit: str = 'both', builder: Builder | None = None) -> list[Region]:
+               emit: Emit = 'both',
+               builder: Builder | None = None) -> list[Region]:
     """Greedy maximal regions covering `code`, in order.
 
     The whole block is tried first, because that is the common case and it costs

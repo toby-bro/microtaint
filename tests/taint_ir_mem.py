@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from microtaint.taint_ir.frompcode import PointerPolicy
 from microtaint.types import Architecture
 
 if TYPE_CHECKING:                    # deferred: unicorn and the engine are
@@ -186,7 +187,8 @@ def _write_mem(mem: list[int], addr: int, size: int, val: int, be: bool) -> None
 def ir_mem_taint(arch: Architecture, code: bytes, reg_taint: dict[str, int],
                  reg_vals: dict[str, int], mem_taint: Sequence[int],
                  mem_vals: Sequence[int], *, be: bool = False,
-                 policy: str = 'avalanche') -> tuple[dict[str, int], list[int]]:
+                 policy: PointerPolicy = 'avalanche',
+                 ) -> tuple[dict[str, int], list[int]]:
     """Run one instruction's taint program over registers and memory.
 
     Returns (register taint by name, per-byte memory taint), or raises
@@ -262,7 +264,7 @@ class MemReport:
 
 
 def run_mem_bank(isa: str = 'AMD64', n_vec: int = 4, seed: int = 7,
-                 policy: str = 'avalanche') -> MemReport:
+                 policy: PointerPolicy = 'avalanche') -> MemReport:
     from microtaint.taint_ir.frompcode import Unsupported
     from microtaint.types import Architecture
     from tests.perop_c_bank import _engine_names

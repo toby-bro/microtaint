@@ -25,7 +25,7 @@ from __future__ import annotations
 import random
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Literal
 
 from microtaint.instrumentation.ast import LogicCircuit
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
@@ -36,6 +36,9 @@ if TYPE_CHECKING:                    # imported inside the run for import cost
 
 #: A per-output mask keyed by register or flag name.
 TaintState = dict[str, int]
+
+#: Which reference a sweep judges against.
+Ref = Literal['differential', 'ground_truth']
 
 #: What one pass over an instruction costs, by category.  Keys are fixed by
 #: `OpStats.add`: ops, pcode_ops, n_route, n_diff, n_floor, n_cube, reads,
@@ -327,7 +330,7 @@ def gt_vectors(desc: UcDesc, reg_names: list[str], rng: random.Random,
 def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                      n_sparse: int = 5, seed: int = 1234,
                      max_examples: int = 12, skip_mem: bool = True,
-                     ref: str = 'ground_truth',
+                     ref: Ref = 'ground_truth',
                      step: Step | None = None) -> BankReport:
     """Sweep the bank; validate and collect op counts.
 

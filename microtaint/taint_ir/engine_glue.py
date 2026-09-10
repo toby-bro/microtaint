@@ -24,9 +24,8 @@ parity tests compare against.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
-from typing import Any
-
 import os
+from typing import Any
 
 #: Must match MT_IR_MEM_BASE / MT_IR_MAX_ACC in emulator/fastpath.h.
 MEM_SLOT_BASE = 512

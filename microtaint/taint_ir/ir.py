@@ -170,8 +170,18 @@ class IRProg:
     then drops what no output reads.
     """
 
-    __slots__ = ('nodes', '_hc', 'inputs', 'outputs', 'live', 'kbits',
-                 'spans', 'uses', 'no_bool', 'accesses')
+    __slots__ = (
+        '_hc',
+        'accesses',
+        'inputs',
+        'kbits',
+        'live',
+        'no_bool',
+        'nodes',
+        'outputs',
+        'spans',
+        'uses',
+    )
 
     def __init__(self) -> None:
         #: (op, a, b, c, imm) per node; a/b/c are node indices or -1.
