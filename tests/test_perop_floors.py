@@ -27,6 +27,7 @@ Bounded here for CI; the full multi-thousand-case sweep runs standalone via
 from __future__ import annotations
 
 import random
+from collections.abc import Iterable, Iterator
 
 import pytest
 
@@ -35,7 +36,8 @@ from tests.conftest import fuzz_budget
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
-def _gt_vectors(gp_names, rng: random.Random, n, max_bits=4):
+def _gt_vectors(gp_names: list[str], rng: random.Random, n: int,
+                max_bits: int = 4) -> Iterator[tuple[dict[str, int], dict[str, int]]]:
     """Vectors tainting only GP regs with few TOTAL bits (ground-truth friendly:
     per-bit enumeration stays cheap and exact)."""
     for _ in range(n):
@@ -46,8 +48,9 @@ def _gt_vectors(gp_names, rng: random.Random, n, max_bits=4):
         yield t, vals
 
 
-def _under_bits(got, ref, keys):
-    u = {}
+def _under_bits(got: dict[str, int], ref: dict[str, int],
+                keys: Iterable[str]) -> dict[str, int]:
+    u: dict[str, int] = {}
     for k in keys:
         m = (int(ref.get(k, 0) or 0)) & ~(int(got.get(k, 0) or 0))
         if m:
@@ -55,7 +58,9 @@ def _under_bits(got, ref, keys):
     return u
 
 
-def soundness_report(isa: str, n_per, seed: int=7, instr_limit=None):
+def soundness_report(isa: str, n_per: int, seed: int = 7,
+                     instr_limit: int | None = None,
+                     ) -> tuple[int, int, int, list[object]]:
     """Three-way check: per-op vs ground truth vs engine oracle.  Returns
     (n_cases, n_exact_vs_gt, n_new_under, new_under_examples)."""
     from benchmark.instruction_bank import load_bank
@@ -67,7 +72,7 @@ def soundness_report(isa: str, n_per, seed: int=7, instr_limit=None):
     keys = gp + list(ud.flags)
     specs = load_bank(isas={isa})
     n_cases = n_exact = 0
-    new_under = []
+    new_under: list[object] = []
     for spec in specs.values():
         regs = spec.regs
         instrs = spec.instructions
@@ -107,7 +112,8 @@ def soundness_report(isa: str, n_per, seed: int=7, instr_limit=None):
     return n_cases, n_exact, len(new_under), new_under
 
 
-def slicewise_report(isa: str, n_per, seed: int=11):
+def slicewise_report(isa: str, n_per: int, seed: int = 11,
+                     ) -> tuple[int, int, int, int, list[object]]:
     """Per-output-slice window (the integration model): trust per-op only on
     outputs whose cone is reconvergence-free.  Returns
     (n_cases, tot_slices, clean_slices, n_new_under_on_clean, examples)."""
@@ -120,7 +126,7 @@ def slicewise_report(isa: str, n_per, seed: int=11):
     keys = gp + list(ud.flags)
     specs = load_bank(isas={isa})
     n_cases = tot_slices = clean_slices = 0
-    new_under = []
+    new_under: list[object] = []
     for spec in specs.values():
         regs = spec.regs
         for ins in spec.instructions:

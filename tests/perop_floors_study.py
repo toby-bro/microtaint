@@ -16,7 +16,7 @@ import sys
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
-def sweep(isa: str, n_per=40, seed: int=7):
+def sweep(isa: str, n_per: int = 40, seed: int = 7) -> int:
     from benchmark.instruction_bank import load_bank
     from tests.oracle_harness import UC_DESCS, build_circuit, classify, ground_truth, reference_taint
     from tests.perop_floors import NeedsMonolithic, Unsupported, engine_perop_floors
@@ -32,7 +32,8 @@ def sweep(isa: str, n_per=40, seed: int=7):
     n_cases = n_exact = n_over = 0
     n_mono = n_unsup = 0
     shared = 0
-    new_under = []
+    #: (label, output, the extra under-taint as hex, the taint that caused it)
+    new_under: list[tuple[str, str, str, dict[str, str]]] = []
     for spec in specs.values():
         regs = spec.regs
         for ins in spec.instructions:
@@ -86,12 +87,13 @@ def sweep(isa: str, n_per=40, seed: int=7):
     print(f'  monolithic fallback : {n_mono} (cmov/rep/opaque -> whole-instr oracle)')
     print(f'  unsupported/err     : {n_unsup} (mem/BE/other, out of study scope)')
     print(f'  NEW under-taints     : {len(new_under)}  <-- MUST be 0')
-    for label, k, m, tt in new_under[:30]:
-        print(f'    BUG {label}: {k} extra-under={m} taint={tt}')
+    for label, out_name, extra_hex, caused_by in new_under[:30]:
+        print(f'    BUG {label}: {out_name} extra-under={extra_hex} '
+              f'taint={caused_by}')
     return len(new_under)
 
 
-def sweep_slicewise(isa: str, n_per=40, seed: int=11):
+def sweep_slicewise(isa: str, n_per: int = 40, seed: int = 11) -> int:
     """Per-output-slice window sweep (the integration model): report slice
     coverage (clean vs total), exactness on clean slices vs the oracle, and any
     new under-taint on clean slices (must be 0)."""
@@ -158,7 +160,7 @@ def sweep_slicewise(isa: str, n_per=40, seed: int=11):
     return new_under
 
 
-def main():
+def main() -> int:
     argv = sys.argv[1:]
     n = 40
     if '--n' in argv:

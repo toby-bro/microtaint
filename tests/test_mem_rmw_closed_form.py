@@ -23,7 +23,7 @@ import random
 
 import pytest
 
-from microtaint.instrumentation.ast import EvalContext, InstructionCellExpr
+from microtaint.instrumentation.ast import EvalContext, InstructionCellExpr, LogicCircuit, TaintAssignment
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.sleigh.engine import _cached_generate_static_rule, generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
@@ -48,15 +48,30 @@ def sim() -> CellSimulator:
     return CellSimulator(ARCH, use_unicorn=False, use_c=True)
 
 
-def _reg_targets(circ):
+def _target_name(a: TaintAssignment) -> str:
+    """The register an assignment writes.  `_reg_targets` has already kept
+    only the assignments that have one."""
+    name = getattr(a.target, 'name', None)
+    assert isinstance(name, str)
+    return name
+
+
+def _target_bits(a: TaintAssignment) -> int:
+    """The width of the slice an assignment writes."""
+    return int(a.target.bit_end) - int(a.target.bit_start)   # type: ignore[union-attr]
+
+
+def _reg_targets(circ: LogicCircuit) -> list[TaintAssignment]:
     return [a for a in circ.assignments
             if getattr(a.target, 'name', None) is not None and not hasattr(a.target, 'address_expr')]
 
 
-def _true_taint(sim: CellSimulator, hexs: str, name: str, be, size: int, mk, base, taint: dict[str, int]):
+def _true_taint(sim: CellSimulator, hexs: str, name: str, bit_end: int,
+                size: int, mk: str, base: dict[str, int],
+                taint: dict[str, int]) -> int:
     # MachineState.mem is keyed by INTEGER address (the ICE reads the concrete
     # bytes there); the circuit's EvalContext uses the MEM_<hex>_<size> string key.
-    ice = InstructionCellExpr(ARCH, hexs, name, 0, be, {})
+    ice = InstructionCellExpr(ARCH, hexs, name, 0, bit_end, {})
     pos = ([('r', r, b) for r in REG_NAMES for b in range(64) if (taint.get(r, 0) >> b) & 1]
            + [('m', mk, b) for b in range(size * 8) if (taint.get(mk, 0) >> b) & 1])
     outs = []
@@ -74,10 +89,11 @@ def _true_taint(sim: CellSimulator, hexs: str, name: str, be, size: int, mk, bas
 
 @pytest.mark.parametrize(('label', 'hexs', 'size', 'cells', 'exact'),
                          [(k, *v) for k, v in CASES.items()], ids=list(CASES))
-def test_cell_free(label: str, hexs: str, size: int, cells, exact):  # noqa: ARG001
+def test_cell_free(label: str, hexs: str, size: int, cells: dict[str, int],
+                   exact: dict[str, int]) -> None:  # noqa: ARG001
     _cached_generate_static_rule.cache_clear()
     circ = generate_static_rule(ARCH, bytes.fromhex(hexs), REGS)
-    outs = {a.target.name: a for a in _reg_targets(circ)}
+    outs = {_target_name(a): a for a in _reg_targets(circ)}
     for name, want in cells.items():
         assert name in outs, f'{label}: no {name} output'
         got = repr(outs[name].expression).count('InstructionCellExpr')
@@ -86,7 +102,9 @@ def test_cell_free(label: str, hexs: str, size: int, cells, exact):  # noqa: ARG
 
 @pytest.mark.parametrize(('label', 'hexs', 'size', 'cells', 'exact'),
                          [(k, *v) for k, v in CASES.items()], ids=list(CASES))
-def test_sound_and_exact_vs_true(label: str, hexs: str, size: int, cells, exact, sim: CellSimulator):  # noqa: ARG001
+def test_sound_and_exact_vs_true(label: str, hexs: str, size: int,
+                                 cells: dict[str, int], exact: dict[str, int],
+                                 sim: CellSimulator) -> None:
     _cached_generate_static_rule.cache_clear()
     circ = generate_static_rule(ARCH, bytes.fromhex(hexs), REGS)
     targets = _reg_targets(circ)
@@ -113,12 +131,12 @@ def test_sound_and_exact_vs_true(label: str, hexs: str, size: int, cells, exact,
         # its own (see the bug-memory-compare-flag-undertaint note) -- out of scope
         # for the closed-form CF this test guards.
         for a in targets:
-            nm = a.target.name
+            nm = _target_name(a)
             if nm not in exact:
                 continue
-            be = a.target.bit_end - a.target.bit_start
-            mask = (1 << (be + 1)) - 1
-            true = _true_taint(sim, hexs, nm, be, size, mk, base, taint) & mask
+            bit_end = _target_bits(a)
+            mask = (1 << (bit_end + 1)) - 1
+            true = _true_taint(sim, hexs, nm, bit_end, size, mk, base, taint) & mask
             g = got.get(nm, 0) & mask
             assert (true & ~g) == 0, f'{label} {nm} UNDER-taint: true={true:#x} got={g:#x}'
             assert g == true, f'{label} {nm}: got {g:#x} != true {true:#x}'

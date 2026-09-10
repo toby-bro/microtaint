@@ -30,6 +30,8 @@ from microtaint.sleigh.engine import generate_static_rule
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
 from instruction_bank import load_bank  # type: ignore[import-not-found]
 
+from microtaint.types import Architecture, Register
+
 # MIPS64BE immediate-logic macros that materialise a constant then apply the op.
 # The label matches the bank's pre-assembled entry (rt=$2 v0, rs=$4 a0).
 _CASE_LABELS = [
@@ -45,19 +47,21 @@ _CASE_BYTES = {i.label: i.bytes for i in _MIPS_SPEC.instructions if i.label in _
 
 
 @pytest.fixture(scope='module')
-def mips():
+def mips() -> tuple[Architecture, list[Register]]:
     return _MIPS_SPEC.arch, _MIPS_SPEC.regs
 
 
 @pytest.fixture(scope='module')
-def cases():
+def cases() -> dict[str, bytes]:
     return _CASE_BYTES
 
 
-def _true_taint(arch, sim: CellSimulator, code: bytes, name: str, be, regs, base, taint: dict[str, int]):
+def _true_taint(arch: Architecture, sim: CellSimulator, code: bytes,
+                name: str, bit_end: int, regs: list[Register],
+                base: dict[str, int], taint: dict[str, int]) -> int:
     rbits = {r.name: r.bits for r in regs}
     rn = [r.name for r in regs]
-    ice = InstructionCellExpr(arch, code.hex(), name, 0, be, {})
+    ice = InstructionCellExpr(arch, code.hex(), name, 0, bit_end, {})
     pos = [(r, b) for r in rn for b in range(rbits[r]) if (taint.get(r, 0) >> b) & 1]
     outs = []
     for combo in itertools.product((0, 1), repeat=len(pos)):
@@ -72,7 +76,9 @@ def _true_taint(arch, sim: CellSimulator, code: bytes, name: str, be, regs, base
 
 
 @pytest.mark.parametrize('label', _CASE_LABELS)
-def test_constant_intermediate_macro_is_monolithic(mips, cases, label: str):
+def test_constant_intermediate_macro_is_monolithic(
+        mips: tuple[Architecture, list[Register]],
+        cases: dict[str, bytes], label: str) -> None:
     arch, regs = mips
     code = cases[label]
     circ = generate_static_rule(arch, code, regs)
@@ -82,7 +88,9 @@ def test_constant_intermediate_macro_is_monolithic(mips, cases, label: str):
 
 
 @pytest.mark.parametrize('label', _CASE_LABELS)
-def test_constant_intermediate_macro_is_sound_and_exact(mips, cases, label: str):
+def test_constant_intermediate_macro_is_sound_and_exact(
+        mips: tuple[Architecture, list[Register]],
+        cases: dict[str, bytes], label: str) -> None:
     arch, regs = mips
     code = cases[label]
     sim = CellSimulator(arch)
