@@ -10,7 +10,7 @@ two fields (a false positive on QR).
 
 # Experiment script, not library code: see artifacts/ndss27/README.md,
 # "Lint and type checking", for why annotations are not required here.
-# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg, explicit-any"
 from __future__ import annotations
 
 import json

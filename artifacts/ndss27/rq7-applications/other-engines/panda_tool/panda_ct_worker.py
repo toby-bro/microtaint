@@ -33,7 +33,7 @@ argv: 1=harness path in /work, 2=argv1 ('vuln'|'ct'), 3=payload_b64 (stdin),
 
 # Experiment script, not library code: see artifacts/ndss27/README.md,
 # "Lint and type checking", for why annotations are not required here.
-# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg, explicit-any"
 import base64
 import json
 import sys

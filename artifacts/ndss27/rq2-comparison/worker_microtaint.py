@@ -8,6 +8,10 @@ Protocol (stdin/stdout, line-delimited JSON):
   ← "QUIT"  → exits cleanly
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg, explicit-any"
+
 import json
 import sys
 import time
