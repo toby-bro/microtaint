@@ -1,5 +1,4 @@
 # ruff: noqa: ARG002
-# mypy: disable-error-code="no-any-return"
 from __future__ import annotations
 
 import logging
@@ -82,13 +81,13 @@ class HeapTracker:
             arch = 'AMD64'
 
         if 'X86' in arch or 'AMD64' in arch:
-            return self.ql.arch.regs.read('RAX')
+            return int(self.ql.arch.regs.read('RAX'))
         if 'ARM64' in arch or 'AARCH64' in arch:
-            return self.ql.arch.regs.read('X0')
+            return int(self.ql.arch.regs.read('X0'))
         if 'ARM' in arch:
-            return self.ql.arch.regs.read('R0')
+            return int(self.ql.arch.regs.read('R0'))
         if 'MIPS' in arch:
-            return self.ql.arch.regs.read('V0')
+            return int(self.ql.arch.regs.read('V0'))
         return 0
 
     def _arg(self, n: int) -> int:
@@ -101,7 +100,7 @@ class HeapTracker:
         if 'AMD64' in arch:
             regs: tuple[str, ...] = ('RDI', 'RSI', 'RDX', 'RCX', 'R8', 'R9')
             if n < len(regs):
-                return self.ql.arch.regs.read(regs[n])
+                return int(self.ql.arch.regs.read(regs[n]))
             # stack args: RSP + 8*(n - len(regs) + 1)
             sp = self.ql.arch.regs.read('RSP')
             return int.from_bytes(self.ql.mem.read(sp + 8 * (n - len(regs) + 1), 8), 'little')
@@ -113,12 +112,12 @@ class HeapTracker:
         if 'ARM64' in arch or 'AARCH64' in arch:
             regs = tuple(f'X{i}' for i in range(8))
             if n < len(regs):
-                return self.ql.arch.regs.read(regs[n])
+                return int(self.ql.arch.regs.read(regs[n]))
 
         if 'ARM' in arch:
             regs = ('R0', 'R1', 'R2', 'R3')
             if n < len(regs):
-                return self.ql.arch.regs.read(regs[n])
+                return int(self.ql.arch.regs.read(regs[n]))
 
         return 0
 

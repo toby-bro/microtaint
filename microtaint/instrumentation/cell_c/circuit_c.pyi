@@ -11,6 +11,10 @@ from typing import Any
 
 from microtaint.instrumentation.ast import EvalContext, LogicCircuit
 
+def cell_capi_loaded() -> bool:
+    """True if the cell_c fast-path CAPI is loaded, so OP_CALL_CELL reaches
+    `cell_eval_fast` instead of calling back into Python."""
+
 class CompiledCircuit:
     """
     A LogicCircuit pre-compiled to compact bytecode.

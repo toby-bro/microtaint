@@ -4,6 +4,7 @@ The runtime itself is `blockpath.h` and has no Python in it at all.  Everything
 declared here is either the COMPILER handing over a finished plan (once per
 distinct block) or a test entry point; none of it runs per block execution.
 """
+from collections.abc import Callable
 from typing import Any
 
 class _Capsule: ...
@@ -49,3 +50,37 @@ def runner_finish(runner: _Capsule, completed: bool) -> None: ...
 def runner_abandon(runner: _Capsule) -> None: ...
 def runner_stats(runner: _Capsule) -> dict[str, Any]: ...
 def runner_reports(runner: _Capsule) -> list[tuple[int, int]]: ...
+
+# ---------------------------------------------------------------------------
+# The live UC_HOOK_BLOCK path.  `hook_ptr` is the C trampoline's address and
+# `hook_ud` its user_data, both handed straight to uc_hook_add; the caller MUST
+# keep the hook alive for as long as it is registered.
+# ---------------------------------------------------------------------------
+
+def hook_new(fastctx: int, compiler: Callable[..., Any], ids: int, ptrs: int,
+             vals: int, n_calls: int, reg_slots: Any) -> _Capsule:
+    """The block hook's C context.
+
+    `fastctx` is the InstructionHook's C context (from
+    `hook_core.c_instruction_hook_ud`), and `ids` / `ptrs` / `vals` are the
+    ADDRESSES of the register-read descriptor's ctypes arrays.  A vector
+    register is one read call that fills two lanes, so the slot list is per
+    name and `n_calls` is counted separately.
+    """
+
+def hook_ptr() -> int:
+    """Address of the pure-C UC_HOOK_BLOCK trampoline, for uc_hook_add."""
+
+def hook_ud(hook: _Capsule) -> int:
+    """user_data for the trampoline: the hook's C context, not a PyObject."""
+
+def hook_finish(hook: _Capsule, completed: bool) -> None:
+    """Commit or abandon the block held back by the deferred-commit protocol.
+
+    A block hook fires for a block that may then fault partway through, so its
+    taint is held until the NEXT block proves it completed.
+    """
+
+def hook_stats(hook: _Capsule) -> dict[str, int]:
+    """Blocks seen, handled, and NOT handled.  `unhandled` is unanalysed code,
+    so it is counted rather than ignored."""

@@ -64,6 +64,23 @@ def _classes(tree: ast.Module) -> list[ast.ClassDef]:
             if isinstance(n, ast.ClassDef) and not _is_fiction(n.name)]
 
 
+def _module_names(tree: ast.Module) -> set[str]:
+    """Module-level names a stub declares, ignoring what it imports.
+
+    An import in a stub is there to spell a type, not to claim the module
+    re-exports it.
+    """
+    names: set[str] = set()
+    for st in tree.body:
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(st.name)
+        elif isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
+            names.add(st.target.id)
+        elif isinstance(st, ast.Assign):
+            names.update(t.id for t in st.targets if isinstance(t, ast.Name))
+    return names
+
+
 def test_stubs_declare_nothing_the_runtime_lacks() -> None:
     """A name in a stub must exist on the object it describes."""
     missing, compared = [], 0
@@ -105,6 +122,43 @@ def test_stubs_declare_everything_the_runtime_exposes() -> None:
                     undeclared.append(f'{pyi}: {node.name}.{name} is public at '
                                       f'runtime but the stub does not declare it')
     assert compared > 20, f'compared only {compared} names: the walk found nothing'
+    assert not undeclared, 'runtime exposes what the stub does not declare:\n  ' + \
+                           '\n  '.join(undeclared)
+
+
+def test_stubs_declare_the_module_level_names_the_runtime_exposes() -> None:
+    """The same check, one level up: module functions, not just methods.
+
+    This is the hole the first version of this test had.  It walked classes
+    only, so eleven module-level entry points were missing from two stubs and
+    nothing said so: hook_core's five C trampoline `_ptr` / `_ud` pairs and
+    blockpath_c's five `hook_*` functions, which are the entire live
+    UC_HOOK_BLOCK path.  wrapper.py carried a
+    `# mypy: disable-error-code="attr-defined"` header, so the ten errors they
+    caused were muted at the one place that would have reported them.
+    """
+    undeclared, compared = [], 0
+    for pyi, mod, tree in _stubs():
+        declared = _module_names(tree)
+        public = getattr(mod, '__all__', None)
+        live = (set(public) if public is not None
+                else {n for n in vars(mod) if not n.startswith('_')})
+        for name in sorted(live):
+            obj = getattr(mod, name, None)
+            # Only what the module DEFINES.  A compiled module's namespace also
+            # holds whatever it imported, which the stub has no reason to
+            # redeclare: the modules themselves (Cython leaves `ctypes`, `os`,
+            # `functools`, `logging` sitting there), and anything whose
+            # __module__ names somewhere else.
+            if isinstance(obj, types.ModuleType):
+                continue
+            if getattr(obj, '__module__', mod.__name__) != mod.__name__:
+                continue
+            compared += 1
+            if name not in declared:
+                undeclared.append(f'{pyi}: module-level {name} is public at '
+                                  f'runtime but the stub does not declare it')
+    assert compared > 10, f'compared only {compared} names: the walk found nothing'
     assert not undeclared, 'runtime exposes what the stub does not declare:\n  ' + \
                            '\n  '.join(undeclared)
 

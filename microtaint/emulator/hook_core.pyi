@@ -328,7 +328,29 @@ class LiveMemReader:
     def __call__(self, address: int, size: int) -> int:
         """Read `size` bytes at `address`. Returns 0 on error."""
 
-#: Address of the pure-C UC_HOOK_CODE trampoline, for uc_hook_add.  Register it
-#: with the InstructionHook instance as user_data (id(hook)); the caller must
-#: keep that instance alive for the hook's lifetime.
-def c_instruction_hook_ptr() -> int: ...
+# ---------------------------------------------------------------------------
+# The pure-C trampolines.  Each pair is (address of the trampoline, its
+# user_data), both handed straight to uc_hook_add.  The user_data is the hook's
+# C CONTEXT, not the hook object: the callback runs without the GIL, so it
+# cannot cast a PyObject to reach the context.  The context carries a borrowed
+# pointer back to the hook for the path that does need Python, which is why the
+# caller MUST keep the hook alive for as long as it is registered.
+# ---------------------------------------------------------------------------
+
+def c_instruction_hook_ptr() -> int:
+    """Address of the pure-C UC_HOOK_CODE trampoline."""
+
+def c_instruction_hook_ud(hook: InstructionHook) -> int:
+    """user_data for the code trampoline.  Valid while `hook` is alive."""
+
+def c_mem_write_hook_ptr() -> int:
+    """Address of the pure-C UC_HOOK_MEM_WRITE trampoline."""
+
+def c_mem_write_hook_ud(hook: MemWriteClearHook) -> int:
+    """user_data for the write trampoline.  Valid while `hook` is alive."""
+
+def c_mem_access_hook_ptr() -> int:
+    """Address of the pure-C UC_HOOK_MEM_READ trampoline."""
+
+def c_mem_access_hook_ud(hook: MemAccessHook) -> int:
+    """user_data for the read trampoline.  Valid while `hook` is alive."""
