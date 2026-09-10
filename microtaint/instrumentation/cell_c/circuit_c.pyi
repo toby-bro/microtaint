@@ -37,6 +37,13 @@ class CompiledCircuit:
     circuits would need shadow-memory state in the cache key).
     """
 
+    value_independent: int
+    """
+    1 if the taint output is a pure function of the input taints (the circuit
+    reads no operand value), so the instruction cache may key on the taint
+    signature alone.
+    """
+
     n_assignments: int
     """
     Number of compiled assignments.  A fast attribute so LogicCircuit.evaluate
@@ -63,6 +70,37 @@ class CompiledCircuit:
         it's used by OP_CALL_CELL to dispatch into the C kernel via
         CellCAPI when available.
         """
+
+    def evaluate_c_arr(
+        self,
+        taint_list: list[int],
+        val_list: list[int],
+        pcode: Any,
+        name_to_slot: dict[str, int],
+    ) -> Any:
+        """Array-gather register taint eval over slot-indexed lists; None when
+        the circuit is not c_evaluable."""
+
+    def evaluate_c_arr_ptr(
+        self,
+        taint_addr: int,
+        val_addr: int,
+        n_slots: int,
+        pcode: Any,
+        name_to_slot: dict[str, int],
+    ) -> Any:
+        """Array-gather register eval over raw uint64 C arrays, given by
+        ADDRESS.  Writes the result directly and atomically."""
+
+    def evaluate_c_mem_ptr(
+        self,
+        taint_addr: int,
+        val_addr: int,
+        n_slots: int,
+        *args: Any,
+    ) -> Any:
+        """Memory eval over raw uint64 C arrays; atomic.  Returns the memory
+        writes as (addr, size, taint)."""
 
     def evaluate_c(
         self,

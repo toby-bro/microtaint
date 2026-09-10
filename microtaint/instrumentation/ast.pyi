@@ -24,6 +24,10 @@ class EvalContext:
     implicit_policy: ImplicitTaintPolicy
     shadow_memory: Any | None
     mem_reader: Callable[[int, int], int] | None
+    #: `str(simulator.arch)`, cached for the TaintOperand fast path.
+    arch_str: str
+    #: Per-evaluate frame sharing is armed for this context.
+    share_frames: bool
 
     def __init__(
         self,
@@ -270,6 +274,10 @@ class TaintAssignment:
     dependencies: list[Expr]
     expression: Expr | None
     expression_str: str
+    #: Pre-tagged in __init__ from `hasattr(target, 'address_expr')`, so the
+    #: hot path tests a C flag instead of probing an attribute per assignment.
+    #: Declared in ast.pyx as `cdef public bint`.
+    is_mem_target: bool
 
     def __init__(
         self,

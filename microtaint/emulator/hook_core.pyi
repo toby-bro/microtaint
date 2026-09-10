@@ -102,6 +102,66 @@ class InstructionHook:
     instr_cache_hits: int
     instr_cache_misses: int
 
+    express_done: int
+    """Instructions answered by the express lane.  The C fast path holds this
+    counter's ADDRESS (`fctx.express_done`), so it is `cdef public` rather than
+    a Python attribute."""
+
+    fast_done: int
+    instr_total: int
+    """Instructions the C fast path finished without entering Python, and the
+    total it was offered.  Coverage is the RATIO of the two, which is why both
+    are counted and not only the numerator."""
+
+    prefilter_hits: int
+    """Instructions dismissed outright because no input was tainted."""
+
+    fb_pc: int
+    fb_pyfall: int
+    fb_mem: int
+    fb_other: int
+    fb_nocircuit: int
+    """Why instructions leave the C path, so the biggest reason is a
+    measurement rather than a guess."""
+
+    arr_fallbacks: int
+    """Instructions the array path had to hand back to the dict path."""
+
+    EXPRESS_MISS_REASONS: tuple[str, ...]
+    """Reason names for `express_miss`, in index order (see fastpath.h)."""
+
+    @property
+    def express_miss(self) -> tuple[int, ...]:
+        """Per-reason express-lane miss counts, paired with
+        EXPRESS_MISS_REASONS."""
+
+    @property
+    def regs_read(self) -> int:
+        """Register reads the fast path performed."""
+
+    @property
+    def regs_circuit(self) -> int:
+        """Register reads the circuits asked for.  `regs_circuit - regs_read`
+        is what the compiled path saved."""
+
+    py_decode_cache: dict[int, tuple[int, bytes, Any]]
+    """address -> (size, bytes, circuit); the dict path only."""
+
+    arr_cache: dict[int, Any]
+    """address -> (in_snap, out_snap, val_snap, slots)."""
+
+    slots_cache: dict[bytes, list[int]]
+    """instruction bytes -> the input slots it reads."""
+
+    taint_ir_progs: dict[bytes, Any]
+    """instruction bytes -> compiled taint program.  Holding it here is what
+    keeps its emitted code alive."""
+
+    def sync_taint_to_dict(self) -> Any:
+        """Flush the slot array into `register_taint` and hand authority back
+        to the dict, so an external re-seed is picked up by the next
+        instruction."""
+
     def invalidate_smc(self) -> None:
         """Drop the decode + Tier-3/Tier-4 caches after a write hit cached code."""
 
@@ -260,9 +320,11 @@ class LiveMemReader:
         mem_buf_addr: int = ...,
     ) -> None: ...
 
-    uc_handle: int
-    uc_mr_addr: int
-    mem_buf_addr: int
+    # The read boundary (the Unicorn handle, and the addresses of uc_mem_read
+    # and of the ctypes buffer) is plain `cdef`, so it is C-level only and not
+    # reachable from Python.  It was declared here as three public ints, which
+    # made mypy accept attribute reads that raise at runtime.
+
     def __call__(self, address: int, size: int) -> int:
         """Read `size` bytes at `address`. Returns 0 on error."""
 

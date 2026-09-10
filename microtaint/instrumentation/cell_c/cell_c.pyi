@@ -37,6 +37,22 @@ class PCodeCellEvaluatorC:
     _sizes: dict[str, int]
 
     def __init__(self, arch: Architecture) -> None: ...
+    def taint_step(
+        self,
+        code: bytes,
+        values: dict[str, int],
+        taints: dict[str, int],
+        out_names: list[str],
+    ) -> tuple[dict[str, int], dict[str, int], dict[str, int]] | None:
+        """The one-pass per-op taint composer, exposed for validation and
+        measurement.  One call runs the whole p-code program once, and every
+        requested output -- result registers and flags alike -- reads its taint
+        straight off the taint frame.
+
+        Returns None when the pass DECLINES a shape it does not model.  The
+        caller must treat that as "fall back to the monolithic differential",
+        never as "no taint".
+        """
     def evaluate_concrete(
         self,
         cell: InstructionCellExpr,

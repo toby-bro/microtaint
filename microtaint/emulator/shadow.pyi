@@ -1,13 +1,18 @@
 # shadow.pyi
+from collections.abc import Callable
 
 class BitPreciseShadowMemory:
     """
     Fast Cython implementation of bit-precise shadow memory.
     """
 
-    # Internal state managed by Cython, but visible to Python as dicts
-    taint_pages: dict[int, bytearray]
-    state_pages: dict[int, bytearray]
+    # The page tables are C-level (`cdef` in shadow.pxd) and are NOT reachable
+    # from Python; the stub used to declare them as visible dicts, which made
+    # mypy accept reads that raise at runtime.
+
+    #: Called once, with no arguments, the first time any byte is poisoned,
+    #: then cleared.  `cdef public object` in shadow.pxd.
+    on_first_poison: Callable[[], None] | None
 
     def __init__(self) -> None: ...
 
