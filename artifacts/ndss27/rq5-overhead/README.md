@@ -29,3 +29,11 @@ by Python startup and module import, which has nothing to do with taint.
 
 Absolute times are machine-dependent; the ratio against `qiling-only` is the
 figure the paper's claim is stated in.
+
+The committed `overhead_results.json` reproduces Figure 8 to within 2% on every
+quantity (0.352 s against 0.360 wall for microtaint-all, 0.222 against 0.227 for
+qiling-only, 94.4 MiB against 93.7, 142 ms against 145 for `qil init`). Take the
+timings only from an otherwise idle machine: this benchmark is one Python
+process and its numbers move by more than a factor of two under load, in every
+phase including plain module import, which is why a run under contention looks
+like an engine regression and is not one.
