@@ -169,8 +169,10 @@ def plot_precision():
 def plot_perf_latency():
     tool_keys = ['microtaint', 'panda', 'triton', 'maat', 'libdft64', 'taintgrind', 'angr']
     engines = [DISPLAY_NAME[t] for t in tool_keys]
-    p50_us = [_pt(t)['latency_p50_ms'] * 1000.0 for t in tool_keys]
-    p99_us = [_pt(t)['latency_p99_ms'] * 1000.0 for t in tool_keys]
+    # PER-STEP, not per test: a sequence test is up to 32 instructions, so the
+    # per-test tail measures sequence length rather than propagation cost.
+    p50_us = [_pt(t)['latency_p50_per_instr_ms'] * 1000.0 for t in tool_keys]
+    p99_us = [_pt(t)['latency_p99_per_instr_ms'] * 1000.0 for t in tool_keys]
 
     x = np.arange(len(engines))
     width = 0.35
@@ -178,9 +180,9 @@ def plot_perf_latency():
     fig, ax = plt.subplots(figsize=(5.5, 3.0 * PLOT_SCALE))
     colors = bar_colors(engines)
 
-    ax.bar(x - width / 2, p50_us, width, label='p50 latency', color=colors, edgecolor='black', linewidth=0.6)
+    ax.bar(x - width / 2, p50_us, width, label='p50 latency (per step)', color=colors, edgecolor='black', linewidth=0.6)
     ax.bar(
-        x + width / 2, p99_us, width, label='p99 latency', color=colors, edgecolor='black', linewidth=0.6, hatch='//',
+        x + width / 2, p99_us, width, label='p99 latency (per step)', color=colors, edgecolor='black', linewidth=0.6, hatch='//',
     )
 
     ax.set_ylabel('Latency (µs, log scale)', fontsize=11)

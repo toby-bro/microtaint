@@ -4001,6 +4001,9 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
         # not wall-clock, so they don't fluctuate with system contention.
         non_pe_records = [r for r in records if r[2] != 'path_explosion']
         non_pe_lats = [r[0] for r in non_pe_records]
+        # One propagation step, not one test: divide by the instruction count.
+        per_instr_lats = [r[0] / r[1] for r in non_pe_records] or [0]
+        single_instr_lats = [r[0] for r in non_pe_records if r[1] == 1] or [0]
         median_lat_all = statistics.median(lats) if lats else 0
         median_lat_non_pe = statistics.median(non_pe_lats) if non_pe_lats else 0
         mean_lat = statistics.mean(lats) if lats else 0
@@ -4038,6 +4041,19 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
             'latency_p50_ms': round(pct(lats, 50), 3),
             'latency_p95_ms': round(pct(lats, 95), 3),
             'latency_p99_ms': round(pct(lats, 99), 3),
+            # PER-STEP percentiles.  The ones above are per TEST, and a test in the
+            # sequence pillars is up to 32 instructions, so their tail measures how
+            # long a sequence takes rather than how long a propagation step takes.
+            # It made microtaint look worse at p99 than Triton and PANDA while being
+            # 5x better at p50, which is an artifact of the mix and not a property
+            # of the engine: normalised per instruction its p99 is 667us against
+            # Triton's 647us, and on single-instruction tests alone 149us against
+            # 659us.  Path-explosion is excluded here for the same reason it is
+            # excluded from throughput.
+            'latency_p50_per_instr_ms': round(pct(per_instr_lats, 50), 4),
+            'latency_p95_per_instr_ms': round(pct(per_instr_lats, 95), 4),
+            'latency_p99_per_instr_ms': round(pct(per_instr_lats, 99), 4),
+            'latency_p99_single_instr_ms': round(pct(single_instr_lats, 99), 4),
             'throughput_per_s': round(1e9 / median_lat_non_pe, 1) if median_lat_non_pe > 0 else 0,
             'throughput_per_s_all': round(1e9 / median_lat_all, 1) if median_lat_all > 0 else 0,
             'throughput_per_s_mean': round(1e9 / mean_lat, 1) if mean_lat > 0 else 0,
