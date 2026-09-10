@@ -18,15 +18,22 @@ from __future__ import annotations
 from typing import Any
 
 from microtaint.taint_ir.frompcode import Unsupported, build_ir
+from microtaint.types import Architecture, Register
 from tests.perop_c_bank import Declined, _engine_names
 
 _CACHE: dict[tuple[str, bytes], Any] = {}
 from microtaint.taint_ir.regmap import name_offset, slot_resolver  # noqa: E402,F401
 
+#: The IR keys a register by (kind, byte offset, size), one entry per size.
+IRKey = tuple[str, int, int]
+IRState = dict[IRKey, int]
 
-def ir_state(arch, names, values, taints):
+
+def ir_state(arch: Architecture, names: list[str], values: dict[str, int],
+             taints: dict[str, int]) -> tuple[IRState, IRState]:
     """Register state keyed the way the IR keys it."""
-    v, t = {}, {}
+    v: IRState = {}
+    t: IRState = {}
     for n in names:
         off = name_offset(arch, n)
         if off is None:
@@ -37,7 +44,7 @@ def ir_state(arch, names, values, taints):
     return v, t
 
 
-def _prog(arch, code):
+def _prog(arch: Architecture, code: bytes) -> Any:
     key = (arch.value if hasattr(arch, 'value') else str(arch), code)
     hit = _CACHE.get(key)
     if hit is None:
@@ -49,7 +56,9 @@ def _prog(arch, code):
     return hit
 
 
-def ir_step(arch, code: bytes, regs, in_taint, in_values):
+def ir_step(arch: Architecture, code: bytes, regs: list[Register],
+            in_taint: dict[str, int], in_values: dict[str, int],
+            ) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
     """Bank adapter: run the lowered IR for one input state."""
     prog = _prog(arch, code)
     if isinstance(prog, tuple):
@@ -62,7 +71,8 @@ def ir_step(arch, code: bytes, regs, in_taint, in_values):
 
     names = [r.name for r in regs]
     alias = _engine_names(arch, names)
-    values, taints = {}, {}
+    values: IRState = {}
+    taints: IRState = {}
     for n in names:
         en = alias[n]
         off = name_offset(arch, en)
@@ -87,7 +97,7 @@ def ir_step(arch, code: bytes, regs, in_taint, in_values):
     return res, {}, cost
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     import argparse
 
     from tests.perop_c_bank import run_bank_perop_c

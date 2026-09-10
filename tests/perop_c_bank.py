@@ -23,16 +23,29 @@ harness both it and the ratchet import.
 from __future__ import annotations
 
 import random
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
+from microtaint.types import Architecture, Register
 
 if TYPE_CHECKING:                    # imported inside the run for import cost
-    from tests.oracle_harness import Verdict
+    from tests.oracle_harness import UcDesc, Verdict
 
 #: A per-output mask keyed by register or flag name.
 TaintState = dict[str, int]
+
+#: What one pass over an instruction costs, by category.  Keys are fixed by
+#: `OpStats.add`: ops, pcode_ops, n_route, n_diff, n_floor, n_cube, reads,
+#: writes, forks.
+Cost = dict[str, int]
+
+#: The signature `run_bank_perop_c(step=...)` drives.  Returning three things
+#: rather than taint alone is what lets the bank check the VALUES a pass
+#: computes as well as the taint it routes.
+Step = Callable[[Architecture, bytes, list[Register], TaintState, TaintState],
+                tuple[TaintState, TaintState, Cost]]
 
 
 class Declined(Exception):  # noqa: N818
@@ -42,7 +55,7 @@ class Declined(Exception):  # noqa: N818
 _EVALS: dict[str, PCodeCellEvaluatorC] = {}
 
 
-def _evaluator(arch):
+def _evaluator(arch: Architecture) -> PCodeCellEvaluatorC:
     key = arch.value if hasattr(arch, 'value') else str(arch)
     ev = _EVALS.get(key)
     if ev is None:
@@ -60,7 +73,7 @@ def _evaluator(arch):
 _NAME_ALIASES = {'N': 'NG', 'Z': 'ZR', 'C': 'CY', 'V': 'OV'}
 
 
-def _engine_names(arch, names):
+def _engine_names(arch: Architecture, names: Iterable[str]) -> dict[str, str]:
     """bank name -> engine geometry name, for the names that differ."""
     key = arch.value if hasattr(arch, 'value') else str(arch)
     cached = _NAME_MAPS.get(key)
@@ -90,7 +103,9 @@ def _engine_names(arch, names):
 _NAME_MAPS: dict[str, dict[str, str]] = {}
 
 
-def perop_c_step(arch, code: bytes, regs, in_taint, in_values):
+def perop_c_step(arch: Architecture, code: bytes, regs: list[Register],
+                 in_taint: TaintState, in_values: TaintState,
+                 ) -> tuple[TaintState, TaintState, Cost]:
     """One pass: returns (taint_by_reg, value_by_reg, cost).  Raises Declined."""
     names = [r.name for r in regs]
     alias = _engine_names(arch, names)
@@ -106,7 +121,9 @@ def perop_c_step(arch, code: bytes, regs, in_taint, in_values):
             {n: vd.get(alias[n], 0) for n in names}, cost)
 
 
-def perop_c_taint(arch, code, regs, in_taint, in_values, *, circuit=None):
+def perop_c_taint(arch: Architecture, code: bytes, regs: list[Register],
+                  in_taint: TaintState, in_values: TaintState,
+                  *, circuit: Any = None) -> TaintState:
     """Oracle-harness adapter: taint only."""
     del circuit
     return perop_c_step(arch, code, regs, in_taint, in_values)[0]
@@ -122,7 +139,7 @@ class OpStats:
                                                     'floor': 0, 'cube': 0})
     worst: list[tuple[int, str]] = field(default_factory=list)   # (ops, label)
 
-    def add(self, label, cost):
+    def add(self, label: str, cost: Cost) -> None:
         self.counts.append(cost['ops'])
         self.pcode.append(cost['pcode_ops'])
         self.by_class['route'] += cost['n_route']
@@ -212,7 +229,7 @@ MASK64 = 0xFFFFFFFFFFFFFFFF
 _REG_MAPS: dict[str, dict[int, str]] = {}
 
 
-def _offset_to_name(arch):
+def _offset_to_name(arch: Architecture) -> dict[int, str]:
     """Invert the engine's register geometry: frame byte offset -> name."""
     key = arch.value if hasattr(arch, 'value') else str(arch)
     inv = _REG_MAPS.get(key)
@@ -226,7 +243,7 @@ def _offset_to_name(arch):
     return inv
 
 
-def written_registers(arch, code: bytes):
+def written_registers(arch: Architecture, code: bytes) -> set[str]:
     """Names of the registers this instruction's p-code actually writes.
 
     The comparison against Unicorn has to be restricted to these.  SLEIGH does
@@ -242,7 +259,7 @@ def written_registers(arch, code: bytes):
     key = arch.value if hasattr(arch, 'value') else str(arch)
     inv = _offset_to_name(arch)
     rev_alias = {v: k for k, v in _NAME_ALIASES.items()}
-    out = set()
+    out: set[str] = set()
     for op in get_context(key).translate(code, 0x1000).ops:
         vn = op.output
         if vn is not None and vn.space.name == 'register':
@@ -255,7 +272,7 @@ def written_registers(arch, code: bytes):
     return out
 
 
-def uc_initial_state(desc):
+def uc_initial_state(desc: Any) -> TaintState:
     """The register state Unicorn starts an instruction from, for everything the
     ground-truth driver does NOT write.
 
@@ -268,7 +285,7 @@ def uc_initial_state(desc):
     """
     import unicorn
     uc = unicorn.Uc(desc.uc_arch, desc.uc_mode)
-    out = {}
+    out: TaintState = {}
     if desc.eflags_reg is not None:
         ef = uc.reg_read(desc.eflags_reg)
         out['EFLAGS'] = ef
@@ -277,7 +294,8 @@ def uc_initial_state(desc):
     return out
 
 
-def gt_vectors(desc, reg_names, rng, n):
+def gt_vectors(desc: Any, reg_names: list[str], rng: random.Random,
+               n: int) -> Iterator[tuple[TaintState, TaintState]]:
     """Input vectors the per-bit ground truth can actually enumerate.
 
     Two constraints the generic fuzzer does not meet.  Unicorn ground truth
@@ -305,9 +323,11 @@ def gt_vectors(desc, reg_names, rng, n):
         yield t, vals
 
 
-def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
-                     max_examples=12, skip_mem=True, ref='ground_truth',
-                     step=None):
+def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
+                     n_sparse: int = 5, seed: int = 1234,
+                     max_examples: int = 12, skip_mem: bool = True,
+                     ref: str = 'ground_truth',
+                     step: Step | None = None) -> BankReport:
     """Sweep the bank; validate and collect op counts.
 
     `ref='ground_truth'` compares against Unicorn per-bit sensitivity, which is
@@ -328,7 +348,7 @@ def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
     for spec in specs.values():
         arch_key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
         reg_names = [r.name for r in spec.regs]
-        desc = None
+        desc: UcDesc | None = None
         if ref == 'ground_truth':
             maker = _UC_DESC.get(arch_key)
             if maker is None:
@@ -349,6 +369,7 @@ def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
             rep.n_instrs += 1
 
             if ref == 'ground_truth':
+                assert desc is not None   # set above, or the ISA was skipped
                 try:
                     written = written_registers(spec.arch, ins.bytes)
                 except Exception:  # noqa: BLE001
@@ -374,6 +395,7 @@ def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
             # vectors about to be judged, not from a table: a table cannot cover
             # an ISA nobody has written one for.
             if ref == 'ground_truth':
+                assert desc is not None
                 undefined, unmodelled = oh.models_disagree(
                     desc, spec.arch, ins.bytes, [v for _t, v in vectors])
                 if undefined:
@@ -397,6 +419,7 @@ def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
                 rep.n_cases += 1
                 try:
                     if ref == 'ground_truth':
+                        assert desc is not None
                         refd = oh.ground_truth(desc, ins.bytes, in_taint, in_values)
                     else:
                         refd = oh.reference_taint(spec.arch, ins.bytes, spec.regs,
@@ -444,7 +467,7 @@ def run_bank_perop_c(*, isas=None, n_dense=3, n_sparse=5, seed=1234,
     return rep
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     import argparse
     from collections import Counter
 
@@ -459,7 +482,7 @@ def main(argv=None):
                     choices=['ground_truth', 'differential'])
     args = ap.parse_args(argv)
 
-    isa_list = args.isas or [None]
+    groups: list[list[str] | None]
     if args.per_isa and args.isas:
         groups = [[i] for i in args.isas]
     else:
