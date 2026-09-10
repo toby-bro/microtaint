@@ -160,6 +160,10 @@ class UcDesc:
     flags: dict[str, int] = field(default_factory=dict)  # flag-name -> bit index within eflags_reg
     eflags_reg: int | None = None              # unicorn const for the flags register
     mask: int = MASK64
+    #: Which ISA this describes.  The memory bank sets it and reads it back
+    #: to find the pointer register; it used to be grafted on from outside,
+    #: so a desc that skipped the graft raised AttributeError instead.
+    tag: str = ''
 
 
 def _uc_desc_amd64() -> UcDesc:

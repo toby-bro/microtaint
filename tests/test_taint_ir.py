@@ -145,6 +145,36 @@ def test_memory_taint_matches_ground_truth(isa, policy):
                     f'\n{detail}')
 
 
+@pytest.mark.parametrize('isa', ['AMD64', 'ARM64'])
+def test_uc_desc_carries_its_own_isa_tag(isa: str) -> None:
+    """`ground_truth_mem` reads `desc.tag` to find the pointer register.
+
+    Nothing declared that attribute: `run_mem_bank` grafted it on after
+    building the desc, so the ground truth worked only for a desc that had been
+    through that one function, and raised AttributeError for any other caller.
+    The field is now on UcDesc and `_uc_desc` fills it, so a desc is usable as
+    soon as it exists.
+    """
+    import dataclasses
+
+    from tests.oracle_harness import UcDesc
+    from tests.taint_ir_mem import _uc_desc, build_cases, ground_truth_mem
+
+    # Declared, not grafted: a non-frozen dataclass accepts an attribute set
+    # from outside, so only the field list distinguishes the two.
+    assert 'tag' in {f.name for f in dataclasses.fields(UcDesc)}
+
+    desc = _uc_desc(isa)
+    assert desc.tag == isa, desc.tag
+
+    # And it is enough on its own: no external graft, straight into the truth.
+    cases = build_cases(isa)
+    assert cases, f'{isa}: no memory cases to drive the ground truth'
+    truth = ground_truth_mem(desc, cases[0].code,
+                             {}, {}, [0] * 64, [0] * 64)
+    assert '@mem' in truth, sorted(truth)
+
+
 def test_vector_lanes_match_ground_truth() -> None:
     """Lane splitting, against per-bit truth read straight out of XMM.
 

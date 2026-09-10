@@ -18,7 +18,20 @@ loaded, which the builder checks.
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from microtaint.types import Architecture
+
+if TYPE_CHECKING:                    # deferred: unicorn and the engine are
+    from tests.oracle_harness import UcDesc  # slow to import
+
+#: The IR keys a register by (kind, byte offset, size).
+IRKey = tuple[Any, ...]
+IRState = dict[IRKey, int]
+#: A ground-truth row: register/flag masks, plus '@mem' as per-byte taint.
+MemTruth = dict[str, Any]
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 CODE_ADDR = 0x1000
@@ -33,7 +46,7 @@ class MemCase:
     isa: str
 
 
-def _ks(isa):
+def _ks(isa: str) -> Any:
     import keystone
     if isa == 'AMD64':
         return keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_64)
@@ -63,14 +76,14 @@ ARM64_CASES = [
 _PTR = {'AMD64': 'RBX', 'ARM64': 'X1'}
 
 
-def build_cases(isa):
+def build_cases(isa: str) -> list[MemCase]:
     src = AMD64_CASES if isa == 'AMD64' else ARM64_CASES
     ks = _ks(isa)
-    out = []
+    out: list[MemCase] = []
     for label in src:
         try:
             code = bytes(ks.asm(label)[0])
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
         out.append(MemCase(label, code, isa))
     return out
@@ -78,12 +91,15 @@ def build_cases(isa):
 
 # ── Unicorn ground truth over registers AND memory ───────────────────
 
-def _uc_desc(isa):
+def _uc_desc(isa: str) -> UcDesc:
     from tests import oracle_harness as oh
-    return oh._uc_desc_amd64() if isa == 'AMD64' else oh._uc_desc_arm64()
+    desc = oh._uc_desc_amd64() if isa == 'AMD64' else oh._uc_desc_arm64()
+    desc.tag = isa
+    return desc
 
 
-def _uc_run_mem(desc, code, reg_vals, mem_bytes):
+def _uc_run_mem(desc: UcDesc, code: bytes, reg_vals: dict[str, int],
+                mem_bytes: Sequence[int]) -> MemTruth:
     import unicorn
     uc = unicorn.Uc(desc.uc_arch, desc.uc_mode)
     uc.mem_map(CODE_ADDR, 0x1000)
@@ -102,7 +118,9 @@ def _uc_run_mem(desc, code, reg_vals, mem_bytes):
     return out
 
 
-def ground_truth_mem(desc, code, reg_taint, reg_vals, mem_taint, mem_vals):
+def ground_truth_mem(desc: UcDesc, code: bytes, reg_taint: dict[str, int],
+                     reg_vals: dict[str, int], mem_taint: Sequence[int],
+                     mem_vals: Sequence[int]) -> MemTruth:
     """Per-bit sensitivity over registers and the data page.
 
     Returns a dict of register/flag masks plus '@mem', a list of per-byte taint.
@@ -113,9 +131,9 @@ def ground_truth_mem(desc, code, reg_taint, reg_vals, mem_taint, mem_vals):
     base_mem = [mem_vals[i] & ~mem_taint[i] & 0xFF for i in range(DATA_LEN)]
     base = _uc_run_mem(desc, code, base_regs, base_mem)
 
-    result = {k: (0 if k != '@mem' else [0] * DATA_LEN) for k in base}
+    result: MemTruth = {k: (0 if k != '@mem' else [0] * DATA_LEN) for k in base}
 
-    def accumulate(out):
+    def accumulate(out: MemTruth) -> None:
         for k in base:
             if k == '@mem':
                 for i in range(DATA_LEN):
@@ -151,7 +169,7 @@ def ground_truth_mem(desc, code, reg_taint, reg_vals, mem_taint, mem_vals):
 
 # ── the IR under its two-pass protocol ───────────────────────────────
 
-def _read_mem(mem, addr, size, be):
+def _read_mem(mem: Sequence[int], addr: int, size: int, be: bool) -> int:
     v = 0
     for i in range(size):
         byte = mem[(addr - DATA_ADDR + i) % DATA_LEN]
@@ -159,14 +177,16 @@ def _read_mem(mem, addr, size, be):
     return v
 
 
-def _write_mem(mem, addr, size, val, be):
+def _write_mem(mem: list[int], addr: int, size: int, val: int, be: bool) -> None:
     for i in range(size):
         sh = 8 * (size - 1 - i) if be else 8 * i
         mem[(addr - DATA_ADDR + i) % DATA_LEN] = (val >> sh) & 0xFF
 
 
-def ir_mem_taint(arch, code, reg_taint, reg_vals, mem_taint, mem_vals, *,
-                 be=False, policy='avalanche'):
+def ir_mem_taint(arch: Architecture, code: bytes, reg_taint: dict[str, int],
+                 reg_vals: dict[str, int], mem_taint: Sequence[int],
+                 mem_vals: Sequence[int], *, be: bool = False,
+                 policy: str = 'avalanche') -> tuple[dict[str, int], list[int]]:
     """Run one instruction's taint program over registers and memory.
 
     Returns (register taint by name, per-byte memory taint), or raises
@@ -178,7 +198,8 @@ def ir_mem_taint(arch, code, reg_taint, reg_vals, mem_taint, mem_vals, *,
     prog = build_ir(arch, code, pointer_policy=policy)
     # The IR keys registers by byte offset, since one offset carries several
     # names; the caller names them however its own state does.
-    vals, tnts = {}, {}
+    vals: IRState = {}
+    tnts: IRState = {}
     for n in set(reg_vals) | set(reg_taint):
         off = name_offset(arch, n)
         if off is None:
@@ -235,19 +256,19 @@ class MemReport:
     declined: int = 0
     under_examples: list[tuple[str, dict[str, int]]] = field(default_factory=list)
 
-    def summary(self):
+    def summary(self) -> str:
         return (f'cases={self.n} exact={self.exact} over={self.over} '
                 f'UNDER={self.under} declined={self.declined}')
 
 
-def run_mem_bank(isa='AMD64', n_vec=4, seed=7, policy='avalanche'):
+def run_mem_bank(isa: str = 'AMD64', n_vec: int = 4, seed: int = 7,
+                 policy: str = 'avalanche') -> MemReport:
     from microtaint.taint_ir.frompcode import Unsupported
     from microtaint.types import Architecture
     from tests.perop_c_bank import _engine_names
 
     arch = getattr(Architecture, isa)
-    desc = _uc_desc(isa)
-    desc.tag = isa
+    desc = _uc_desc(isa)          # `_uc_desc` sets desc.tag
     rep = MemReport()
     be = False
     for case in build_cases(isa):
@@ -255,7 +276,7 @@ def run_mem_bank(isa='AMD64', n_vec=4, seed=7, policy='avalanche'):
         for _ in range(n_vec):
             reg_vals = {n: rng.randint(1, MASK64) for n in desc.gp}
             reg_vals[_PTR[isa]] = DATA_ADDR
-            reg_taint = {n: 0 for n in desc.gp}
+            reg_taint = dict.fromkeys(desc.gp, 0)
             # A few tainted bits: on one non-pointer register and in memory.
             others = [n for n in desc.gp if n != _PTR[isa]]
             reg_taint[rng.choice(others)] = 1 << rng.randint(0, 63)
@@ -291,7 +312,7 @@ def run_mem_bank(isa='AMD64', n_vec=4, seed=7, policy='avalanche'):
             from tests.perop_c_bank import written_registers
             try:
                 written = written_registers(arch, case.code)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 written = None
             under, over = {}, {}
             for k in list(desc.gp) + list(desc.flags):
@@ -320,12 +341,12 @@ def run_mem_bank(isa='AMD64', n_vec=4, seed=7, policy='avalanche'):
     return rep
 
 
-def _uc_initial(desc):
+def _uc_initial(desc: UcDesc) -> dict[str, int]:
     from tests.perop_c_bank import uc_initial_state
     return uc_initial_state(desc)
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument('--isas', nargs='*', default=['AMD64'])

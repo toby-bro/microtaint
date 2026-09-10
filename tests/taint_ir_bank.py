@@ -18,11 +18,16 @@ from __future__ import annotations
 from typing import Any
 
 from microtaint.taint_ir.frompcode import Unsupported, build_ir
+from microtaint.taint_ir.regmap import name_offset, slot_resolver
 from microtaint.types import Architecture, Register
 from tests.perop_c_bank import Declined, _engine_names
 
+#: `name_offset` and `slot_resolver` are re-exported on purpose: every bank
+#: harness needs them next to `ir_step`, and mypy will not honour a re-export
+#: that is not declared here.
+__all__ = ['ir_state', 'ir_step', 'main', 'name_offset', 'slot_resolver']
+
 _CACHE: dict[tuple[str, bytes], Any] = {}
-from microtaint.taint_ir.regmap import name_offset, slot_resolver  # noqa: E402,F401
 
 #: The IR keys a register by (kind, byte offset, size), one entry per size.
 IRKey = tuple[str, int, int]
