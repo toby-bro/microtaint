@@ -35,7 +35,59 @@ compilable:
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import TypedDict
+
+from microtaint.taint_ir.boolsynth import BoolExpr
+
+#: What a program keys an input or an output by: a register NAME, or a
+#: (kind, offset) / (kind, offset, size) tuple -- ('reg', off, size),
+#: ('regv', off), ('mem', k), ('addr', k) and the rest.  The kind is always
+#: first and the numbers always follow.
+IRKey = str | tuple[str, int] | tuple[str, int, int]
+
+#: One node: (op, a, b, c, imm), where a/b/c are node indices or -1 and
+#: `imm` is a constant, a slot index, or a packed truth table -- an int in
+#: every case; see `eval_op`.
+IRNode = tuple[str, int, int, int, int]
+
+#: Places a key in the caller's value/taint arrays; None means the caller
+#: has no slot for it, which is a refusal rather than a zero.
+SlotOf = Callable[[IRKey], 'int | None']
+
+
+class Access(TypedDict):
+    """One memory access the lowered instruction makes."""
+
+    #: 'load' or 'store'.
+    kind: str
+    #: Width in bytes.
+    size: int
+    #: The node that computes the address.
+    addr: int
+    #: Which instruction of a lowered BLOCK made it; None outside a block.
+    instr: int | None
+
+
+#: A one-bit node reduced to (leaves, truth table), or None when the node
+#: is not one-bit-expressible.  See boolsynth.
+SymCone = tuple[tuple[int, ...], int] | None
+
+class Serialized(TypedDict):
+    """`serialize`'s flat arrays, as a C evaluator or code generator wants
+    them: one entry per node in `ops`/`a`/`b`/`c`/`imm`, then where the
+    runtime state is read and written."""
+
+    ops: list[str]
+    a: list[int]
+    b: list[int]
+    c: list[int]
+    imm: list[int]
+    #: (node, 0 for a value / 1 for a taint, slot).
+    inputs: list[tuple[int, int, int]]
+    #: (slot, node).
+    outputs: list[tuple[int, int]]
+    n_nodes: int
+    cost: int
 
 from microtaint.taint_ir import boolsynth as bs
 
@@ -185,12 +237,12 @@ class IRProg:
 
     def __init__(self) -> None:
         #: (op, a, b, c, imm) per node; a/b/c are node indices or -1.
-        self.nodes: list[tuple[str, int, int, int, Any]] = []
-        self._hc: dict[tuple[str, int, int, int, Any], int] = {}
+        self.nodes: list[IRNode] = []
+        self._hc: dict[IRNode, int] = {}
         #: (kind, key) -> node, where kind is 'v' (value) or 't' (taint).
-        self.inputs: dict[tuple[str, Any], int] = {}
+        self.inputs: dict[tuple[str, IRKey], int] = {}
         #: (key, node) for every result the program publishes.
-        self.outputs: list[tuple[Any, int]] = []
+        self.outputs: list[tuple[IRKey, int]] = []
         self.live: list[bool] = []          # populated by finish()
         #: Upper bound on a node's significant bits.  Tracking it lets a
         #: redundant truncation disappear -- a lifter emits one after almost
@@ -207,11 +259,11 @@ class IRProg:
         #: contain only machine-shaped opcodes.
         self.no_bool = False
         #: Memory accesses this instruction makes; see frompcode.
-        self.accesses: list[dict[str, Any]] = []
+        self.accesses: list[Access] = []
 
     # -- construction --------------------------------------------------
     def _emit(self, op: str, a: int = -1, b: int = -1, c: int = -1,
-              imm: Any = 0) -> int:
+              imm: int = 0) -> int:
         for x in (a, b, c):
             if x >= 0:
                 self.uses[x] = self.uses.get(x, 0) + 1
@@ -271,7 +323,7 @@ class IRProg:
         imm: int = self.nodes[n][4]
         return imm
 
-    def input_value(self, key: Any, bits: int = 64) -> int:
+    def input_value(self, key: IRKey, bits: int = 64) -> int:
         n = self.inputs.get(('v', key))
         if n is None:
             n = self._emit(INV, imm=len(self.inputs))
@@ -279,7 +331,7 @@ class IRProg:
             self.kbits[n] = bits
         return n
 
-    def input_taint(self, key: Any, bits: int = 64) -> int:
+    def input_taint(self, key: IRKey, bits: int = 64) -> int:
         n = self.inputs.get(('t', key))
         if n is None:
             n = self._emit(INT, imm=len(self.inputs))
@@ -346,7 +398,8 @@ class IRProg:
             if a == b:
                 return a
             # (x & m1) & m2  ->  x & (m1 & m2)
-            if cb and nodes[a][0] == AND and nodes[nodes[a][2]][0] == CONST:
+            if bv is not None and nodes[a][0] == AND \
+                    and nodes[nodes[a][2]][0] == CONST:
                 return self.op(AND, nodes[a][1],
                                self.const(nodes[nodes[a][2]][4] & bv))
         elif op == OR:
@@ -385,7 +438,8 @@ class IRProg:
             if av == 0:
                 return self.const(0)
             # (x << k1) << k2 -> x << (k1+k2), the shape masking produces
-            if cb and nodes[a][0] == op and nodes[nodes[a][2]][0] == CONST:
+            if bv is not None and nodes[a][0] == op \
+                    and nodes[nodes[a][2]][0] == CONST:
                 k = nodes[nodes[a][2]][4] + bv
                 if k >= 64:
                     return self.const(MASK64) if op == SAR else self.const(0)
@@ -402,7 +456,7 @@ class IRProg:
         return None
 
     # -- the one-bit boolean layer -------------------------------------
-    def _sym(self, n: int) -> Any:
+    def _sym(self, n: int) -> SymCone:
         """(leaves, truth table) for a one-bit node, or None."""
         op, a, b, c, imm = self.nodes[n]
         if op == BOOLSYM:
@@ -586,7 +640,7 @@ class IRProg:
         out.no_bool = True
         m: dict[int, int] = {}
 
-        def expand(tree: Any, leaves: Sequence[int]) -> int:
+        def expand(tree: BoolExpr, leaves: Sequence[int]) -> int:
             kind = tree[0]
             if kind == 'leaf':
                 node: int = m[leaves[tree[1]]]
@@ -612,6 +666,12 @@ class IRProg:
             elif op == BOOLSYM:
                 leaves = tuple(x for x in (a, b, c) if x >= 0)
                 tree = bs.expr_for(imm)
+                if tree is None:
+                    # boolsynth enumerates all 256 three-variable tables and
+                    # masks its argument into range, so this is unreachable;
+                    # it raises rather than asserts because -O would drop an
+                    # assert and leave `expand` reading None.
+                    raise ValueError(f'no boolean expression for 0x{imm:02x}')
                 m[n] = expand(tree, leaves)
                 out.kbits[m[n]] = 1
             else:
@@ -622,7 +682,7 @@ class IRProg:
         out.accesses = self.accesses
         return out.finish()
 
-    def serialize(self, slot_of: Callable[[Any], int | None]) -> dict[str, Any]:
+    def serialize(self, slot_of: SlotOf) -> Serialized:
         """Flat arrays for a C evaluator or a code generator.
 
         `slot_of(name) -> int` places each register in the caller's value/taint
@@ -653,8 +713,8 @@ class IRProg:
                 'n_nodes': len(prog.nodes), 'cost': prog.cost()}
 
     # -- reference evaluation ------------------------------------------
-    def run(self, values: dict[Any, int],
-            taints: dict[Any, int]) -> dict[Any, int]:
+    def run(self, values: dict[IRKey, int],
+            taints: dict[IRKey, int]) -> dict[IRKey, int]:
         """Reference interpreter: evaluate the live program for one input state.
 
         `values`/`taints` are keyed the way the builder keyed its inputs.  Slow

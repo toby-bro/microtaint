@@ -33,12 +33,12 @@ simplify is returned semantically identical.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from pypcode import Varnode
 from pypcode.pypcode_native import PcodeOp
 
-from microtaint.sleigh.constfold import VNKey, fold_constants
+from microtaint.sleigh.constfold import VarnodeLike, VNKey, fold_constants
 
 
 class _Space(NamedTuple):
@@ -68,18 +68,27 @@ class _Vn:
         self.size = size
 
 
+#: An op in a simplified slice: either the lifter's, or one this module
+#: synthesised to replace a run of them.  A `type` statement so the two
+#: names below can be referenced before they are defined.
+type SliceOp = PcodeOp | _Op
+#: A varnode in a simplified slice: the lifter's, or a synthesised one.
+type SliceVn = Varnode | _Vn
+
+
 class _Op:
     """Duck-typed PcodeOp (opcode.name / output / inputs)."""
 
     __slots__ = ('inputs', 'opcode', 'output')
 
-    def __init__(self, name: str, output: Any, inputs: list[Any]) -> None:
+    def __init__(self, name: str, output: SliceVn | None,
+                 inputs: list[SliceVn]) -> None:
         self.opcode = _Opcode(name)
         self.output = output
         self.inputs = list(inputs)
 
 
-def _key(vn: Varnode) -> VNKey:
+def _key(vn: VarnodeLike) -> VNKey:
     return (vn.space.name, vn.offset, vn.size)
 
 
@@ -87,7 +96,8 @@ def _const(value: int, size: int) -> _Vn:
     return _Vn('const', value & ((1 << (size * 8)) - 1) if size else value, size)
 
 
-def _algebraic_src(name: str, outp: Any, ins: list[Any], boolean: set[VNKey]) -> Any | None:  # noqa: C901
+def _algebraic_src(name: str, outp: SliceVn, ins: list[SliceVn],
+                   boolean: set[VNKey]) -> SliceVn | None:
     """The varnode `outp` provably equals under an algebraic identity on the
     (const-resolved) inputs `ins`, or None to keep the op.  The boolean-only
     ``AND(1, x) == x`` identity fires only when `x` is a proven 0/1 value."""
@@ -98,7 +108,7 @@ def _algebraic_src(name: str, outp: Any, ins: list[Any], boolean: set[VNKey]) ->
     allo = (1 << obits) - 1 if obits else 0
     ca, cb = a.space.name == 'const', b.space.name == 'const'
 
-    def is_bool(v: Any) -> bool:
+    def is_bool(v: SliceVn) -> bool:
         return (v.space.name == 'const' and v.offset in (0, 1)) or _key(v) in boolean
 
     a_bool, b_bool = is_bool(a), is_bool(b)
@@ -125,7 +135,7 @@ def _algebraic_src(name: str, outp: Any, ins: list[Any], boolean: set[VNKey]) ->
     return None
 
 
-def simplify_slice(slice_ops: list[PcodeOp]) -> list[Any]:  # noqa: C901
+def simplify_slice(slice_ops: list[PcodeOp]) -> list[SliceOp]:  # noqa: C901
     """Return a semantics-preserving, constant-folded copy of ``slice_ops``.
 
     The input list must be in forward program order (as ``slice_backward``
@@ -134,15 +144,15 @@ def simplify_slice(slice_ops: list[PcodeOp]) -> list[Any]:  # noqa: C901
     folded = fold_constants(slice_ops)
     const_of: dict[VNKey, int] = dict(folded)
     boolean: set[VNKey] = set()
-    out: list[Any] = []
+    out: list[SliceOp] = []
 
-    def resolve(vn: Varnode) -> Any:
+    def resolve(vn: Varnode) -> SliceVn:
         if vn.space.name == 'const':
             return vn
         k = _key(vn)
         return _const(const_of[k], vn.size) if k in const_of else vn
 
-    def emit_copy(dst: Any, src: Any) -> None:
+    def emit_copy(dst: SliceVn, src: SliceVn) -> None:
         out.append(_Op('COPY', dst, [src]))
         if src.space.name == 'const':
             const_of[_key(dst)] = src.offset

@@ -18,10 +18,17 @@ instruction starts.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+
+from pypcode import PcodeOp
 
 from microtaint.taint_ir.frompcode import LIFT_BASE, Builder, Emit, Unsupported
+from microtaint.taint_ir.ir import IRProg
+
+#: Lower instructions [i, j) of the block: the program, and the index it
+#: had to cut at (None when it lowered the whole run).
+Lower = Callable[[int, int], tuple[IRProg | None, int | None]]
 from microtaint.types import ArchLike
 
 __all__ = ['Region', 'instruction_starts', 'plan_block']
@@ -39,16 +46,16 @@ class Region:
     count: int
     addr: int
     end: int
-    prog: Any                    # IRProg, or None if this one lowers nowhere
+    prog: IRProg | None          # None if this region lowers nowhere
 
 
-def _translate(arch: ArchLike, code: bytes, base: int) -> list[Any]:
+def _translate(arch: ArchLike, code: bytes, base: int) -> list[PcodeOp]:
     from microtaint.sleigh.lifter import get_context  # noqa: PLC0415 - the lifter is expensive to import eagerly
     key = arch.value if hasattr(arch, 'value') else str(arch)
     return get_context(key).translate(code, base).ops
 
 
-def instruction_starts(ops: list[Any]) -> list[tuple[int, int, int]]:
+def instruction_starts(ops: list[PcodeOp]) -> list[tuple[int, int, int]]:
     """(op index, address, size) for each instruction, from the IMARKs."""
     out = []
     for i, op in enumerate(ops):
@@ -79,7 +86,7 @@ def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
     n = len(marks)
     end_of = [marks[i + 1][1] if i + 1 < n else base + len(code) for i in range(n)]
 
-    def lower(i: int, j: int) -> tuple[Any, int | None]:
+    def lower(i: int, j: int) -> tuple[IRProg | None, int | None]:
         """Instructions [i, j) as one program.
 
         Returns (program, None) on success and (None, cut) on a decline, where
@@ -104,7 +111,7 @@ def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
 
 
 def _greedy(n: int, marks: list[tuple[int, int, int]], end_of: list[int],
-            lower: Any) -> list[Region]:
+            lower: Lower) -> list[Region]:
     """Longest-first from each cut, so every region is maximal.
 
     A decline usually says WHICH instruction caused it, and then the boundary is

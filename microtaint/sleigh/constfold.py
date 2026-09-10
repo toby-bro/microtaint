@@ -23,12 +23,39 @@ directly as masks or shift amounts.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from pypcode.pypcode_native import PcodeOp, Varnode
 
 VNKey = tuple[str, int, int]
 
 
-def _key(vn: Varnode) -> VNKey:
+class _SpaceLike(Protocol):
+    @property
+    def name(self) -> str: ...
+
+
+class VarnodeLike(Protocol):
+    """The three fields that identify a varnode.
+
+    A Protocol because the slice simplifier substitutes SYNTHESISED
+    varnodes into an op stream alongside the lifter's, and they carry
+    these three and nothing else.  Keying on the shape rather than the
+    class is what lets one function serve both.
+
+    Read-only members on purpose: pypcode exposes these as properties,
+    and a Protocol declaring plain attributes would reject it.
+    """
+
+    @property
+    def space(self) -> _SpaceLike: ...
+    @property
+    def offset(self) -> int: ...
+    @property
+    def size(self) -> int: ...
+
+
+def _key(vn: VarnodeLike) -> VNKey:
     return (vn.space.name, vn.offset, vn.size)
 
 

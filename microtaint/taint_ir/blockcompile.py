@@ -13,15 +13,29 @@ address the wrong words and the failure would be silent.
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from types import ModuleType
+from typing import TYPE_CHECKING
 
-from microtaint.taint_ir.ir import IRProg
+if TYPE_CHECKING:                    # stub-only: an opaque PyCapsule handle
+    from microtaint.emulator.blockpath_c import _Capsule
+
+from microtaint.taint_ir.blocks import Region
+from microtaint.taint_ir.frompcode import Builder
+from microtaint.taint_ir.ir import IRKey, IRProg
+from microtaint.taint_ir.ir import SlotOf as _SlotOf
+
+#: Builds one block's minimal register-read descriptor, or None when the
+#: block reads no register value at all.
+Descriptor = Callable[[frozenset[int]], 'tuple[int, int, int, int, list[int], bool, object] | None']
+
 from microtaint.types import ArchLike
 
 __all__ = ['block_slot_resolver', 'compile_block']
 
 #: An IR key is either a name or a tuple like ('reg', offset) / ('mem', k).
-SlotOf = Callable[[Any], 'int | None']
+#: Re-exported from the IR, which defines what a key is.
+SlotOf = _SlotOf
 
 
 def _layout() -> dict[str, int]:
@@ -50,7 +64,7 @@ def block_slot_resolver(arch: ArchLike, name_to_slot: dict[str, int]) -> SlotOf:
         if off is not None:
             by_off.setdefault(off, slot)
 
-    def slot_of(key: Any) -> int | None:
+    def slot_of(key: IRKey) -> int | None:
         if not isinstance(key, tuple):
             got: int | None = name_to_slot.get(key)
             return got
@@ -74,9 +88,10 @@ RegionSpec = tuple[int, int, list[tuple[int, int, int]], int]
 
 
 def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str, int],
-                  *, builder: Any = None, descriptor: Any = None,
+                  *, builder: Builder | None = None,
+                  descriptor: Descriptor | None = None,
                   publish_all_values: bool = False,
-                  ) -> tuple[Any, list[Any], set[int]] | None:
+                  ) -> tuple[_Capsule, list[Region], set[int]] | None:
     """-> (plan capsule, [Region], register offsets read), or None.
 
     None means the caller must send this block down the per-instruction path.
@@ -112,15 +127,15 @@ def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str
     return plan, regions, reads
 
 
-def _compile_regions(regions: list[Any], slot_of: SlotOf, lay: dict[str, int],
-                     publish_all_values: bool,
-                     ) -> tuple[list[RegionSpec], list[Any], set[int]] | None:
+def _compile_regions(regions: list[Region], slot_of: SlotOf,
+                     lay: dict[str, int], publish_all_values: bool,
+                     ) -> tuple[list[RegionSpec], list[object], set[int]] | None:
     """Emit each region, and collect what the block reads."""
     from microtaint.instrumentation.cell_c import taint_ir_c  # noqa: PLC0415
     from microtaint.taint_ir.exec import compile_program  # noqa: PLC0415
 
     specs: list[RegionSpec] = []
-    keep: list[Any] = []
+    keep: list[object] = []
     reads: set[int] = set()
     # Which register VALUES each region has to publish: only what a LATER
     # region of the same block reads.  The next BLOCK re-reads the register
@@ -141,6 +156,9 @@ def _compile_regions(regions: list[Any], slot_of: SlotOf, lay: dict[str, int],
         later_reads = [None] * len(regions)  # type: ignore[list-item]
     for ri, region in enumerate(regions):
         prog = region.prog
+        # compile_block refuses the whole block if any region lowers
+        # nowhere, so by here every one of them has a program.
+        assert prog is not None
         if later_reads[ri] is not None:
             _keep_only_needed_values(prog, later_reads[ri])
         accesses = list(getattr(prog, 'accesses', None) or [])
@@ -192,7 +210,7 @@ def _compile_regions(regions: list[Any], slot_of: SlotOf, lay: dict[str, int],
     return specs, keep, reads
 
 
-def _values_read_later(regions: list[Any]) -> list[set[int]]:
+def _values_read_later(regions: list[Region]) -> list[set[int]]:
     """For each region, the register offsets some LATER region reads.
 
     Read as VALUES: a later region's taint inputs come from the threaded taint,
@@ -222,7 +240,8 @@ def _keep_only_needed_values(prog: IRProg, needed: set[int]) -> None:
     prog.finish()
 
 
-def _address_slice(prog: IRProg, slot_of: SlotOf, taint_ir_c: Any) -> Any:
+def _address_slice(prog: IRProg, slot_of: SlotOf,
+                   taint_ir_c: ModuleType) -> tuple[_Capsule, int] | None:
     """The part of `prog` that computes its load addresses, compiled.
 
     Returns (capsule, function address) or None if it will not compile, in
@@ -237,7 +256,7 @@ def _address_slice(prog: IRProg, slot_of: SlotOf, taint_ir_c: Any) -> Any:
     from microtaint.taint_ir.exec import compile_program  # noqa: PLC0415
 
     saved_outputs = list(prog.outputs)
-    addr_outputs = [(k, n) for k, n in saved_outputs
+    addr_outputs: list[tuple[IRKey, int]] = [(k, n) for k, n in saved_outputs
                     if isinstance(k, tuple) and k[0] == 'addr']
     if not addr_outputs or len(addr_outputs) == len(saved_outputs):
         return None                      # nothing to prune
@@ -257,8 +276,9 @@ def _address_slice(prog: IRProg, slot_of: SlotOf, taint_ir_c: Any) -> Any:
         prog.finish()
 
 
-def _read_descriptor(descriptor: Any, reads: set[int],
-                     keep: list[Any]) -> tuple[int, int, int, int, Any, bool]:
+def _read_descriptor(descriptor: Descriptor | None, reads: set[int],
+                     keep: list[object],
+                     ) -> tuple[int, int, int, int, list[int] | None, bool]:
     """The block's own uc_reg_read_batch descriptor, or an empty one.
 
     Empty means the C runtime reads nothing, which is correct for a block whose
