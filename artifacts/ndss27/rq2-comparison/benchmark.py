@@ -2862,6 +2862,8 @@ class GroundTruthSimulator:
             'RCX': ux.UC_X86_REG_RCX,
             'RDX': ux.UC_X86_REG_RDX,
         }
+        # Read back after every emulation to tell "ran to the end" from "stopped".
+        self._reg_map_pc = ux.UC_X86_REG_RIP
         # Cached Unicorn instance — reusing the same Uc with mem_write +
         # reg_write is ~20× faster than creating a fresh Uc per run.  Re-
         # creating only when the bytestring changes (rare) keeps semantics
@@ -2874,19 +2876,19 @@ class GroundTruthSimulator:
 
     # Isolate every emulation in its own Unicorn instance.
     #
-    # The fast oracle reuses one instance across a case's 2^k runs, resetting
-    # every register class, both mapped regions and EFLAGS between them.  That is
-    # about 100x cheaper and almost always right, but on a long batch a few runs
-    # come back with register values NO assignment can produce, which shows up as
-    # a spurious under-taint.  Measured over five seeds of the full corpus: 41
-    # cases reported unsound, and isolated re-verification confirmed ZERO of them.
-    # One was `and rax, 0`, whose output cannot depend on any input, with the
-    # oracle claiming 32 tainted bits in RAX.
+    # This is a CROSS-CHECK, not a fix.  It was written on the theory that reusing
+    # one Uc across a case's 2^k runs was what made the oracle occasionally report
+    # register values no assignment can produce; it is not.  The cause was the
+    # emu_start wall-clock timeout returning WITHOUT raising, handled in
+    # _run_unicorn below, and isolating the instances did not reduce the artifacts
+    # at all -- one isolated run scored 1 spurious under-taint and the next scored
+    # 29, while the fast oracle with the timeout handled scores 0.  Kept because a
+    # second, independent oracle configuration is worth having when a result looks
+    # surprising.
     #
-    # A fresh instance per emulation costs ~3 ms instead of ~30 us, which is about
-    # 16 minutes for the whole 3,263-case ground-truth set -- worth paying for the
-    # run whose numbers go in a paper, not for everyday use.  MICROTAINT_GT_ISOLATE=1
-    # or --gt-isolate turns it on.
+    # A fresh instance per emulation costs ~3 ms instead of ~30 us, about 16
+    # minutes for the whole 3,263-case set.  MICROTAINT_GT_ISOLATE=1 or
+    # --gt-isolate turns it on.
     _ISOLATE = os.environ.get('MICROTAINT_GT_ISOLATE', '') not in ('', '0')
 
     def _ensure_uc(self) -> Any:
@@ -3069,8 +3071,14 @@ class GroundTruthSimulator:
     # Sequences in the benchmark are at most 32 instructions; we allow
     # 1024 to give plenty of headroom for loops with bounded iteration
     # while still preventing infinite execution.
-    UC_TIMEOUT_US = 10_000  # 10 ms per call
+    UC_TIMEOUT_US = 50_000  # 50 ms per call
     UC_MAX_COUNT = 1024  # max instructions per call
+
+    # Emulations that stopped without reaching the end of the sequence, summed
+    # over the life of the simulator.  A healthy run has zero; a non-zero count
+    # means the machine was too busy for the wall-clock timeout and the oracle
+    # saw fewer observations than it asked for.
+    incomplete_runs = 0
 
     # Full reset list.  We zero every architectural register before every
     # run.  Caching a Unicorn instance and only resetting RAX/RBX/RCX/RDX
@@ -3203,15 +3211,30 @@ class GroundTruthSimulator:
         # drop trapped enumerations from the aggregation entirely
         # (strict noninterference semantics: a trap is "no observation").
         trapped = False
+        end = self._CODE_BASE + len(bytestring)
         try:
             uc.emu_start(
                 self._CODE_BASE,
-                self._CODE_BASE + len(bytestring),
+                end,
                 timeout=self.UC_TIMEOUT_US,
                 count=self.UC_MAX_COUNT,
             )
         except unicorn.UcError:
             trapped = True
+        # A wall-clock timeout does NOT raise: emu_start returns normally with the
+        # emulation stopped wherever it got to, and the registers still holding
+        # their INPUT values.  Reading those back as an "output" is what invented
+        # taint -- it makes the oracle report the input register as varying, so a
+        # sound engine looks unsound.  Demonstrated directly: `add rax,rbx` with
+        # timeout=1us returns no error, leaves RIP at the entry and RAX at its
+        # input.  That is also why the artifacts tracked machine load: the busier
+        # the box, the more often 10 ms was not enough for one instruction.
+        #
+        # Treat any emulation that did not reach the end of the sequence exactly
+        # as a trap -- no observation -- rather than trusting stale registers.
+        if not trapped and uc.reg_read(self._reg_map_pc) != end:
+            trapped = True
+            type(self).incomplete_runs += 1
         regs_out = {r: uc.reg_read(self._reg_map[r]) for r in REGISTERS}
         regs_out['__trapped__'] = trapped
         return regs_out
@@ -4446,11 +4469,11 @@ def main():
         '--gt-isolate',
         action='store_true',
         help=(
-            'Give every ground-truth emulation its own Unicorn instance.  ~100x '
-            'slower (about 16 min for the full corpus) and free of the spurious '
-            'under-taints the reused instance produces on a long batch.  Use it for '
-            'a run whose numbers are going to be published; verify_unsound.py does '
-            'the same thing after the fact for a normal run.'
+            'Give every ground-truth emulation its own Unicorn instance: a second, '
+            'independent oracle configuration for cross-checking a surprising '
+            'result.  ~100x slower (about 16 min for the full corpus).  Not needed '
+            'for correctness -- the spurious under-taints it was written to chase '
+            'came from the emu_start wall-clock timeout, which is handled.'
         ),
     )
     parser.add_argument(
