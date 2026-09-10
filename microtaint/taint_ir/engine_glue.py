@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from microtaint.types import ArchLike
 
 #: Must match MT_IR_MEM_BASE / MT_IR_MAX_ACC in emulator/fastpath.h.
 MEM_SLOT_BASE = 512
@@ -49,7 +50,7 @@ def enabled() -> bool:
     return _ENABLED
 
 
-def _arch_key(arch: Any) -> str:
+def _arch_key(arch: ArchLike) -> str:
     return arch.value if hasattr(arch, 'value') else str(arch)
 
 
@@ -68,7 +69,7 @@ def _layout_key(name_to_slot: dict[str, int]) -> frozenset[tuple[str, int]]:
     return frozenset(name_to_slot.items())
 
 
-def _lift(key: Any, arch: Any, code: bytes, n_slots: int) -> Any:
+def _lift(key: Any, arch: ArchLike, code: bytes, n_slots: int) -> Any:
     """This instruction's lowered program, lifting it only when it has to.
 
     A program that is only waiting on a register slot keeps its LIFT.  Rebuilding
@@ -94,7 +95,7 @@ def _lift(key: Any, arch: Any, code: bytes, n_slots: int) -> Any:
         return None
 
 
-def program_for(arch: Any, code: bytes, name_to_slot: dict[str, int], *,
+def program_for(arch: ArchLike, code: bytes, name_to_slot: dict[str, int], *,
                 force: bool = False) -> Any:
     """-> (capsule, function address) for the engine's layout, or None.
 

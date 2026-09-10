@@ -14,6 +14,8 @@ address the wrong words and the failure would be silent.
 from __future__ import annotations
 
 from typing import Any, Callable
+from microtaint.types import ArchLike
+from microtaint.taint_ir.ir import IRProg
 
 __all__ = ['block_slot_resolver', 'compile_block']
 
@@ -27,7 +29,7 @@ def _layout() -> dict[str, int]:
     return dict(blockpath_c.layout())
 
 
-def block_slot_resolver(arch: Any, name_to_slot: dict[str, int]) -> SlotOf:
+def block_slot_resolver(arch: ArchLike, name_to_slot: dict[str, int]) -> SlotOf:
     """`slot_of` for a BLOCK program, in the layout blockpath.h runs.
 
     Register taint sits at the caller's own slot, the register's VALUE at
@@ -70,7 +72,7 @@ def block_slot_resolver(arch: Any, name_to_slot: dict[str, int]) -> SlotOf:
 RegionSpec = tuple[int, int, list[tuple[int, int, int]], int]
 
 
-def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int],
+def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str, int],
                   *, builder: Any = None, descriptor: Any = None,
                   publish_all_values: bool = False,
                   ) -> tuple[Any, list[Any], set[int]] | None:
@@ -207,7 +209,7 @@ def _values_read_later(regions: list[Any]) -> list[set[int]]:
     return out
 
 
-def _keep_only_needed_values(prog: Any, needed: set[int]) -> None:
+def _keep_only_needed_values(prog: IRProg, needed: set[int]) -> None:
     """Drop the value outputs no later region reads, and re-run dead-code
     elimination so whatever computed them goes too."""
     kept = [(k, n) for k, n in prog.outputs
@@ -219,7 +221,7 @@ def _keep_only_needed_values(prog: Any, needed: set[int]) -> None:
     prog.finish()
 
 
-def _address_slice(prog: Any, slot_of: SlotOf, taint_ir_c: Any) -> Any:
+def _address_slice(prog: IRProg, slot_of: SlotOf, taint_ir_c: Any) -> Any:
     """The part of `prog` that computes its load addresses, compiled.
 
     Returns (capsule, function address) or None if it will not compile, in

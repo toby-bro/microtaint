@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from microtaint.types import ArchLike
 
 _OFFSETS: dict[str, dict[str, int]] = {}
 
 
-def offsets(arch: Any) -> dict[str, int]:
+def offsets(arch: ArchLike) -> dict[str, int]:
     key = arch.value if hasattr(arch, 'value') else str(arch)
     o = _OFFSETS.get(key)
     if o is None:
@@ -25,7 +26,7 @@ def offsets(arch: Any) -> dict[str, int]:
     return o
 
 
-def name_offset(arch: Any, name: str) -> int | None:
+def name_offset(arch: ArchLike, name: str) -> int | None:
     """Byte offset of a register the caller named, or None.
 
     Vector lanes reach the taint state as `VL_0x<offset>` -- a name generated
@@ -43,7 +44,7 @@ def name_offset(arch: Any, name: str) -> int | None:
     return None
 
 
-def slot_resolver(arch: Any, name_to_slot: dict[str, int], *,
+def slot_resolver(arch: ArchLike, name_to_slot: dict[str, int], *,
                   n_reg_slots: int | None = None) -> Callable[[Any], int | None]:
     """A `slot_of` for IR keys, given the caller's register-name slot map."""
     by_off: dict[int, int] = {}

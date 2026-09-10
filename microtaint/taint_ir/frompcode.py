@@ -49,6 +49,8 @@ from microtaint.taint_ir.ir import (
     XOR,
     IRProg,
 )
+from microtaint.types import ArchLike
+from pypcode import PcodeOp, Varnode
 
 LIFT_BASE = 0x1000
 
@@ -293,7 +295,7 @@ class Builder:
     """Lower one instruction to IR.  `prog.outputs` ends up holding the taint of
     every architectural register, written or passed through."""
 
-    def __init__(self, arch: Any, be: bool,
+    def __init__(self, arch: ArchLike, be: bool,
                  pointer_policy: PointerPolicy = DEFAULT_POINTER_POLICY) -> None:
         if pointer_policy not in POINTER_POLICIES:
             raise ValueError(pointer_policy)
@@ -539,7 +541,7 @@ class Builder:
                      self.p.mask(tnt, self.pc_size * 8))
 
     # -- opaque operations ---------------------------------------------
-    def _emit_callother(self, ops: list[Any], pc: int, op: Any) -> None:
+    def _emit_callother(self, ops: list[Any], pc: int, op: PcodeOp) -> None:
         """An operation p-code does not model (crc32, aes, a fence).
 
         Its VALUE is unknowable here, so the only safe thing is to make sure
@@ -569,7 +571,7 @@ class Builder:
         p = self.p
         if op.output is None:
             return
-        osz = op.output.size
+        osz = self._out(op).size
         if not self._invention_stays_opaque(ops, pc, op.output):
             raise Unsupported('CALLOTHER result is read downstream')
         any_t = p.const(0)
@@ -584,12 +586,12 @@ class Builder:
                              self._read_lane(vn, lane, min(8, vn.size - lane))[1])
         avalanche = p.splat(p.op(NEZ, any_t))
         if osz <= 8:
-            self._predicated_write(op.output, p.const(0),
+            self._predicated_write(self._out(op), p.const(0),
                                    p.op(AND, p.const(_mask_of(osz)), avalanche))
             return
         for lane in range(0, osz, 8):
             lsz = min(8, osz - lane)
-            self._write_lane(op.output, lane, lsz, p.const(0),
+            self._write_lane(self._out(op), lane, lsz, p.const(0),
                              p.op(AND, p.const(_mask_of(lsz)), avalanche))
 
     #: Opcodes that MOVE bytes without computing on them: their taint rule
@@ -624,7 +626,7 @@ class Builder:
                 return False
         poisoned = [(out.space.name, out.offset, out.offset + out.size)]
 
-        def reads_poison(vn: Any) -> bool:
+        def reads_poison(vn: Varnode) -> bool:
             return any(vn.space.name == sp and vn.offset < hi
                        and vn.offset + vn.size > lo
                        for sp, lo, hi in poisoned)
@@ -650,7 +652,7 @@ class Builder:
             self.p.outputs.append((('addr', k), addr_node))
         return k
 
-    def _emit_load(self, op: Any) -> None:
+    def _emit_load(self, op: PcodeOp) -> None:
         """A load's value and shadow taint enter as INPUTS at a slot the caller
         fills once the address has been computed.
 
@@ -659,7 +661,7 @@ class Builder:
         published as an output, so a caller can act on it.
         """
         p = self.p
-        size = op.output.size
+        size = self._out(op).size
         if size > 8:
             raise Unsupported('wide load')
         addr_v, addr_t = self._read_in(op.inputs[1])
@@ -671,9 +673,9 @@ class Builder:
             tnt = p.op(OR, tnt,
                        p.op(AND, p.const(_mask_of(size)),
                             p.splat(p.op(NEZ, addr_t))))
-        self._predicated_write(op.output, val, tnt)
+        self._predicated_write(self._out(op), val, tnt)
 
-    def _emit_store(self, op: Any) -> None:
+    def _emit_store(self, op: PcodeOp) -> None:
         """A store contributes the taint to write and the address to write it
         at, both as outputs; committing them is the caller's job.
 
@@ -769,7 +771,8 @@ class Builder:
                 stored = True
 
     # -- helpers -------------------------------------------------------
-    def _branch_target(self, op: Any, pc: int, n: int) -> int | None:
+    def _branch_target(self, op: PcodeOp, pc: int, n: int) -> int | None:
+        tgt: int | None
         vn = op.inputs[0]
         if vn.space.name == 'const':
             rel = vn.offset
@@ -800,7 +803,23 @@ class Builder:
             return tgt
         return None
 
-    def _read_in(self, vn: Any) -> tuple[int, int]:
+    @staticmethod
+    def _out(op: PcodeOp) -> Varnode:
+        """The op's output varnode.
+
+        `op.output` is None for the ops that write nothing -- STORE,
+        BRANCH, CBRANCH, CALL -- and every use of this is on a dispatch
+        path that has already matched an opcode which writes.  Stating it
+        turns a would-be AttributeError into a DECLINE, which is the sound
+        direction: the caller falls back to the differential rather than
+        lowering an instruction this does not model.
+        """
+        out = op.output
+        if out is None:
+            raise Unsupported(f'{op.opcode.name} writes no output')
+        return out
+
+    def _read_in(self, vn: Varnode) -> tuple[int, int]:
         p = self.p
         sp = vn.space.name
         if sp == 'const':
@@ -810,7 +829,7 @@ class Builder:
                     self.t.read(sp, vn.offset, vn.size))
         raise Unsupported(f'input space {sp}')
 
-    def _predicated_write(self, vn: Any, val: int, tnt: int) -> None:
+    def _predicated_write(self, vn: Varnode, val: int, tnt: int) -> None:
         """Commit one output under the current predicate.
 
         With a KNOWN predicate this folds to a plain write (the constant SEL
@@ -850,7 +869,7 @@ class Builder:
     _LANE_OPS = {'COPY', 'INT_ZEXT', 'INT_SEXT', 'INT_NEGATE',
                  'INT_AND', 'INT_OR', 'INT_XOR'}
 
-    def _read_lane(self, vn: Any, lane: int, lsz: int) -> tuple[int, int]:
+    def _read_lane(self, vn: Varnode, lane: int, lsz: int) -> tuple[int, int]:
         """One 8-byte lane of a varnode, as (value, taint)."""
         p = self.p
         sp = vn.space.name
@@ -861,7 +880,7 @@ class Builder:
                     self.t.read(sp, vn.offset + lane, lsz))
         raise Unsupported(f'wide input space {sp}')
 
-    def _emit_wide_special(self, name: str, op: Any) -> bool:
+    def _emit_wide_special(self, name: str, op: PcodeOp) -> bool:
         """Wide shapes that are not bit-parallel but are still exact.
 
         These are what a widening multiply lifts to.  `imul r64, r64` builds a
@@ -875,7 +894,7 @@ class Builder:
         p = self.p
         if self.be:
             raise Unsupported('wide varnode on a big-endian target')
-        osz = op.output.size
+        osz = self._out(op).size
         isz = op.inputs[0].size if op.inputs else osz
 
         # A lane-aligned slice of a wide value is just that lane.
@@ -884,7 +903,7 @@ class Builder:
             if off % 8 or off + osz > isz:
                 return False
             av, at = self._read_lane(op.inputs[0], off, osz)
-            self._predicated_write(op.output, p.mask(av, osz * 8),
+            self._predicated_write(self._out(op), p.mask(av, osz * 8),
                                    p.mask(at, osz * 8))
             return True
 
@@ -901,8 +920,8 @@ class Builder:
                       p.op(MUL, a1, b0))
             any_t = p.op(OR, p.op(OR, at0, at1), p.op(OR, bt0, bt1))
             full = p.splat(p.op(NEZ, any_t))
-            self._write_lane(op.output, 0, 8, lo, full)
-            self._write_lane(op.output, 8, 8, hi, full)
+            self._write_lane(self._out(op), 0, 8, lo, full)
+            self._write_lane(self._out(op), 8, 8, hi, full)
             return True
 
         # Equality over a wide value: the same rule, accumulated across lanes.
@@ -922,13 +941,13 @@ class Builder:
             v = eq if name == 'INT_EQUAL' else p.op(XOR, eq, p.const(1))
             can_true = p.op(EQ, bad, p.const(0))
             can_false = p.op(NEZ, anyv)
-            self._predicated_write(op.output, v,
+            self._predicated_write(self._out(op), v,
                                    p.op(AND, can_true, can_false))
             return True
 
         return False
 
-    def _write_lane(self, vn: Any, lane: int, lsz: int, val: int, tnt: int) -> None:
+    def _write_lane(self, vn: Varnode, lane: int, lsz: int, val: int, tnt: int) -> None:
         p = self.p
         sp = vn.space.name
         if sp not in ('register', 'unique'):
@@ -938,7 +957,7 @@ class Builder:
         self.v.write(sp, vn.offset + lane, lsz, val)
         self.t.write(sp, vn.offset + lane, lsz, tnt)
 
-    def _emit_wide(self, name: str, op: Any) -> None:
+    def _emit_wide(self, name: str, op: PcodeOp) -> None:
         """Lane-by-lane emission for a bit-parallel op on a wide varnode.
 
         Vector movement and vector logic are most of what a SIMD lifter emits
@@ -952,7 +971,7 @@ class Builder:
             # invert.  No big-endian ISA in the corpus lifts a wide varnode, so
             # decline rather than guess.
             raise Unsupported('wide varnode on a big-endian target')
-        osz = op.output.size
+        osz = self._out(op).size
         isz = op.inputs[0].size if op.inputs else osz
         fill_v = fill_t = None
         if name == 'INT_SEXT':
@@ -997,14 +1016,14 @@ class Builder:
                     else:
                         v = p.op(XOR, av, bv)
                         tnt = p.op(OR, at, bt)
-            self._write_lane(op.output, lane, lsz,
+            self._write_lane(self._out(op), lane, lsz,
                              p.mask(v, lsz * 8), p.mask(tnt, lsz * 8))
 
     # -- the per-opcode lowering ---------------------------------------
-    def _emit_op(self, name: str, op: Any) -> None:
+    def _emit_op(self, name: str, op: PcodeOp) -> None:
         p = self.p
         if any(s > 8 for s in
-               [x.size for x in op.inputs] + [op.output.size]):
+               [x.size for x in op.inputs] + [self._out(op).size]):
             if name in self._LANE_OPS:
                 self._emit_wide(name, op)
                 return
@@ -1014,14 +1033,14 @@ class Builder:
         ins = [self._read_in(x) for x in op.inputs]
         av, at = ins[0] if ins else (p.const(0), p.const(0))
         bv, bt = ins[1] if len(ins) > 1 else (p.const(0), p.const(0))
-        osz = op.output.size
+        osz = self._out(op).size
         isz = op.inputs[0].size if op.inputs else osz
         obits = osz * 8
         ibits = isz * 8
         om = _mask_of(osz)
 
         val, tnt = self._rule(name, op, av, at, bv, bt, osz, isz, obits, ibits, om)
-        self._predicated_write(op.output, val, tnt)
+        self._predicated_write(self._out(op), val, tnt)
 
     def _sext(self, node: int, bits: int) -> int:
         p = self.p
@@ -1030,7 +1049,7 @@ class Builder:
         sh = p.const(64 - bits)
         return p.op(SAR, p.op(SHL, node, sh), sh)
 
-    def _rule(self, name: str, op: Any, av: int, at: int, bv: int, bt: int,
+    def _rule(self, name: str, op: PcodeOp, av: int, at: int, bv: int, bt: int,
               osz: int, isz: int, obits: int, ibits: int,
               om: int) -> tuple[int, int]:
         p = self.p
@@ -1311,7 +1330,7 @@ class Builder:
 _BUILDERS: dict[tuple[str, str], Builder] = {}
 
 
-def builder_for(arch: Any,
+def builder_for(arch: ArchLike,
                 pointer_policy: PointerPolicy = DEFAULT_POINTER_POLICY) -> Builder:
     """The shared Builder for `arch` under `pointer_policy`, made once.
 
@@ -1328,7 +1347,7 @@ def builder_for(arch: Any,
     return b
 
 
-def build_ir(arch: Any, code: bytes, *,
+def build_ir(arch: ArchLike, code: bytes, *,
              pointer_policy: PointerPolicy = DEFAULT_POINTER_POLICY,
              emit: Emit = 'taint') -> IRProg:
     """Lower one instruction to a taint IR program.  Raises Unsupported."""

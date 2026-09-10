@@ -38,6 +38,7 @@ from typing import Any, NamedTuple
 from pypcode.pypcode_native import PcodeOp
 
 from microtaint.sleigh.constfold import VNKey, fold_constants
+from pypcode import Varnode
 
 
 class _Space(NamedTuple):
@@ -78,7 +79,7 @@ class _Op:
         self.inputs = list(inputs)
 
 
-def _key(vn: Any) -> VNKey:
+def _key(vn: Varnode) -> VNKey:
     return (vn.space.name, vn.offset, vn.size)
 
 
@@ -135,7 +136,7 @@ def simplify_slice(slice_ops: list[PcodeOp]) -> list[Any]:  # noqa: C901
     boolean: set[VNKey] = set()
     out: list[Any] = []
 
-    def resolve(vn: Any) -> Any:
+    def resolve(vn: Varnode) -> Any:
         if vn.space.name == 'const':
             return vn
         k = _key(vn)

@@ -28,6 +28,12 @@ class Architecture(StrEnum):
     SPARC32BE = 'SPARC32BE'
 
 
+#: How a caller may name an architecture: the enum, or the string it
+#: wraps.  `Architecture` is a StrEnum, so both reach the lifter the same
+#: way and every helper that takes one accepts either.
+ArchLike = Architecture | str
+
+
 @dataclass(slots=True)
 class Register:
     name: str

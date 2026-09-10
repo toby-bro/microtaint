@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from microtaint.taint_ir.frompcode import LIFT_BASE, Builder, Emit, Unsupported
+from microtaint.types import ArchLike
 
 __all__ = ['Region', 'instruction_starts', 'plan_block']
 
@@ -41,7 +42,7 @@ class Region:
     prog: Any                    # IRProg, or None if this one lowers nowhere
 
 
-def _translate(arch: Any, code: bytes, base: int) -> list[Any]:
+def _translate(arch: ArchLike, code: bytes, base: int) -> list[Any]:
     from microtaint.sleigh.lifter import get_context  # noqa: PLC0415 - the lifter is expensive to import eagerly
     key = arch.value if hasattr(arch, 'value') else str(arch)
     return get_context(key).translate(code, base).ops
@@ -56,7 +57,7 @@ def instruction_starts(ops: list[Any]) -> list[tuple[int, int, int]]:
     return out
 
 
-def plan_block(arch: Any, code: bytes, base: int = LIFT_BASE, *,
+def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
                emit: Emit = 'both',
                builder: Builder | None = None) -> list[Region]:
     """Greedy maximal regions covering `code`, in order.
