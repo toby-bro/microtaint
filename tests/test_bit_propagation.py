@@ -436,7 +436,7 @@ class TestTier6RMWMemoryDestination:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0x01, 8)
 
-        def reader(addr: int, sz: int):
+        def reader(addr: int, sz: int) -> int:
             if addr == mem_addr:
                 return 0xFF
             return 0
@@ -474,7 +474,7 @@ class TestTier6RMWMemoryDestination:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0xF0, 8)
 
-        def reader(addr: int, sz: int):
+        def reader(addr: int, sz: int) -> int:
             if addr == mem_addr:
                 return 0xAB
             return 0
@@ -513,7 +513,7 @@ class TestTier6RMWMemoryDestination:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0x01, 8)
 
-        def reader(addr: int, sz: int):
+        def reader(addr: int, sz: int) -> int:
             if addr == mem_addr:
                 return 0x100
             return 0

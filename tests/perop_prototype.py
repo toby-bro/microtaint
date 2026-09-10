@@ -32,6 +32,8 @@ compaction precision question lives.  Memory + BE come with the corpus extension
 """
 from __future__ import annotations
 
+from pypcode import Context, PcodeOp, Varnode
+
 from microtaint.sleigh.lifter import get_context
 from microtaint.types import Architecture, Register
 
@@ -60,7 +62,9 @@ def _signed(v: int, nbytes: int) -> int:
 # read at each input's width; op carries input/output Varnode sizes.
 # ---------------------------------------------------------------------------
 
-def _apply(name: str, op, in_vals: list[int]) -> int:
+def _apply(name: str, op: PcodeOp, in_vals: list[int]) -> int:
+    # _apply is only reached for ops that write; the caller skips the rest.
+    assert op.output is not None
     o_sz = op.output.size
     om = _mask(o_sz)
     a = in_vals[0] if in_vals else 0
@@ -86,9 +90,9 @@ def _apply(name: str, op, in_vals: list[int]) -> int:
     if name == 'INT_LEFT':
         return (a << b) & om if b < 128 else 0
     if name == 'INT_RIGHT':
-        return (a >> b) & om
+        return int((a >> b) & om)
     if name == 'INT_SRIGHT':
-        return (_signed(a, isz) >> min(b, 8 * isz)) & om
+        return int((_signed(a, isz) >> min(b, 8 * isz)) & om)
     if name == 'INT_MULT':
         return (a * b) & om
     if name == 'INT_ZEXT':
@@ -98,7 +102,7 @@ def _apply(name: str, op, in_vals: list[int]) -> int:
     if name == 'SUBPIECE':
         return (a >> (8 * b)) & om
     if name == 'PIECE':
-        return ((a << (8 * op.inputs[1].size)) | b) & om
+        return int(((a << (8 * op.inputs[1].size)) | b) & om)
     if name == 'INT_EQUAL':
         return 1 if a == b else 0
     if name == 'INT_NOTEQUAL':
@@ -151,13 +155,13 @@ _CTRL = {'BRANCH', 'BRANCHIND', 'CBRANCH', 'CALL', 'CALLIND', 'RETURN'}
 # ---------------------------------------------------------------------------
 
 class TwoCorner:
-    def __init__(self, sctx, little_endian: bool):
+    def __init__(self, sctx: Context, little_endian: bool) -> None:
         self.sctx = sctx
         self.le = little_endian
         self.hi: dict[tuple[str, int], int] = {}
         self.lo: dict[tuple[str, int], int] = {}
 
-    def _rd(self, store, vn) -> int:
+    def _rd(self, store: dict[tuple[str, int], int], vn: Varnode) -> int:
         if vn.space.name == 'const':
             return vn.offset & _mask(vn.size)
         v = 0
@@ -167,17 +171,18 @@ class TwoCorner:
             v |= byte << (8 * sh)
         return v
 
-    def _wr(self, store, vn, val) -> None:
+    def _wr(self, store: dict[tuple[str, int], int], vn: Varnode,
+            val: int) -> None:
         for i in range(vn.size):
             sh = i if self.le else (vn.size - 1 - i)
             store[(vn.space.name, vn.offset + i)] = (val >> (8 * sh)) & 0xFF
 
-    def init_reg(self, vn, value: int, taint: int) -> None:
+    def init_reg(self, vn: Varnode, value: int, taint: int) -> None:
         m = _mask(vn.size)
         self._wr(self.hi, vn, (value | taint) & m)
         self._wr(self.lo, vn, (value & ~taint) & m)
 
-    def run(self, ops) -> None:
+    def run(self, ops: list[PcodeOp]) -> None:
         for op in ops:
             name = op.opcode.name
             if name in _SKIP or name in _CTRL:
@@ -194,7 +199,7 @@ class TwoCorner:
             self._wr(self.hi, op.output, hi_out)
             self._wr(self.lo, op.output, lo_out)
 
-    def out_taint(self, vn) -> int:
+    def out_taint(self, vn: Varnode) -> int:
         return (self._rd(self.hi, vn) ^ self._rd(self.lo, vn)) & _mask(vn.size)
 
 
@@ -206,7 +211,7 @@ def scheme_b_taint(arch: Architecture,
                    code: bytes,
                    regs: list[Register],
                    in_taint: dict[str, int],
-                   in_values: dict[str, int]):
+                   in_values: dict[str, int]) -> dict[str, int]:
     """Run Scheme B; return output taint dict over the mappable bank registers.
     Raises Unsupported if any op or register can't be mapped (caller skips)."""
     key = _arch_key(arch)
@@ -233,7 +238,7 @@ def engine_scheme_b(arch: Architecture,
                     in_taint: dict[str, int],
                     in_values: dict[str, int],
                     *,
-                    circuit=None):
+                    circuit: object = None) -> dict[str, int]:
     """Oracle-harness engine adapter for Scheme B."""
     return scheme_b_taint(arch, code, regs, in_taint, in_values)
 

@@ -194,7 +194,10 @@ def loop_addrs(min_loop_binary: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
-def _gather_observations(binary, addrs, taint_offset):
+def _gather_observations(binary: str, addrs: dict[str, int],
+                         taint_offset: int,
+                         ) -> tuple[int, int | None,
+                                    list[tuple[int, dict[str, int]]]]:
     """Emulate ``binary`` with bit-0 of input byte ``taint_offset`` tainted.
 
     Returns ``(final_shadow, tainted_iter, observations)`` where:
@@ -210,20 +213,23 @@ def _gather_observations(binary, addrs, taint_offset):
     the condition), the first byte (index 0) is processed in iter 1.
     """
     msg = bytes(range(16))
-    output_shadow = []
-    wrapper_ref = [None]
+    output_shadow: list[int] = []
+    wrapper_ref: list[MicrotaintWrapper | None] = [None]
     observations = []
-    tainted_iter_found = [None]
+    tainted_iter_found: list[int | None] = [None]
 
-    def write_hook(ql, fd, buf, count: int, *_):
+    def write_hook(ql: Qiling, fd: int, buf: int, count: int,
+                   *_: object) -> int:
         if fd == 1 and count == 8:
-            output_shadow.append(wrapper_ref[0].shadow_mem.read_mask(buf, 8))
+            w0 = wrapper_ref[0]
+            assert w0 is not None, 'the hook fired before the wrapper was set'
+            output_shadow.append(w0.shadow_mem.read_mask(buf, 8))
         return count
 
     ql = Qiling([binary], '/', verbose=QL_VERBOSE.OFF)
 
     class _Stdin:
-        def read(self, n):
+        def read(self, n: int) -> bytes:
             return msg[:n]
 
     ql.os.stdin = _Stdin()
@@ -240,7 +246,7 @@ def _gather_observations(binary, addrs, taint_offset):
     )
     wrapper_ref[0] = w
 
-    def read_hook(ql, fd, buf, count: int):
+    def read_hook(ql: Qiling, fd: int, buf: int, count: int) -> int:
         if fd != 0:
             return 0
         ql.mem.write(buf, msg[:count])
@@ -253,7 +259,8 @@ def _gather_observations(binary, addrs, taint_offset):
     observe_addr = addrs['observe']
     state = {'iter': 0}
 
-    def watcher(uc, address, size: int, user_data):
+    def watcher(uc: object, address: int, size: int,
+                user_data: object) -> None:
         if address == loop_head_addr:
             state['iter'] += 1
 

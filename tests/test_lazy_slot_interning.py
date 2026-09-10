@@ -27,6 +27,8 @@ import ctypes
 import pytest
 
 from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
+from microtaint.instrumentation.cell_c.circuit_c import CompiledCircuit
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
@@ -39,7 +41,7 @@ _REGS = [Register(name='RAX', bits=64), Register(name='RBX', bits=64),
          *[Register(name=f, bits=1) for f in _FLAGS]]
 
 
-def _compiled():
+def _compiled() -> tuple[CompiledCircuit, CellSimulator]:
     """A freshly generated circuit plus its CompiledCircuit (built on first
     evaluate).  Fresh per test: the whole point is per-circuit cache state."""
     circuit = generate_static_rule(Architecture.AMD64, ADD_RAX_RBX, _REGS)
@@ -52,7 +54,12 @@ def _compiled():
     return comp, sim
 
 
-def _run_ptr(comp, sim: CellSimulator, slot_map, taint: dict[str, int], values: dict[str, int]):
+def _run_ptr(comp: CompiledCircuit, sim: CellSimulator,
+             slot_map: dict[str, int], taint: dict[str, int],
+             values: dict[str, int]) -> dict[str, int]:
+    kernel = sim._pcode
+    assert isinstance(kernel, PCodeCellEvaluatorC), \
+        'the C-array path needs the C evaluator'
     """evaluate_c_arr_ptr against a slot-indexed array -> {name: out taint}."""
     n = max(slot_map.values()) + 1
     arr = ctypes.c_uint64 * n
@@ -61,13 +68,18 @@ def _run_ptr(comp, sim: CellSimulator, slot_map, taint: dict[str, int], values: 
         t[slot] = taint.get(name, 0)
         v[slot] = values.get(name, 0)
     rc = comp.evaluate_c_arr_ptr(ctypes.addressof(t), ctypes.addressof(v),
-                                 n, sim._pcode, slot_map)
+                                 n, kernel, slot_map)
     if rc is None:
         pytest.skip('the C array path declined this instruction')
     return {name: int(t[slot]) for name, slot in slot_map.items()}
 
 
-def _run_list(comp, sim: CellSimulator, slot_map, taint: dict[str, int], values: dict[str, int]):
+def _run_list(comp: CompiledCircuit, sim: CellSimulator,
+              slot_map: dict[str, int], taint: dict[str, int],
+              values: dict[str, int]) -> dict[str, int]:
+    kernel = sim._pcode
+    assert isinstance(kernel, PCodeCellEvaluatorC), \
+        'the C-array path needs the C evaluator'
     """evaluate_c_arr (the list form) -> {name: out taint} for the targets."""
     n = max(slot_map.values()) + 1
     t = [0] * n
@@ -75,7 +87,7 @@ def _run_list(comp, sim: CellSimulator, slot_map, taint: dict[str, int], values:
     for name, slot in slot_map.items():
         t[slot] = taint.get(name, 0)
         v[slot] = values.get(name, 0)
-    out = comp.evaluate_c_arr(t, v, sim._pcode, slot_map)
+    out = comp.evaluate_c_arr(t, v, kernel, slot_map)
     if out is None:
         pytest.skip('the C array path declined this instruction')
     return out

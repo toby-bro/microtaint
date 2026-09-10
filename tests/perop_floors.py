@@ -165,7 +165,7 @@ def _vid(vn: Varnode) -> VId:
     return (vn.space.name, vn.offset, vn.size)
 
 
-def _reconv_contaminated(ops):
+def _reconv_contaminated(ops: list[PcodeOp]) -> set[VId]:
     """Per-VARNODE reconvergence contamination (the tunable window at its natural
     integration granularity: per output slice, not per whole instruction).
 
@@ -181,7 +181,7 @@ def _reconv_contaminated(ops):
     reg_anc: dict[VId, frozenset[VId]] = {}
     contaminated: set[VId] = set()
     for o in ops:
-        in_ancs = []
+        in_ancs: list[frozenset[VId]] = []
         in_contam = False
         for i in o.inputs:
             if i.space.name == 'const':
@@ -220,7 +220,7 @@ def _reconv_contaminated(ops):
     return contaminated
 
 
-def _is_reconvergent(ops) -> bool:
+def _is_reconvergent(ops: list[PcodeOp]) -> bool:
     """True if some op's two dynamic inputs share a register ancestor (or repeat).
 
     That is the reconvergence the design flags: a tainted source reaches one op
@@ -239,7 +239,7 @@ def _is_reconvergent(ops) -> bool:
     # original value -- e.g. add writes RAX after INT_CARRY/INT_SCARRY read it.)
     reg_anc: dict[VId, frozenset[VId]] = {}   # vid -> register-leaf ancestors
     for o in ops:
-        in_ancs = []
+        in_ancs: list[frozenset[VId]] = []
         for i in o.inputs:
             if i.space.name == 'const':
                 in_ancs.append(frozenset())
@@ -277,7 +277,7 @@ _REG_ALIASES = {
 }
 
 
-def _resolve_vn(reg_vn, name: str):
+def _resolve_vn(reg_vn: dict[str, Varnode], name: str) -> Varnode | None:
     """Map a bank/human register name to its pypcode varnode, tolerating
     case and the AArch64 flag spelling.  Returns None if unmappable."""
     vn = reg_vn.get(name)
@@ -324,7 +324,8 @@ class PerOpFloors:
             v |= byte << (8 * sh)
         return v
 
-    def _scatter(self, store, vn: Varnode, val) -> None:
+    def _scatter(self, store: dict[tuple[str, int], int], vn: Varnode,
+                 val: int) -> None:
         for i in range(vn.size):
             sh = i if self.le else (vn.size - 1 - i)
             store[(vn.space.name, vn.offset + i)] = (val >> (8 * sh)) & 0xFF
@@ -335,7 +336,10 @@ class PerOpFloors:
         self._scatter(self.taint, vn, taint & m)
 
     # -- the per-op taint rule -------------------------------------------
-    def _op_taint(self, name: str, op: PcodeOp, in_v, in_t) -> int:
+    def _op_taint(self, name: str, op: PcodeOp, in_v: list[int],
+                  in_t: list[int]) -> int:
+        # only reached for ops that write; the driver skips the others
+        assert op.output is not None
         o_sz = op.output.size
         om = _mask(o_sz)
         isz = op.inputs[0].size if op.inputs else o_sz
@@ -463,17 +467,20 @@ class PerOpFloors:
         # ---- div/rem handled by _AVALANCHE above; anything else opaque ----
         raise Unsupported(name)
 
-    def _local_diff(self, name: str, op: PcodeOp, in_v, in_t) -> int:
+    def _local_diff(self, name: str, op: PcodeOp, in_v: list[int],
+                    in_t: list[int]) -> int:
         """Bare two-corner differential over THIS op's concrete inputs.  Tightens
         the floor where the two extremal corners actually diverge."""
+        out = op.output
+        assert out is not None    # reached only for ops that write
         try:
             hi = _apply(name, op, [(v | t) for v, t in zip(in_v, in_t)])
             lo = _apply(name, op, [(v & ~t) for v, t in zip(in_v, in_t)])
         except Unsupported:
-            return _mask(op.output.size)
-        return (hi ^ lo) & _mask(op.output.size)
+            return _mask(out.size)
+        return (hi ^ lo) & _mask(out.size)
 
-    def run(self, ops, strict=True) -> None:
+    def run(self, ops: list[PcodeOp], strict: bool = True) -> None:
         # Intra-instruction control flow (cmov, rep, string ops) predicates
         # later writes; a straight-line per-op pass would execute the taken side
         # unconditionally and drop the not-taken side's taint (under-taint).
@@ -516,7 +523,7 @@ def perop_floors_taint(arch: Architecture,
                        code: bytes,
                        regs: list[Register],
                        in_taint: dict[str, int],
-                       in_values: dict[str, int]):
+                       in_values: dict[str, int]) -> dict[str, int]:
     """Run the per-op-with-floors interpreter; return output taint over the
     mappable bank registers.  Raises Unsupported for BE / mem / opaque ops."""
     key = _arch_key(arch)
@@ -541,7 +548,8 @@ def perop_floors_slicewise(arch: Architecture,
                            code: bytes,
                            regs: list[Register],
                            in_taint: dict[str, int],
-                           in_values: dict[str, int]):
+                           in_values: dict[str, int],
+                           ) -> tuple[dict[str, int], set[str]]:
     """The tunable window at OUTPUT-SLICE granularity: run the per-op pass over
     the whole instruction, then trust the per-op taint only for outputs whose
     dependency cone is reconvergence-free; the rest (contaminated slices) would
@@ -580,7 +588,7 @@ def engine_perop_floors(arch: Architecture,
                         in_taint: dict[str, int],
                         in_values: dict[str, int],
                         *,
-                        circuit: LogicCircuit=None):
+                        circuit: LogicCircuit | None = None) -> dict[str, int]:
     """Oracle-harness engine adapter for per-op-with-floors."""
     return perop_floors_taint(arch, code, regs, in_taint, in_values)
 

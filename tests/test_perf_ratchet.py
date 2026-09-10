@@ -69,7 +69,6 @@ import time
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -200,6 +199,51 @@ def _pct(vals: list[float], p: float) -> float:
     return s[k]
 
 
+#: One measured instruction.  The metric fields are ints and the two labels
+#: are strings; the metrics are read with a NAME from _METRICS, which is why
+#: this is a plain dict and not a TypedDict -- a TypedDict cannot be indexed
+#: by a variable.  The timing rows carry `ns` and `tp_s` as floats.
+Row = dict[str, str | int | float]
+#: A whole run as written to the perf log: rows plus derived summaries.
+Record = dict[str, object]
+
+
+def _number(row: Row, name: str) -> float:
+    """A measured quantity off a row, as a float (the timings are not ints)."""
+    v = row[name]
+    assert isinstance(v, (int, float)), f'{name} is {type(v).__name__}'
+    return float(v)
+
+
+def _label(row: Row, name: str) -> str:
+    """The isa or asm off a row, as a string."""
+    v = row[name]
+    assert isinstance(v, str), f'{name} is {type(v).__name__}, not a label'
+    return v
+
+
+def _recorded(baseline: Record, isa: str, asm: str) -> dict[str, int] | None:
+    """The recorded floor for one instruction, or None if it is new.
+
+    The baseline is isa -> asm -> {metric: count} with a `_meta` block sitting
+    beside the ISAs, so both lookups are checked here rather than at each of
+    the four places that walk it.
+    """
+    per_isa = baseline.get(isa)
+    if not isinstance(per_isa, dict):
+        return None
+    entry = per_isa.get(asm)
+    return entry if isinstance(entry, dict) else None
+
+
+def _metric(row: Row, name: str) -> int:
+    """One metric off a row.  The names in _METRICS all address ints; this is
+    where that is checked rather than assumed."""
+    v = row[name]
+    assert isinstance(v, int), f'{name} is {type(v).__name__}, not a count'
+    return v
+
+
 def _stats(vals: list[float]) -> dict[str, float]:
     """Every distribution stat we can think of, over a list of per-instr values."""
     if not vals:
@@ -267,14 +311,14 @@ def _git_sha() -> tuple[str, bool]:
         return 'unknown', False
 
 
-def _load_baseline() -> dict[str, Any]:
+def _load_baseline() -> Record:
     if not BASELINE_PATH.exists():
         return {}
-    data: dict[str, Any] = json.loads(BASELINE_PATH.read_text())
+    data: Record = json.loads(BASELINE_PATH.read_text())
     return data
 
 
-def _write_log(record: dict[str, Any]) -> Path | None:
+def _write_log(record: Record) -> Path | None:
     """One JSON file per run in perf.log.d/, timestamp-sortable name. Best effort."""
     try:
         LOG_DIR.mkdir(exist_ok=True)
@@ -289,7 +333,7 @@ def _write_log(record: dict[str, Any]) -> Path | None:
         return None
 
 
-def _base_record(kind: str, rows: list[dict]) -> dict:
+def _base_record(kind: str, rows: list[Row]) -> Record:
     sha, dirty = _git_sha()
     return {
         'ts': datetime.now(timezone.utc).isoformat(),
@@ -309,28 +353,30 @@ def _base_record(kind: str, rows: list[dict]) -> dict:
 # ===========================================================================
 
 
-def _deterministic_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _deterministic_rows() -> tuple[list[Row], Record]:
     """Measure (cells, assigns) per instruction; return rows + a log record."""
     cases = _cases()
     assert cases, 'no instructions assembled -- corpus/keystone broken'
-    rows: list[dict[str, Any]] = []
-    by_isa: dict[str, list[dict[str, Any]]] = {}
+    rows: list[Row] = []
+    by_isa: dict[str, list[Row]] = {}
     for c in cases:
         cells, assigns, nodes = _work(c)
-        row = {'isa': c.isa, 'asm': c.asm, 'cells': cells, 'assigns': assigns, 'nodes': nodes}
+        row: Row = {'isa': c.isa, 'asm': c.asm, 'cells': cells,
+                   'assigns': assigns, 'nodes': nodes}
         rows.append(row)
         by_isa.setdefault(c.isa, []).append(row)
     rec = _base_record('ratchet', rows)
-    rec['summary'] = {m: _stats([r[m] for r in rows]) for m in _METRICS}
+    rec['summary'] = {m: _stats([_metric(r, m) for r in rows]) for m in _METRICS}
     rec['per_isa'] = {
-        isa: {m: _stats([r[m] for r in rs]) for m in _METRICS}
+        isa: {m: _stats([_metric(r, m) for r in rs]) for m in _METRICS}
         for isa, rs in by_isa.items()
     }
     return rows, rec
 
 
-def _regenerate_baseline(rows: list[dict], baseline: dict, allow_reg: bool) -> None:
-    new: dict = {
+def _regenerate_baseline(rows: list[Row], baseline: Record,
+                         allow_reg: bool) -> None:
+    new: dict[str, object] = {
         '_meta': {
             'description': 'Deterministic per-instruction taint-prop work. RATCHET: '
             'values only ever decrease. Regenerate with '
@@ -346,13 +392,15 @@ def _regenerate_baseline(rows: list[dict], baseline: dict, allow_reg: bool) -> N
     }
     raised = []
     for r in rows:
-        old = baseline.get(r['isa'], {}).get(r['asm'])
+        old = _recorded(baseline, _label(r, 'isa'), _label(r, 'asm'))
         raised += [
-            f'{r["isa"]} {r["asm"]} {m}: {old[m]} -> {r[m]}'
+            f'{_label(r, "isa")} {_label(r, "asm")} {m}: {old[m]} -> {_metric(r, m)}'
             for m in _METRICS
-            if old is not None and m in old and r[m] > old[m]
+            if old is not None and m in old and _metric(r, m) > old[m]
         ]
-        new.setdefault(r['isa'], {})[r['asm']] = {m: r[m] for m in _METRICS}
+        per_isa = new.setdefault(_label(r, 'isa'), {})
+        assert isinstance(per_isa, dict)
+        per_isa[_label(r, 'asm')] = {m: _metric(r, m) for m in _METRICS}
     if raised and not allow_reg:
         pytest.fail(
             'UPDATE_PERF_BASELINE refused: these would RAISE the baseline '
@@ -362,20 +410,23 @@ def _regenerate_baseline(rows: list[dict], baseline: dict, allow_reg: bool) -> N
     print(f'\nwrote baseline: {BASELINE_PATH} ({len(rows)} instructions)')
 
 
-def _diff_baseline(rows: list[dict], baseline: dict) -> tuple[list[str], list[str], list[str]]:
+def _diff_baseline(rows: list[Row],
+                   baseline: Record) -> tuple[list[str], list[str], list[str]]:
     regressions, improvements, missing = [], [], []
     for r in rows:
-        old = baseline.get(r['isa'], {}).get(r['asm'])
+        old = _recorded(baseline, _label(r, 'isa'), _label(r, 'asm'))
         if old is None:
             missing.append(f'{r["isa"]} {r["asm"]}')
             continue
         for m in _METRICS:
             if m not in old:
                 continue
-            if r[m] > old[m]:
-                regressions.append(f'{r["isa"]} {r["asm"]} {m}: {old[m]} -> {r[m]} (+{r[m] - old[m]})')
-            elif r[m] < old[m]:
-                improvements.append(f'{r["isa"]} {r["asm"]} {m}: {old[m]} -> {r[m]} ({r[m] - old[m]})')
+            got = _metric(r, m)
+            where = f'{_label(r, "isa")} {_label(r, "asm")} {m}'
+            if got > old[m]:
+                regressions.append(f'{where}: {old[m]} -> {got} (+{got - old[m]})')
+            elif got < old[m]:
+                improvements.append(f'{where}: {old[m]} -> {got} ({got - old[m]})')
     return regressions, improvements, missing
 
 
@@ -423,12 +474,12 @@ def test_instruction_cost_ratchet() -> None:
 def test_perf_timing_bench() -> None:
     cases = _cases()
     assert cases
-    rows: list[dict[str, Any]] = []
-    by_isa: dict[str, list[dict[str, Any]]] = {}
+    rows: list[Row] = []
+    by_isa: dict[str, list[Row]] = {}
     for c in cases:
         cells, assigns, nodes = _work(c)
         ns = _time_ns(c)
-        row = {
+        row: Row = {
             'isa': c.isa,
             'asm': c.asm,
             'cells': cells,
@@ -440,17 +491,17 @@ def test_perf_timing_bench() -> None:
         rows.append(row)
         by_isa.setdefault(c.isa, []).append(row)
 
-    ns_all = [r['ns'] for r in rows]
+    ns_all = [_number(r, 'ns') for r in rows]
     summary = {
         'ns': _stats(ns_all),
-        'cells': _stats([r['cells'] for r in rows]),
-        'assigns': _stats([r['assigns'] for r in rows]),
+        'cells': _stats([_number(r, 'cells') for r in rows]),
+        'assigns': _stats([_number(r, 'assigns') for r in rows]),
         'throughput': _throughput(ns_all),
     }
     per_isa = {}
     for isa, rs in by_isa.items():
-        ns_i = [r['ns'] for r in rs]
-        per_isa[isa] = {'ns': _stats(ns_i), 'throughput': _throughput(ns_i), 'cells': _stats([r['cells'] for r in rs])}
+        ns_i = [_number(r, 'ns') for r in rs]
+        per_isa[isa] = {'ns': _stats(ns_i), 'throughput': _throughput(ns_i), 'cells': _stats([_number(r, 'cells') for r in rs])}
 
     rec = _base_record('timing', rows)
     rec['summary'] = summary
@@ -482,8 +533,9 @@ def test_perf_timing_bench() -> None:
             f'tp/s={d["throughput"]["tp_s_aggregate"]:,.0f}',
         )
     print('  slow tail (top 8 by ns):')
-    for r in sorted(rows, key=lambda r: -r['ns'])[:8]:
-        print(f'    {r["ns"]:9.0f} ns  {r["cells"]:5.1f} cells  {r["isa"]:9s} {r["asm"]}')
+    for r in sorted(rows, key=lambda r: -_number(r, 'ns'))[:8]:
+        print(f'    {_number(r, "ns"):9.0f} ns  {_number(r, "cells"):5.1f} cells  '
+              f'{_label(r, "isa"):9s} {_label(r, "asm")}')
     if path:
         print(f'  logged: {path.relative_to(_HERE.parent)}')
 

@@ -138,7 +138,7 @@ class TestBug1RMWDifferential:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0x01, 8)
 
-        def reader(addr: int, sz: int):
+        def reader(addr: int, sz: int) -> int:
             return 0xFF if addr == mem_addr else 0
 
         ectx = EvalContext(
@@ -168,7 +168,7 @@ class TestBug1RMWDifferential:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0x01, 8)
 
-        def reader(addr: int, sz: int):
+        def reader(addr: int, sz: int) -> int:
             return 0x100 if addr == mem_addr else 0
 
         ectx = EvalContext(
@@ -248,7 +248,7 @@ class TestBug2MemoryInputOffset:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0x01, 8)
 
-        def reader(addr: int, sz: int):
+        def reader(addr: int, sz: int) -> int:
             return 0xFF if addr == mem_addr else 0
 
         ectx = EvalContext(
@@ -277,7 +277,7 @@ class TestBug2MemoryInputOffset:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(mem_addr, 0xFFFFFFFFFFFFFFFF, 8)
 
-        def reader(addr: int, sz: int):
+        def reader(addr: int, sz: int) -> int:
             return 0xDEADBEEF if addr == mem_addr else 0
 
         ectx = EvalContext(
@@ -310,7 +310,7 @@ class TestBug3AddressOnlyRegisters:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(0x3000, 0x01, 8)
 
-        def reader(addr: int, sz: int):
+        def reader(addr: int, sz: int) -> int:
             return 0x01 if addr == 0x3000 else 0
 
         ectx = EvalContext(
@@ -338,7 +338,7 @@ class TestBug3AddressOnlyRegisters:
         shadow = BitPreciseShadowMemory()
         shadow.write_mask(0x4000, 0x01, 8)
 
-        def reader(addr: int, sz: int):
+        def reader(addr: int, sz: int) -> int:
             return 0xFF if addr == 0x4000 else 0
 
         ectx = EvalContext(
@@ -377,7 +377,8 @@ class TestBug4ReadOutputDynamicMem:
         ev = _get_pcode_evaluator_class()(Architecture.AMD64)
 
         class Cell:
-            def __init__(self, instr, out_reg, b_start, b_end):
+            def __init__(self, instr: str, out_reg: str, b_start: int,
+                     b_end: int) -> None:
                 self.instruction = instr
                 self.out_reg = out_reg
                 self.out_bit_start = b_start
@@ -424,7 +425,8 @@ class TestBug5LoadDynamicMem:
         ev = _get_pcode_evaluator_class()(Architecture.AMD64)
 
         class Cell:
-            def __init__(self, instr, out_reg, b_start, b_end):
+            def __init__(self, instr: str, out_reg: str, b_start: int,
+                     b_end: int) -> None:
                 self.instruction = instr
                 self.out_reg = out_reg
                 self.out_bit_start = b_start
@@ -454,7 +456,8 @@ class TestBug5LoadDynamicMem:
         ev = _get_pcode_evaluator_class()(Architecture.AMD64)
 
         class Cell:
-            def __init__(self, instr, out_reg, b_start, b_end):
+            def __init__(self, instr: str, out_reg: str, b_start: int,
+                     b_end: int) -> None:
                 self.instruction = instr
                 self.out_reg = out_reg
                 self.out_bit_start = b_start
@@ -524,7 +527,7 @@ class TestSipHashAvalanche:
         msg = bytes(range(16))
 
         class _S:
-            def read(self, n):
+            def read(self, n: int):
                 return msg[:n]
 
         ql.os.stdin = _S()
@@ -541,7 +544,7 @@ class TestSipHashAvalanche:
 
         captured = [0]
 
-        def _read_hook(ql, fd, buf, count: int):
+        def _read_hook(ql, fd: int, buf: int, count: int):
             if fd != 0:
                 return 0
             data = msg[:count]
@@ -553,7 +556,7 @@ class TestSipHashAvalanche:
 
         ql.os.set_syscall(0, _read_hook, QL_INTERCEPT.CALL)
 
-        def _write_hook(ql, fd, buf, count: int, *_):
+        def _write_hook(ql, fd: int, buf: int, count: int, *_: object):
             if fd == 1 and count == 8 and captured[0] == 0:
                 captured[0] = wrapper.shadow_mem.read_mask(buf, 8)
             return count
