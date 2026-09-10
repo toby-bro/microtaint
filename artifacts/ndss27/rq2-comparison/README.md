@@ -50,8 +50,27 @@ the reference run shipped with the engine,
 report the paper's numbers were generated from, so a reviewer can check the
 tables and figures without waiting three hours first.
 
-Exact and deterministic: fixed corpus, fixed masks, enumerated ground truth. A
-rerun that finds an unsound microtaint case is a real disagreement with the
-paper and is worth reporting.
+The corpus and the masks are fixed by the seed, and the ground truth is an
+enumeration, so the *inputs* are deterministic. The oracle's answers are not,
+quite: it drives 2^k Unicorn emulations through one reused instance, and on a
+long batch a few of them come back with register values no assignment produces.
+That can only ADD apparent under-taints, never hide one, so a run's unsound
+count is an upper bound.
+
+So verify before believing:
+
+```sh
+uv run python verify_unsound.py REPORT.json
+```
+
+It re-scores every reported unsound case against an isolated oracle (a fresh
+Unicorn per emulation) and a freshly started worker, and prints CONFIRMED or
+ORACLE ARTIFACT for each. Measured over five seeds of the full corpus: seeds 7
+and 99 reported none, seed 42 reported one and seed 1 reported twenty-two, and
+**every one of the twenty-three was the oracle**. One of them was `and rax, 0`,
+an instruction whose output cannot depend on any input, with the oracle claiming
+32 tainted bits in RAX.
+
+A CONFIRMED case is a real disagreement with the paper and worth reporting.
 
 `proofs/` holds the Z3 proofs of the category rules (Appendix A).
