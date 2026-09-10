@@ -13,9 +13,26 @@ cases Unicorn invokes the instance as `hook(uc, address, size, user_data)`.
 """
 
 import ctypes
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import TypeAlias
 
-from microtaint.types import Architecture
+from microtaint.emulator.reporter import Reporter
+from microtaint.emulator.shadow import BitPreciseShadowMemory
+from microtaint.instrumentation.ast import LogicCircuit
+from microtaint.instrumentation.cell import DecodedOps
+from microtaint.simulator import CellSimulator
+from microtaint.types import Architecture, ImplicitTaintPolicy
+
+#: The ctypes-wrapped `uc_mem_read(uc, address, buf, size) -> uc_err`.
+UcMemRead: TypeAlias = Callable[[ctypes.c_void_p, int, ctypes.Array[ctypes.c_ubyte], int], int]
+#: `uc_reg_read_batch(uc, int *regs, void **vals, count) -> uc_err`.
+UcRegReadBatch: TypeAlias = Callable[[ctypes.c_void_p, object, object, int], int]
+#: The engine's state_format: (name, bits) per register, in slot order.
+FormatKey: TypeAlias = tuple[tuple[str, int], ...]
+
+# The wrapper imports this module, so naming its type here would be a cycle
+# at runtime; in a stub the import is only ever read by the checker.
+from microtaint.emulator.wrapper import MicrotaintWrapper
 
 class InstructionHook:
     """
@@ -33,7 +50,7 @@ class InstructionHook:
     """
 
     # ----- wrapper-derived state, captured once at construction -----
-    wrapper: Any
+    wrapper: MicrotaintWrapper
     """The owning MicrotaintWrapper. Used only for slow-path callbacks."""
 
     register_taint: dict[str, int]
@@ -42,7 +59,7 @@ class InstructionHook:
     last_tainted_writes: set[int]
     """The wrapper's set of guest addresses written this instruction."""
 
-    instr_cache: dict[int, tuple[Any, dict[str, int]]]
+    instr_cache: dict[int, tuple[frozenset[tuple[str, int]], dict[str, int]]]
     """
     Tier 3 cache: address -> (frozenset(taint.items()), output_state).
     Used as the cold-path lookup when the version-cache misses.
@@ -54,27 +71,27 @@ class InstructionHook:
     Hot-path lookup uses a 64-bit version compare instead of a frozenset construction.
     """
 
-    decode_cache: dict[int, tuple[int, bytes, Any]]
+    decode_cache: dict[int, tuple[int, bytes, LogicCircuit]]
     """
     Address-keyed decode cache: address -> (size, instruction_bytes, circuit).
     On a repeat visit the hook reuses this instead of uc_mem_read + the ctypes
     buffer slice + the cached_gen_rule tuplehash (~3.0 us of the cache-hit floor).
     """
 
-    shadow_mem: Any
-    """BitPreciseShadowMemory instance (a cdef class from microtaint.emulator.shadow)."""
+    shadow_mem: BitPreciseShadowMemory
 
-    sim: Any
-    """The CellSimulator used for differential evaluation."""
+    sim: CellSimulator
+    """The evaluator used for differential evaluation."""
 
-    policy: Any
-    """ImplicitTaintPolicy instance for SC / BOF detection."""
+    policy: ImplicitTaintPolicy
+    """Governs the SC / BOF detection."""
 
-    reporter: Any
-    """Findings reporter."""
+    reporter: Reporter
 
-    ql: Any
-    """Qiling instance, used for emu_stop on detected violations."""
+    ql: object
+    """The Qiling instance, used for emu_stop on a detected violation.
+    Qiling ships no type information, and nothing here reads it: it is
+    only ever handed back."""
 
     check_bof: bool
     check_sc: bool
@@ -144,20 +161,20 @@ class InstructionHook:
         """Register reads the circuits asked for.  `regs_circuit - regs_read`
         is what the compiled path saved."""
 
-    py_decode_cache: dict[int, tuple[int, bytes, Any]]
+    py_decode_cache: dict[int, tuple[int, bytes, LogicCircuit]]
     """address -> (size, bytes, circuit); the dict path only."""
 
-    arr_cache: dict[int, Any]
+    arr_cache: dict[int, tuple[int, int, int, list[int]]]
     """address -> (in_snap, out_snap, val_snap, slots)."""
 
     slots_cache: dict[bytes, list[int]]
     """instruction bytes -> the input slots it reads."""
 
-    taint_ir_progs: dict[bytes, Any]
+    taint_ir_progs: dict[bytes, object]
     """instruction bytes -> compiled taint program.  Holding it here is what
     keeps its emitted code alive."""
 
-    def sync_taint_to_dict(self) -> Any:
+    def sync_taint_to_dict(self) -> None:
         """Flush the slot array into `register_taint` and hand authority back
         to the dict, so an external re-seed is picked up by the next
         instruction."""
@@ -167,24 +184,24 @@ class InstructionHook:
 
     def __init__(
         self,
-        wrapper: Any,
+        wrapper: MicrotaintWrapper,
         *,
         uc_handle: ctypes.c_void_p,
-        uc_mem_read: Callable[..., int],
-        uc_reg_read_batch: Callable[..., int],
-        mem_buf: Any,
+        uc_mem_read: UcMemRead,
+        uc_reg_read_batch: UcRegReadBatch,
+        mem_buf: ctypes.Array[ctypes.c_ubyte],
         arch: Architecture,
-        cached_gen_rule: Callable[..., Any],
-        x64_format_key: Any,
-        get_decoded: Callable[..., Any],
-        build_offsets_arrs: Callable[..., Any],
+        cached_gen_rule: Callable[[Architecture, bytes, FormatKey], LogicCircuit],
+        x64_format_key: FormatKey,
+        get_decoded: Callable[[Architecture, bytes], DecodedOps],
+        build_offsets_arrs: Callable[[frozenset[int]], object],
         eflags_bits: dict[str, int],
         eval_context_cls: type,
         uc_reg_read_batch_addr: int = ...,
         flag_parent: str = ...,
         pc_reg_name: str = ...,
     ) -> None: ...
-    def prepare_block_mode(self, names: Any) -> int:
+    def prepare_block_mode(self, names: list[str]) -> int:
         """Resolve what the per-instruction path would resolve lazily.
 
         Block mode never runs that path, so the engine handle, the C memory
@@ -196,10 +213,10 @@ class InstructionHook:
     """Register name -> slot index in the taint and value arrays."""
     def __call__(
         self,
-        uc: Any,
+        uc: object,
         address: int,
         size: int,
-        user_data: Any,
+        user_data: object,
     ) -> None:
         """Unicorn-invoked instruction callback. Hot-path entry point."""
 
@@ -227,43 +244,43 @@ class MemWriteClearHook:
          (the program wrote a fresh, untainted value).
     """
 
-    wrapper: Any
-    shadow_mem: Any  # BitPreciseShadowMemory (cdef class)
+    wrapper: MicrotaintWrapper
+    shadow_mem: BitPreciseShadowMemory
     last_tainted_writes: set[int]
-    reporter: Any
-    ql: Any
+    reporter: Reporter
+    ql: object
     check_uaf: bool
-    instr_hook: Any  # InstructionHook | None — caches to invalidate on SMC
+    instr_hook: InstructionHook | None
 
-    def __init__(self, wrapper: Any) -> None: ...
+    def __init__(self, wrapper: MicrotaintWrapper) -> None: ...
     def __call__(
         self,
-        uc: Any,
+        uc: object,
         access: int,
         address: int,
         size: int,
         value: int,
-        user_data: Any = ...,
+        user_data: object = ...,
     ) -> None: ...
 
 class MemAccessHook:
     """Unicorn UC_HOOK_MEM_READ callback. Reports UAF on read-after-free."""
 
-    wrapper: Any
-    shadow_mem: Any
-    reporter: Any
-    ql: Any
+    wrapper: MicrotaintWrapper
+    shadow_mem: BitPreciseShadowMemory
+    reporter: Reporter
+    ql: object
     check_uaf: bool
 
-    def __init__(self, wrapper: Any) -> None: ...
+    def __init__(self, wrapper: MicrotaintWrapper) -> None: ...
     def __call__(
         self,
-        uc: Any,
+        uc: object,
         access: int,
         address: int,
         size: int,
         value: int,
-        user_data: Any = ...,
+        user_data: object = ...,
     ) -> None: ...
 
 class UafUnmappedWriteHook:
@@ -275,20 +292,20 @@ class UafUnmappedWriteHook:
     Unicorn's own crash handler fires.
     """
 
-    wrapper: Any
-    shadow_mem: Any
-    reporter: Any
-    ql: Any
+    wrapper: MicrotaintWrapper
+    shadow_mem: BitPreciseShadowMemory
+    reporter: Reporter
+    ql: object
 
-    def __init__(self, wrapper: Any) -> None: ...
+    def __init__(self, wrapper: MicrotaintWrapper) -> None: ...
     def __call__(
         self,
-        uc: Any,
+        uc: object,
         access: int,
         address: int,
         size: int,
         value: int,
-        user_data: Any = ...,
+        user_data: object = ...,
     ) -> bool: ...
 
 class LiveMemReader:
@@ -303,19 +320,19 @@ class LiveMemReader:
     with no Python frame setup.
     """
 
-    wrapper: Any
-    uc_mem_read: Callable[..., int]
-    mem_buf: Any
-    mem_ptrs: dict[int, Any]
-    ql: Any
+    wrapper: MicrotaintWrapper
+    uc_mem_read: UcMemRead
+    mem_buf: ctypes.Array[ctypes.c_ubyte]
+    mem_ptrs: dict[int, object]
+    ql: object
 
     def __init__(
         self,
-        wrapper: Any,
+        wrapper: MicrotaintWrapper,
         *,
-        uc_mem_read: Callable[..., int],
-        mem_buf: Any,
-        mem_ptrs: dict[int, Any],
+        uc_mem_read: UcMemRead,
+        mem_buf: ctypes.Array[ctypes.c_ubyte],
+        mem_ptrs: dict[int, object],
         uc_mem_read_addr: int = ...,
         mem_buf_addr: int = ...,
     ) -> None: ...

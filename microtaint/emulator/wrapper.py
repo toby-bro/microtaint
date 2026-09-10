@@ -3,7 +3,8 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import unicorn.unicorn_py3.unicorn as _uu
 from qiling import Qiling
@@ -31,6 +32,25 @@ from microtaint.instrumentation.cell import _get_decoded
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import _cached_generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintError, ImplicitTaintPolicy
+
+if TYPE_CHECKING:                    # stub-only: an opaque PyCapsule handle
+    from microtaint.emulator.blockpath_c import _Capsule
+
+#: The Unicorn UC_HOOK_CODE callback: (uc, address, size, user_data).
+#: Both InstructionHook.__call__ and the plain bound method satisfy it.
+InstrHook = Callable[[object, int, int, object], None]
+
+#: A Unicorn memory callback: (uc, access, address, size, value, user_data).
+#: The invalid-access variants answer False to stop the run.
+MemHook = Callable[[object, int, int, int, int, object], None]
+InvalidMemHook = Callable[[object, int, int, int, int, object], bool]
+
+
+#: A Qiling syscall handler.  Each one takes ITS syscall's arguments, so
+#: there is no single signature to write; this module only forwards the
+#: value to `ql.os.set_syscall`, and Qiling calls it with the right arity.
+SyscallHandler = object
+
 
 logger = logging.getLogger(__name__)
 
@@ -165,14 +185,24 @@ _VECTOR_LANES: dict[Architecture, dict[int, tuple[str, str, int]]] = {
 #: plus the raw addresses the C hot path reads them through.  Named because two
 #: methods hand it around and an 11-tuple in a signature says nothing.
 RegReadDescriptor = tuple[
-    Any, Any, Any,          # ids / vals / ptrs ctypes arrays (kept alive by the cache)
+    # None in all three when the read is empty: n_calls == 0 and there is
+    # nothing to allocate.
+    ctypes.Array[ctypes.c_int] | None,       # register ids
+    ctypes.Array[ctypes.c_uint64] | None,    # the values the read fills
+    ctypes.Array[ctypes.c_void_p] | None,    # pointers into the values
     int,                    # how many value slots the read fills
     list[str],              # the register name each slot carries
     bool,                   # the packed flags register is among them
-    Any,                    # n_calls pre-wrapped as ctypes.c_int
+    ctypes.c_int | int,     # n_calls pre-wrapped; a plain 0 when empty
     int, int, int,          # ids / ptrs / vals addresses
     int,                    # n_calls
 ]
+
+#: What one block's minimal read descriptor is: the three array addresses,
+#: the call count, the slot each value lands in, whether the packed flags
+#: register is among them, and the arrays themselves so the cache keeps
+#: them alive.
+BlockReadDescriptor = tuple[int, int, int, int, list[int], bool, object]
 
 
 class _RegisterFile:
@@ -208,7 +238,7 @@ class _RegisterFile:
         self.arch = arch
         self.regs = archregs.for_arch(arch)
         self.vectors = _VECTOR_LANES.get(arch, {})
-        self._cache: dict[Any, RegReadDescriptor] = {}
+        self._cache: dict[int | frozenset[int], RegReadDescriptor] = {}
 
         # The whole-file read, for the snapshot fallbacks.  Vector lanes are
         # appended after the scalars so a lane pair stays contiguous.
@@ -417,13 +447,17 @@ class MicrotaintWrapper:
         # per callback; the taint logic in _evaluate is unchanged).  Set
         # MICROTAINT_C_HOOK=0 to fall back to the ctypes CFUNCTYPE path.
         self._use_c_hook: bool = os.environ.get('MICROTAINT_C_HOOK', '1') != '0'
-        self._instr_hook_ud: Any = None  # user_data (id of the InstructionHook), kept alive
+        #: user_data for the C trampoline: the hook's context address,
+        #: kept in its ctypes wrapper so Unicorn receives the same object.
+        self._instr_hook_ud: ctypes.c_void_p | None = None
         self._instr_hook_obj: object = None
         # Cython mem-hook trampolines (CFUNCTYPE instances + the Cython
         # callables they wrap).  These must be kept alive for the lifetime
         # of the Unicorn instance — Unicorn keeps only the raw function
         # pointer, not the Python object that backs it.
-        self._mem_cfuncs: list[Any] = []
+        #: The ctypes callbacks handed to Unicorn, kept alive here because
+        #: Unicorn holds only the raw pointer.
+        self._mem_cfuncs: list[object] = []
 
         # Tracks addresses written with nonzero taint by the most recent circuit
         # evaluation. The mem_write hook reads this set to avoid clearing taint
@@ -446,7 +480,8 @@ class MicrotaintWrapper:
         #: Block-at-a-time taint (MICROTAINT_BLOCK=1).  Opt-in; the
         #: per-instruction path is untouched when it is off.  The runtime is
         #: pure C (emulator/blockpath.h); this holds the C context alive.
-        self._block_ctx: Any = None
+        #: The block hook's C context, an opaque capsule from blockpath_c.
+        self._block_ctx: _Capsule | None = None
 
         self._setup_hooks()
 
@@ -582,7 +617,8 @@ class MicrotaintWrapper:
 
     def _block_read_descriptor(self, offsets: frozenset[int],
                            slot_map: dict[str, int],
-                           cache: dict[frozenset[int], Any]) -> Any:
+                           cache: dict[frozenset[int], BlockReadDescriptor],
+                           ) -> BlockReadDescriptor:
         """A minimal uc_reg_read_batch descriptor for one block's reads.
 
         The whole-file read was 90% of block mode's cost when it was first
@@ -628,7 +664,7 @@ class MicrotaintWrapper:
             uc_ids.append(uc_id)
             slots.extend((slot_map.get(name, -1), -1))
         n_calls = len(uc_ids)
-        got: tuple[int, int, int, int, list[int], bool, Any]
+        got: BlockReadDescriptor
         if n_calls == 0:
             got = (0, 0, 0, 0, [], False, None)
             cache[offsets] = got
@@ -664,12 +700,12 @@ class MicrotaintWrapper:
         slot_map = dict(hook.slot_map)
         reg_slots = [slot_map.get(n, -1) for n in regfile.all_names]
 
-        desc_cache: dict[frozenset[int], Any] = {}
+        desc_cache: dict[frozenset[int], BlockReadDescriptor] = {}
 
-        def descriptor(offsets: frozenset[int]) -> Any:
+        def descriptor(offsets: frozenset[int]) -> BlockReadDescriptor:
             return self._block_read_descriptor(offsets, slot_map, desc_cache)
 
-        def compiler(address: int, size: int) -> Any:
+        def compiler(address: int, size: int) -> _Capsule | None:
             """Plan one block.  Called once per DISTINCT block, with the GIL,
             from the C hook: this is the compiler, not the runtime."""
             try:
@@ -683,15 +719,15 @@ class MicrotaintWrapper:
         # `_vals` has one slot per NAME and `_ids`/`_ptrs` one per uc_reg_read
         # call: a vector register is one call that fills two lanes.  So the
         # slot list is per name and the call count is separate.
-        ectx = blockpath_c.hook_new(
+        block_ctx = blockpath_c.hook_new(
             c_instruction_hook_ud(hook), compiler,
             ctypes.addressof(regfile._ids), ctypes.addressof(regfile._ptrs),
             ctypes.addressof(regfile._vals), regfile._n_calls, reg_slots)
-        self._block_ctx = ectx
+        self._block_ctx = block_ctx
         h = ctypes.c_size_t()
         err = _uc_hook_add(self._uc_handle, ctypes.byref(h), UC_HOOK_BLOCK,
                            ctypes.c_void_p(blockpath_c.hook_ptr()),
-                           ctypes.c_void_p(blockpath_c.hook_ud(ectx)), 1, 0)
+                           ctypes.c_void_p(blockpath_c.hook_ud(block_ctx)), 1, 0)
         if err != 0:
             logger.warning(f'block hook registration failed: {err}')
             self._block_ctx = None
@@ -742,9 +778,9 @@ class MicrotaintWrapper:
         if not self._instr_hook_registered:
             # Build the Cython hot-path hook callable. Falls back to the
             # Python method if Cython hook construction fails.
-            # Typed as Callable[..., None] because both InstructionHook.__call__
-            # and the plain bound method _instruction_evaluator_raw satisfy it.
-            instr_hook: Callable[..., None] = (
+            # `InstrHook` because both InstructionHook.__call__ and the plain
+            # bound method _instruction_evaluator_raw satisfy it.
+            instr_hook: InstrHook = (
                 self._make_cython_hook() or self._instruction_evaluator_raw
                 if not self._disable_cython_hook
                 else self._instruction_evaluator_raw
@@ -856,8 +892,8 @@ class MicrotaintWrapper:
                     continue
         return None
 
-    def _set_syscall_hook(self, name: str, handler: Callable[..., Any],
-                          intercept: Any) -> None:
+    def _set_syscall_hook(self, name: str, handler: SyscallHandler,
+                          intercept: object) -> None:
         """Hook a syscall by name, registered under its number on this guest.
 
         Registering the NUMBER rather than the name is deliberate.  Qiling
@@ -887,7 +923,7 @@ class MicrotaintWrapper:
 
     def _register_cython_mem_hook(
         self,
-        hook_obj: Callable[..., None],
+        hook_obj: MemHook,
         hook_type: int,
     ) -> None:
         """Register a Cython MemWriteClearHook / MemAccessHook via the
@@ -939,7 +975,7 @@ class MicrotaintWrapper:
 
     def _register_cython_invalid_hook(
         self,
-        hook_obj: Callable[..., bool],
+        hook_obj: InvalidMemHook,
         hook_type: int,
     ) -> None:
         """Register a Cython invalid-mem hook (e.g. UC_HOOK_MEM_WRITE_UNMAPPED).
@@ -1085,7 +1121,7 @@ class MicrotaintWrapper:
         logger.debug(f'Tainted {n} bytes at 0x{buf:x} from stdin')
         return n
 
-    def _stub_unimplemented_syscall(self, ql: Qiling, *_args: Any) -> None:
+    def _stub_unimplemented_syscall(self, ql: Qiling, *_args: object) -> None:
         ql.arch.regs.write('RAX', 0xFFFFFFFFFFFFFFDA)
 
     # Labels that Qiling assigns to regions that are NOT user heap data.
@@ -1111,7 +1147,8 @@ class MicrotaintWrapper:
                 return str(label)
         return None
 
-    def _munmap_hook(self, ql: Qiling, addr: int, length: int, *_args: Any) -> None:
+    def _munmap_hook(self, ql: Qiling, addr: int, length: int,
+                     *_args: object) -> None:
         if length <= 0:
             return
         label = self._region_label_at(ql, addr, length)
