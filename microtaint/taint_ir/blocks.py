@@ -81,11 +81,15 @@ def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
     memory access.  It is off by default because the default base is synthetic.
 
     The whole block is tried first, because that is the common case and it costs
-    one lowering; only when it declines does this walk instruction by
-    instruction.  A single instruction that will not lower at all still gets a
-    Region with `prog=None`, so the caller sees complete coverage of the block
-    and can send that one instruction down the per-instruction path rather than
-    having to work out what is missing.
+    one lowering; only when it declines is the block walked in shorter runs.
+    That first attempt is `_greedy`'s own first step, not a separate fast path:
+    when it was written out here as well, every block that declined paid for the
+    whole-block lowering TWICE, once here and once inside `_greedy`.
+
+    A single instruction that will not lower at all still gets a Region with
+    `prog=None`, so the caller sees complete coverage of the block and can send
+    that one instruction down the per-instruction path rather than having to
+    work out what is missing.
     """
     if builder is None:
         # The shared one: a Builder costs a register-map build (measured at
@@ -117,47 +121,73 @@ def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
         except Exception:            # a lifter surprise is a decline, not a crash
             return None, None
 
-    whole, _cut = lower(0, n)
-    if whole is not None:
-        return [Region(0, n, marks[0][1], end_of[n - 1], whole)]
     return _greedy(n, marks, end_of, lower)
+
+
+#: How many instructions to ask for at a region start once the block has been
+#: cut at least once.  A block that lowers whole never gets here, and one that
+#: does not has short regions after the first: measured over the 61 distinct
+#: blocks of the three taint-density guests, 51 of 61 regions are 4
+#: instructions or fewer.
+_REACH_AFTER_CUT = 4
+
+
+def _longest(i: int, n: int, reach: int, lower: Lower) -> tuple[int, IRProg | None]:
+    """The longest run from `i` that lowers as one program, and that program.
+
+    Asks for `reach` instructions and doubles while they fit, instead of asking
+    for the whole remainder every time.  The first probe from a start is the
+    expensive one -- it lowers everything it is given and is thrown away on a
+    decline -- and probing the remainder was 74% of the planning cost of the
+    worst block in bench_dense, which cuts into eight regions.
+
+    Growing is what keeps a region MAXIMAL: a run that fits is accepted only
+    once a longer one has been refused.  That is sound because a decline is
+    caused by a PAIR of accesses inside the run -- an address that depends on a
+    value loaded there, or a load after a store to the same place -- and
+    dropping the last instruction cannot create one, so a run that fits implies
+    every shorter run fits.
+    """
+    best_len, best_prog = 0, None
+    j = min(n, i + max(1, reach))
+    capped = False
+    while True:
+        prog, cut = lower(i, j)
+        if prog is not None:
+            best_len, best_prog = j - i, prog
+            # A length the decline itself named is a boundary: the instruction
+            # after it is the one that broke the run, so there is nothing
+            # longer to find.
+            if j >= n or capped:
+                return best_len, best_prog
+            j = min(n, i + 2 * best_len)
+            continue
+        if cut is not None and best_len < cut < j - i:
+            # The decline named a position: everything before it is a
+            # candidate, and if THAT declines it names another, so this walks
+            # strictly downwards and terminates.
+            j, capped = i + cut, True
+            continue
+        if best_len:
+            return best_len, best_prog
+        # Nothing has fitted and the decline named no usable position (an
+        # unliftable instruction, say): search downwards from the longest.
+        for k in range(n, i, -1):
+            prog, _c = lower(i, k)
+            if prog is not None:
+                return k - i, prog
+        return 0, None
 
 
 def _greedy(n: int, marks: list[tuple[int, int, int]], end_of: list[int],
             lower: Lower) -> list[Region]:
-    """Longest-first from each cut, so every region is maximal.
-
-    A decline usually says WHICH instruction caused it, and then the boundary is
-    known without searching for it: take the instructions before that one and
-    start again there.  Searching costs a full lowering per candidate length, and
-    a lowering is a SLEIGH translation plus an IR build -- measured at up to
-    201 ms for one block.  The search remains as the fallback for a decline that
-    names no position (an unliftable instruction, say).
-    """
+    """Longest-first from each cut, so every region is maximal."""
     regions: list[Region] = []
     i = 0
+    reach = n                    # the first probe is the whole block
     while i < n:
-        taken = 0
-        prog = None
-        prog, cut = lower(i, n)
-        if prog is not None:
-            taken = n - i
-        else:
-            while cut is not None and cut > 0:
-                # The decline named a position: everything before it is a
-                # candidate, and if THAT declines it names another, so this
-                # walks strictly downwards and terminates.
-                prog, cut2 = lower(i, i + cut)
-                if prog is not None:
-                    taken = cut
-                    break
-                cut = cut2 if cut2 is not None and cut2 < cut else None
-            if not taken and prog is None:
-                for j in range(n, i, -1):       # no position named: search
-                    prog, _c = lower(i, j)
-                    if prog is not None:
-                        taken = j - i
-                        break
+        taken, prog = _longest(i, n, reach, lower)
+        reach = _REACH_AFTER_CUT
         if not taken:
             # This one instruction lowers nowhere.  Emit it as a region with no
             # program so the caller still sees complete coverage of the block

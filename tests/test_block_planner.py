@@ -89,6 +89,105 @@ def test_every_instruction_is_accounted_for(code: bytes) -> None:
     _assert_covers(plan_block(arch, code), arch, code)
 
 
+#: A real block from `benchmark/taint_density/bench_dense.elf` at 0x401313: 27
+#: instructions that cut into EIGHT regions, because the S-box loop loads an
+#: index and then loads through it, over and over.  The synthetic block above
+#: cuts once, which is not enough to exercise a planner that probes ahead: the
+#: interesting case is the second and later cuts, where what the planner asks
+#: for is no longer the whole block.
+_EIGHT_REGIONS_BASE = 0x401313
+_EIGHT_REGIONS = bytes.fromhex(
+    '488b95d8feffff8b45fc83e00789c148d3ea4889d089c28b45fc31d08845ef'
+    '8b45fc48980fb68405e0feffff8845ee0fb645ef48980fb69405e0feffff8b'
+    '45fc4898889405e0feffff0fb645ef48980fb655ee889405e0feffff8345fc'
+    '01817dfcff0000007e99')
+
+
+def _assert_every_cut_is_maximal(arch: Architecture, code: bytes, base: int,
+                                 *, abs_ram: bool = False) -> int:
+    """Every region but the last must not accept one more instruction.
+
+    Returns how many cuts it checked, so a caller can refuse to pass on zero:
+    a block that happens to lower whole has no cut to check and would agree
+    with any planner at all.
+    """
+    from microtaint.taint_ir.blocks import _translate
+    from microtaint.taint_ir.frompcode import Unsupported, builder_for
+
+    builder = builder_for(arch)
+    regions = plan_block(arch, code, base, abs_ram=abs_ram, builder=builder)
+    ops = _translate(arch, code, base)
+    marks = instruction_starts(ops)
+    n = len(marks)
+    checked = 0
+    for r in regions[:-1]:
+        if r.prog is None:
+            continue          # nothing lowered, so there is no length to grow
+        i, j = r.first, r.first + r.count + 1
+        if j > n:
+            continue
+        lo = marks[i][0]
+        hi = marks[j][0] if j < n else len(ops)
+        end = marks[j][1] if j < n else base + len(code)
+        try:
+            builder.build(ops[lo:hi], end, emit=Emit.BOTH, block=True,
+                          abs_ram=abs_ram)
+        except Unsupported:
+            checked += 1
+            continue
+        pytest.fail(
+            f'region [{i}, {i + r.count}) is not maximal: it also lowers with '
+            f'{r.count + 1} instructions, so the planner cut early')
+    return checked
+
+
+#: A real block from `bench_sparse.elf` at 0x40105e: it cuts once and the TAIL
+#: is 8 instructions, longer than the planner asks for at a second region
+#: start.  That is the case that catches a planner which takes the first run
+#: that fits: without growing, this becomes three regions instead of two.
+_LONG_TAIL_BASE = 0x40105E
+_LONG_TAIL = bytes.fromhex(
+    '488b7424f8440fb61d952000000fb65c24f741b8000000004c8d15831f00'
+    '0049b9b3010000000100004c89e1ba000000000f1f44000066662e0f1f84'
+    '000000000066662e0f1f84000000000066662e0f1f84000000000066662e'
+    '0f1f8400000000000fb63940c0c70389d04431c001f883c2010fb6fa4132'
+    '043a8801490faff10fb6c04801c64883c10181fa0001000075d0')
+
+
+def test_a_region_grows_past_what_the_planner_first_asks_for() -> None:
+    """The planner probes a few instructions at a region start rather than the
+    whole remainder, so a region longer than that probe has to be found by
+    growing.  Taking the first run that fits would cut this block into three
+    regions instead of two, which is correct but slower and loses the dead-code
+    elimination that runs across a region."""
+    arch = Architecture.AMD64
+    regions = plan_block(arch, _LONG_TAIL, _LONG_TAIL_BASE, abs_ram=True)
+    assert len(regions) == 2, (
+        f'expected two regions, got {[(r.first, r.count) for r in regions]}')
+    assert regions[1].count >= 5, (
+        f'the tail region is {regions[1].count} instructions; it is here '
+        f'BECAUSE it is longer than the first probe, so a short one means the '
+        f'planner stopped growing')
+    checked = _assert_every_cut_is_maximal(arch, _LONG_TAIL, _LONG_TAIL_BASE,
+                                           abs_ram=True)
+    assert checked == 1, f'expected one cut to check, checked {checked}'
+
+
+def test_a_real_multi_region_block_is_cut_maximally() -> None:
+    """The planner probes ahead rather than lowering the whole remainder every
+    time, and the risk of that is a region cut one instruction short: still
+    correct, just more regions and less dead code eliminated across each."""
+    arch = Architecture.AMD64
+    regions = plan_block(arch, _EIGHT_REGIONS, _EIGHT_REGIONS_BASE, abs_ram=True)
+    assert len(regions) >= 4, (
+        f'this block used to cut into eight regions and now makes '
+        f'{len(regions)}; it is here BECAUSE it cuts repeatedly, so the '
+        f'property below is no longer being exercised')
+    checked = _assert_every_cut_is_maximal(arch, _EIGHT_REGIONS,
+                                           _EIGHT_REGIONS_BASE, abs_ram=True)
+    assert checked >= 4, f'only {checked} cuts were checked'
+
+
 def test_regions_are_maximal() -> None:
     """Greedy means each region is as long as it can be: the instruction just
     past a cut must genuinely not fit.  A planner that cut early would still
