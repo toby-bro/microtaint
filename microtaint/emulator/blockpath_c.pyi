@@ -21,11 +21,21 @@ def plan_new(
     size: int,
     regions: list[tuple[int, int, list[tuple[int, int, int]]]],
     keepalive: Any,
+    ids_addr: int = ...,
+    ptrs_addr: int = ...,
+    vals_addr: int = ...,
+    n_calls: int = ...,
+    val_slots: list[int] | None = ...,
+    need_flags: bool = ...,
 ) -> _Capsule:
     """A block's plan: per region, (function address, guest address, accesses).
 
     `keepalive` is held for the plan's lifetime; the emitted code the function
     addresses point into belongs to it, and the C runtime does not refcount.
+
+    The trailing arguments are the block's OWN uc_reg_read_batch descriptor:
+    which registers it reads and where they land.  Reading the whole register
+    file instead was 90% of block mode's cost when it was first wired.
     """
 
 def runner_new(n_slots: int, pc_slot: int, mem: _Capsule,

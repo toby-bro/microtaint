@@ -588,6 +588,26 @@ class MicrotaintWrapper:
         slot_map = dict(hook.slot_map)
         reg_slots = [slot_map.get(n, -1) for n in regfile.all_names]
 
+        def descriptor(offsets: frozenset[int]) -> Any:
+            """A minimal uc_reg_read_batch descriptor for one block's reads.
+
+            The whole-file read was 90% of block mode's cost when it was first
+            wired.  `offsets_arrays` already builds and caches exactly this for
+            the per-instruction path; a block is the same question asked of a
+            bigger register set.
+            """
+            built = regfile.offsets_arrays(offsets)
+            (ids_arr, vals_arr, ptrs_arr, _n_vals, uc_names, needs_flags,
+             _n_calls_c, ids_addr, ptrs_addr, vals_addr, n_calls) = built
+            if n_calls == 0:
+                return None
+            slots = [slot_map.get(n, -1) for n in uc_names]
+            # The ctypes arrays are cached by the register file, but hold a
+            # reference anyway: the C plan keeps only their addresses.
+            hold = (ids_arr, vals_arr, ptrs_arr)
+            return (ids_addr, ptrs_addr, vals_addr, n_calls, slots,
+                    bool(needs_flags), hold)
+
         def compiler(address: int, size: int) -> Any:
             """Plan one block.  Called once per DISTINCT block, with the GIL,
             from the C hook: this is the compiler, not the runtime."""
@@ -595,7 +615,8 @@ class MicrotaintWrapper:
                 code = bytes(self.ql.mem.read(address, size))
             except Exception:  # an unreadable block is unhandleable
                 return None
-            got = compile_block(self.arch, code, address, slot_map)
+            got = compile_block(self.arch, code, address, slot_map,
+                                descriptor=descriptor)
             return None if got is None else got[0]
 
         # `_vals` has one slot per NAME and `_ids`/`_ptrs` one per uc_reg_read

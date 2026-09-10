@@ -98,10 +98,22 @@ typedef struct {
 } MtBlkRegion;
 
 typedef struct {
-  int size; /* the block's byte length: part of its identity */
+  int size;      /* the block's byte length: part of its identity */
   int n_regions;
-  int handleable;       /* every region lowered */
+  int handleable; /* every region lowered */
   MtBlkRegion *regions; /* malloc'd */
+  /* This block's OWN register read.  Reading the whole file per block is what
+   * made the first wired version 2.8x slower than the per-instruction path:
+   * measured, 0.392 s of block mode's 0.434 s on bench_untainted went on
+   * reading ~88 registers per block, ~37 us each time, while the taint
+   * computation the whole thing exists for cost 0.009 s.  A block reads only
+   * the registers its regions actually read, which is the same trick
+   * `ir_slots` plays per instruction.  The arrays belong to the caller. */
+  unsigned long long ids_addr, ptrs_addr, vals_addr;
+  int n_calls;   /* uc_reg_read_batch calls; a vector is one call, two slots */
+  int n_vals;    /* slots the read fills */
+  int *val_slots; /* engine slot for each of those, malloc'd */
+  int need_flags; /* the packed flags register is among them */
 } MtBlkPlan;
 
 typedef struct {
@@ -366,8 +378,9 @@ static inline void mt_blk_abandon(MtBlkPending *pend) {
 /* The emitted code a region's `fn` points into is owned by the caller, which
  * must keep it alive for the plan's lifetime.  Nothing here refcounts. */
 static void mt_blk_plan_free(MtBlkPlan *p) {
-  if (!p) { return; }
+  if (!p) return;
   free(p->regions);
+  free(p->val_slots);
   free(p);
 }
 

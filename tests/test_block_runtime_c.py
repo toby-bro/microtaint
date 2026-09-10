@@ -81,8 +81,7 @@ def _run(layout: dict[str, int], seq: list[bytes], values: dict[str, int],
     for code in chunks:
         got = compile_block(_ARCH, code, addr, layout)
         assert got is not None, f'{code.hex()} at {addr:#x} did not compile'
-        plan, _regions = got
-        rc = B.runner_on_block(runner, plan, addr, regs)
+        rc = B.runner_on_block(runner, got[0], addr, regs)
         assert rc == 0, f'the runtime declined {code.hex()} at {addr:#x}'
         regs = B.runner_values(runner)
         addr += len(code)

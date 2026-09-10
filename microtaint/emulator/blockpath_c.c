@@ -59,6 +59,25 @@ typedef struct {
     unsigned long no_plan, no_regs, no_slot;
 } MtBlkCtx;
 
+/* Diagnostic bisect, the same idea as MICROTAINT_NULL_HOOK on the instruction
+ * path: stop the block hook after each stage so the cost of BEING hooked can be
+ * told apart from the cost of the work inside.  Purely for measurement -- any
+ * value but 0 produces no taint.
+ *   1  return as soon as the block is announced
+ *   2  ... after the plan-cache lookup
+ *   3  ... after the register-file read
+ *   4  ... after computing, without committing
+ */
+static int blk_stop_after = -1;
+
+static int blk_stage(void) {
+    if (blk_stop_after < 0) {
+        const char *v = getenv("MICROTAINT_BLOCK_STOP");
+        blk_stop_after = (v && *v) ? atoi(v) : 0;
+    }
+    return blk_stop_after;
+}
+
 static uint64_t blk_key(uint64_t address, unsigned int size) {
     uint64_t h = address * 0x9E3779B97F4A7C15ULL;
     h ^= (uint64_t)size * 0xC2B2AE3D27D4EB4FULL;
@@ -80,21 +99,23 @@ static BlkCacheEnt *blk_slot(MtBlkCtx *b, uint64_t key) {
  * The per-instruction path reads only an instruction's live inputs; a block
  * cannot know which registers its later regions will want, and asking Unicorn
  * per region is the cost block mode exists to remove. */
-static int blk_read_regs(MtBlkCtx *b) {
+static int blk_read_regs(MtBlkCtx *b, const MtBlkPlan *plan) {
     MtFastCtx *c = b->fc;
     if (!c->use_cregs || !c->uc_reg_read_batch) return -1;
     if (*c->uc_handle_addr == 0) return -1;
+    /* The BLOCK's own register set, not the whole file.  See MtBlkPlan. */
+    if (plan->n_calls <= 0) return 0;         /* reads nothing: nothing to do */
     c->uc_reg_read_batch((void *)(uintptr_t)*c->uc_handle_addr,
-                         (void *)(uintptr_t)b->ids_addr,
-                         (void *)(uintptr_t)b->ptrs_addr, b->n_calls);
-    const uint64_t *vals = (const uint64_t *)(uintptr_t)b->vals_addr;
+                         (void *)(uintptr_t)plan->ids_addr,
+                         (void *)(uintptr_t)plan->ptrs_addr, plan->n_calls);
+    const uint64_t *vals = (const uint64_t *)(uintptr_t)plan->vals_addr;
     uint64_t *g_val = *c->g_val;
     const int n_slots = *c->n_slots;
-    for (int i = 0; i < b->n_regs; i++) {
-        const int slot = b->reg_slots[i];
+    for (int i = 0; i < plan->n_vals; i++) {
+        const int slot = plan->val_slots[i];
         if (slot >= 0 && slot < n_slots) g_val[slot] = vals[i];
     }
-    if (*c->eflags_slot >= 0) mt_explode_eflags(c);
+    if (plan->need_flags && *c->eflags_slot >= 0) mt_explode_eflags(c);
     return 0;
 }
 
@@ -261,11 +282,15 @@ static void plan_destroy(PyObject *cap) {
 }
 
 /* plan_new(size, [(fn_addr, region_addr, [(kind, size, needval), ...]), ...],
- *          keepalive) */
+ *          keepalive, ids, ptrs, vals, n_calls, val_slots, need_flags) */
 static PyObject *py_plan_new(PyObject *self, PyObject *args) {
     (void)self;
-    int size; PyObject *regions, *keepalive;
-    if (!PyArg_ParseTuple(args, "iOO", &size, &regions, &keepalive)) return NULL;
+    int size; PyObject *regions, *keepalive, *val_slots = NULL;
+    unsigned long long ids = 0, ptrs = 0, vals = 0;
+    int n_calls = 0, need_flags = 0;
+    if (!PyArg_ParseTuple(args, "iOO|KKKiOp", &size, &regions, &keepalive,
+                          &ids, &ptrs, &vals, &n_calls, &val_slots, &need_flags))
+        return NULL;
     PyObject *seq = PySequence_Fast(regions, "regions must be a sequence");
     if (!seq) return NULL;
     const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
@@ -309,6 +334,26 @@ static PyObject *py_plan_new(PyObject *self, PyObject *args) {
         Py_DECREF(aseq);
     }
     Py_DECREF(seq);
+
+    plan->ids_addr = ids;
+    plan->ptrs_addr = ptrs;
+    plan->vals_addr = vals;
+    plan->n_calls = n_calls;
+    plan->need_flags = need_flags;
+    if (val_slots && val_slots != Py_None) {
+        PyObject *vs = PySequence_Fast(val_slots, "val_slots must be a sequence");
+        if (!vs) { mt_blk_plan_free(plan); return NULL; }
+        const Py_ssize_t nv = PySequence_Fast_GET_SIZE(vs);
+        plan->val_slots = (int *)calloc((size_t)(nv > 0 ? nv : 1), sizeof(int));
+        if (!plan->val_slots) { Py_DECREF(vs); mt_blk_plan_free(plan); return PyErr_NoMemory(); }
+        for (Py_ssize_t i = 0; i < nv; i++) {
+            long v = PyLong_AsLong(PySequence_Fast_GET_ITEM(vs, i));
+            if (v == -1 && PyErr_Occurred()) { Py_DECREF(vs); mt_blk_plan_free(plan); return NULL; }
+            plan->val_slots[i] = (int)v;
+        }
+        plan->n_vals = (int)nv;
+        Py_DECREF(vs);
+    }
 
     PlanBox *box = (PlanBox *)calloc(1, sizeof(PlanBox));
     if (!box) { mt_blk_plan_free(plan); return PyErr_NoMemory(); }
@@ -563,6 +608,8 @@ static void mt_blk_hook(void *uc, uint64_t address, uint32_t size, void *user_da
     MtBlkCtx *b = (MtBlkCtx *)user_data;
     MtFastCtx *c = b->fc;
     b->blocks++;
+    const int stage = blk_stage();
+    if (stage == 1) return;
 
     const uint64_t key = blk_key(address, size);
     BlkCacheEnt *ent = blk_slot(b, key);
@@ -596,17 +643,21 @@ static void mt_blk_hook(void *uc, uint64_t address, uint32_t size, void *user_da
         PyGILState_Release(gil);
     }
 
+    if (stage == 2) return;
+
     /* Reaching a new block proves the held one completed. */
     if (b->pend.valid) mt_blk_commit(&b->pend, &b->env, *c->g_taint, *c->n_slots);
 
     if (!ent->plan) { b->unhandled++; b->no_plan++; return; }
-    if (blk_read_regs(b) != 0) { b->unhandled++; b->no_regs++; return; }
+    if (blk_read_regs(b, ent->plan) != 0) { b->unhandled++; b->no_regs++; return; }
+    if (stage == 3) return;
     b->env.pc_slot = *c->rip_slot;
     if (mt_blk_compute(ent->plan, &b->env, *c->g_val, *c->g_taint,
                        *c->n_slots, address, &b->pend) != MT_BLK_OK) {
         b->unhandled++;
         return;
     }
+    if (stage == 4) mt_blk_abandon(&b->pend);
     b->handled++;
 }
 

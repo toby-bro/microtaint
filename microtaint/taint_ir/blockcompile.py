@@ -66,12 +66,19 @@ def block_slot_resolver(arch: Any, name_to_slot: dict[str, int]) -> SlotOf:
 
 
 def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int],
-                  *, builder: Any = None) -> tuple[Any, list[Any]] | None:
-    """-> (plan capsule, [Region]), or None if the block cannot be handled.
+                  *, builder: Any = None,
+                  descriptor: Any = None) -> tuple[Any, list[Any], set[int]] | None:
+    """-> (plan capsule, [Region], register offsets read), or None.
 
     None means the caller must send this block down the per-instruction path.
     A block is refused rather than partly handled: a region silently skipped is
     unanalysed code, which is worse than being slow.
+
+    The third element is the set of register byte-offsets whose VALUE the
+    block's programs actually read.  Reading the whole register file per block
+    instead was 90% of block mode's cost when it was first wired -- 0.392 s of
+    0.434 s on bench_untainted -- so the caller turns this into a minimal read
+    descriptor and hands it back through `descriptor`.
     """
     from microtaint.emulator import blockpath_c  # noqa: PLC0415
     from microtaint.instrumentation.cell_c import taint_ir_c  # type: ignore[attr-defined]  # noqa: PLC0415
@@ -90,6 +97,7 @@ def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int
         return None
 
     specs, keep = [], []
+    reads: set[int] = set()
     for region in regions:
         prog = region.prog
         accesses = list(getattr(prog, 'accesses', None) or [])
@@ -112,8 +120,36 @@ def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int
         live_mem = {k[1] for (kind, k), n in prog.inputs.items()
                     if kind == 'v' and isinstance(k, tuple) and k[0] == 'mem'
                     and prog.live[n]}
+        # Registers whose VALUE survived the dead-code pass.  A taint rule
+        # usually routes masks around without ever looking at what the register
+        # held, so this set is far smaller than "every register the block
+        # mentions" -- and it is the whole difference between a block read and
+        # a whole-file read.
+        reads |= {k[1] for (kind, k), n in prog.inputs.items()
+                  if kind == 'v' and isinstance(k, tuple) and k[0] == 'reg'
+                  and prog.live[n]}
         specs.append((addr, region.addr,
                       [(0 if a['kind'] == 'load' else 1, a['size'],
                         1 if k in live_mem else 0)
                        for k, a in enumerate(accesses)]))
-    return blockpath_c.plan_new(len(code), specs, keep), regions
+
+    desc = _read_descriptor(descriptor, reads, keep)
+    plan = blockpath_c.plan_new(len(code), specs, keep, *desc)
+    return plan, regions, reads
+
+
+def _read_descriptor(descriptor: Any, reads: set[int],
+                     keep: list[Any]) -> tuple[int, int, int, int, Any, bool]:
+    """The block's own uc_reg_read_batch descriptor, or an empty one.
+
+    Empty means the C runtime reads nothing, which is correct for a block whose
+    programs read no register value at all.
+    """
+    if descriptor is None:
+        return (0, 0, 0, 0, None, False)
+    got = descriptor(frozenset(reads))
+    if got is None:
+        return (0, 0, 0, 0, None, False)
+    ids, ptrs, vals, n_calls, val_slots, need_flags, hold = got
+    keep.append(hold)
+    return (ids, ptrs, vals, n_calls, val_slots, need_flags)
