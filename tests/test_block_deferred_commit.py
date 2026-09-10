@@ -63,7 +63,8 @@ def _fresh(layout: dict[str, int], *, rax_tainted: bool = True) -> tuple[Any, An
     if rax_tainted:
         seed[layout['RAX']] = (1 << 64) - 1
     B.runner_seed(runner, seed)
-    got = compile_block(_ARCH, _MOV_RAX_RBX, 0x401000, layout)
+    got = compile_block(_ARCH, _MOV_RAX_RBX, 0x401000, layout,
+                        publish_all_values=True)
     assert got is not None, 'mov rax, rbx did not compile'
     return runner, got[0], [0] * len(layout)
 
@@ -106,7 +107,8 @@ def test_an_abandoned_block_leaves_nothing_behind(kit: dict[str, int]) -> None:
         'instruction that never ran')
 
     # A later block, which must commit ITSELF and nothing else.
-    got = compile_block(_ARCH, _INC_RCX, 0x402000, layout)
+    got = compile_block(_ARCH, _INC_RCX, 0x402000, layout,
+                        publish_all_values=True)
     assert got is not None, 'inc rcx did not compile'
     B.runner_on_block(runner, got[0], 0x402000, regs)
     B.runner_finish(runner, True)

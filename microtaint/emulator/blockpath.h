@@ -154,6 +154,7 @@ typedef struct {
    * not allocate. */
   uint64_t *sv, *st, *so;
   int pc_slot;         /* -1 when the program counter has no slot */
+  int stop_after;      /* diagnostic: 5 stop after pass 1, 6 after the loads */
   unsigned long *miss; /* MT_BLK_N_MISS counters, may be NULL */
   /* The address a declined memory read wanted.  "The read declined" is not
    * actionable; "it declined at this address" says whether the reader is
@@ -272,6 +273,7 @@ static int mt_blk_compute(
       memset(so + MT_BLK_MEM_BASE, 0, accb);
       ((MtBlkFn)(reg->addr_fn ? reg->addr_fn : reg->fn))(sv, st, so);
 
+      if (env->stop_after == 5) { continue; }
       for (int k = 0; k < reg->n_acc; k++) {
         if (reg->acc_kind[k] != 0) { continue; /* stores read nothing */ }
         const int base = MT_BLK_MEM_BASE + MT_BLK_PER_ACC * k;
@@ -293,6 +295,7 @@ static int mt_blk_compute(
       }
     }
 
+    if (env->stop_after == 6) { continue; }
     /* Pass 2: the answer, in place.  `st` is both the taint input and the
      * output, so afterwards it IS the region's post-state and nothing has to
      * be copied back. */

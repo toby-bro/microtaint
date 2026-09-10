@@ -57,6 +57,7 @@ typedef struct {
      * code, so "how often and why" has to be a measurement. */
     unsigned long miss[MT_BLK_N_MISS];
     unsigned long no_plan, no_regs, no_slot;
+    unsigned long regs_clean;    /* blocks entered with no register tainted */
 } MtBlkCtx;
 
 /* Diagnostic bisect, the same idea as MICROTAINT_NULL_HOOK on the instruction
@@ -676,10 +677,26 @@ static void mt_blk_hook(void *uc, uint64_t address, uint32_t size, void *user_da
     /* Reaching a new block proves the held one completed. */
     if (b->pend.valid) mt_blk_commit(&b->pend, &b->env, *c->g_taint, *c->n_slots);
 
+    /* How often is the whole register state clean at a block boundary?  That
+     * is the cheap sound condition for skipping a block entirely: nothing to
+     * clear, nothing that can spread, so taint can only arrive through a load
+     * off tainted memory.  Counted before acting on it, and counted HERE
+     * because the Python-visible register_taint is not a live view of this
+     * array -- a probe that read it reported 100% clean on every workload,
+     * which is plainly wrong. */
+    {
+        const uint64_t *gt = *c->g_taint;
+        const int ns = *c->n_slots;
+        uint64_t any = 0;
+        for (int i = 0; i < ns; i++) any |= gt[i];
+        b->regs_clean += (any == 0);
+    }
+
     if (!ent->plan) { b->unhandled++; b->no_plan++; return; }
     if (blk_read_regs(b, ent->plan) != 0) { b->unhandled++; b->no_regs++; return; }
     if (stage == 3) return;
     b->env.pc_slot = *c->rip_slot;
+    b->env.stop_after = stage;
     if (mt_blk_compute(ent->plan, &b->env, *c->g_val, *c->g_taint,
                        *c->n_slots, address, &b->pend) != MT_BLK_OK) {
         b->unhandled++;
@@ -800,11 +817,11 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     if (!miss) return NULL;
     for (int i = 0; i < MT_BLK_N_MISS; i++)
         PyList_SET_ITEM(miss, i, PyLong_FromUnsignedLong(b->miss[i]));
-    return Py_BuildValue("{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:K,s:l}",
+    return Py_BuildValue("{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:K,s:l}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
-                         "cache_full", b->no_slot, "miss", miss,
+                         "cache_full", b->no_slot, "regs_clean", b->regs_clean, "miss", miss,
                          "last_bad_addr", (unsigned long long)b->env.last_bad_addr,
                          "last_bad_size", (long)b->env.last_bad_size);
 }

@@ -79,7 +79,7 @@ def _run(layout: dict[str, int], seq: list[bytes], values: dict[str, int],
     chunks = [b''.join(seq)] if as_block else list(seq)
     addr = _BASE
     for code in chunks:
-        got = compile_block(_ARCH, code, addr, layout)
+        got = compile_block(_ARCH, code, addr, layout, publish_all_values=True)
         assert got is not None, f'{code.hex()} at {addr:#x} did not compile'
         rc = B.runner_on_block(runner, got[0], addr, regs)
         assert rc == 0, f'the runtime declined {code.hex()} at {addr:#x}'
@@ -159,7 +159,7 @@ def test_a_stored_value_reaches_a_load_that_indexes_with_it(
         chunks = [b''.join(seq)] if as_block else list(seq)
         addr = _BASE
         for code in chunks:
-            built = compile_block(_ARCH, code, addr, layout)
+            built = compile_block(_ARCH, code, addr, layout, publish_all_values=True)
             assert built is not None, f'{code.hex()} did not compile'
             assert B.runner_on_block(runner, built[0], addr, regs) == 0
             regs = B.runner_values(runner)
@@ -193,7 +193,8 @@ def test_a_register_the_block_zeroes_does_not_keep_its_old_value(
     B.mem_taint(mem, B_ARENA, 0xFF, 1)              # only [rbx+0] is tainted
 
     runner = B.runner_new(len(layout), -1, mem)
-    built = compile_block(_ARCH, b''.join(seq), _BASE, layout)
+    built = compile_block(_ARCH, b''.join(seq), _BASE, layout,
+                            publish_all_values=True)
     assert built is not None, 'the block did not compile'
     assert B.runner_on_block(runner, built[0], _BASE, _regs(layout, values)) == 0
     B.runner_finish(runner, True)

@@ -71,8 +71,9 @@ RegionSpec = tuple[int, int, list[tuple[int, int, int]], int]
 
 
 def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int],
-                  *, builder: Any = None,
-                  descriptor: Any = None) -> tuple[Any, list[Any], set[int]] | None:
+                  *, builder: Any = None, descriptor: Any = None,
+                  publish_all_values: bool = False,
+                  ) -> tuple[Any, list[Any], set[int]] | None:
     """-> (plan capsule, [Region], register offsets read), or None.
 
     None means the caller must send this block down the per-instruction path.
@@ -86,9 +87,7 @@ def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int
     descriptor and hands it back through `descriptor`.
     """
     from microtaint.emulator import blockpath_c  # noqa: PLC0415
-    from microtaint.instrumentation.cell_c import taint_ir_c  # type: ignore[attr-defined]  # noqa: PLC0415
     from microtaint.taint_ir.blocks import plan_block  # noqa: PLC0415
-    from microtaint.taint_ir.exec import compile_program  # noqa: PLC0415
 
     lay = _layout()
     if len(name_to_slot) > lay['val_base']:
@@ -101,11 +100,46 @@ def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int
     if not regions or any(r.prog is None for r in regions):
         return None
 
+    got = _compile_regions(regions, slot_of, lay, publish_all_values)
+    if got is None:
+        return None
+    specs, keep, reads = got
+    desc = _read_descriptor(descriptor, reads, keep)
+    plan = blockpath_c.plan_new(len(code), specs, keep, *desc)
+    return plan, regions, reads
+
+
+def _compile_regions(regions: list[Any], slot_of: SlotOf, lay: dict[str, int],
+                     publish_all_values: bool,
+                     ) -> tuple[list[RegionSpec], list[Any], set[int]] | None:
+    """Emit each region, and collect what the block reads."""
+    from microtaint.instrumentation.cell_c import taint_ir_c  # type: ignore[attr-defined]  # noqa: PLC0415
+    from microtaint.taint_ir.exec import compile_program  # noqa: PLC0415
+
     specs: list[RegionSpec] = []
     keep: list[Any] = []
     reads: set[int] = set()
-    for region in regions:
+    # Which register VALUES each region has to publish: only what a LATER
+    # region of the same block reads.  The next BLOCK re-reads the register
+    # file from the CPU, so the last region need publish nothing at all.
+    #
+    # This is not cosmetic.  A published value keeps alive whatever computes
+    # it, and for a value loaded from memory that means resolving the load --
+    # a guest memory read, measured at ~71 ns and the single largest item in
+    # computing a block (35 of 98 ns/instr on bench_dense).  Dropping a value
+    # nobody reads drops the read that produced it.
+    later_reads = _values_read_later(regions)
+    if publish_all_values:
+        # For a caller that chains regions BY HAND and so needs every value
+        # back.  The engine never does: it re-reads the register file from the
+        # CPU at each block, so only a later region of the SAME block can want
+        # a published value.  Test harnesses that treat one region as one block
+        # are the exception.
+        later_reads = [None] * len(regions)  # type: ignore[list-item]
+    for ri, region in enumerate(regions):
         prog = region.prog
+        if later_reads[ri] is not None:
+            _keep_only_needed_values(prog, later_reads[ri])
         accesses = list(getattr(prog, 'accesses', None) or [])
         if len(accesses) > lay['max_acc']:
             return None
@@ -152,9 +186,37 @@ def compile_block(arch: Any, code: bytes, base: int, name_to_slot: dict[str, int
                         1 if k in live_mem else 0)
                        for k, a in enumerate(accesses)], addr_fn))
 
-    desc = _read_descriptor(descriptor, reads, keep)
-    plan = blockpath_c.plan_new(len(code), specs, keep, *desc)
-    return plan, regions, reads
+    return specs, keep, reads
+
+
+def _values_read_later(regions: list[Any]) -> list[set[int]]:
+    """For each region, the register offsets some LATER region reads.
+
+    Read as VALUES: a later region's taint inputs come from the threaded taint,
+    not from what this region publishes.
+    """
+    out: list[set[int]] = [set() for _ in regions]
+    acc: set[int] = set()
+    for i in range(len(regions) - 1, -1, -1):
+        out[i] = set(acc)
+        prog = regions[i].prog
+        if prog is None:
+            continue
+        acc |= {k[1] for (kind, k) in prog.inputs
+                if kind == 'v' and isinstance(k, tuple) and k[0] == 'reg'}
+    return out
+
+
+def _keep_only_needed_values(prog: Any, needed: set[int]) -> None:
+    """Drop the value outputs no later region reads, and re-run dead-code
+    elimination so whatever computed them goes too."""
+    kept = [(k, n) for k, n in prog.outputs
+            if not (isinstance(k, tuple) and k[0] == 'regv' and k[1] not in needed)]
+    if len(kept) == len(prog.outputs):
+        return
+    prog.outputs = kept
+    prog.live = []
+    prog.finish()
 
 
 def _address_slice(prog: Any, slot_of: SlotOf, taint_ir_c: Any) -> Any:
