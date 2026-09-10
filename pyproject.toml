@@ -316,6 +316,14 @@ max-complexity = 10
 python_version = "3.12"
 disallow_untyped_defs = true
 disallow_untyped_calls = true
+# ...but not calls INTO the untyped emulators and assemblers.  They ship no
+# type information, so every `uc.mem_write(...)` in a harness reads as an
+# untyped call; the alternative was ~100 per-line ignores, or the per-file
+# `# mypy: disable-error-code` headers that hid 728 errors in this tree.  Our
+# own code stays under the check.
+untyped_calls_exclude = [
+    "unicorn", "qiling", "keystone", "capstone", "pypcode", "riscv_encoder",
+]
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 disallow_any_generics = true
