@@ -722,11 +722,19 @@ class MicrotaintWrapper:
         # `_vals` has one slot per NAME and `_ids`/`_ptrs` one per uc_reg_read
         # call: a vector register is one call that fills two lanes.  So the
         # slot list is per name and the call count is separate.
+        # The last two are the addresses of the hook's own code_lo/code_hi.
+        # Block mode plans blocks the instruction hook never decodes, so it
+        # widens that range itself; otherwise the mem-write hook's
+        # self-modifying-code guard never fires and a rewritten block keeps
+        # running the plan compiled for the bytes that used to be there.
+        lo_addr, hi_addr = hook.code_range_addrs()
         block_ctx = blockpath_c.hook_new(
             c_instruction_hook_ud(hook), compiler,
             ctypes.addressof(regfile._ids), ctypes.addressof(regfile._ptrs),
-            ctypes.addressof(regfile._vals), regfile._n_calls, reg_slots)
+            ctypes.addressof(regfile._vals), regfile._n_calls, reg_slots,
+            lo_addr, hi_addr)
         self._block_ctx = block_ctx
+        hook.block_invalidate = lambda: blockpath_c.hook_invalidate(block_ctx)
         h = ctypes.c_size_t()
         err = _uc_hook_add(self._uc_handle, ctypes.byref(h), UC_HOOK_BLOCK,
                            ctypes.c_void_p(blockpath_c.hook_ptr()),

@@ -48,6 +48,16 @@ def runner_on_block(runner: _Capsule, plan: _Capsule, address: int,
 def runner_finish(runner: _Capsule, completed: bool) -> None: ...
 def runner_abandon(runner: _Capsule) -> None: ...
 def runner_stats(runner: _Capsule) -> dict[str, int]: ...
+def hook_invalidate(hook: _Capsule) -> None:
+    """Drop every cached plan after a write hit code the hook has planned.
+
+    A plan is keyed by (address, size) alone, so rewritten bytes at the same
+    address would otherwise run the plan compiled for what used to be there.
+    """
+
+def hook_code_range(hook: _Capsule) -> tuple[int, int]:
+    """(lo, hi) of the bytes this hook has planned, for the mem-write guard."""
+
 def runner_reports(runner: _Capsule) -> list[tuple[int, int]]: ...
 
 # ---------------------------------------------------------------------------
@@ -58,7 +68,8 @@ def runner_reports(runner: _Capsule) -> list[tuple[int, int]]: ...
 
 def hook_new(fastctx: int, compiler: Callable[[int, int], object | None],
              ids: int, ptrs: int, vals: int, n_calls: int,
-             reg_slots: list[int]) -> _Capsule:
+             reg_slots: list[int], code_lo_addr: int = ...,
+             code_hi_addr: int = ...) -> _Capsule:
     """The block hook's C context.
 
     `fastctx` is the InstructionHook's C context (from
@@ -66,6 +77,12 @@ def hook_new(fastctx: int, compiler: Callable[[int, int], object | None],
     ADDRESSES of the register-read descriptor's ctypes arrays.  A vector
     register is one read call that fills two lanes, so the slot list is per
     name and `n_calls` is counted separately.
+
+    `code_lo_addr` / `code_hi_addr` are the addresses of the instruction hook's
+    own `code_lo` and `code_hi`.  Block mode plans blocks that hook never
+    decodes, so it widens the same range: it is what the mem-write hook's
+    self-modifying-code guard tests, and without it a rewritten block would
+    keep running the plan compiled for the bytes that used to be there.
     """
 
 def hook_ptr() -> int:

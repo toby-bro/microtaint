@@ -58,6 +58,12 @@ typedef struct {
     unsigned long miss[MT_BLK_N_MISS];
     unsigned long no_plan, no_regs, no_slot;
     unsigned long regs_clean;    /* blocks entered with no register tainted */
+    /* The instruction hook's [code_lo, code_hi): the bytes some cache holds a
+     * decode of.  Block mode plans blocks the instruction hook never sees, so
+     * without widening this the mem-write hook's self-modifying-code guard
+     * never fires and a rewritten block keeps running its old plan. */
+    unsigned long long *code_lo, *code_hi;
+    unsigned long invalidations;
 } MtBlkCtx;
 
 /* Diagnostic bisect, the same idea as MICROTAINT_NULL_HOOK on the instruction
@@ -670,6 +676,20 @@ static void mt_blk_hook(void *uc, uint64_t address, uint32_t size, void *user_da
         }
         Py_XDECREF(res);
         PyGILState_Release(gil);
+        /* This block's bytes are now behind a cached plan, so a write into
+         * them has to invalidate it.  Widened whether or not the plan
+         * compiled: a REFUSED block is cached as a refusal, and rewritten
+         * bytes at the same address must not inherit it. */
+        if (b->code_lo && b->code_hi) {
+            if (*b->code_hi <= *b->code_lo) {   /* empty: seed both ends */
+                *b->code_lo = address;
+                *b->code_hi = address + (uint64_t)size;
+            } else {
+                if (address < *b->code_lo) *b->code_lo = address;
+                if (address + (uint64_t)size > *b->code_hi)
+                    *b->code_hi = address + (uint64_t)size;
+            }
+        }
     }
 
     if (stage == 2) return;
@@ -720,10 +740,12 @@ static void blkctx_destroy(PyObject *cap) {
 static PyObject *py_hook_new(PyObject *self, PyObject *args) {
     (void)self;
     unsigned long long fc_addr, ids, ptrs, vals;
+    unsigned long long code_lo_addr = 0, code_hi_addr = 0;
     PyObject *compiler, *slots;
     int n_calls;
-    if (!PyArg_ParseTuple(args, "KOKKKiO", &fc_addr, &compiler, &ids, &ptrs,
-                          &vals, &n_calls, &slots)) return NULL;
+    if (!PyArg_ParseTuple(args, "KOKKKiO|KK", &fc_addr, &compiler, &ids, &ptrs,
+                          &vals, &n_calls, &slots,
+                          &code_lo_addr, &code_hi_addr)) return NULL;
     if (!PyCallable_Check(compiler)) {
         PyErr_SetString(PyExc_TypeError, "compiler must be callable");
         return NULL;
@@ -758,6 +780,8 @@ static PyObject *py_hook_new(PyObject *self, PyObject *args) {
     Py_DECREF(fast);
     b->n_regs = (int)n;
     b->fc = c;
+    b->code_lo = (unsigned long long *)(uintptr_t)code_lo_addr;
+    b->code_hi = (unsigned long long *)(uintptr_t)code_hi_addr;
     b->ids_addr = ids; b->ptrs_addr = ptrs; b->vals_addr = vals;
     b->n_calls = n_calls;
     Py_INCREF(compiler);
@@ -807,6 +831,44 @@ static PyObject *py_hook_finish(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+/* hook_invalidate(hook): drop every cached plan after a write hit cached code.
+ *
+ * Called from the mem-write hook's self-modifying-code branch, which the block
+ * hook arms by widening [code_lo, code_hi) above.  A plan is keyed by (address,
+ * size) alone, so without this the rewritten bytes would run the plan compiled
+ * for what used to be there -- taint computed for instructions that are gone.
+ * Rare, so a full clear and a lazy re-plan is the right shape. */
+static PyObject *py_hook_invalidate(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    MtBlkCtx *b = blkctx_of(cap);
+    if (!b) return NULL;
+    for (int i = 0; i < BLK_CACHE_CAP; i++) {
+        Py_XDECREF(b->cache[i].capsule);
+        b->cache[i].capsule = NULL;
+        b->cache[i].plan = NULL;
+        b->cache[i].key = 0;
+    }
+    /* The held block was computed from bytes that may no longer be there. */
+    mt_blk_abandon(&b->pend);
+    b->invalidations++;
+    if (b->code_lo && b->code_hi) { *b->code_lo = ~(unsigned long long)0; *b->code_hi = 0; }
+    Py_RETURN_NONE;
+}
+
+/* hook_code_range(hook) -> (lo, hi), the bytes it has planned. */
+static PyObject *py_hook_code_range(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    MtBlkCtx *b = blkctx_of(cap);
+    if (!b) return NULL;
+    return Py_BuildValue("(KK)",
+                         b->code_lo ? *b->code_lo : (unsigned long long)0,
+                         b->code_hi ? *b->code_hi : (unsigned long long)0);
+}
+
 static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *cap;
@@ -817,11 +879,12 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     if (!miss) return NULL;
     for (int i = 0; i < MT_BLK_N_MISS; i++)
         PyList_SET_ITEM(miss, i, PyLong_FromUnsignedLong(b->miss[i]));
-    return Py_BuildValue("{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:K,s:l}",
+    return Py_BuildValue("{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:K,s:l}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
                          "cache_full", b->no_slot, "regs_clean", b->regs_clean, "miss", miss,
+                         "invalidations", b->invalidations,
                          "last_bad_addr", (unsigned long long)b->env.last_bad_addr,
                          "last_bad_size", (long)b->env.last_bad_size);
 }
@@ -861,11 +924,16 @@ static PyMethodDef Methods[] = {
     {"runner_stats", py_runner_stats, METH_VARARGS, "runner_stats(runner) -> dict"},
     {"runner_reports", py_runner_reports, METH_VARARGS, "runner_reports(runner) -> [(addr, mask)]"},
     {"hook_new", py_hook_new, METH_VARARGS,
-     "hook_new(fastctx, compiler, ids, ptrs, vals, n_calls, reg_slots) -> hook"},
+     "hook_new(fastctx, compiler, ids, ptrs, vals, n_calls, reg_slots"
+     "[, code_lo_addr, code_hi_addr]) -> hook"},
     {"hook_ptr", py_hook_ptr, METH_NOARGS, "hook_ptr() -> the C trampoline's address"},
     {"hook_ud", py_hook_ud, METH_VARARGS, "hook_ud(hook) -> its user_data address"},
     {"hook_finish", py_hook_finish, METH_VARARGS, "hook_finish(hook, completed)"},
     {"hook_stats", py_hook_stats, METH_VARARGS, "hook_stats(hook) -> dict"},
+    {"hook_invalidate", py_hook_invalidate, METH_VARARGS,
+     "hook_invalidate(hook) -- drop every cached plan (self-modifying code)"},
+    {"hook_code_range", py_hook_code_range, METH_VARARGS,
+     "hook_code_range(hook) -> (lo, hi) of the bytes it has planned"},
     {"layout", py_layout, METH_NOARGS, "layout() -> the block slot layout"},
     {NULL, NULL, 0, NULL},
 };

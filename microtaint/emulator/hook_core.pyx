@@ -554,6 +554,11 @@ cdef class InstructionHook:
     cdef MtFastCtx fctx
     cdef bint arr_loaded              # register_taint has been loaded into g_taint
     cdef bint block_mode              # block mode owns g_taint for the whole run
+    #: Called by invalidate_smc when block mode is on, to drop its plan cache
+    #: too.  The block runtime is a separate module and its cache is keyed by
+    #: (address, size), so a rewritten block would otherwise run the plan
+    #: compiled for what used to be there.
+    cdef public object block_invalidate
     cdef public unsigned long arr_fallbacks   # instructions that had to use the dict path
     cdef MemReadCtx mem_ctx           # C guest-read context handed to circuit_c
     cdef bint mem_ctx_ready
@@ -654,6 +659,7 @@ cdef class InstructionHook:
         self.addr_map.n = 0
         self.arr_loaded = False
         self.block_mode = False
+        self.block_invalidate = None
         self.arr_fallbacks = 0
         self.mem_ctx_ready = False
         self.rip_slot = -1
@@ -1982,6 +1988,16 @@ cdef class InstructionHook:
                     out[self.addr_map.keys[i]] = self.addr_map.vals[i].size
         return out
 
+    def code_range_addrs(self) -> tuple:
+        """Addresses of `code_lo` and `code_hi`, for the block runtime.
+
+        Block mode plans blocks the instruction hook never decodes, so it has
+        to widen the same range: it is what the mem-write hook's
+        self-modifying-code guard tests, on both the nogil and the GIL path.
+        """
+        return (<unsigned long long>&self.code_lo,
+                <unsigned long long>&self.code_hi)
+
     cpdef void invalidate_smc(self):
         """Drop every address-keyed cache after a write hit cached code.
 
@@ -2008,6 +2024,10 @@ cdef class InstructionHook:
         mt_am_clear(&self.addr_map)
         self.code_lo = 0xFFFFFFFFFFFFFFFF
         self.code_hi = 0
+        # Block mode's plans are keyed by (address, size) in a separate module,
+        # and it is what widened the range that brought us here.
+        if self.block_invalidate is not None:
+            self.block_invalidate()
 
     cdef object _read_pre_regs(self, bytes instruction_bytes, unsigned long long address):
         """Read this instruction's live input-register values into a dict (with

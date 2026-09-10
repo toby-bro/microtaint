@@ -179,6 +179,13 @@ class InstructionHook:
         to the dict, so an external re-seed is picked up by the next
         instruction."""
 
+    #: Called by `invalidate_smc` when block mode is on, to drop its plan
+    #: cache too; set by the wrapper when it installs the block hook.
+    block_invalidate: Callable[[], None] | None
+
+    def code_range_addrs(self) -> tuple[int, int]:
+        """Addresses of `code_lo` and `code_hi`, for the block runtime."""
+
     def invalidate_smc(self) -> None:
         """Drop the decode + Tier-3/Tier-4 caches after a write hit cached code."""
 
