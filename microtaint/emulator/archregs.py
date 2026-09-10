@@ -46,8 +46,16 @@ _CONST_MODULE: dict[Architecture, tuple[str, str]] = {
 # Sleigh spelling -> Unicorn spelling, only where the two disagree.
 # PowerPC is the one architecture whose general registers Unicorn numbers
 # rather than names; everything else agrees letter for letter.
+#: Sleigh's spelling -> Unicorn's, for the few they genuinely disagree on.
+#: The segment BASES matter more than they look: glibc reaches thread-local
+#: storage through `%fs:`, so a register the engine cannot read is an address
+#: it computes from zero, and a load resolved at the wrong address reads the
+#: shadow at the wrong place and comes back clean.  Sleigh names them
+#: FS_OFFSET / GS_OFFSET and Unicorn FS_BASE / GS_BASE, so nothing matched.
 _ALIASES: dict[Architecture, dict[str, str]] = {
     Architecture.PPC32BE: {f'R{i}': str(i) for i in range(32)},
+    Architecture.AMD64: {'FS_OFFSET': 'FS_BASE', 'GS_OFFSET': 'GS_BASE'},
+    Architecture.X86: {'FS_OFFSET': 'FS_BASE', 'GS_OFFSET': 'GS_BASE'},
 }
 
 # Condition flags: Sleigh's own one-byte register -> bit position inside the

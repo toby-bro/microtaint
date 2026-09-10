@@ -694,7 +694,8 @@ class Builder:
         p = self.p
         size = self._out(op).size
         if size > 8:
-            raise Unsupported('wide load')
+            self._emit_wide_load(op)
+            return
         addr_v, addr_t = self._read_in(op.inputs[1])
         k = self._access_for('load', addr_v, size)
         p.outputs.append((('addrt', k), addr_t))
@@ -705,6 +706,62 @@ class Builder:
                        p.op(AND, p.const(_mask_of(size)),
                             p.splat(p.op(NEZ, addr_t))))
         self._predicated_write(self._out(op), val, tnt)
+
+    def _lane_taint(self, tnt: int, addr_t: int, lsz: int) -> int:
+        """A loaded lane's taint, with the pointer policy applied.
+
+        Under AVALANCHE a tainted address taints the whole word it brought
+        back, because which word that is was itself secret.
+        """
+        p = self.p
+        if self.pointer_policy is not PointerPolicy.AVALANCHE:
+            return tnt
+        return p.op(OR, tnt,
+                    p.op(AND, p.const(_mask_of(lsz)),
+                         p.splat(p.op(NEZ, addr_t))))
+
+    def _emit_wide_load(self, op: PcodeOp) -> None:
+        """A load wider than a machine word, one 8-byte lane at a time.
+
+        A vector load is a byte-for-byte copy, so lane `k` of the destination
+        is the 8 bytes at `address + k` whichever way round the target stores
+        them, and the runtime reads each lane exactly as it reads any other
+        8-byte load.  Splitting is what the per-instruction path already does
+        for wide MEMORY, and without it here a block containing one is refused
+        whole -- and a refused block is skipped, so nothing computes its taint.
+        Measured on a static-glibc guest, wide loads and stores were 41 of the
+        58 reasons a block refused, all of them inside the vectorised string
+        and memory routines.
+        """
+        p = self.p
+        out = self._out(op)
+        addr_v, addr_t = self._read_in(op.inputs[1])
+        for lane in range(0, out.size, 8):
+            lsz = min(8, out.size - lane)
+            a = addr_v if lane == 0 else p.op(ADD, addr_v, p.const(lane))
+            k = self._access_for('load', a, lsz)
+            p.outputs.append((('addrt', k), addr_t))
+            val = p.input_value(('mem', k), lsz * 8)
+            tnt = self._lane_taint(p.input_taint(('mem', k), lsz * 8),
+                                   addr_t, lsz)
+            self._write_lane(out, lane, lsz, val, tnt)
+
+    def _emit_wide_store(self, op: PcodeOp) -> None:
+        """The store half of `_emit_wide_load`."""
+        p = self.p
+        src = op.inputs[2]
+        if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
+            raise Unsupported('predicated store')
+        addr_v, addr_t = self._read_in(op.inputs[1])
+        for lane in range(0, src.size, 8):
+            lsz = min(8, src.size - lane)
+            a = addr_v if lane == 0 else p.op(ADD, addr_v, p.const(lane))
+            val_v, val_t = self._read_lane(src, lane, lsz)
+            k = self._access_for('store', a, lsz)
+            p.outputs.append((('addrt', k), addr_t))
+            p.outputs.append((('sttaint', k), p.mask(val_t, lsz * 8)))
+            if self.emit in (Emit.VALUE, Emit.BOTH):
+                p.outputs.append((('stval', k), p.mask(val_v, lsz * 8)))
 
     def _ram_load(self, vn: Varnode) -> tuple[int, int]:
         """A varnode that IS memory: a load at an address the lifter resolved.
@@ -766,7 +823,8 @@ class Builder:
         p = self.p
         size = op.inputs[2].size
         if size > 8:
-            raise Unsupported('wide store')
+            self._emit_wide_store(op)
+            return
         if not (p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1):
             raise Unsupported('predicated store')
         addr_v, addr_t = self._read_in(op.inputs[1])
