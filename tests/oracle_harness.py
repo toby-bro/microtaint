@@ -31,6 +31,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from types import SimpleNamespace
+from typing import Any
 
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
@@ -294,7 +295,8 @@ def _uc_run(desc: UcDesc, code: bytes, vals: dict[str, int], *,
     return out
 
 
-def models_disagree(desc: UcDesc, arch, code: bytes, states) -> set[str]:
+def models_disagree(desc: UcDesc, arch, code: bytes,
+                    states) -> tuple[set[str], set[str]]:
     """Outputs where SLEIGH and Unicorn model this instruction differently.
 
     Where an ISA leaves a flag ARCHITECTURALLY UNDEFINED -- x86 OF after a
@@ -336,6 +338,16 @@ def models_disagree(desc: UcDesc, arch, code: bytes, states) -> set[str]:
     if not desc.flags:
         return set(), set()               # nothing undefined to find
     sim = CellSimulator(arch)
+    # Only the C evaluator has `evaluate_concrete_flat`.  This used to be a bare
+    # attribute reach inside `except Exception: continue`, so on the Cython
+    # evaluator every flag was skipped, nothing was ever compared, and the
+    # function returned two empty sets -- an exclusion list that excludes
+    # nothing, indistinguishable from an instruction the two models agree on.
+    flat = getattr(sim._pcode, 'evaluate_concrete_flat', None)
+    if flat is None:
+        raise RuntimeError(
+            f'{type(sim._pcode).__name__} has no evaluate_concrete_flat, so '
+            f'this function cannot compare the two models at all')
     hx = code.hex()
     written = _flags_the_lifter_writes(arch, code, desc)
     # And the cell has to be asked by the ENGINE's name too.  Asking it for `N`
@@ -352,11 +364,23 @@ def models_disagree(desc: UcDesc, arch, code: bytes, states) -> set[str]:
         for fname in desc.flags:
             if fname in disagree:
                 continue
-            cell = SimpleNamespace(instruction=hx, out_reg=engine_name.get(fname, fname),
-                                   out_bit_start=0, out_bit_end=0)
+            # A duck-type on purpose: the evaluator reads only these four
+            # fields, and building a real InstructionCellExpr here would tie
+            # the harness to the lifter it is supposed to be checking.
+            cell: Any = SimpleNamespace(
+                instruction=hx, out_reg=engine_name.get(fname, fname),
+                out_bit_start=0, out_bit_end=0)
             try:
-                mine = sim._pcode.evaluate_concrete_flat(cell, dict(vals))
+                mine = flat(cell, dict(vals))
             except Exception:
+                # This ONE flag has no cell for this instruction, which is
+                # ordinary: measured over the AMD64 bank, 43 of the first 400
+                # instructions answer for no flag at all -- every `push`, and
+                # `adcx`/`adox`, whose CF/OF the lifter writes but the cell
+                # declines.  So a per-instruction "compared nothing" is not
+                # evidence of anything.  What IS evidence is the evaluator
+                # having no `evaluate_concrete_flat` at all, and that is
+                # refused above rather than swallowed here.
                 continue
             if (int(mine) & 1) != (truth.get(fname, 0) & 1):
                 disagree.add(fname)
