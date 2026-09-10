@@ -20,7 +20,7 @@ import json
 import platform
 import subprocess
 import sys
-from typing import Any
+from typing import TypedDict
 
 import pytest
 
@@ -31,14 +31,25 @@ pytestmark = pytest.mark.skipif(
 FULL = 0xFFFFFFFFFFFFFFFF
 
 
-def _run(disable_cregs: bool) -> dict[str, Any]:
+class CregRun(TypedDict):
+    """What the child below prints: the final register taint by name, and the
+    shadow masks at the two addresses it wrote.  Every value is a hex string,
+    so the two runs compare literally."""
+
+    final_taint: dict[str, str]
+    shadow_D: str
+    shadow_D8: str
+
+
+def _run(disable_cregs: bool) -> CregRun:
     import os
     env = dict(os.environ)
     env['MICROTAINT_DISABLE_CREGS'] = '1' if disable_cregs else '0'
     out = subprocess.run(
         [sys.executable, __file__], capture_output=True, text=True, check=True, env=env,
     ).stdout
-    return json.loads(out.strip().splitlines()[-1])
+    run: CregRun = json.loads(out.strip().splitlines()[-1])
+    return run
 
 
 def test_creg_path_matches_ctypes_path() -> None:

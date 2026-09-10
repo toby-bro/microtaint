@@ -25,7 +25,7 @@ exactly where regioning is dangerous.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -67,7 +67,8 @@ def _regs(layout: dict[str, int], values: dict[str, int]) -> list[int]:
 
 
 def _run(layout: dict[str, int], seq: list[bytes], values: dict[str, int],
-         taint: dict[str, int], *, as_block: bool) -> tuple[dict[str, int], Any]:
+         taint: dict[str, int], *, as_block: bool,
+         ) -> tuple[dict[str, int], _Capsule]:
     """Run `seq` (a list of instruction byte strings) through the C runtime.
 
     `as_block` runs it as ONE block cut into planned regions; otherwise each

@@ -47,7 +47,7 @@ def test_path_explosion_scaling() -> None:
     assert out_taint != 0, 'Dataflow taint failed to propagate!'
 
 
-def test_path_explosion_speed(benchmark: BenchmarkFixture) -> None:  # type: ignore[no-untyped-def]
+def test_path_explosion_speed(benchmark: BenchmarkFixture) -> None:
     """
     Optional: If you run `uv run pytest --benchmark-only`,
     this will prove the 2^100 path sequence executes in microseconds.

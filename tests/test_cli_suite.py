@@ -25,7 +25,7 @@ import platform
 import subprocess
 import sys
 import tempfile
-from typing import Any, Generator
+from typing import Generator, NotRequired, TypedDict
 
 import pytest
 
@@ -214,7 +214,45 @@ def run_cli(
         os.unlink(payload_path)
 
 
-def _extract_json(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+class Summary(TypedDict):
+    """The counts the CLI prints alongside its findings."""
+
+    total: int
+    bof: int
+    uaf: int
+    side_channel: int
+    aiw: int
+
+
+class FindingDoc(TypedDict):
+    """One reported finding.
+
+    The first three keys are on every finding.  The rest come from
+    `Finding.extra`, which is merged into the same object, so each is present
+    only for the kind that sets it: `size`/`source` on a taint source,
+    `access_size` on a buffer overflow, `taint_mask` on a side channel,
+    `pointer_taint` on an arbitrary indexed write.
+    """
+
+    kind: str
+    address: str
+    description: str
+    instruction: NotRequired[str]
+    size: NotRequired[int]
+    source: NotRequired[str]
+    access_size: NotRequired[int]
+    taint_mask: NotRequired[str]
+    pointer_taint: NotRequired[str]
+
+
+class CliReport(TypedDict):
+    """The CLI's JSON document."""
+
+    findings: list[FindingDoc]
+    summary: Summary
+
+
+def _extract_json(result: subprocess.CompletedProcess[str]) -> CliReport:
     """
     Extract the JSON object from result.stdout, tolerating any stray debug
     lines (e.g. 'DEBUG RET: ...', '[DBG] ...') that engine.py or wrapper.py
@@ -229,8 +267,8 @@ def _extract_json(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
 
     # Fast path: entire stdout is clean JSON (expected on a patched build)
     try:
-        doc: dict[str, Any] = json.loads(raw)
-        return doc
+        fast: CliReport = json.loads(raw)
+        return fast
     except json.JSONDecodeError:
         pass
 
@@ -260,7 +298,7 @@ def _extract_json(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
 
     candidate = ''.join(lines[start : end + 1])
     try:
-        doc: dict[str, Any] = json.loads(candidate)
+        doc: CliReport = json.loads(candidate)
         return doc
     except json.JSONDecodeError as exc:
         pytest.fail(

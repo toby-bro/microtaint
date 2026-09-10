@@ -47,7 +47,7 @@ def test_all_pcode_ops_are_categorized() -> None:
     all_handled = all_categorized | IGNORED_OPCODES
 
     # 3. Get all opcodes defined by the pypcode library
-    all_pypcode_ops: set[str] = {opcode.name for opcode in pypcode.OpCode}  # type: ignore[attr-defined]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType, reportGeneralTypeIssues]  # ty: ignore[not-iterable]
+    all_pypcode_ops: set[str] = {opcode.name for opcode in pypcode.OpCode}  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType, reportGeneralTypeIssues]  # ty: ignore[not-iterable]
 
     # 4. Find what is missing
     missing_ops = all_pypcode_ops - all_handled

@@ -28,34 +28,44 @@ imm-logic sequences) was invisible -- this test inspects sub-circuits.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-from typing import Any
-
 import pytest
 
-from microtaint.instrumentation.ast import ChainedCircuit, EvalContext
+from benchmark.instruction_bank import load_bank
+from microtaint.instrumentation.ast import (
+    ChainedCircuit,
+    EvalContext,
+    LogicCircuit,
+)
+from microtaint.instrumentation.cell_c.circuit_c import CompiledCircuit
 from microtaint.simulator import CellSimulator, _native_be_safe
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import ImplicitTaintPolicy
-
-_HERE = Path(__file__).parent
-sys.path.insert(0, str(_HERE.parent / 'benchmark'))
-from instruction_bank import load_bank  # type: ignore[import-not-found]  # noqa: E402
+from tests.conftest import cell_kernel
 
 _BANK = load_bank()
 _ISAS = sorted(_BANK.keys())
 
 
-def _subcircuits(circ: object) -> list[Any]:
+def _subcircuits(circ: LogicCircuit) -> list[LogicCircuit]:
     return list(circ.sub_circuits) if isinstance(circ, ChainedCircuit) else [circ]
+
+
+def _compiled(circ: LogicCircuit) -> CompiledCircuit | None:
+    """A circuit's compiled form, or None when it stayed on the walker.
+
+    `_compiled` is False before compilation is attempted and None when one was
+    refused; both mean the taint went through the Python walker, which is what
+    this file counts.
+    """
+    c = circ._compiled
+    return None if isinstance(c, bool) else c
 
 
 def _fastpath_offenders(isa: str) -> dict[str, list[str]]:
     """Return {reason: [labels]} for every instruction of `isa` off the fast path."""
     spec = _BANK[isa]
     sim = CellSimulator(spec.arch)
-    pc = sim._pcode
+    pc = cell_kernel(sim)
     taint = {r.name: 0xFFFFFFFFFFFFFFFF for r in spec.regs}
     values = {r.name: 0x0123456789ABCDEF for r in spec.regs}
     off: dict[str, list[str]] = {
@@ -72,11 +82,12 @@ def _fastpath_offenders(isa: str) -> dict[str, list[str]]:
             off['runtime_cell_fallback'].append(f'{ins.label} (+{pc.fallback_calls - nf0})')
 
         subs = _subcircuits(circ)
-        if any(getattr(s, '_compiled', None) in (False, None) for s in subs):
+        compiled = [c for c in map(_compiled, subs) if c is not None]
+        if len(compiled) != len(subs):
             off['walker_taint'].append(ins.label)
         else:
-            for s in subs:
-                st = s._compiled.stats()
+            for c in compiled:
+                st = c.stats()
                 if st.get('python_fallback', 0):
                     off['py_fallback'].append(f'{ins.label} ({st["python_fallback"]}/{st["n_assignments"]})')
                     break

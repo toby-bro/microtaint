@@ -15,22 +15,34 @@ Regenerate deliberately, never to make a red test green:
 
 import pytest
 
-from tests.perop_op_ratchet import compare, load_baseline, measure
+from tests.perop_op_ratchet import Measured, compare, load_baseline, measure
+
+_REGENERATE = ('no op-count baseline; run: '
+               '.venv/bin/python -m tests.perop_op_ratchet --update')
 
 
 @pytest.fixture(scope='module')
-def measured():
+def measured() -> Measured:
     return measure()
 
 
-def test_baseline_exists() -> None:
-    assert load_baseline() is not None, (
-        'no op-count baseline; run: '
-        '.venv/bin/python -m tests.perop_op_ratchet --update')
+def _baseline() -> Measured:
+    """The pinned baseline, or a failure.
 
-
-def test_no_instruction_needs_more_operations(measured):
+    Returning an empty comparison when the file is missing would make both
+    ratchets below pass while comparing nothing at all.
+    """
     baseline = load_baseline()
+    assert baseline is not None, _REGENERATE
+    return baseline
+
+
+def test_baseline_exists() -> None:
+    assert load_baseline() is not None, _REGENERATE
+
+
+def test_no_instruction_needs_more_operations(measured: Measured) -> None:
+    baseline = _baseline()
     regressions, _improvements, _new = compare(measured, baseline)
     if regressions:
         detail = '\n'.join(f'  {isa} {label}: {before} -> {after} ops'
@@ -39,8 +51,8 @@ def test_no_instruction_needs_more_operations(measured):
                     f'{detail}')
 
 
-def test_no_instruction_started_declining(measured):
-    baseline = load_baseline()
+def test_no_instruction_started_declining(measured: Measured) -> None:
+    baseline = _baseline()
     _reg, _imp, new_declines = compare(measured, baseline)
     if new_declines:
         detail = '\n'.join(f'  {isa} {label} (was {n} ops)'

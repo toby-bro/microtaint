@@ -404,7 +404,7 @@ class TaintSequence:
                 # The C evaluator has this entry point; the Python one does
                 # not, and either may be in use.  A miss is a decline, which is
                 # what the except already means.
-                return self._sim._pcode.evaluate_concrete_flat(cell, inputs)  # type: ignore[union-attr,arg-type]
+                return self._sim._pcode.evaluate_concrete_flat(cell, inputs)  # type: ignore[union-attr]
             except Exception:
                 return None
 

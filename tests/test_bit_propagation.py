@@ -108,10 +108,10 @@ def regs() -> list[Register]:
 
 
 def _ectx(simulator: CellSimulator,
-         taint: dict[str, int],
-         values: dict[str, int],
-         *,
-         shadow: BitPreciseShadowMemory=None):
+          taint: dict[str, int],
+          values: dict[str, int],
+          *,
+          shadow: BitPreciseShadowMemory | None = None) -> EvalContext:
     """Build an EvalContext with IGNORE policy (we don't care about implicit taint)."""
     return EvalContext(
         input_taint=taint,
@@ -124,17 +124,18 @@ def _ectx(simulator: CellSimulator,
 
 def _eval(simulator: CellSimulator,
           regs: list[Register],
-          bytestring,
+          bytestring: bytes,
           taint: dict[str, int],
           values: dict[str, int],
           *,
-          shadow: BitPreciseShadowMemory=None):
+          shadow: BitPreciseShadowMemory | None = None) -> dict[str, int]:
     """Generate the circuit and evaluate it. Returns the output_taint dict."""
     circuit = generate_static_rule(Architecture.AMD64, bytestring, regs)
     return circuit.evaluate(_ectx(simulator, taint, values, shadow=shadow))
 
 
-def _diff_truth(op: Callable, v: int, t: int, mask: int = 0xFFFFFFFFFFFFFFFF) -> int:
+def _diff_truth(op: Callable[[int], int], v: int, t: int,
+                mask: int = 0xFFFFFFFFFFFFFFFF) -> int:
     """
     Differential ground-truth: op(V|T) XOR op(V&~T), masked to mask.
     `op` is a unary callable that does the operation given a concrete input.

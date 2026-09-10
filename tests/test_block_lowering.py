@@ -31,14 +31,12 @@ compare against; nothing calls `block=True` yet.
 """
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 from pypcode import PcodeOp
 
 from microtaint.taint_ir import frompcode
 from microtaint.taint_ir.frompcode import Emit, PointerPolicy, Unsupported
-from microtaint.taint_ir.ir import IRProg
+from microtaint.taint_ir.ir import IRKey, IRProg
 from microtaint.types import Architecture
 
 _ARCH, _KEY = Architecture.AMD64, 'AMD64'
@@ -52,7 +50,7 @@ _LOOP_BODY = [
 ]
 
 
-def _ops(seq: list[bytes]) -> tuple[list[Any], int]:
+def _ops(seq: list[bytes]) -> tuple[list[PcodeOp], int]:
     """Concatenated p-code for `seq`, each instruction at its own lift base."""
     from microtaint.sleigh.lifter import get_context
     ops: list[PcodeOp] = []
@@ -132,7 +130,12 @@ def test_the_block_program_is_cheaper_than_the_sum_of_its_parts(builder: frompco
     layout = {n: i for i, n in enumerate(names)}
     kinds = ('addr', 'addrt', 'sttaint', 'mem')
 
-    def slot_of(key: tuple[str, int]) -> int | None:
+    def slot_of(key: IRKey) -> int | None:
+        # A bare-name key belongs to no layout here: this test places
+        # registers and accesses by offset, and anything else is a key this
+        # slot map cannot express.
+        if not isinstance(key, tuple):
+            raise KeyError(key)
         if key[0] in ('reg', 'regv'):
             name = builder.name_by_off.get(key[1])
             if name is None or name not in layout:

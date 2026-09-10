@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import random
 
+from microtaint.taint_ir.ir import IRKey
 from microtaint.types import Architecture
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
@@ -112,23 +113,38 @@ def ground_truth(code: bytes, taint: dict[str, int],
     return res
 
 
+def _lane_offset(arch: Architecture, name: str) -> int:
+    """The byte offset of a vector lane, which must resolve.
+
+    A lane name the mapper does not recognise resolves to None, and keying the
+    IR state on None silently matches nothing: the lane's taint would pass
+    straight through and the comparison would report agreement.  That is the
+    exact shape of the bug this bank exists to catch, so it fails here instead.
+    """
+    from tests.taint_ir_bank import name_offset
+    off = name_offset(arch, name)
+    if off is None:
+        raise AssertionError(
+            f'{name} does not resolve to a register offset for {arch}, so its '
+            f'taint would silently pass through untouched')
+    return off
+
+
 def ir_answer(arch: Architecture, code: bytes, taint: dict[str, int],
               vals: dict[str, int]) -> dict[str, int]:
     from microtaint.taint_ir.frompcode import build_ir
-    from tests.taint_ir_bank import name_offset
 
     prog = build_ir(arch, code)
-    v: dict[tuple[str | int, ...], int] = {}
-    t: dict[tuple[str | int, ...], int] = {}
-    for n in LANES:
-        off = name_offset(arch, n)
+    v: dict[IRKey, int] = {}
+    t: dict[IRKey, int] = {}
+    offs = {n: _lane_offset(arch, n) for n in LANES}
+    for n, off in offs.items():
         for sz in range(1, 9):
             v[('reg', off, sz)] = vals[n]
             t[('reg', off, sz)] = taint[n]
     out = prog.run(v, t)
     res = dict(taint)
-    for n in LANES:
-        off = name_offset(arch, n)
+    for n, off in offs.items():
         for sz in range(1, 9):
             if ('reg', off, sz) in out:
                 res[n] = out[('reg', off, sz)]

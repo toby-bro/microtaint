@@ -367,8 +367,9 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
             maker = _UC_DESC.get(arch_key)
             if maker is None:
                 continue                     # no per-bit truth for this ISA yet
-            desc = getattr(oh, maker)()
-            base_keys = list(desc.gp) + list(desc.flags)
+            made: UcDesc = getattr(oh, maker)()
+            desc = made
+            base_keys = list(made.gp) + list(made.flags)
         else:
             base_keys = reg_names
 
@@ -383,7 +384,8 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
             rep.n_instrs += 1
 
             if ref is Ref.GROUND_TRUTH:
-                assert desc is not None   # set above, or the ISA was skipped
+                # Set above, or the ISA was skipped before the loop started.
+                assert desc is not None
                 try:
                     written = written_registers(spec.arch, ins.bytes)
                 except Exception:
@@ -397,6 +399,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
 
             rng = random.Random(f'{seed}:{ins.label}')
             if ref is Ref.GROUND_TRUTH:
+                assert desc is not None
                 vectors = list(gt_vectors(desc, reg_names, rng, n_sparse))
             else:
                 vectors = list(oh.fuzz_vectors(reg_names, rng, n_dense, n_sparse))

@@ -15,9 +15,10 @@ honest total a compiled taint circuit would have to execute.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
-from typing import Any
+from typing import Literal
 
 from microtaint.taint_ir.frompcode import Unsupported, build_ir
+from microtaint.taint_ir.ir import IRKey, IRProg
 from microtaint.taint_ir.regmap import name_offset, slot_resolver
 from microtaint.types import Architecture, Register
 from tests.perop_c_bank import Declined, Ref, _engine_names
@@ -27,10 +28,16 @@ from tests.perop_c_bank import Declined, Ref, _engine_names
 #: that is not declared here.
 __all__ = ['ir_state', 'ir_step', 'main', 'name_offset', 'slot_resolver']
 
-_CACHE: dict[tuple[str, bytes], Any] = {}
+#: A lowered program, or the reason the lowering refused this encoding.  The
+#: refusal is cached too: re-lifting an instruction only to decline again is
+#: the same answer at full price.
+Lowered = IRProg | tuple[Literal['decline'], str]
 
-#: The IR keys a register by (kind, byte offset, size), one entry per size.
-IRKey = tuple[str, int, int]
+_CACHE: dict[tuple[str, bytes], Lowered] = {}
+
+#: One input state as the IR keys it.  The key type comes from the IR itself
+#: rather than being restated as ('reg', offset, size): `IRProg.run` takes the
+#: full union, and a narrower dict would not be assignable to it.
 IRState = dict[IRKey, int]
 
 
@@ -49,15 +56,17 @@ def ir_state(arch: Architecture, names: list[str], values: dict[str, int],
     return v, t
 
 
-def _prog(arch: Architecture, code: bytes) -> Any:
+def _prog(arch: Architecture, code: bytes) -> Lowered:
     key = (arch.value if hasattr(arch, 'value') else str(arch), code)
     hit = _CACHE.get(key)
     if hit is None:
+        made: Lowered
         try:
-            hit = build_ir(arch, code)
+            made = build_ir(arch, code)
         except Unsupported as e:
-            hit = ('decline', str(e))
-        _CACHE[key] = hit
+            made = ('decline', str(e))
+        _CACHE[key] = made
+        return made
     return hit
 
 

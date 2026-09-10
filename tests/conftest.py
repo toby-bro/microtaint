@@ -8,6 +8,10 @@ import sys
 
 import pytest
 
+from microtaint.instrumentation.cell import PCodeCellEvaluator
+from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
+from microtaint.simulator import CellSimulator
+
 # Make cell_c importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'microtaint', 'instrumentation', 'cell_c'))
 
@@ -16,7 +20,6 @@ if os.environ.get('MICROTAINT_USE_C') == '1':
 
     _original_init = sim_mod.CellSimulator.__init__
 
-    from microtaint.simulator import CellSimulator
     from microtaint.types import Architecture
 
     def _patched_init(self: CellSimulator, arch: Architecture,
@@ -97,3 +100,34 @@ def pytest_collection_modifyitems(config: pytest.Config,
     for item in items:
         if 'slow' in item.keywords:
             item.add_marker(skip)
+
+
+# ---------------------------------------------------------------------------
+# The cell evaluator behind a simulator.
+#
+# `CellSimulator._pcode` is None when the native evaluator could not be built.
+# Reading a counter or calling an entry point through that None is not a
+# failure a test should absorb: it means the kernel under test never ran, and
+# the assertion that follows would be about nothing.
+
+
+def cell_kernel(sim: CellSimulator) -> PCodeCellEvaluator | PCodeCellEvaluatorC:
+    """Either cell evaluator, whichever this simulator built."""
+    kernel = sim._pcode
+    assert kernel is not None, (
+        'this simulator has no native cell evaluator, so there is nothing to '
+        'measure or compare')
+    return kernel
+
+
+def c_cell_kernel(sim: CellSimulator) -> PCodeCellEvaluatorC:
+    """The pure-C evaluator specifically.
+
+    Some entry points exist only there: the C-level shadow access goes through
+    a C-API capsule the Cython kernel does not publish.
+    """
+    kernel = cell_kernel(sim)
+    assert isinstance(kernel, PCodeCellEvaluatorC), (
+        f'this entry point needs the C kernel; the simulator has '
+        f'{type(kernel).__name__}')
+    return kernel

@@ -29,6 +29,7 @@ import platform
 import subprocess
 import sys
 import tempfile
+from typing import TypedDict
 
 import pytest
 
@@ -122,8 +123,25 @@ def _compile(src: str) -> str:
     return path
 
 
+class RunResult(TypedDict):
+    """What the child prints: both taint states, and the counters that say
+    whether the express lane engaged at all.
+
+    `regs` and `shadow` are the answer being compared; `express_done` and
+    `instr_total` are what stop a run that took the GIL path throughout from
+    agreeing with itself and reporting parity.
+    """
+
+    findings: list[str]
+    regs: dict[str, int]
+    shadow: str
+    instr_total: int
+    express_done: int
+    fast_done: int
+
+
 def _run(binary: str, payload: bytes, *, express: bool, taint_ir: bool,
-         nogil_mem: bool = True) -> dict[str, int]:
+         nogil_mem: bool = True) -> RunResult:
     env = dict(os.environ)
     env['MICROTAINT_EXPRESS'] = '1' if express else '0'
     env['MICROTAINT_NOGIL_MEM'] = '1' if nogil_mem else '0'
@@ -133,17 +151,18 @@ def _run(binary: str, payload: bytes, *, express: bool, taint_ir: bool,
                          cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     for line in out.stdout.splitlines():
         if line.startswith('@@RESULT@@'):
-            return json.loads(line[len('@@RESULT@@'):])
+            result: RunResult = json.loads(line[len('@@RESULT@@'):])
+            return result
     raise AssertionError(f'child produced no result:\n{out.stdout}\n{out.stderr}')
 
 
 @pytest.fixture(scope='module')
-def binary():
+def binary() -> str:
     return _compile(_SRC)
 
 
 @pytest.mark.parametrize('taint_ir', [False, True], ids=['circuit', 'compiled'])
-def test_express_lane_matches_the_gil_path(binary, taint_ir):
+def test_express_lane_matches_the_gil_path(binary: str, taint_ir: bool) -> None:
     payload = bytes((i * 37 + 11) & 0xFF for i in range(48))
     on = _run(binary, payload, express=True, taint_ir=taint_ir)
     off = _run(binary, payload, express=False, taint_ir=taint_ir)
@@ -160,7 +179,8 @@ def test_express_lane_matches_the_gil_path(binary, taint_ir):
 
 
 @pytest.mark.parametrize('taint_ir', [False, True], ids=['circuit', 'compiled'])
-def test_nogil_memory_callbacks_match_the_gil_path(binary, taint_ir):
+def test_nogil_memory_callbacks_match_the_gil_path(binary: str,
+                                                   taint_ir: bool) -> None:
     """Same comparison for the load/store callbacks, which own the shadow.
 
     Every byte of memory taint is in the digest, so a callback that cleared a
@@ -178,7 +198,8 @@ def test_nogil_memory_callbacks_match_the_gil_path(binary, taint_ir):
 
 
 @pytest.mark.parametrize('taint_ir', [False, True], ids=['circuit', 'compiled'])
-def test_express_lane_carries_most_of_the_run(binary, taint_ir):
+def test_express_lane_carries_most_of_the_run(binary: str,
+                                              taint_ir: bool) -> None:
     """A coverage floor, so a change that quietly disabled the lane is visible.
 
     Deliberately loose: what it must catch is the lane falling to nothing, not

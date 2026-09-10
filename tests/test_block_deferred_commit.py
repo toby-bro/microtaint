@@ -26,7 +26,7 @@ import os
 import platform
 import subprocess
 import tempfile
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -34,6 +34,9 @@ from microtaint.emulator import blockpath_c as B
 from microtaint.taint_ir import frompcode
 from microtaint.taint_ir.blockcompile import compile_block
 from microtaint.types import Architecture
+
+if TYPE_CHECKING:    # stub-only: opaque PyCapsule handles into blockpath.h
+    from microtaint.emulator.blockpath_c import _Capsule as Handle
 
 pytestmark = pytest.mark.skipif(
     platform.system() != 'Linux', reason='emulator tests require Linux',
@@ -55,7 +58,8 @@ def kit() -> dict[str, int]:
     return {n: i for i, n in enumerate(names)}
 
 
-def _fresh(layout: dict[str, int], *, rax_tainted: bool = True) -> tuple[Any, Any, list[int]]:
+def _fresh(layout: dict[str, int], *, rax_tainted: bool = True,
+           ) -> tuple[Handle, Handle, list[int]]:
     """A runner whose RAX is tainted, and a plan for `mov rax, rbx`."""
     mem = B.mem_new(_ARENA, _ARENA_LEN)
     runner = B.runner_new(len(layout), -1, mem)
@@ -69,7 +73,7 @@ def _fresh(layout: dict[str, int], *, rax_tainted: bool = True) -> tuple[Any, An
     return runner, got[0], [0] * len(layout)
 
 
-def _rax(runner: object, layout: dict[str, int]) -> int:
+def _rax(runner: Handle, layout: dict[str, int]) -> int:
     return B.runner_taint(runner)[layout['RAX']]
 
 

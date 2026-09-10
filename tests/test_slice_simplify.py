@@ -10,13 +10,13 @@ count==0 select branch must fold away).
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 
 import pypcode
 import pytest
-from pypcode import PcodeOp, Varnode
 
-from microtaint.sleigh.constfold import VNKey, _eval, _key
-from microtaint.sleigh.slice_simplify import simplify_slice
+from microtaint.sleigh.constfold import VarnodeLike, VNKey, _eval, _key
+from microtaint.sleigh.slice_simplify import SliceOp, simplify_slice
 from microtaint.sleigh.slicer import slice_backward
 
 _CTX = pypcode.Context('x86:LE:64:default')
@@ -36,12 +36,12 @@ _CASES = [
 ]
 
 
-def _eval_slice(ops: list[PcodeOp], env: dict[VNKey, int]) -> dict[VNKey, int]:
+def _eval_slice(ops: Sequence[SliceOp], env: dict[VNKey, int]) -> dict[VNKey, int]:
     """Concretely evaluate a slice; unknown reads come from `env`. Returns the
     value map (VNKey -> value). Ops constfold._eval cannot model raise."""
     vals: dict[VNKey, int] = {}
 
-    def read(vn: Varnode) -> int:
+    def read(vn: VarnodeLike) -> int:
         if vn.space.name == 'const':
             return vn.offset
         k = _key(vn)
@@ -61,7 +61,7 @@ def _eval_slice(ops: list[PcodeOp], env: dict[VNKey, int]) -> dict[VNKey, int]:
     return vals
 
 
-def _input_keys(ops: list[PcodeOp]) -> set[VNKey]:
+def _input_keys(ops: Sequence[SliceOp]) -> set[VNKey]:
     """Varnodes read but never defined in the slice (the free inputs)."""
     defined = {_key(o.output) for o in ops if o.output is not None}
     reads: set[VNKey] = set()
@@ -92,7 +92,7 @@ def test_simplify_collapses_constant_shift_flag() -> None:
     """A constant-count shift's flag select must shrink (dead branch removed)."""
     ops = _CTX.translate(bytes.fromhex('c1e007'), 0x1000).ops  # shl eax,7
     from microtaint.sleigh.slice_simplify import _Vn  # noqa: PLC0415
-    def real(ops: list[PcodeOp]) -> int:
+    def real(ops: Sequence[SliceOp]) -> int:
         # COPY is pure routing (determine_category ignores it); count real work.
         return sum(1 for o in ops if o.opcode.name != 'COPY')
     for off in (0x200, 0x207, 0x206):  # CF, SF, ZF

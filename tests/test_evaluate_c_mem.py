@@ -12,22 +12,21 @@ acceptable bail) directly -- no Qiling, so no multi-instance segfault risk.
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+from collections.abc import Callable
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
-from collections.abc import Callable
-from typing import Any
-
-from instruction_bank import isa_registers  # type: ignore[import-not-found]
-
+from benchmark.instruction_bank import isa_registers
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
+from microtaint.instrumentation.cell_c.circuit_c import CompiledCircuit
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy
+
+#: A register-taint answer, as both paths return it.
+TaintOut = dict[str, int]
 
 FULL = 0xFFFFFFFFFFFFFFFF
 BASE = 0x100000  # a base address the addressing modes below land on/near
@@ -49,6 +48,22 @@ CASES = [
 ]
 
 
+def _c_kernel(sim: CellSimulator) -> PCodeCellEvaluatorC:
+    """The pure-C cell kernel behind a simulator.
+
+    `evaluate_c_mem` takes the C evaluator specifically, not the Cython one:
+    the C-level shadow access it needs goes through the C-API capsule the
+    Cython kernel does not publish.  A simulator built without it has nothing
+    for these tests to compare, so say so instead of handing the C layer a
+    kernel it will decline.
+    """
+    kernel = sim._pcode
+    assert isinstance(kernel, PCodeCellEvaluatorC), (
+        f'evaluate_c_mem needs the C kernel; this simulator has '
+        f'{type(kernel).__name__}')
+    return kernel
+
+
 def _mem_reader_factory(mem: dict[int, int]) -> Callable[[int, int], int]:
     def reader(addr: int, size: int) -> int:
         return sum((mem.get(addr + i, 0) & 0xFF) << (8 * i) for i in range(size))
@@ -56,7 +71,8 @@ def _mem_reader_factory(mem: dict[int, int]) -> Callable[[int, int], int]:
 
 
 def _run_case(arch: Architecture, hx: str, *, rax_taint: int,
-              mem_taint_bytes: dict[int, int]) -> tuple[Any, Any, Any]:
+              mem_taint_bytes: dict[int, int],
+              ) -> tuple[TaintOut, TaintOut | None, CompiledCircuit]:
     regs = list(isa_registers(arch))
     sim = CellSimulator(arch)
     circ = generate_static_rule(arch, bytes.fromhex(hx), regs)
@@ -91,7 +107,8 @@ def _run_case(arch: Architecture, hx: str, *, rax_taint: int,
     # which every one of these sites has already done.
     assert compiled is not None and not isinstance(compiled, bool)
 
-    cmem = compiled.evaluate_c_mem(dict(taint), dict(values), sim._pcode, shadow, mem_reader)
+    cmem = compiled.evaluate_c_mem(dict(taint), dict(values), _c_kernel(sim),
+                                   shadow, mem_reader)
     return ref, cmem, compiled
 
 
@@ -117,12 +134,15 @@ def test_c_mem_matches_do_evaluate(label: str, hx: str, rax_taint: int,
 
 def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int,
                   mem_taint_bytes: dict[int, int],
-                  ) -> tuple[Any, Any, Any, Any]:
+                  ) -> tuple[TaintOut, TaintOut,
+                             dict[tuple[int, int], int]] | None:
     """Mirror of _run_case for evaluate_c_mem_ptr: register taint/values live in
     raw uint64 C arrays (ctypes) indexed by slot; the eval writes reg targets to
     the taint array and mem targets to the shadow, returning the mem writes.
-    Returns (ref, got_reg, got_mem, bailed) where got_reg is the reg-taint dict
-    read back from the array and got_mem maps (addr,size)->taint from the writes."""
+
+    Returns (ref, got_reg, got_mem), where got_reg is the reg-taint dict read
+    back from the array and got_mem maps (addr, size) -> taint from the writes,
+    or None when the circuit declined and there is nothing to compare."""
     import ctypes
     regs = list(isa_registers(arch))
     names = [r.name for r in regs]
@@ -163,12 +183,13 @@ def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int,
     v_arr = TArr(*[values[n] & FULL for n in names])
     slot_map = {n: i for i, n in enumerate(names)}
     writes = compiled.evaluate_c_mem_ptr(ctypes.addressof(t_arr), ctypes.addressof(v_arr),
-                                         K, sim._pcode, shadow, mem_reader, slot_map)
+                                         K, _c_kernel(sim), shadow, mem_reader,
+                                         slot_map)
     if writes is None:
-        return ref, None, None, True
+        return None
     got_reg = {names[i]: int(t_arr[i]) for i in range(K)}
     got_mem = {(int(a), int(s)): int(t) for (a, s, t) in writes}
-    return ref, got_reg, got_mem, False
+    return ref, got_reg, got_mem
 
 
 @pytest.mark.parametrize('label,hx', [(c[1], c[2]) for c in CASES])
@@ -181,12 +202,14 @@ def _run_case_ptr(arch: Architecture, hx: str, *, rax_taint: int,
 def test_c_mem_ptr_matches_do_evaluate(label: str, hx: str, rax_taint: int,
                                        mem_taint: dict[int, int]) -> None:
     """evaluate_c_mem_ptr's array+shadow output must equal the differential."""
-    ref, got_reg, got_mem, bailed = _run_case_ptr(
-        Architecture.AMD64, hx, rax_taint=rax_taint, mem_taint_bytes=mem_taint)
-    if bailed:
+    got = _run_case_ptr(Architecture.AMD64, hx, rax_taint=rax_taint,
+                        mem_taint_bytes=mem_taint)
+    if got is None:
         pytest.skip(f'{label}: evaluate_c_mem_ptr bailed (falls back)')
+    ref, got_reg, got_mem = got
     # Split the reference into register + MEM_ parts.
-    ref_reg, ref_mem = {}, {}
+    ref_reg: TaintOut = {}
+    ref_mem: dict[tuple[int, int], int] = {}
     for k, v in ref.items():
         if isinstance(k, str) and k.startswith('MEM_'):
             body = k[4:]
@@ -248,9 +271,7 @@ def test_c_mem_arms_per_evaluate_frame_recycle() -> None:
     assert compiled is not None and not isinstance(compiled, bool)
     assert getattr(compiled, 'has_mem_ops', 0), 'expected a memory circuit with cells'
 
-    kernel = sim._pcode
-    if kernel is None or getattr(kernel, 'native_calls', None) is None:
-        pytest.skip('kernel does not expose a cell-execution counter')
+    kernel = _c_kernel(sim)
 
     N = 15
     # Reference cadence: do_evaluate resets the pool per call -> N re-executions.
@@ -307,7 +328,8 @@ def test_c_mem_persistent_kernel_sequence() -> None:
         ref = circ.evaluate(ectx)
         compiled = circ._compiled
         assert compiled is not None and not isinstance(compiled, bool)
-        cmem = compiled.evaluate_c_mem(dict(taint), dict(values), sim._pcode, shadow, reader)
+        cmem = compiled.evaluate_c_mem(dict(taint), dict(values), _c_kernel(sim),
+                                       shadow, reader)
         if cmem is None:
             continue
         assert cmem == ref, (

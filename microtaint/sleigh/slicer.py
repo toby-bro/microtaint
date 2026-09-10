@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pypcode.pypcode_native import PcodeOp, Varnode
 
+from microtaint.sleigh.constfold import VarnodeLike
+
 
 def get_varnode_id(vn: Varnode) -> str:
     """Helper to get a unique identifier for a varnode."""
@@ -10,18 +12,23 @@ def get_varnode_id(vn: Varnode) -> str:
     return f'{vn.space.name}:{vn.offset}:{vn.size}'
 
 
-def _vn_range(vn: Varnode) -> tuple[str, int, int]:
+def _vn_range(vn: VarnodeLike) -> tuple[str, int, int]:
     """Return (space_name, byte_start, byte_end_exclusive) for a varnode."""
     return (vn.space.name, vn.offset, vn.offset + vn.size)
 
 
 def slice_backward(
     ops: list[PcodeOp],
-    target_varnode: Varnode,
+    target_varnode: VarnodeLike,
 ) -> list[PcodeOp]:
     """
     Given an ordered list of P-code operations and a target output varnode,
     traverse backward to find all operations that contribute to computing it.
+
+    The target is a `VarnodeLike` rather than a `Varnode` because pypcode's
+    Varnode cannot be constructed from Python: a caller that wants the slice of
+    a register the lifter never names outright -- a flag, say -- has no way to
+    hand one over, and only the (space, offset, size) triple is read here.
 
     Overlap-aware: an op's output is included in the slice if its byte range
     overlaps ANY varnode currently in the worklist within the same address

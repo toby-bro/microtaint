@@ -33,7 +33,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import pytest
 
@@ -122,7 +122,23 @@ def _build(source: str) -> str:
     return path
 
 
-def _probe(guest: str, arr_hook: str) -> dict[str, Any]:
+class Probe(TypedDict):
+    """One run of `tests.arr_hook_probe`.
+
+    `findings` arrives as JSON lists, not the (kind, address) tuples the probe
+    built, so it is compared and printed rather than indexed.  `mem` is keyed
+    by the decimal address as a string, for the same reason: JSON object keys
+    are strings.
+    """
+
+    engine: str
+    arr_hook: str
+    findings: list[list[object]]
+    regs: dict[str, int]
+    mem: dict[str, int]
+
+
+def _probe(guest: str, arr_hook: str) -> Probe:
     env = {**os.environ, 'MICROTAINT_ARR_HOOK': arr_hook}
     run = subprocess.run(
         [sys.executable, '-m', 'tests.arr_hook_probe', guest, _STDIN.hex()],
@@ -130,13 +146,14 @@ def _probe(guest: str, arr_hook: str) -> dict[str, Any]:
     if run.returncode != 0:
         pytest.fail(f'the probe failed with ARR_HOOK={arr_hook}: '
                     f'{run.stderr.decode()[-2000:]}')
-    return json.loads(run.stdout.decode())
+    probe: Probe = json.loads(run.stdout.decode())
+    return probe
 
 
-def _under_taint(reference: dict[str, Any],
-                 candidate: dict[str, Any]) -> dict[str, Any]:
+def _under_taint(reference: dict[str, int],
+                 candidate: dict[str, int]) -> dict[str, tuple[int, int]]:
     """Bits the reference holds that the candidate does not, per key."""
-    lost = {}
+    lost: dict[str, tuple[int, int]] = {}
     for key, ref in reference.items():
         got = candidate.get(key, 0)
         if ref & ~got:

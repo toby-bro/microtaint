@@ -20,11 +20,32 @@ import ctypes
 import json
 import random
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 from benchmark.instruction_bank import ISASpec
-from microtaint.taint_ir.ir import IRProg
+from microtaint.taint_ir.ir import IRKey, IRProg
 from microtaint.types import Architecture
+
+#: One instruction's timings: (label, machine-op cost, C ns, interpreter ns,
+#: JIT ns).  A JIT time of 0 means the host emitter declined that program.
+PerfRow = tuple[str, int, float, float, float]
+#: An instruction whose compiled answer differed, and the output keys it
+#: differed on ('jit' when the host emitter is the one that disagreed).
+Mismatch = tuple[str, list[IRKey]]
+
+
+class IsaPerf(TypedDict):
+    """One ISA's measurement: the per-instruction rows, plus how much of the
+    bank was actually measured -- `declined` and `mismatches` are what stop a
+    fast-looking mean from hiding a bank that mostly did not run."""
+
+    rows: list[PerfRow]
+    declined: int
+    compile_s: float
+    n_progs: int
+    mismatches: list[Mismatch]
+    n_jit: int
+    jit_compile_s: float
 
 BASELINE = Path(__file__).parent / 'taint_ir_perf_baseline.json'
 MASK64 = 0xFFFFFFFFFFFFFFFF
@@ -84,7 +105,7 @@ def _sizes(arch: Architecture) -> dict[str, int]:
 
 
 def measure_isa(isa: str, spec: ISASpec, *, iters: int = 200000,
-                opt: str = '-O3') -> dict[str, Any] | None:
+                opt: str = '-O3') -> IsaPerf | None:
     import time
 
     from microtaint.instrumentation.cell_c import taint_ir_c
@@ -141,7 +162,8 @@ def measure_isa(isa: str, spec: ISASpec, *, iters: int = 200000,
     T = (ctypes.c_uint64 * total)(*tnts)
     O = (ctypes.c_uint64 * total)()
 
-    rows, mismatches = [], []
+    rows: list[PerfRow] = []
+    mismatches: list[Mismatch] = []
     n_jit, jit_compile_total = [0], [0.0]
     for i, (label, p) in enumerate(zip(labels, progs)):
         try:
@@ -149,13 +171,13 @@ def measure_isa(isa: str, spec: ISASpec, *, iters: int = 200000,
         except KeyError:
             continue
         got_i = taint_ir_c.run(cap, list(vals), list(tnts))
-        for k in range(total):
-            O[k] = tnts[k]
+        for i_slot in range(total):
+            O[i_slot] = tnts[i_slot]
         call(i, V, T, O)
-        bad = []
+        bad: list[IRKey] = []
         for k, _n in p.outputs:
-            s = slot_of(k)
-            if s is not None and O[s] != got_i[s]:
+            sl = slot_of(k)
+            if sl is not None and O[sl] != got_i[sl]:
                 bad.append(k)
         if bad:
             mismatches.append((label, bad))
@@ -175,9 +197,9 @@ def measure_isa(isa: str, spec: ISASpec, *, iters: int = 200000,
             n_jit[0] += 1
             jit_compile_total[0] += jit_compile
         rows.append((label, p.cost(), ns_c, ns_i, ns_j))
-    return {'rows': rows, 'declined': declined, 'compile_s': compile_s,
-            'n_progs': len(progs), 'mismatches': mismatches,
-            'n_jit': n_jit[0], 'jit_compile_s': jit_compile_total[0]}
+    return IsaPerf(rows=rows, declined=declined, compile_s=compile_s,
+                   n_progs=len(progs), mismatches=mismatches,
+                   n_jit=n_jit[0], jit_compile_s=jit_compile_total[0])
 
 
 def _q(xs: list[float], q: float) -> float:
@@ -187,7 +209,7 @@ def _q(xs: list[float], q: float) -> float:
     return s[min(len(s) - 1, int(q * len(s)))]
 
 
-def summarize(isa: str, res: dict[str, Any]) -> str:
+def summarize(isa: str, res: IsaPerf) -> str:
     rows = res['rows']
     ops = [r[1] for r in rows]
     cns = [r[2] for r in rows]

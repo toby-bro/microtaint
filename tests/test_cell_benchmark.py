@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import itertools
 import os
-from typing import Any
 
 import pytest
 from pytest_benchmark.fixture import BenchmarkFixture
@@ -1374,7 +1373,7 @@ def test_pow2_scale_taint_exact_and_minimal(
 #           several different taint masks to maximise differential coverage
 # ===========================================================================
 
-TAINT_SCENARIOS: list[dict[str, Any]] = [
+TAINT_SCENARIOS: list[dict[str, int]] = [
     {'RAX': FULL_TAINT_64, 'RBX': 0},
     {'RAX': 0, 'RBX': FULL_TAINT_64},
     {'RAX': FULL_TAINT_64, 'RBX': FULL_TAINT_64},
@@ -1700,8 +1699,8 @@ TAINT_CHAIN: list[tuple[str, str]] = [
 
 # Pre-compile chain circuits (same session cache)
 @pytest.fixture(scope='session')
-def chain_circuits() -> dict[str, Any]:
-    circuits = {}
+def chain_circuits() -> dict[str, LogicCircuit]:
+    circuits: dict[str, LogicCircuit] = {}
     for _, hex_bytes in TAINT_CHAIN:
         if hex_bytes not in circuits:
             circuits[hex_bytes] = generate_static_rule(

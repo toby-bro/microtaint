@@ -104,10 +104,17 @@ class CompiledCircuit:
         taint_addr: int,
         val_addr: int,
         n_slots: int,
-        *args: object,
-    ) -> dict[str, int] | None:
-        """Memory eval over raw uint64 C arrays; atomic.  Returns the memory
-        writes as (addr, size, taint)."""
+        pcode: PCodeCellEvaluatorC,
+        shadow_memory: BitPreciseShadowMemory,
+        mem_reader: Callable[[int, int], int] | None,
+        name_to_slot: dict[str, int],
+    ) -> list[tuple[int, int, int]] | None:
+        """Memory eval over raw uint64 C arrays; atomic.
+
+        Register taint is written back into the array at `taint_addr`; the
+        return value is the MEMORY writes, one (addr, size, taint) triple each.
+        None means the circuit declined and nothing was committed.
+        """
 
     def evaluate_c(
         self,

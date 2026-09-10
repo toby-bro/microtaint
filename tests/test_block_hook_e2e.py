@@ -24,7 +24,7 @@ import platform
 import subprocess
 import tempfile
 from collections.abc import Iterator
-from typing import Any
+from typing import TypedDict
 
 import pytest
 
@@ -74,7 +74,21 @@ def _build() -> str:
     return path
 
 
-def _run(guest: str, block: bool) -> dict[str, Any]:
+class RunTaint(TypedDict):
+    """One run's whole answer: register taint by name, memory taint by
+    address, and the block-mode counters (None when block mode never
+    installed, which is what tells the two runs apart)."""
+
+    regs: dict[str, int]
+    mem: dict[int, int]
+    stats: dict[str, int] | None
+
+
+#: The two runs under comparison: the instruction path, then block mode.
+BothRuns = tuple[RunTaint, RunTaint]
+
+
+def _run(guest: str, block: bool) -> RunTaint:
     from qiling import Qiling
     from qiling.const import QL_VERBOSE
 
@@ -104,8 +118,8 @@ def _run(guest: str, block: bool) -> dict[str, Any]:
                 m = w.shadow_mem.read_mask(a, 8)
                 if m:
                     mem[a] = m
-        return {'regs': {k: v for k, v in w.register_taint.items() if v},
-                'mem': mem, 'stats': w.block_mode_stats()}
+        return RunTaint(regs={k: v for k, v in w.register_taint.items() if v},
+                        mem=mem, stats=w.block_mode_stats())
     finally:
         os.dup2(saved, 1)
         os.close(dn)
@@ -116,7 +130,7 @@ def _run(guest: str, block: bool) -> dict[str, Any]:
 
 
 @pytest.fixture(scope='module')
-def both() -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+def both() -> Iterator[BothRuns]:
     guest = _build()
     try:
         yield _run(guest, block=False), _run(guest, block=True)
@@ -125,7 +139,7 @@ def both() -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
 
 
 def test_the_block_hook_actually_handles_the_blocks(
-        both: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        both: BothRuns) -> None:
     """Every block, or the comparison below proves nothing.
 
     A hook that declined everything would leave the taint state untouched, and
@@ -142,7 +156,7 @@ def test_the_block_hook_actually_handles_the_blocks(
 
 
 def test_the_instruction_path_did_not_also_run(
-        both: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        both: BothRuns) -> None:
     """Block mode OWNS the taint.  Both hooks armed would write the same state
     and clobber each other, and the comparison would measure whichever ran
     last -- which is exactly how an earlier version of this reported success."""
@@ -153,7 +167,7 @@ def test_the_instruction_path_did_not_also_run(
 
 
 def test_block_and_instruction_paths_agree(
-        both: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        both: BothRuns) -> None:
     instr, block = both
     assert instr['regs'] or instr['mem'], (
         'the instruction path found no taint at all, so there is nothing to '

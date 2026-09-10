@@ -36,8 +36,10 @@ import pytest
 from qiling import Qiling
 from qiling.const import QL_VERBOSE
 
+from microtaint.emulator.hook_core import InstructionHook
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.wrapper import MicrotaintWrapper
+from tests.conftest import cell_kernel
 
 _BENCH_DIR = Path(__file__).resolve().parent.parent / 'benchmark' / 'taint_density'
 
@@ -59,7 +61,7 @@ LIMITS = {
 }
 
 
-def _counters(elf: Path):
+def _counters(elf: Path) -> tuple[InstructionHook, int]:
     stdin = bytes((i * 7 + 13) & 0xFF for i in range(64))
     ql = Qiling([str(elf)], '/', verbose=QL_VERBOSE.OFF)
     ql.os.stdin = io.BytesIO(stdin)
@@ -76,9 +78,9 @@ def _counters(elf: Path):
         os.close(devnull)
         os.close(saved)
     h = w._instr_hook_obj
-    if h is None:
+    if not isinstance(h, InstructionHook):
         pytest.skip('Cython instruction hook not installed')
-    return h, w.sim._pcode.native_calls
+    return h, cell_kernel(w.sim).native_calls
 
 
 @pytest.mark.skipif(

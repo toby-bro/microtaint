@@ -22,7 +22,6 @@ differential at all, and how often the window has to fire.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
 
 from pypcode import Context, PcodeOp, Varnode
 
@@ -126,10 +125,15 @@ def classify_instr(sctx: Context, code: bytes) -> tuple[str, int]:
     return ('RECONVERGENT' if reconv else 'NONAFFINE'), reconv
 
 
-def run(isas: list[str] | None = None) -> dict[str, Any]:
+#: One ISA's tally: how many instructions were classified, the class counts,
+#: and how many p-code ops reconverged across the whole ISA.
+IsaTally = tuple[int, 'Counter[str]', int]
+
+
+def run(isas: list[str] | None = None) -> dict[str, IsaTally]:
     from benchmark.instruction_bank import load_bank
     specs = load_bank(isas=set(isas) if isas else None)
-    per_isa: dict[str, Any] = {}
+    per_isa: dict[str, IsaTally] = {}
     for name, spec in specs.items():
         key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
         try:
@@ -155,7 +159,7 @@ if __name__ == '__main__':
     import sys
     isas = sys.argv[1:] or None
     per = run(isas)
-    tot = Counter()
+    tot: Counter[str] = Counter()
     print(f"{'ISA':12}{'n':>5}  {'pure-affine':>12}{'nonaffine':>11}{'reconvergent':>13}{'opaque':>8}{'other':>7}")
     for name, (n, cnt, rc) in per.items():
         tot.update(cnt)

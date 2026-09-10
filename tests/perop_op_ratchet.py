@@ -30,14 +30,22 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
-from typing import Any
+from typing import Literal, TypedDict
 
-#: One measured ISA: {'ops': {label: op count}, 'declined': [label, ...]}.
-Measured = dict[str, dict[str, Any]]
+
+class IsaOps(TypedDict):
+    """One measured ISA: the op count per instruction it answered, and the
+    labels it declined."""
+
+    ops: dict[str, int]
+    declined: list[str]
+
+
+Measured = dict[str, IsaOps]
 #: (isa, label, baseline, now) -- baseline is 'declined' for a new answer.
-Change = tuple[str, str, Any, Any]
+Change = tuple[str, str, int | Literal['declined'], int]
 #: (isa, label, baseline op count).  A decline has no 'now' to report.
-NewDecline = tuple[str, str, Any]
+NewDecline = tuple[str, str, int]
 
 from tests.perop_c_bank import Declined, perop_c_step
 
@@ -65,7 +73,7 @@ def measure(isas: list[str] | None = None) -> Measured:
     """-> {isa: {'ops': {label: n}, 'declined': [label, ...]}}"""
     from benchmark.instruction_bank import load_bank
 
-    out: dict[str, dict[str, Any]] = {}
+    out: Measured = {}
     specs = load_bank(isas=set(isas) if isas else None)
     for isa, spec in sorted(specs.items()):
         ops: dict[str, int] = {}

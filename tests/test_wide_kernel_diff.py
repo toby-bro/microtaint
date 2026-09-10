@@ -211,15 +211,18 @@ def _cell_wide_taint(
         or_in.setdefault(k, v & _FULL)
         and_in.setdefault(k, v & _FULL)
     tainted: set[int] = set()
-    for k in range(0, nbytes, 8):
+    # `off` rather than `k`: the loops above bind `k` to an input NAME, and one
+    # name reused for a byte offset in the same scope is how a lane index ends
+    # up being formatted into a register name.
+    for off in range(0, nbytes, 8):
         cell = types.SimpleNamespace(
-            instruction=instr_hex, out_reg=_vlane(out_base, k),
+            instruction=instr_hex, out_reg=_vlane(out_base, off),
             out_bit_start=0, out_bit_end=63,
         )
         lane = ev.evaluate_differential(cell, dict(or_in), dict(and_in))
-        for i in range(min(8, nbytes - k)):
+        for i in range(min(8, nbytes - off)):
             if (lane >> (i * 8)) & 0xFF:
-                tainted.add(k + i)
+                tainted.add(off + i)
     return tainted
 
 

@@ -24,11 +24,17 @@ import logging
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 
-from microtaint.emulator.reporter import Reporter
+from microtaint.emulator.reporter import Finding, Reporter
+
+if TYPE_CHECKING:
+    from qiling import Qiling
+
+    from microtaint.emulator.heap import HeapTracker
+    from microtaint.emulator.wrapper import MicrotaintWrapper
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,7 +55,9 @@ def _compile(c_src: str, tmp_path: Path, *, extra_flags: list[str] | None = None
     return bin_file
 
 
-def _run_with_heap_tracker(binary: Path) -> tuple[Any, Any, Any, Any]:
+def _run_with_heap_tracker(binary: Path,
+                           ) -> tuple[Qiling, MicrotaintWrapper, HeapTracker,
+                                      Reporter]:
     """
     Instantiate Qiling + MicrotaintWrapper(check_uaf=True) + HeapTracker.
     Returns (ql, wrapper, heap_tracker, reporter).
@@ -86,7 +94,7 @@ def _run_with_heap_tracker(binary: Path) -> tuple[Any, Any, Any, Any]:
     return ql, wrapper, heap_tracker, reporter
 
 
-def _findings_of_kind(reporter: Reporter, kind: str) -> list[Any]:
+def _findings_of_kind(reporter: Reporter, kind: str) -> list[Finding]:
     return [f for f in getattr(reporter, 'findings', []) if str(f.kind).endswith(kind)]
 
 

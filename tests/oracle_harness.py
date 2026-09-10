@@ -28,10 +28,11 @@ bounded gate, and it can be driven standalone for full-bank sweeps:
 from __future__ import annotations
 
 import random
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import SimpleNamespace
+from typing import Protocol
 
 from microtaint.instrumentation.ast import EvalContext, LogicCircuit
 from microtaint.simulator import CellSimulator
@@ -70,7 +71,7 @@ def build_circuit(arch: Architecture, code: bytes,
 
 def reference_taint(arch: Architecture, code: bytes, regs: list[Register],
                     in_taint: TaintState, in_values: TaintState, *,
-                    circuit: LogicCircuit = None) -> TaintState:
+                    circuit: LogicCircuit | None = None) -> TaintState:
     """Oracle 1: circuit.evaluate -- the current whole-instruction differential.
     Register-only (no shadow); memory forms are filtered by the corpus driver."""
     if circuit is None:
@@ -94,7 +95,7 @@ def reference_taint(arch: Architecture, code: bytes, regs: list[Register],
 
 def engine_evaluate_c(arch: Architecture, code: bytes, regs: list[Register],
                       in_taint: TaintState, in_values: TaintState, *,
-                      circuit: LogicCircuit = None) -> TaintState:
+                      circuit: LogicCircuit | None = None) -> TaintState:
     """The CURRENT C register fast path (CompiledCircuit.evaluate_c), falling
     back to the differential where it declines (None: mem / PC / wide).  Proves
     the harness detects a real (non-identity) engine matching the oracle, and is
@@ -117,7 +118,7 @@ def engine_evaluate_c(arch: Architecture, code: bytes, regs: list[Register],
 
 def engine_evaluate_c_arr(arch: Architecture, code: bytes,
                           regs: list[Register], in_taint: TaintState,
-                          in_values: TaintState, *, circuit: LogicCircuit = None) -> TaintState:
+                          in_values: TaintState, *, circuit: LogicCircuit | None = None) -> TaintState:
     """The array-gather register path (CompiledCircuit.evaluate_c_arr): register
     taint/values are passed as slot-indexed lists (slot = position in `regs`), so
     the per-op input fill is an array gather, not a dict hash lookup.  Returns
@@ -147,7 +148,7 @@ def engine_evaluate_c_arr(arch: Architecture, code: bytes,
 def engine_evaluate_c_arr_ptr(arch: Architecture, code: bytes,
                               regs: list[Register], in_taint: TaintState,
                               in_values: TaintState, *,
-                              circuit: LogicCircuit = None) -> TaintState:
+                              circuit: LogicCircuit | None = None) -> TaintState:
     """The live-usable pointer form (evaluate_c_arr_ptr): register taint/values
     live in raw uint64 C arrays (here ctypes arrays), indexed by slot; the eval
     writes target slots of the taint array in place (atomic).  Reads the array
@@ -628,9 +629,17 @@ def _compile_and_mem(circuit: LogicCircuit, arch: Architecture,
     return bool(c) and getattr(c, 'has_mem_ops', False)
 
 
-#: `engine_fn(arch, code, regs, in_taint, in_values, *, circuit) -> dict`,
-#: the one shape every engine under test is adapted to.
-EngineFn = Callable[..., dict[str, int]]
+class EngineFn(Protocol):
+    """The one shape every engine under test is adapted to.
+
+    A Protocol rather than `Callable[..., TaintState]`: the `...` there accepts
+    any argument list at all, so an adapter whose parameters had drifted would
+    still type-check and only fail once the sweep called it.
+    """
+
+    def __call__(self, arch: Architecture, code: bytes, regs: list[Register],
+                 in_taint: TaintState, in_values: TaintState, *,
+                 circuit: LogicCircuit | None = None) -> TaintState: ...
 
 
 def run_bank(engine_fn: EngineFn, *, isas: list[str] | None = None,
