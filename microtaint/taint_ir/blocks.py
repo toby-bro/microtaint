@@ -58,7 +58,7 @@ def instruction_starts(ops: list[Any]) -> list[tuple[int, int, int]]:
 
 
 def plan_block(arch: ArchLike, code: bytes, base: int = LIFT_BASE, *,
-               emit: Emit = 'both',
+               emit: Emit = Emit.BOTH,
                builder: Builder | None = None) -> list[Region]:
     """Greedy maximal regions covering `code`, in order.
 

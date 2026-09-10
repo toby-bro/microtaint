@@ -20,7 +20,7 @@ from typing import Any
 from microtaint.taint_ir.frompcode import Unsupported, build_ir
 from microtaint.taint_ir.regmap import name_offset, slot_resolver
 from microtaint.types import Architecture, Register
-from tests.perop_c_bank import Declined, _engine_names
+from tests.perop_c_bank import Declined, Ref, _engine_names
 
 #: `name_offset` and `slot_resolver` are re-exported on purpose: every bank
 #: harness needs them next to `ir_step`, and mypy will not honour a re-export
@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     for isa in args.isas:
         rep = run_bank_perop_c(isas=[isa], n_sparse=args.sparse,
-                               ref='ground_truth', step=ir_step)
+                               ref=Ref.GROUND_TRUTH, step=ir_step)
         print(f'[{isa}] {rep.summary()}')
         print(f'[{isa}] {rep.stats.summary()}')
         print(f'[{isa}] {rep.vs_oracle()}')

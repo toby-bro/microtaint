@@ -39,7 +39,8 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Literal
+from enum import StrEnum
+from typing import Any
 
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
@@ -51,7 +52,19 @@ MEM_SLOTS_PER_ACCESS = 4
 #: `MEM_<address>_<size>`, the name a resolved store output carries.
 _MEM_OUTPUT = re.compile(r'^MEM_(-?0x[0-9a-fA-F]+)_(\d+)$')
 
-Path = Literal['compiled', 'differential']
+class Path(StrEnum):
+    """Which implementation answered, or which one a caller is asking for.
+
+    A StrEnum so a caller may still pass the spelling and a report may
+    still print it, while the dispatch below compares members.
+    """
+
+    #: The lowered taint program.  What production runs, and what declines
+    #: on a shape the lowering does not model.
+    COMPILED = 'compiled'
+    #: The whole-instruction differential.  Always reachable, and the
+    #: reference the compiled path is judged against.
+    DIFFERENTIAL = 'differential'
 
 #: What `path=None` means.  The same variable the emulator hook reads, so one
 #: run of the suite exercises one implementation from top to bottom.
@@ -67,7 +80,7 @@ def default_path() -> Path:
     caller who names an implementation, because comparing the two in a run
     configured for one of them is exactly what the tests need to do.
     """
-    return 'differential' if os.environ.get(_ENV) == '0' else 'compiled'
+    return Path.DIFFERENTIAL if os.environ.get(_ENV) == '0' else Path.COMPILED
 
 
 def taint_step(
@@ -129,13 +142,13 @@ def _dispatch(arch: Architecture, code: bytes, in_taint: dict[str, int],
     if state_format is None:
         from microtaint.emulator import archregs
         state_format = archregs.state_format(arch)
-    want = path or default_path()
-    if want == 'compiled':
+    want = Path(path) if path is not None else default_path()
+    if want is Path.COMPILED:
         got = _compiled(arch, code, in_taint, in_values, state_format, memory)
         if got is not None:
-            return got, 'compiled'
+            return got, Path.COMPILED
     return _differential(arch, code, in_taint, in_values, state_format,
-                         implicit_policy, memory), 'differential'
+                         implicit_policy, memory), Path.DIFFERENTIAL
 
 
 _LAYOUTS: dict[Any, dict[str, int]] = {}

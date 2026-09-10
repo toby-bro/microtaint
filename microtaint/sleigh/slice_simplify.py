@@ -35,10 +35,10 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+from pypcode import Varnode
 from pypcode.pypcode_native import PcodeOp
 
 from microtaint.sleigh.constfold import VNKey, fold_constants
-from pypcode import Varnode
 
 
 class _Space(NamedTuple):

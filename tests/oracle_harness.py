@@ -30,8 +30,8 @@ from __future__ import annotations
 import random
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import SimpleNamespace
-from typing import Literal
 
 from microtaint.instrumentation.ast import EvalContext, LogicCircuit
 from microtaint.simulator import CellSimulator
@@ -41,8 +41,18 @@ from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 #: A per-output mask keyed by register or flag name.
 TaintState = dict[str, int]
 
-#: Which reference a sweep judges against.
-Ref = Literal['differential', 'ground_truth']
+class Ref(StrEnum):
+    """Which reference a sweep judges the engine against.
+
+    A StrEnum, like the rest: a caller may still pass the spelling and a
+    report may still print it, while the sweep compares members.
+    """
+
+    #: The whole-instruction differential.  A bit-exact gate.
+    DIFFERENTIAL = 'differential'
+    #: Unicorn per-bit sensitivity.  Soundness and precision, and the
+    #: only correct gate where the two paths may legitimately differ.
+    GROUND_TRUTH = 'ground_truth'
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
@@ -625,12 +635,12 @@ EngineFn = Callable[..., dict[str, int]]
 
 def run_bank(engine_fn: EngineFn, *, isas: list[str] | None = None,
              n_dense: int = 5, n_sparse: int = 8, seed: int = 1234,
-             ref: Ref = 'differential', uc_desc: UcDesc | None = None,
+             ref: Ref = Ref.DIFFERENTIAL, uc_desc: UcDesc | None = None,
              skip_mem: bool = True, max_mismatch: int = 25) -> Report:
     """Drive `engine_fn` over the instruction bank and compare vs a reference.
 
-    ref='differential' -> compare vs reference_taint (bit-exact gate).
-    ref='ground_truth'  -> compare vs Unicorn per-bit (needs uc_desc; soundness
+    ref=Ref.DIFFERENTIAL -> compare vs reference_taint (bit-exact gate).
+    ref=Ref.GROUND_TRUTH  -> compare vs Unicorn per-bit (needs uc_desc; soundness
                             + precision).  Uses only the sparse vectors (GT is
                             per-bit-expensive and exact only for few bits).
     """
@@ -652,7 +662,7 @@ def run_bank(engine_fn: EngineFn, *, isas: list[str] | None = None,
             rep.n_instrs += 1
             rng = random.Random(f'{seed}:{ins.label}')
             for in_taint, in_values in fuzz_vectors(reg_names, rng, n_dense, n_sparse):
-                if ref == 'ground_truth':
+                if ref is Ref.GROUND_TRUTH:
                     # GT enumerates tainted bits: cap total to keep it cheap/exact.
                     total_bits = sum(bin(v).count('1') for v in in_taint.values())
                     if total_bits == 0 or total_bits > 20:
@@ -661,9 +671,9 @@ def run_bank(engine_fn: EngineFn, *, isas: list[str] | None = None,
                 try:
                     got = engine_fn(spec.arch, ins.bytes, spec.regs,
                                     in_taint, in_values, circuit=circuit)
-                    if ref == 'ground_truth':
+                    if ref is Ref.GROUND_TRUTH:
                         assert uc_desc is not None, \
-                            "ref='ground_truth' needs a UcDesc"
+                            'ref=Ref.GROUND_TRUTH needs a UcDesc'
                         keys = list(uc_desc.gp) + list(uc_desc.flags)
                         refd = ground_truth(uc_desc, ins.bytes, in_taint, in_values)
                     else:
@@ -696,7 +706,7 @@ if __name__ == '__main__':
     ap.add_argument('--sparse', type=int, default=8)
     ap.add_argument('--ref', choices=['differential', 'ground_truth'], default='differential')
     args = ap.parse_args()
-    ud = UC_DESCS['AMD64']() if args.ref == 'ground_truth' else None
+    ud = UC_DESCS['AMD64']() if args.ref is Ref.GROUND_TRUTH else None
     r = run_bank(reference_taint, isas=args.isas, n_dense=args.dense,
                  n_sparse=args.sparse, ref=args.ref, uc_desc=ud)
     print(r.summary())

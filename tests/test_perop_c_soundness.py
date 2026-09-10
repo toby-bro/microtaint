@@ -21,7 +21,7 @@ Two design points worth stating, because both were mistakes at some stage:
 
 import pytest
 
-from tests.perop_c_bank import run_bank_perop_c
+from tests.perop_c_bank import Ref, run_bank_perop_c
 
 
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'RISCV64'])
@@ -30,7 +30,7 @@ def test_no_new_under_taint_vs_ground_truth(isa: str, request: pytest.FixtureReq
 
     rep = run_bank_perop_c(isas=[isa],
                            n_sparse=fuzz_budget(3, request.config),
-                           ref='ground_truth')
+                           ref=Ref.GROUND_TRUTH)
     assert rep.n_instrs > 0, f'{isa}: no instructions exercised'
     assert rep.n_cases > 0, f'{isa}: no cases evaluated'
     if rep.n_under_new:
@@ -48,7 +48,7 @@ def test_coverage_does_not_collapse(isa: str, floor):
     """A decline is safe but not free: it sends the instruction back to the
     slow whole-instruction differential.  Guard the fraction the pass answers so
     a rule change cannot buy correctness by quietly declining more."""
-    rep = run_bank_perop_c(isas=[isa], n_sparse=1, ref='ground_truth')
+    rep = run_bank_perop_c(isas=[isa], n_sparse=1, ref=Ref.GROUND_TRUTH)
     cov = rep.n_answered / rep.n_instrs
     assert cov >= floor, (f'{isa}: per-op pass answers only {cov:.1%} of the '
                           f'bank (floor {floor:.0%}); '

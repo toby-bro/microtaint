@@ -14,8 +14,9 @@ address the wrong words and the failure would be silent.
 from __future__ import annotations
 
 from typing import Any, Callable
-from microtaint.types import ArchLike
+
 from microtaint.taint_ir.ir import IRProg
+from microtaint.types import ArchLike
 
 __all__ = ['block_slot_resolver', 'compile_block']
 

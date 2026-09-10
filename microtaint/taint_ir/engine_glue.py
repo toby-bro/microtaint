@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+
 from microtaint.types import ArchLike
 
 #: Must match MT_IR_MEM_BASE / MT_IR_MAX_ACC in emulator/fastpath.h.

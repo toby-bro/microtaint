@@ -25,7 +25,8 @@ from __future__ import annotations
 import random
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Literal
+from enum import StrEnum
+from typing import TYPE_CHECKING, Callable
 
 from microtaint.instrumentation.ast import LogicCircuit
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
@@ -37,8 +38,18 @@ if TYPE_CHECKING:                    # imported inside the run for import cost
 #: A per-output mask keyed by register or flag name.
 TaintState = dict[str, int]
 
-#: Which reference a sweep judges against.
-Ref = Literal['differential', 'ground_truth']
+class Ref(StrEnum):
+    """Which reference a sweep judges the engine against.
+
+    A StrEnum, like the rest: a caller may still pass the spelling and a
+    report may still print it, while the sweep compares members.
+    """
+
+    #: The whole-instruction differential.  A bit-exact gate.
+    DIFFERENTIAL = 'differential'
+    #: Unicorn per-bit sensitivity.  Soundness and precision, and the
+    #: only correct gate where the two paths may legitimately differ.
+    GROUND_TRUTH = 'ground_truth'
 
 #: What one pass over an instruction costs, by category.  Keys are fixed by
 #: `OpStats.add`: ops, pcode_ops, n_route, n_diff, n_floor, n_cube, reads,
@@ -330,15 +341,15 @@ def gt_vectors(desc: UcDesc, reg_names: list[str], rng: random.Random,
 def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                      n_sparse: int = 5, seed: int = 1234,
                      max_examples: int = 12, skip_mem: bool = True,
-                     ref: Ref = 'ground_truth',
+                     ref: Ref = Ref.GROUND_TRUTH,
                      step: Step | None = None) -> BankReport:
     """Sweep the bank; validate and collect op counts.
 
-    `ref='ground_truth'` compares against Unicorn per-bit sensitivity, which is
+    `ref=Ref.GROUND_TRUTH` compares against Unicorn per-bit sensitivity, which is
     the only correct soundness gate here: the per-op pass is deliberately
     TIGHTER than the whole-instruction differential in places (it knows an
     interior carry cannot reach a flag), so scoring it against that differential
-    reports genuine precision gains as under-taint.  `ref='differential'` keeps
+    reports genuine precision gains as under-taint.  `ref=Ref.DIFFERENTIAL` keeps
     the old comparison for measuring how the two answers differ.
     """
     from benchmark.instruction_bank import load_bank
@@ -352,7 +363,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
         arch_key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
         reg_names = [r.name for r in spec.regs]
         desc: UcDesc | None = None
-        if ref == 'ground_truth':
+        if ref is Ref.GROUND_TRUTH:
             maker = _UC_DESC.get(arch_key)
             if maker is None:
                 continue                     # no per-bit truth for this ISA yet
@@ -371,7 +382,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                 continue
             rep.n_instrs += 1
 
-            if ref == 'ground_truth':
+            if ref is Ref.GROUND_TRUTH:
                 assert desc is not None   # set above, or the ISA was skipped
                 try:
                     written = written_registers(spec.arch, ins.bytes)
@@ -385,7 +396,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                 keys = base_keys
 
             rng = random.Random(f'{seed}:{ins.label}')
-            if ref == 'ground_truth':
+            if ref is Ref.GROUND_TRUTH:
                 vectors = list(gt_vectors(desc, reg_names, rng, n_sparse))
             else:
                 vectors = list(oh.fuzz_vectors(reg_names, rng, n_dense, n_sparse))
@@ -397,7 +408,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
             # what, so those outputs leave the verdict.  Detected from the very
             # vectors about to be judged, not from a table: a table cannot cover
             # an ISA nobody has written one for.
-            if ref == 'ground_truth':
+            if ref is Ref.GROUND_TRUTH:
                 assert desc is not None
                 undefined, unmodelled = oh.models_disagree(
                     desc, spec.arch, ins.bytes, [v for _t, v in vectors])
@@ -421,7 +432,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                     rep.stats.add(ins.label, cost)
                 rep.n_cases += 1
                 try:
-                    if ref == 'ground_truth':
+                    if ref is Ref.GROUND_TRUTH:
                         assert desc is not None
                         refd = oh.ground_truth(desc, ins.bytes, in_taint, in_values)
                     else:

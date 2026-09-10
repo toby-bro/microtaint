@@ -17,7 +17,7 @@ import random
 import pytest
 
 from microtaint.taint_ir.ir import IRProg
-from tests.perop_c_bank import TaintState
+from tests.perop_c_bank import Ref, TaintState
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
@@ -111,7 +111,7 @@ def test_ir_never_under_taints_vs_ground_truth(isa: str, request: pytest.Fixture
     from tests.taint_ir_bank import ir_step
 
     rep = run_bank_perop_c(isas=[isa], n_sparse=fuzz_budget(2, request.config),
-                           ref='ground_truth', step=ir_step)
+                           ref=Ref.GROUND_TRUTH, step=ir_step)
     assert rep.n_cases > 0
     if rep.n_under_new:
         detail = '\n'.join(

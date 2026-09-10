@@ -22,7 +22,10 @@ instruction in one basic block: see `_predicated_write`.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
-from typing import Any, Literal
+from enum import StrEnum
+from typing import Any
+
+from pypcode import PcodeOp, Varnode
 
 from microtaint.taint_ir.ir import (
     ADD,
@@ -50,7 +53,6 @@ from microtaint.taint_ir.ir import (
     IRProg,
 )
 from microtaint.types import ArchLike
-from pypcode import PcodeOp, Varnode
 
 LIFT_BASE = 0x1000
 
@@ -278,17 +280,35 @@ class SymFrame:
 #: bench_dense the entire 256-byte state buffer went clean at the first S-box
 #: round.  A load through a tainted address is exactly the shape a taint engine
 #: exists to follow, so the sound policy is the one that runs.
-#: The two spellings, as a type so a wrong one is a checker error rather
-#: than a ValueError at the first call.
-PointerPolicy = Literal['avalanche', 'concrete']
-POINTER_POLICIES: tuple[PointerPolicy, ...] = ('avalanche', 'concrete')
+class PointerPolicy(StrEnum):
+    """What a load through a TAINTED address does to the loaded value.
 
-#: What a lowering publishes: taint alone, values alone, or both.
-Emit = Literal['taint', 'value', 'both']
+    A StrEnum so the value a caller passes and the member compare equal,
+    and so it serialises as itself; the Builder normalises to a member on
+    the way in, and every comparison after that is member to member.
+    """
+
+    #: A tainted address taints the whole loaded word.  Sound, and the one
+    #: that runs: see the note above on what the alternative cost.
+    AVALANCHE = 'avalanche'
+    #: Read the shadow at the computed address, claiming nothing about the
+    #: address's own taint.
+    CONCRETE = 'concrete'
+
+
+POINTER_POLICIES: tuple[PointerPolicy, ...] = tuple(PointerPolicy)
+
+
+class Emit(StrEnum):
+    """What a lowering publishes: taint alone, values alone, or both."""
+
+    TAINT = 'taint'
+    VALUE = 'value'
+    BOTH = 'both'
 
 #: What every caller gets unless it names something else.  Soundness is not an
 #: opt-in.
-DEFAULT_POINTER_POLICY: PointerPolicy = 'avalanche'
+DEFAULT_POINTER_POLICY: PointerPolicy = PointerPolicy.AVALANCHE
 
 
 class Builder:
@@ -297,9 +317,9 @@ class Builder:
 
     def __init__(self, arch: ArchLike, be: bool,
                  pointer_policy: PointerPolicy = DEFAULT_POINTER_POLICY) -> None:
-        if pointer_policy not in POINTER_POLICIES:
-            raise ValueError(pointer_policy)
-        self.pointer_policy = pointer_policy
+        # Normalise once, so every comparison below is member to member
+        # rather than a string compare, and a bad spelling fails here.
+        self.pointer_policy = PointerPolicy(pointer_policy)
         from microtaint.instrumentation.cell import _build_reg_maps
         offsets, sizes = _build_reg_maps(arch)[:2]
         # Keep a NON-OVERLAPPING cover of the register file, widest first.
@@ -345,7 +365,7 @@ class Builder:
         self.be = be
         self.arch = arch
 
-    def build(self, ops: list[Any], end_addr: int, *, emit: Emit = 'taint',
+    def build(self, ops: list[Any], end_addr: int, *, emit: Emit = Emit.TAINT,
               block: bool = False) -> IRProg:
         """Lower `ops`.  `emit` selects which frame becomes the program's
         outputs: 'taint' (the shipped behaviour) or 'value'.
@@ -363,7 +383,8 @@ class Builder:
         """
         if emit not in ('taint', 'value', 'both'):
             raise ValueError(emit)
-        self.emit = emit
+        # Same normalisation as the policy: a member from here on.
+        self.emit = Emit(emit)
         self.block = block
         p = IRProg()
         v = SymFrame(p, self.declared, self.be, 'v')
@@ -505,8 +526,8 @@ class Builder:
         # block, and the emulator is asked for registers once per block rather
         # than once per instruction.  The two frames are hash-consed into one
         # IRProg, so shared subexpressions are computed once.
-        want = (('reg', t),) if self.emit == 'taint' else \
-               (('regv', v),) if self.emit == 'value' else \
+        want = (('reg', t),) if self.emit is Emit.TAINT else \
+               (('regv', v),) if self.emit is Emit.VALUE else \
                (('reg', t), ('regv', v))
         for tag, frame in want:
             dirty_bytes: set[int] = set()
@@ -669,7 +690,7 @@ class Builder:
         p.outputs.append((('addrt', k), addr_t))
         val = p.input_value(('mem', k), size * 8)
         tnt = p.input_taint(('mem', k), size * 8)
-        if self.pointer_policy == 'avalanche':
+        if self.pointer_policy is PointerPolicy.AVALANCHE:
             tnt = p.op(OR, tnt,
                        p.op(AND, p.const(_mask_of(size)),
                             p.splat(p.op(NEZ, addr_t))))
@@ -705,7 +726,7 @@ class Builder:
         k = self._access_for('store', addr_v, size)
         p.outputs.append((('addrt', k), addr_t))
         p.outputs.append((('sttaint', k), p.mask(val_t, size * 8)))
-        if self.emit in ('value', 'both'):
+        if self.emit in (Emit.VALUE, Emit.BOTH):
             p.outputs.append((('stval', k), p.mask(val_v, size * 8)))
 
     def _check_address_independence(self, p: IRProg) -> None:
@@ -1349,7 +1370,7 @@ def builder_for(arch: ArchLike,
 
 def build_ir(arch: ArchLike, code: bytes, *,
              pointer_policy: PointerPolicy = DEFAULT_POINTER_POLICY,
-             emit: Emit = 'taint') -> IRProg:
+             emit: Emit = Emit.TAINT) -> IRProg:
     """Lower one instruction to a taint IR program.  Raises Unsupported."""
     from microtaint.sleigh.lifter import get_context
     key = arch.value if hasattr(arch, 'value') else str(arch)
