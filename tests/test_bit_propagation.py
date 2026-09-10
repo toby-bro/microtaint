@@ -49,7 +49,6 @@ Usage
 """
 
 # ruff: noqa: ARG001, PLC0415
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,type-arg,no-any-return"
 
 from __future__ import annotations
 
@@ -107,7 +106,7 @@ def regs() -> list[Register]:
 # ---------------------------------------------------------------------------
 
 
-def _ctx(simulator, taint, values, *, shadow=None):
+def _ctx(simulator: CellSimulator, taint, values, *, shadow=None):
     """Build an EvalContext with IGNORE policy (we don't care about implicit taint)."""
     return EvalContext(
         input_taint=taint,
@@ -118,7 +117,7 @@ def _ctx(simulator, taint, values, *, shadow=None):
     )
 
 
-def _eval(simulator, regs, bytestring, taint, values, *, shadow=None):
+def _eval(simulator: CellSimulator, regs: list[Register], bytestring, taint, values, *, shadow=None):
     """Generate the circuit and evaluate it. Returns the output_taint dict."""
     circuit = generate_static_rule(Architecture.AMD64, bytestring, regs)
     return circuit.evaluate(_ctx(simulator, taint, values, shadow=shadow))
@@ -140,7 +139,7 @@ def _diff_truth(op: Callable, v: int, t: int, mask: int = 0xFFFFFFFFFFFFFFFF) ->
 class TestTier1RegisterBaseline:
     """If any of these fail, the whole engine is broken; nothing else matters."""
 
-    def test_mov_reg_reg_propagates_full_taint(self, simulator, regs):
+    def test_mov_reg_reg_propagates_full_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         # mov rbx, rax  (48 89 c3)
         out = _eval(
             simulator,
@@ -151,7 +150,7 @@ class TestTier1RegisterBaseline:
         )
         assert out.get('RBX', 0) == 0xFFFFFFFFFFFFFFFF, f'mov rbx, rax: expected full taint, got {out.get("RBX", 0):#x}'
 
-    def test_xor_reg_reg_propagates_full_taint(self, simulator, regs):
+    def test_xor_reg_reg_propagates_full_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         # xor rax, rbx (48 31 d8)
         out = _eval(
             simulator,
@@ -165,7 +164,7 @@ class TestTier1RegisterBaseline:
             0xFF | 0xF0
         ), f'xor rax, rbx: expected {0xFF | 0xF0:#x}, got {out.get("RAX", 0):#x}'
 
-    def test_or_reg_reg_propagates(self, simulator, regs):
+    def test_or_reg_reg_propagates(self, simulator: CellSimulator, regs: list[Register]) -> None:
         # or rax, rbx (48 09 d8)
         out = _eval(
             simulator,
@@ -177,7 +176,7 @@ class TestTier1RegisterBaseline:
         # bit i of OR-result depends on bit i of either input
         assert out.get('RAX', 0) == (0x0F | 0x10)
 
-    def test_add_reg_reg_propagates(self, simulator, regs):
+    def test_add_reg_reg_propagates(self, simulator: CellSimulator, regs: list[Register]) -> None:
         # add rax, rbx (48 01 d8)
         out = _eval(
             simulator,
@@ -197,7 +196,7 @@ class TestTier1RegisterBaseline:
 class TestTier2MemoryLoads:
     """Loads must propagate shadow taint into the destination register."""
 
-    def test_movzx_byte_from_register_indirect(self, simulator, regs):
+    def test_movzx_byte_from_register_indirect(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         movzx eax, byte ptr [rax]   (0f b6 00)
 
@@ -221,7 +220,7 @@ class TestTier2MemoryLoads:
             'This is where SipHash input loading currently fails to taint registers.'
         )
 
-    def test_mov_qword_from_stack(self, simulator, regs):
+    def test_mov_qword_from_stack(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         mov rax, qword ptr [rbp - 0x40]  (48 8b 45 c0)
 
@@ -241,7 +240,7 @@ class TestTier2MemoryLoads:
             out.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
         ), f'mov rax, [rbp-0x40]: expected full taint, got {out.get("RAX", 0):#x}'
 
-    def test_mov_qword_from_register_indirect(self, simulator, regs):
+    def test_mov_qword_from_register_indirect(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         mov rax, qword ptr [rax]  (48 8b 00)
         Register-indirect 8-byte load.
@@ -265,7 +264,7 @@ class TestTier2MemoryLoads:
 class TestTier3SingleBitPrecision:
     """Single-bit input taint must propagate per the differential ground truth."""
 
-    def test_xor_single_bit_preserves_position(self, simulator, regs):
+    def test_xor_single_bit_preserves_position(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         XOR with constant: bit i of input → bit i of output (XOR is bit-independent).
 
@@ -278,7 +277,7 @@ class TestTier3SingleBitPrecision:
             rax_taint & 0xFFFFFFFF == 0x08
         ), f'xor eax, imm: expected output taint 0x08, got {rax_taint & 0xFFFFFFFF:#x}'
 
-    def test_add_low_bit_carry_ripple(self, simulator, regs):
+    def test_add_low_bit_carry_ripple(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         add rax, rbx with bit 0 of RAX tainted.
 
@@ -314,7 +313,7 @@ class TestTier3SingleBitPrecision:
 class TestTier4CrossRegister:
     """Taint must cross between registers via mixing operations."""
 
-    def test_add_only_rbx_tainted(self, simulator, regs):
+    def test_add_only_rbx_tainted(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         add rax, rbx with only RBX tainted — RAX must become tainted too.
         This is the cross-register flow that SipHash mixing depends on.
@@ -329,7 +328,7 @@ class TestTier4CrossRegister:
         rax_taint = out.get('RAX', 0)
         assert rax_taint != 0, 'add rax, rbx with tainted RBX must taint RAX (cross-register flow)'
 
-    def test_movabs_clears_destination_taint(self, simulator, regs):
+    def test_movabs_clears_destination_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         movabs rax, 0x736f6d6570736575   (48 b8 75 65 73 70 65 6d 6f 73)
         Loading an immediate must CLEAR any prior RAX taint.
@@ -354,7 +353,7 @@ class TestTier4CrossRegister:
 class TestTier5ShiftsAndRotates:
     """Shifts move tainted bits to known positions."""
 
-    def test_shl_by_constant_preserves_bit(self, simulator, regs):
+    def test_shl_by_constant_preserves_bit(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         shl rax, 8   (48 c1 e0 08)
         Tainting bit 0 must produce bit 8 in the output (shifted by 8).
@@ -363,7 +362,7 @@ class TestTier5ShiftsAndRotates:
         rax_taint = out.get('RAX', 0)
         assert rax_taint == 0x100, f'shl rax, 8 with bit 0 tainted: expected 0x100, got {rax_taint:#x}'
 
-    def test_shr_by_constant_preserves_bit(self, simulator, regs):
+    def test_shr_by_constant_preserves_bit(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         shr rax, 4   (48 c1 e8 04)
         Tainting bit 7 must produce bit 3 in the output (shifted right by 4).
@@ -407,7 +406,7 @@ class TestTier5ShiftsAndRotates:
 class TestTier6RMWMemoryDestination:
     """RMW operations to memory must use the differential, not just OR."""
 
-    def test_add_mem_reg_carry_ripple(self, simulator, regs):
+    def test_add_mem_reg_carry_ripple(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         add [rbp-0x10], rax  (48 01 45 f0)
 
@@ -450,7 +449,7 @@ class TestTier6RMWMemoryDestination:
             f'treats RMW like a pure STORE and skips the differential.'
         )
 
-    def test_xor_mem_reg_bit_independence(self, simulator, regs):
+    def test_xor_mem_reg_bit_independence(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         xor [rbp-0x18], rax  (48 31 45 e8)
         XOR is bit-independent so the differential must equal T_mem | T_RAX
@@ -483,7 +482,7 @@ class TestTier6RMWMemoryDestination:
         # XOR is bit-independent, so the right answer is T_mem | T_RAX = 0xFF
         assert mem_taint & 0xFF == 0xFF, f'xor [mem], reg: expected low byte = 0xFF, got {mem_taint & 0xFF:#x}'
 
-    def test_sub_mem_reg_borrow_ripple(self, simulator, regs):
+    def test_sub_mem_reg_borrow_ripple(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """
         sub [rbp-0x10], rax  (48 29 45 f0)
         Borrow propagation: same shape as ADD's carry ripple.

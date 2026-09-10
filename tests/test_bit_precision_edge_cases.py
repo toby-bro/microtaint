@@ -23,7 +23,6 @@ ARM64 cases are also included.
 """
 
 # ruff: noqa: ARG002
-# mypy: disable-error-code="no-untyped-def, no-untyped-call, attr-defined"
 
 from __future__ import annotations
 
@@ -149,7 +148,10 @@ def z(regs: list[Register]) -> dict[str, int]:
 class TestConstantResultFlags:
     """When the main result is always a constant (0 or -1), flags are deterministic."""
 
-    def test_and_with_zero_immediate_zf_clean(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_and_with_zero_immediate_zf_clean(self,
+                                              sim_amd64: CellSimulator,
+                                              regs_amd64: list[Register],
+                                              reg_names_amd64: list[str]) -> None:
         """and rax, 0 with T_RAX=MASK — result always 0, ZF always 1, must not taint ZF."""
         code = bytes.fromhex('4883e000')  # and rax, 0
         taint = {**z(regs_amd64), 'RAX': MASK64}
@@ -161,7 +163,10 @@ class TestConstantResultFlags:
             0,
         ), f'and/0: ZF must match true taint {true.get("ZF",0):#x}; got {mt.get("ZF",0):#x}'
 
-    def test_and_with_zero_immediate_sf_clean(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_and_with_zero_immediate_sf_clean(self,
+                                              sim_amd64: CellSimulator,
+                                              regs_amd64: list[Register],
+                                              reg_names_amd64: list[str]) -> None:
         """and rax, 0 with T_RAX=MASK — SF always 0 (result=0 is positive)."""
         code = bytes.fromhex('4883e000')
         taint = {**z(regs_amd64), 'RAX': MASK64}
@@ -173,7 +178,10 @@ class TestConstantResultFlags:
             0,
         ), f'and/0: SF taint mismatch; true={true.get("SF",0):#x} mt={mt.get("SF",0):#x}'
 
-    def test_and_with_zero_immediate_pf_clean(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_and_with_zero_immediate_pf_clean(self,
+                                              sim_amd64: CellSimulator,
+                                              regs_amd64: list[Register],
+                                              reg_names_amd64: list[str]) -> None:
         """and rax, 0 — PF(0) is always 1 (even parity), must not be tainted."""
         code = bytes.fromhex('4883e000')
         taint = {**z(regs_amd64), 'RAX': MASK64}
@@ -185,7 +193,10 @@ class TestConstantResultFlags:
             0,
         ), f'and/0: PF taint mismatch; true={true.get("PF",0):#x} mt={mt.get("PF",0):#x}'
 
-    def test_or_with_minus_one_zf_clean(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_or_with_minus_one_zf_clean(self,
+                                        sim_amd64: CellSimulator,
+                                        regs_amd64: list[Register],
+                                        reg_names_amd64: list[str]) -> None:
         """or rax, -1 with T_RAX=MASK — result always MASK64, ZF always 0."""
         code = bytes.fromhex('4883c8ff')  # or rax, -1
         taint = {**z(regs_amd64), 'RAX': MASK64}
@@ -194,7 +205,10 @@ class TestConstantResultFlags:
         mt = _mt_eval(sim_amd64, regs_amd64, code, taint, values)
         assert mt.get('ZF', 0) == true.get('ZF', 0), f'or/-1: ZF must be clean (always 0); got {mt.get("ZF",0):#x}'
 
-    def test_xor_self_flags_clean(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_xor_self_flags_clean(self,
+                                  sim_amd64: CellSimulator,
+                                  regs_amd64: list[Register],
+                                  reg_names_amd64: list[str]) -> None:
         """xor rax, rax with T_RAX=MASK — result always 0; ZF/SF/PF must be clean."""
         code = bytes.fromhex('4831c0')  # xor rax, rax
         taint = {**z(regs_amd64), 'RAX': MASK64}
@@ -215,7 +229,10 @@ class TestConstantResultFlags:
 
 class TestShiftCarryFlag:
 
-    def test_shr_1_cf_is_bit0(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_shr_1_cf_is_bit0(self,
+                              sim_amd64: CellSimulator,
+                              regs_amd64: list[Register],
+                              reg_names_amd64: list[str]) -> None:
         """shr rax,1 — CF = bit0 of RAX before shift. T_RAX=0x1 → T_CF=1."""
         code = bytes.fromhex('48d1e8')  # shr rax, 1
         taint = {**z(regs_amd64), 'RAX': 0x1}  # only bit 0 tainted
@@ -227,7 +244,10 @@ class TestShiftCarryFlag:
             0,
         ), f'shr/1 CF: bit0 tainted → T_CF={true.get("CF",0)}; got {mt.get("CF",0)}'
 
-    def test_shr_1_cf_from_bit0_high_taint(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_shr_1_cf_from_bit0_high_taint(self,
+                                           sim_amd64: CellSimulator,
+                                           regs_amd64: list[Register],
+                                           reg_names_amd64: list[str]) -> None:
         """shr rax,1 T_RAX=MASK — CF tainted (depends on bit 0 of input)."""
         code = bytes.fromhex('48d1e8')
         taint = {**z(regs_amd64), 'RAX': MASK64}
@@ -239,7 +259,10 @@ class TestShiftCarryFlag:
             0,
         ), f'shr/1 CF full taint: true={true.get("CF",0):#x} got {mt.get("CF",0):#x}'
 
-    def test_shl_1_cf_is_msb(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_shl_1_cf_is_msb(self,
+                             sim_amd64: CellSimulator,
+                             regs_amd64: list[Register],
+                             reg_names_amd64: list[str]) -> None:
         """shl rax,1 — CF = bit63 of RAX before shift. T_RAX=MSB → T_CF=1."""
         code = bytes.fromhex('48d1e0')  # shl rax, 1
         taint = {**z(regs_amd64), 'RAX': 0x8000000000000000}  # only bit 63
@@ -251,7 +274,10 @@ class TestShiftCarryFlag:
             0,
         ), f'shl/1 CF: MSB tainted → T_CF={true.get("CF",0)}; got {mt.get("CF",0)}'
 
-    def test_shr_1_zf_sf_pf_precise(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_shr_1_zf_sf_pf_precise(self,
+                                    sim_amd64: CellSimulator,
+                                    regs_amd64: list[Register],
+                                    reg_names_amd64: list[str]) -> None:
         """shr rax,1 with partial taint — ZF/SF/PF must match true differential."""
         code = bytes.fromhex('48d1e8')
         taint = {**z(regs_amd64), 'RAX': 0x2}  # only bit 1
@@ -264,7 +290,10 @@ class TestShiftCarryFlag:
                 0,
             ), f'shr/1 {flag}: partial taint mismatch; true={true.get(flag,0):#x} mt={mt.get(flag,0):#x}'
 
-    def test_sar_1_cf_is_bit0(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_sar_1_cf_is_bit0(self,
+                              sim_amd64: CellSimulator,
+                              regs_amd64: list[Register],
+                              reg_names_amd64: list[str]) -> None:
         """sar rax,1 — CF = bit0. T_RAX=0x1 → T_CF=1."""
         code = bytes.fromhex('48d1f8')  # sar rax, 1
         taint = {**z(regs_amd64), 'RAX': 0x1}
@@ -284,7 +313,10 @@ class TestShiftCarryFlag:
 
 class TestRotation:
 
-    def test_ror_1_bit63_from_bit0(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_ror_1_bit63_from_bit0(self,
+                                   sim_amd64: CellSimulator,
+                                   regs_amd64: list[Register],
+                                   reg_names_amd64: list[str]) -> None:
         """ror rax,1 — bit63 of result = bit0 of input. T_RAX[0]=1 → T_RAX_out[63]=1."""
         code = bytes.fromhex('48d1c8')  # ror rax, 1
         taint = {**z(regs_amd64), 'RAX': 0x3}  # bits 0 and 1
@@ -296,7 +328,10 @@ class TestRotation:
             0,
         ), f'ror/1: RAX taint mismatch; true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_rol_1_bit0_from_bit63(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_rol_1_bit0_from_bit63(self,
+                                   sim_amd64: CellSimulator,
+                                   regs_amd64: list[Register],
+                                   reg_names_amd64: list[str]) -> None:
         """rol rax,1 — bit0 of result = bit63 of input."""
         code = bytes.fromhex('48d1c0')  # rol rax, 1
         taint = {**z(regs_amd64), 'RAX': 0x8000000000000001}  # bits 63 and 0
@@ -308,7 +343,10 @@ class TestRotation:
             0,
         ), f'rol/1: RAX taint mismatch; true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_ror_8_exact_permutation(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_ror_8_exact_permutation(self,
+                                     sim_amd64: CellSimulator,
+                                     regs_amd64: list[Register],
+                                     reg_names_amd64: list[str]) -> None:
         """ror rax,8 — exact byte rotation. Each byte permutes to known position."""
         code = bytes.fromhex('48c1c808')  # ror rax, 8
         taint = {**z(regs_amd64), 'RAX': 0xFF00000000000000}  # byte 7 tainted
@@ -328,7 +366,10 @@ class TestRotation:
 
 class TestRotateThroughCarry:
 
-    def test_rcl_1_cf_fills_bit0(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_rcl_1_cf_fills_bit0(self,
+                                 sim_amd64: CellSimulator,
+                                 regs_amd64: list[Register],
+                                 reg_names_amd64: list[str]) -> None:
         """rcl rax,1 — bit0 of result = old CF. T_CF=1, T_RAX=0 → only bit0 tainted."""
         code = bytes.fromhex('48d1d0')  # rcl rax, 1
         taint = {**z(regs_amd64), 'CF': 1}  # only CF tainted
@@ -340,7 +381,10 @@ class TestRotateThroughCarry:
             0,
         ), f'rcl/1 (T_CF only): RAX taint; true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_rcr_1_cf_fills_bit63(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_rcr_1_cf_fills_bit63(self,
+                                  sim_amd64: CellSimulator,
+                                  regs_amd64: list[Register],
+                                  reg_names_amd64: list[str]) -> None:
         """rcr rax,1 — bit63 of result = old CF. T_CF=1, T_RAX=0 → only bit63 tainted."""
         code = bytes.fromhex('48d1d8')  # rcr rax, 1
         taint = {**z(regs_amd64), 'CF': 1}
@@ -352,7 +396,10 @@ class TestRotateThroughCarry:
             0,
         ), f'rcr/1 (T_CF only): RAX taint; true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_rcl_1_rax_tainted_cf_is_msb(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_rcl_1_rax_tainted_cf_is_msb(self,
+                                         sim_amd64: CellSimulator,
+                                         regs_amd64: list[Register],
+                                         reg_names_amd64: list[str]) -> None:
         """rcl rax,1 — new CF = old MSB of RAX. T_RAX=MSB → T_CF=1."""
         code = bytes.fromhex('48d1d0')
         taint = {**z(regs_amd64), 'RAX': 0x8000000000000000}  # bit 63
@@ -372,7 +419,10 @@ class TestRotateThroughCarry:
 
 class TestSetcc:
 
-    def test_setl_sf_ne_of_tainted(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_setl_sf_ne_of_tainted(self,
+                                   sim_amd64: CellSimulator,
+                                   regs_amd64: list[Register],
+                                   reg_names_amd64: list[str]) -> None:
         """setl al — al = (SF != OF). T_SF=1, T_OF=1 → T_RAX[7:0] = 1."""
         code = bytes.fromhex('0f9cc0')  # setl al
         taint = {**z(regs_amd64), 'SF': 1, 'OF': 1}
@@ -383,7 +433,10 @@ class TestSetcc:
             mt.get('RAX', 0) & 0xFF == true.get('RAX', 0) & 0xFF
         ), f'setl: T_SF=T_OF=1 → al tainted; true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_setge_sf_eq_of_tainted(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_setge_sf_eq_of_tainted(self,
+                                    sim_amd64: CellSimulator,
+                                    regs_amd64: list[Register],
+                                    reg_names_amd64: list[str]) -> None:
         """setge al — al = (SF == OF). T_SF=1 → T_al = 1."""
         code = bytes.fromhex('0f9dc0')  # setge al
         taint = {**z(regs_amd64), 'SF': 1}
@@ -394,7 +447,10 @@ class TestSetcc:
             mt.get('RAX', 0) & 0xFF == true.get('RAX', 0) & 0xFF
         ), f'setge: T_SF=1 → al tainted; true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_sete_zf_tainted(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_sete_zf_tainted(self,
+                             sim_amd64: CellSimulator,
+                             regs_amd64: list[Register],
+                             reg_names_amd64: list[str]) -> None:
         """sete al — al = ZF. T_ZF=1 → T_al = 1."""
         code = bytes.fromhex('0f94c0')  # sete al
         taint = {**z(regs_amd64), 'ZF': 1}
@@ -405,7 +461,10 @@ class TestSetcc:
             mt.get('RAX', 0) & 0xFF == true.get('RAX', 0) & 0xFF
         ), f'sete: T_ZF=1 → al tainted; true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_setne_zf_untainted_clean(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_setne_zf_untainted_clean(self,
+                                      sim_amd64: CellSimulator,
+                                      regs_amd64: list[Register],
+                                      reg_names_amd64: list[str]) -> None:
         """setne al with no flag taint → al must not be tainted."""
         code = bytes.fromhex('0f95c0')  # setne al
         taint = z(regs_amd64)
@@ -423,9 +482,9 @@ class TestAvalancheConcreteZero:
 
     def test_mul_by_zero_rax_over_taint_documented(
         self,
-        sim_amd64,
-        regs_amd64,
-        reg_names_amd64,
+        sim_amd64: CellSimulator,
+        regs_amd64: list[Register],
+        reg_names_amd64: list[str],
     ) -> None:
         """mul rbx with RBX=0 concrete — microtaint over-taints RAX.
 
@@ -453,7 +512,10 @@ class TestAvalancheConcreteZero:
 
 class TestFlagPrecision:
 
-    def test_add_cf_from_partial_taint(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_add_cf_from_partial_taint(self,
+                                       sim_amd64: CellSimulator,
+                                       regs_amd64: list[Register],
+                                       reg_names_amd64: list[str]) -> None:
         """add rax,rbx with only high bits tainted — CF precise."""
         code = bytes.fromhex('4801d8')
         taint = {**z(regs_amd64), 'RAX': 0xF000000000000000}  # top nibble only
@@ -465,7 +527,10 @@ class TestFlagPrecision:
             0,
         ), f'add partial CF: true={true.get("CF",0):#x} mt={mt.get("CF",0):#x}'
 
-    def test_sub_borrow_chain_exact(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_sub_borrow_chain_exact(self,
+                                    sim_amd64: CellSimulator,
+                                    regs_amd64: list[Register],
+                                    reg_names_amd64: list[str]) -> None:
         """sub with partial taint — borrow chain must be SOUND (mt ⊇ true).
 
         Note: this test was previously named *_exact and asserted equality.
@@ -487,9 +552,9 @@ class TestFlagPrecision:
 
     def test_cmp_flags_all_precise_partial_taint(
         self,
-        sim_amd64,
-        regs_amd64,
-        reg_names_amd64,
+        sim_amd64: CellSimulator,
+        regs_amd64: list[Register],
+        reg_names_amd64: list[str],
     ) -> None:
         """cmp rax,rbx with partial taint — all flags must be SOUND (mt ⊇ true).
 
@@ -505,7 +570,10 @@ class TestFlagPrecision:
             mt_v = mt.get(flag, 0)
             assert (true_v & ~mt_v) == 0, f'cmp partial {flag} UNSOUND: true={true_v:#x} mt={mt_v:#x}'
 
-    def test_and_partial_taint_exact(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_and_partial_taint_exact(self,
+                                     sim_amd64: CellSimulator,
+                                     regs_amd64: list[Register],
+                                     reg_names_amd64: list[str]) -> None:
         """and rax,rbx with partial taint — result and ZF must be exact."""
         code = bytes.fromhex('4821d8')
         taint = {**z(regs_amd64), 'RAX': 0x00000000FFFFFFFF}  # low 32 bits
@@ -517,7 +585,10 @@ class TestFlagPrecision:
             0,
         ), f'and partial RAX: true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_shl_result_exact_partial(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_shl_result_exact_partial(self,
+                                      sim_amd64: CellSimulator,
+                                      regs_amd64: list[Register],
+                                      reg_names_amd64: list[str]) -> None:
         """shl rax,4 with partial taint — result bits exact (MAPPED)."""
         code = bytes.fromhex('48c1e004')  # shl rax, 4
         taint = {**z(regs_amd64), 'RAX': 0x00FF00FF00FF00FF}
@@ -529,7 +600,10 @@ class TestFlagPrecision:
             0,
         ), f'shl/4 partial: true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_bswap_exact(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_bswap_exact(self,
+                         sim_amd64: CellSimulator,
+                         regs_amd64: list[Register],
+                         reg_names_amd64: list[str]) -> None:
         """bswap rax — exact byte permutation."""
         code = bytes.fromhex('480fc8')  # bswap rax
         taint = {**z(regs_amd64), 'RAX': 0xFF00FF00FF00FF00}
@@ -538,7 +612,10 @@ class TestFlagPrecision:
         mt = _mt_eval(sim_amd64, regs_amd64, code, taint, values)
         assert mt.get('RAX', 0) == true.get('RAX', 0), f'bswap: true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_movzx_upper_bits_exact_zero(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_movzx_upper_bits_exact_zero(self,
+                                         sim_amd64: CellSimulator,
+                                         regs_amd64: list[Register],
+                                         reg_names_amd64: list[str]) -> None:
         """movzx rax,bl — upper 56 bits always 0, must not be tainted."""
         code = bytes.fromhex('480fb6c3')  # movzx rax, bl
         taint = {**z(regs_amd64), 'RBX': MASK64}
@@ -547,7 +624,10 @@ class TestFlagPrecision:
         mt = _mt_eval(sim_amd64, regs_amd64, code, taint, values)
         assert mt.get('RAX', 0) == true.get('RAX', 0), f'movzx: true={true.get("RAX",0):#x} mt={mt.get("RAX",0):#x}'
 
-    def test_movsx_sign_extension_exact(self, sim_amd64, regs_amd64, reg_names_amd64) -> None:
+    def test_movsx_sign_extension_exact(self,
+                                        sim_amd64: CellSimulator,
+                                        regs_amd64: list[Register],
+                                        reg_names_amd64: list[str]) -> None:
         """movsx rax,bl — sign extends bit7. Upper bits match sign of bit7."""
         code = bytes.fromhex('480fbed3')  # movsx rax, bl
         # T_RBX = 0x80 (bit 7 only) — sign bit tainted
@@ -660,7 +740,10 @@ def _mt64(sim, regs, code, taint, values):
 
 class TestARM64Precision:
 
-    def test_add_full_taint_propagates(self, sim_arm64, regs_arm64, reg_names_arm64) -> None:
+    def test_add_full_taint_propagates(self,
+                                       sim_arm64: CellSimulator,
+                                       regs_arm64: list[Register],
+                                       reg_names_arm64: list[str]) -> None:
         """ADD X0,X1,X2 — both inputs fully tainted → X0 must be tainted."""
         # ADD X0, X1, X2 (0x8B020020)
         code = bytes.fromhex('2000028b')
@@ -668,7 +751,10 @@ class TestARM64Precision:
         out = _mt64(sim_arm64, regs_arm64, code, {**z, 'X1': MASK64, 'X2': MASK64}, {**z, 'X1': 5, 'X2': 3})
         assert out.get('X0', 0) != 0, 'ADD with both tainted → X0 must be tainted'
 
-    def test_add_partial_taint_exact(self, sim_arm64, regs_arm64, reg_names_arm64) -> None:
+    def test_add_partial_taint_exact(self,
+                                     sim_arm64: CellSimulator,
+                                     regs_arm64: list[Register],
+                                     reg_names_arm64: list[str]) -> None:
         """ADD X0,X1,X2 — partial taint on X1 → result matches true differential."""
         code = bytes.fromhex('2000028b')
         z = _z64(regs_arm64)
@@ -678,7 +764,10 @@ class TestARM64Precision:
         mt = _mt64(sim_arm64, regs_arm64, code, taint, values)
         assert mt.get('X0', 0) == true.get('X0', 0), f'ADD partial: true={true.get("X0",0):#x} mt={mt.get("X0",0):#x}'
 
-    def test_eor_zeroing_idiom(self, sim_arm64, regs_arm64, reg_names_arm64) -> None:
+    def test_eor_zeroing_idiom(self,
+                               sim_arm64: CellSimulator,
+                               regs_arm64: list[Register],
+                               reg_names_arm64: list[str]) -> None:
         """EOR X0,X1,X1 (zeroing) — X1 fully tainted → X0 must be 0 (constant result)."""
         # EOR X0, X1, X1  (0xCA010020)
         code = bytes.fromhex('200001ca')
@@ -686,7 +775,10 @@ class TestARM64Precision:
         out = _mt64(sim_arm64, regs_arm64, code, {**z, 'X1': MASK64}, {**z, 'X1': 0xDEAD})
         assert out.get('X0', 0) == 0, f'EOR X0,X1,X1 (zeroing): X0 must be 0; got {out.get("X0",0):#x}'
 
-    def test_sub_propagates(self, sim_arm64, regs_arm64, reg_names_arm64) -> None:
+    def test_sub_propagates(self,
+                            sim_arm64: CellSimulator,
+                            regs_arm64: list[Register],
+                            reg_names_arm64: list[str]) -> None:
         """SUB X0,X1,X2 — X1 partially tainted → result exact."""
         # SUB X0, X1, X2  (0xCB020020)
         code = bytes.fromhex('200002cb')
@@ -697,7 +789,10 @@ class TestARM64Precision:
         mt = _mt64(sim_arm64, regs_arm64, code, taint, values)
         assert mt.get('X0', 0) == true.get('X0', 0), f'SUB partial: true={true.get("X0",0):#x} mt={mt.get("X0",0):#x}'
 
-    def test_and_propagates(self, sim_arm64, regs_arm64, reg_names_arm64) -> None:
+    def test_and_propagates(self,
+                            sim_arm64: CellSimulator,
+                            regs_arm64: list[Register],
+                            reg_names_arm64: list[str]) -> None:
         """AND X0,X1,X2 — partial taint exact."""
         # AND X0, X1, X2  (0x8A020020)
         code = bytes.fromhex('2000028a')
@@ -708,7 +803,10 @@ class TestARM64Precision:
         mt = _mt64(sim_arm64, regs_arm64, code, taint, values)
         assert mt.get('X0', 0) == true.get('X0', 0), f'AND partial: true={true.get("X0",0):#x} mt={mt.get("X0",0):#x}'
 
-    def test_adds_flags_tainted_fully(self, sim_arm64, regs_arm64, reg_names_arm64) -> None:
+    def test_adds_flags_tainted_fully(self,
+                                      sim_arm64: CellSimulator,
+                                      regs_arm64: list[Register],
+                                      reg_names_arm64: list[str]) -> None:
         """ADDS W0,W1,W2 — both fully tainted → all flags conservatively tainted (sound)."""
         # ADDS W0, W1, W2  (0x2B020020)
         code = bytes.fromhex('2000022b')
@@ -718,7 +816,10 @@ class TestARM64Precision:
         assert out.get('N', 0) != 0, 'ADDS: N flag must be tainted when both inputs unknown'
         assert out.get('Z', 0) != 0, 'ADDS: Z flag must be tainted when both inputs unknown'
 
-    def test_adds_flags_no_taint(self, sim_arm64, regs_arm64, reg_names_arm64) -> None:
+    def test_adds_flags_no_taint(self,
+                                 sim_arm64: CellSimulator,
+                                 regs_arm64: list[Register],
+                                 reg_names_arm64: list[str]) -> None:
         """ADDS W0,W1,W2 — no taint → no flag taint."""
         code = bytes.fromhex('2000022b')
         z = _z64(regs_arm64)
@@ -726,7 +827,10 @@ class TestARM64Precision:
         for flag in ('N', 'Z', 'C', 'V'):
             assert out.get(flag, 0) == 0, f'ADDS no taint: {flag} must be 0'
 
-    def test_csel_zflag_tainted(self, sim_arm64, regs_arm64, reg_names_arm64) -> None:
+    def test_csel_zflag_tainted(self,
+                                sim_arm64: CellSimulator,
+                                regs_arm64: list[Register],
+                                reg_names_arm64: list[str]) -> None:
         """CSEL X0,X1,X2,EQ — T_Z=1 → X0 must be tainted (selects different value)."""
         # CSEL X0, X1, X2, EQ  (0x9A820020)
         code = bytes.fromhex('2000829a')
@@ -736,9 +840,9 @@ class TestARM64Precision:
 
     def test_csel_no_flag_taint_result_clean(
         self,
-        sim_arm64,
-        regs_arm64,
-        reg_names_arm64,
+        sim_arm64: CellSimulator,
+        regs_arm64: list[Register],
+        reg_names_arm64: list[str],
     ) -> None:
         """CSEL X0,X1,X2,EQ — no taint → X0 not tainted."""
         code = bytes.fromhex('2000829a')
@@ -746,7 +850,10 @@ class TestARM64Precision:
         out = _mt64(sim_arm64, regs_arm64, code, z, {**z, 'X1': 10, 'X2': 20, 'Z': 0})
         assert out.get('X0', 0) == 0, 'CSEL no taint: X0 must be 0'
 
-    def test_add_no_taint_clean(self, sim_arm64, regs_arm64, reg_names_arm64) -> None:
+    def test_add_no_taint_clean(self,
+                                sim_arm64: CellSimulator,
+                                regs_arm64: list[Register],
+                                reg_names_arm64: list[str]) -> None:
         """ADD X0,X1,X2 — no taint → X0 not tainted."""
         code = bytes.fromhex('2000028b')
         z = _z64(regs_arm64)

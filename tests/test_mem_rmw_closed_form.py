@@ -53,7 +53,7 @@ def _reg_targets(circ):
             if getattr(a.target, 'name', None) is not None and not hasattr(a.target, 'address_expr')]
 
 
-def _true_taint(sim, hexs, name, be, size, mk, base, taint):
+def _true_taint(sim: CellSimulator, hexs, name, be, size, mk, base, taint):
     # MachineState.mem is keyed by INTEGER address (the ICE reads the concrete
     # bytes there); the circuit's EvalContext uses the MEM_<hex>_<size> string key.
     ice = InstructionCellExpr(ARCH, hexs, name, 0, be, {})
@@ -86,7 +86,7 @@ def test_cell_free(label, hexs, size, cells, exact):  # noqa: ARG001
 
 @pytest.mark.parametrize(('label', 'hexs', 'size', 'cells', 'exact'),
                          [(k, *v) for k, v in CASES.items()], ids=list(CASES))
-def test_sound_and_exact_vs_true(label, hexs, size, cells, exact, sim):  # noqa: ARG001
+def test_sound_and_exact_vs_true(label, hexs, size, cells, exact, sim: CellSimulator):  # noqa: ARG001
     _cached_generate_static_rule.cache_clear()
     circ = generate_static_rule(ARCH, bytes.fromhex(hexs), REGS)
     targets = _reg_targets(circ)

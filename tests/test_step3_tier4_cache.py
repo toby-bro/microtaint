@@ -38,7 +38,6 @@ store time) in every Tier-4 entry.  On a version hit, additionally verify
 """
 
 # ruff: noqa: S603,PLW1510,PLC0415,C901,S607,ARG001,S110
-# mypy: disable-error-code="no-untyped-def,import-untyped,attr-defined,call-overload,no-untyped-call"
 
 # ---------------------------------------------------------------------------
 # Imports

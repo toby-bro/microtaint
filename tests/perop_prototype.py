@@ -30,7 +30,6 @@ oracle.  Three propagation schemes over the lifted p-code, one forward pass:
 Only the register/flag corpus (LE ISAs) is covered here; that is where the
 compaction precision question lives.  Memory + BE come with the corpus extension.
 """
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,import-untyped,var-annotated"
 from __future__ import annotations
 
 from microtaint.sleigh.lifter import get_context

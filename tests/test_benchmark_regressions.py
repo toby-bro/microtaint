@@ -33,7 +33,6 @@ Bug classes fixed
                            whole output, not just bit-0.
 """
 
-# mypy: disable-error-code="no-untyped-def, no-untyped-call"
 
 from __future__ import annotations
 
@@ -91,7 +90,7 @@ def _eval(
 
 
 class TestCmovNotTaken:
-    def test_cmovz_not_taken_preserves_dest_taint(self, simulator, regs) -> None:
+    def test_cmovz_not_taken_preserves_dest_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """cmovz rax, rbx when ZF=0 (not taken) — RAX keeps its original taint."""
         # ZF=0: the processor does NOT copy RBX → RAX. RAX is unchanged.
         # So T_RAX_out = T_RAX_in (old value passes through).
@@ -110,7 +109,7 @@ class TestCmovNotTaken:
             out.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
         ), f'cmovz not-taken must preserve RAX taint; got {out.get("RAX", 0):#x}'
 
-    def test_cmovz_not_taken_rbx_untainted_preserves_dest(self, simulator, regs) -> None:
+    def test_cmovz_not_taken_rbx_untainted_preserves_dest(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """cmovz when RBX is untainted but RAX is — dest taint must survive."""
         out = _eval(
             simulator,
@@ -123,7 +122,7 @@ class TestCmovNotTaken:
             out.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
         ), f'cmovz not-taken: RAX taint must survive; got {out.get("RAX", 0):#x}'
 
-    def test_cmovl_not_taken_preserves_dest_taint(self, simulator, regs) -> None:
+    def test_cmovl_not_taken_preserves_dest_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """cmovl rbx, rdx when condition false — RBX keeps original taint."""
         # EFLAGS default 0 → SF=0, OF=0 → SF==OF → condition not met → not taken.
         out = _eval(
@@ -137,7 +136,7 @@ class TestCmovNotTaken:
             out.get('RBX', 0) == 0xFFFFFFFFFFFFFFFF
         ), f'cmovl not-taken: RBX taint must survive; got {out.get("RBX", 0):#x}'
 
-    def test_cmovs_not_taken_preserves_dest_taint(self, simulator, regs) -> None:
+    def test_cmovs_not_taken_preserves_dest_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """cmovs rcx, rdx when SF=0 (not taken) — RCX keeps its taint."""
         out = _eval(
             simulator,
@@ -150,7 +149,7 @@ class TestCmovNotTaken:
             out.get('RCX', 0) == 0xFFFFFFFFFFFFFFFF
         ), f'cmovs not-taken: RCX taint must survive; got {out.get("RCX", 0):#x}'
 
-    def test_cmov_taken_replaces_dest_taint(self, simulator, regs) -> None:
+    def test_cmov_taken_replaces_dest_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """Sanity: cmovz when ZF=1 IS taken — dest gets source taint."""
         # Force ZF=1 by using value 0 in the instruction that sets EFLAGS.
         # For the worker/circuit path this is hard to test without EFLAGS,
@@ -180,7 +179,7 @@ class TestCmovNotTaken:
 
 
 class TestChainSequence:
-    def test_shl_or_shr_chain_rbx_taint(self, simulator, regs) -> None:
+    def test_shl_or_shr_chain_rbx_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """shl rax,4; or rbx,rax; shr rbx,2 — RBX taint must use UPDATED RAX."""
         # Differential ground truth:
         #   step 1: rax' = rax << 4
@@ -203,7 +202,7 @@ class TestChainSequence:
         # And must be non-zero (RAX is fully tainted and feeds into RBX via OR then SHR)
         assert rbx_out != 0, f'chain: RBX must be tainted from tainted RAX; got {rbx_out:#x}'
 
-    def test_add_cascade_chain(self, simulator, regs) -> None:
+    def test_add_cascade_chain(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """add rax,rbx; add rcx,rax; add rdx,rcx — taint cascades correctly."""
         # With only RBX tainted:
         #   rax' = rax + rbx → T_RAX = diff(add(V_RAX|T_RBX, V_RBX)|T_RBX)  ... → some taint
@@ -221,7 +220,7 @@ class TestChainSequence:
         assert out.get('RCX', 0) != 0, 'cascade: RCX must be tainted via RAX'
         assert out.get('RDX', 0) != 0, 'cascade: RDX must be tainted via RCX'
 
-    def test_neg_sub_mov_chain(self, simulator, regs) -> None:
+    def test_neg_sub_mov_chain(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """neg rax; sub rbx,rax; mov rcx,rbx — RCX gets RBX taint."""
         # With RAX untainted and RBX partially tainted:
         #   neg rax → rax' = -rax (clean)
@@ -238,7 +237,7 @@ class TestChainSequence:
         # RCX must carry some of RBX's taint (the mov at the end)
         assert out.get('RCX', 0) != 0, f'neg-sub-mov: RCX must be tainted via RBX; got {out}'
 
-    def test_imul_add_mov_chain_zero_output(self, simulator, regs) -> None:
+    def test_imul_add_mov_chain_zero_output(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """imul rax,rbx; add rcx,rax; mov rdx,rcx — if imul result=0, rdx must be clean."""
         # imul rax, rbx with rax=1, rbx=0: result = 0 (clean)
         # add rcx, 0: rcx unchanged (clean if rcx was clean)
@@ -263,7 +262,7 @@ class TestChainSequence:
 
 
 class TestSubregMovzx:
-    def test_movzx_bx_then_add_rcx_clean_upper(self, simulator, regs) -> None:
+    def test_movzx_bx_then_add_rcx_clean_upper(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """movzx rax,bx; add rax,rcx — upper bits of RAX must be 0-extended."""
         # movzx rax, bx: rax = zero_extend(bx)
         # add rax, rcx: result has carry from bx+cl into higher bits, but
@@ -284,7 +283,7 @@ class TestSubregMovzx:
             rax_out & 0xFFFFFFFF00000000
         ) == 0, f'movzx must zero-extend; old RAX upper taint must not appear: {rax_out:#x}'
 
-    def test_movzx_al_clears_high_bits(self, simulator, regs) -> None:
+    def test_movzx_al_clears_high_bits(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """movzx rax,al — upper 56 bits zeroed; old RAX taint must not survive."""
         out = _eval(
             simulator,
@@ -298,7 +297,7 @@ class TestSubregMovzx:
         # Bits 8-63 must be 0 (zero extension clears them unconditionally)
         assert (rax_out & 0xFFFFFFFFFFFFFF00) == 0, f'movzx rax,al must clear upper 56 bits of taint: {rax_out:#x}'
 
-    def test_movzx_preserves_source_low_bits(self, simulator, regs) -> None:
+    def test_movzx_preserves_source_low_bits(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """movzx rax,bx — low 16 bits of BX taint appear in RAX bits 0-15."""
         out = _eval(
             simulator,
@@ -325,7 +324,7 @@ class TestSubregMovzx:
 
 
 class TestDoublePermutation:
-    def test_bswap_twice_is_identity(self, simulator, regs) -> None:
+    def test_bswap_twice_is_identity(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """bswap rax; bswap rax is the identity — taint mask must be unchanged."""
         # Asymmetric taint mask to distinguish identity from swapped
         taint_in = 0x0102030405060708
@@ -338,7 +337,7 @@ class TestDoublePermutation:
         )
         assert out.get('RAX', 0) == taint_in, f'bswapx2 is identity: expected {taint_in:#x}, got {out.get("RAX",0):#x}'
 
-    def test_bswap_once_swaps_taint_bytes(self, simulator, regs) -> None:
+    def test_bswap_once_swaps_taint_bytes(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """Sanity: single bswap rax swaps the byte-level taint positions."""
         # bswap reverses byte order. If taint is on bytes 7,6 (bits 63-48),
         # after bswap they move to bytes 0,1 (bits 15-0).
@@ -355,7 +354,7 @@ class TestDoublePermutation:
             out.get('RAX', 0) == expected
         ), f'bswap: byte 7→byte 0 taint: expected {expected:#x}, got {out.get("RAX",0):#x}'
 
-    def test_rol_then_ror_same_amount_is_identity(self, simulator, regs) -> None:
+    def test_rol_then_ror_same_amount_is_identity(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """rol rax,8; ror rax,8 is the identity — taint mask unchanged."""
         taint_in = 0x0102030405060708
         out = _eval(
@@ -382,7 +381,7 @@ class TestDoublePermutation:
 
 
 class TestAvalancheDestReadBack:
-    def test_imul_3op_untainted_source_clean_output(self, simulator, regs) -> None:
+    def test_imul_3op_untainted_source_clean_output(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """imul rax, rbx, 3 with RBX=0 and old RAX tainted — result must be 0 taint."""
         # imul rax, rbx, 3: rax = rbx * 3.  RBX is the source; RAX is a pure
         # destination.  If RBX is concrete 0 and untainted, result=0 always.
@@ -396,7 +395,7 @@ class TestAvalancheDestReadBack:
         )
         assert out.get('RAX', 0) == 0, f'imul 3-op: untainted RBX must produce untainted RAX; got {out.get("RAX",0):#x}'
 
-    def test_imul_3op_tainted_source_propagates(self, simulator, regs) -> None:
+    def test_imul_3op_tainted_source_propagates(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """imul rax, rbx, 3 with RBX tainted — RAX output must be tainted."""
         out = _eval(
             simulator,
@@ -407,7 +406,7 @@ class TestAvalancheDestReadBack:
         )
         assert out.get('RAX', 0) != 0, f'imul 3-op: tainted RBX must produce tainted RAX; got {out}'
 
-    def test_lzcnt_untainted_source_clean_output(self, simulator, regs) -> None:
+    def test_lzcnt_untainted_source_clean_output(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """lzcnt rax, rbx with RBX untainted — RAX output must be clean."""
         out = _eval(
             simulator,
@@ -418,7 +417,7 @@ class TestAvalancheDestReadBack:
         )
         assert out.get('RAX', 0) == 0, f'lzcnt: untainted RBX must produce clean RAX; got {out.get("RAX",0):#x}'
 
-    def test_lzcnt_tainted_source_propagates(self, simulator, regs) -> None:
+    def test_lzcnt_tainted_source_propagates(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """lzcnt rax, rbx with RBX tainted — RAX must be tainted."""
         out = _eval(
             simulator,
@@ -429,7 +428,7 @@ class TestAvalancheDestReadBack:
         )
         assert out.get('RAX', 0) != 0, f'lzcnt: tainted RBX must produce tainted RAX; got {out}'
 
-    def test_imul_2op_both_tainted_propagates(self, simulator, regs) -> None:
+    def test_imul_2op_both_tainted_propagates(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """imul rax, rbx (2-operand): both tainted → RAX tainted (AVALANCHE)."""
         out = _eval(
             simulator,
@@ -440,7 +439,7 @@ class TestAvalancheDestReadBack:
         )
         assert out.get('RAX', 0) != 0, f'imul 2-op: tainted inputs must produce tainted output; got {out}'
 
-    def test_imul_2op_untainted_rax_tainted_rbx(self, simulator, regs) -> None:
+    def test_imul_2op_untainted_rax_tainted_rbx(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """imul rax, rbx with RAX untainted, RBX fully tainted → RAX output tainted."""
         out = _eval(
             simulator,
@@ -462,7 +461,7 @@ class TestAvalancheDestReadBack:
 
 
 class TestShiftByTaintedReg:
-    def test_shr_tainted_cl_avalanches_output(self, simulator, regs) -> None:
+    def test_shr_tainted_cl_avalanches_output(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """shr rax, cl when CL is tainted — all RAX output bits must be tainted."""
         out = _eval(
             simulator,
@@ -475,7 +474,7 @@ class TestShiftByTaintedReg:
             out.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
         ), f'shr rax,cl with tainted cl must fully taint RAX; got {out.get("RAX",0):#x}'
 
-    def test_shl_tainted_cl_avalanches_output(self, simulator, regs) -> None:
+    def test_shl_tainted_cl_avalanches_output(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """shl rax, cl when CL is tainted — all RAX output bits must be tainted."""
         out = _eval(
             simulator,
@@ -488,7 +487,7 @@ class TestShiftByTaintedReg:
             out.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
         ), f'shl rax,cl with tainted cl must fully taint RAX; got {out.get("RAX",0):#x}'
 
-    def test_shr_chain_tainted_cl_avalanches(self, simulator, regs) -> None:
+    def test_shr_chain_tainted_cl_avalanches(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """mov rcx,rdx; shr rax,cl — when RDX is tainted, RCX becomes tainted,
         and then shr by tainted CL must avalanche."""
         out = _eval(
@@ -502,7 +501,7 @@ class TestShiftByTaintedReg:
             out.get('RAX', 0) == 0xFFFFFFFFFFFFFFFF
         ), f'mov rcx,rdx; shr rax,cl — tainted shift must avalanche; got {out.get("RAX",0):#x}'
 
-    def test_shr_untainted_cl_does_not_avalanche(self, simulator, regs) -> None:
+    def test_shr_untainted_cl_does_not_avalanche(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """shr rax, cl when CL is clean — output should NOT be fully tainted."""
         # With RAX partially tainted and CL=4 (untainted), output is RAX>>4
         out = _eval(
@@ -528,7 +527,7 @@ class TestShiftByTaintedReg:
 
 
 class TestSanitiserDoubleXor:
-    def test_xor_self_rbx_zeroing_independent(self, simulator, regs) -> None:
+    def test_xor_self_rbx_zeroing_independent(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """xor rax,rax; xor rbx,rbx — RBX must be zeroed even when RAX is tainted."""
         out = _eval(
             simulator,
@@ -540,7 +539,7 @@ class TestSanitiserDoubleXor:
         assert out.get('RAX', 0) == 0, f'xor rax,rax must zero RAX taint; got {out.get("RAX",0):#x}'
         assert out.get('RBX', 0) == 0, f'xor rbx,rbx must zero RBX taint; got {out.get("RBX",0):#x}'
 
-    def test_xor_self_three_regs_all_zeroed(self, simulator, regs) -> None:
+    def test_xor_self_three_regs_all_zeroed(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """xor rax,rax; xor rbx,rbx; xor rcx,rcx — all three zeroed."""
         out = _eval(
             simulator,
@@ -560,7 +559,7 @@ class TestSanitiserDoubleXor:
 
 
 class TestRegressionBaselines:
-    def test_single_bswap_swaps_bytes(self, simulator, regs) -> None:
+    def test_single_bswap_swaps_bytes(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """Single bswap must byte-swap the taint mask (not identity)."""
         # byte 7 (bits 63-56) moves to byte 0 (bits 7-0)
         taint_in = 0xFF00000000000000
@@ -576,7 +575,7 @@ class TestRegressionBaselines:
             out.get('RAX', 0) == expected
         ), f'bswap*1: {taint_in:#x} → expected {expected:#x}, got {out.get("RAX",0):#x}'
 
-    def test_xor_self_zeroes_single_reg(self, simulator, regs) -> None:
+    def test_xor_self_zeroes_single_reg(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """xor rax,rax zeroes RAX taint (single instruction, must still work)."""
         out = _eval(
             simulator,
@@ -587,7 +586,7 @@ class TestRegressionBaselines:
         )
         assert out.get('RAX', 0) == 0, 'xor rax,rax: zeroing idiom must produce 0 taint'
 
-    def test_mov_propagates_full_taint(self, simulator, regs) -> None:
+    def test_mov_propagates_full_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """mov rbx, rax — full taint propagation (single instruction)."""
         out = _eval(
             simulator,
@@ -598,7 +597,7 @@ class TestRegressionBaselines:
         )
         assert out.get('RBX', 0) == 0xFFFFFFFFFFFFFFFF, f'mov must copy full taint; got {out.get("RBX",0):#x}'
 
-    def test_imul_tainted_inputs_propagates(self, simulator, regs) -> None:
+    def test_imul_tainted_inputs_propagates(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """imul rax, rbx with both tainted — output must be tainted."""
         out = _eval(
             simulator,

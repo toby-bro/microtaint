@@ -64,7 +64,6 @@ Run with:
 """
 
 # ruff: noqa: ARG001, ARG002, PLC0415, S110, S607, PLW1510, S603, ARG005
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,type-arg,arg-type"
 
 from __future__ import annotations
 
@@ -123,7 +122,7 @@ class TestBug1RMWDifferential:
     """`add [mem], reg`, `sub [mem], reg` etc. must use the proper
     differential, not just OR-of-input-taints."""
 
-    def test_add_mem_reg_carries_through_byte_boundary(self, simulator, regs):
+    def test_add_mem_reg_carries_through_byte_boundary(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """add [rbp-0x10], rax with V_mem=0xFF, V_RAX=0x01, T_RAX=0x01.
         Sum = 0x100; differential reveals 9 affected bits.
 
@@ -160,7 +159,7 @@ class TestBug1RMWDifferential:
         # And the popcount must be at least 8 (the differential alone).
         assert bin(mem_taint).count('1') >= 8, f'add carry must produce popcount>=8, got {bin(mem_taint).count("1")}.'
 
-    def test_sub_mem_reg_borrows_through_byte_boundary(self, simulator, regs):
+    def test_sub_mem_reg_borrows_through_byte_boundary(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """sub [rbp-0x10], rax: borrow ripple from bit 0 cascades upward."""
         rbp = 0x80000000DD00
         mem_addr = rbp - 0x10
@@ -185,7 +184,7 @@ class TestBug1RMWDifferential:
             bin(mem_taint).count('1') >= 9
         ), f'sub borrow should produce popcount>=9, got {bin(mem_taint).count("1")} (mask={mem_taint:#x}).'
 
-    def test_pure_store_uses_or_path(self, simulator, regs):
+    def test_pure_store_uses_or_path(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """`mov [rbp-0x10], rax` is a PURE store — NOT RMW.  It must take
         the cheap OR-of-input-taints path, NOT the C1 XOR C2 cell
         differential (which executes the instruction via InstructionCellExpr
@@ -237,7 +236,7 @@ class TestBug1RMWDifferential:
 class TestBug2MemoryInputOffset:
     """Memory operands like `[rbp-0x10]` must dereference rbp+(-0x10), not rbp."""
 
-    def test_add_rax_mem_with_negative_offset(self, simulator, regs):
+    def test_add_rax_mem_with_negative_offset(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """add rax, [rbp-0x10] — REG-DEST with offset memory input.
         V_RAX=0x01, T_RAX=0; V_mem=0xFF, T_mem=0x01.
         Expected differential: (0x01 + 0xFF) XOR (0x01 + 0xFE) = 0x100 ^ 0xFF = 0x1FF.
@@ -267,7 +266,7 @@ class TestBug2MemoryInputOffset:
             'This indicates the MEM input offset is being dropped from the address.'
         )
 
-    def test_load_with_offset_propagates_full_taint(self, simulator, regs):
+    def test_load_with_offset_propagates_full_taint(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """`mov rax, [rbp-0x10]` (qword load) — already worked even before
         the fix because it goes through the LOAD-LIKE path that reads
         shadow directly.  Regression guard."""
@@ -302,7 +301,7 @@ class TestBug3AddressOnlyRegisters:
     `add rdx, [rax]`), its concrete value must reach the simulator so
     the dereference resolves correctly."""
 
-    def test_add_reg_mem_with_address_only_register(self, simulator, regs):
+    def test_add_reg_mem_with_address_only_register(self, simulator: CellSimulator, regs: list[Register]) -> None:
         """add rdx, [rax] — RAX is an address-only register.
         V_RAX=0x3000, V_RDX=0xFF, V_mem=0x01, T_mem=0x01.
         Expected: differential popcount=9 (carry from bit 0 ripples)."""
@@ -329,7 +328,9 @@ class TestBug3AddressOnlyRegisters:
             'This indicates the address register is not reaching the simulator state.'
         )
 
-    def test_rmw_with_address_only_register_for_destination(self, simulator, regs):
+    def test_rmw_with_address_only_register_for_destination(self,
+                                                            simulator: CellSimulator,
+                                                            regs: list[Register]) -> None:
         """add [rax], rbx — destination's own RAX is address-only and
         must be in the simulator's regs so the write hits the right address."""
         shadow = BitPreciseShadowMemory()
@@ -365,7 +366,7 @@ class TestBug4ReadOutputDynamicMem:
     """cell.pyx _read_output must parse `MEM_<reg>_<offset>_<size>`
     by reading the address register from the executed frame."""
 
-    def test_pcode_native_handles_dynamic_mem_output(self, regs):
+    def test_pcode_native_handles_dynamic_mem_output(self, regs: list[Register]) -> None:
         """Direct call into the native p-code evaluator with a dynamic
         MEM out_reg.  Earlier the parser fell into the hex-only path and
         returned 0 silently."""
@@ -411,7 +412,7 @@ class TestBug5LoadDynamicMem:
     by looking up the address register from the frame's already-loaded
     register state (two-pass: regs first, mems second)."""
 
-    def test_pcode_native_consumes_dynamic_mem_input(self, regs):
+    def test_pcode_native_consumes_dynamic_mem_input(self, regs: list[Register]) -> None:
         """Single concrete (non-differential) execution with a memory
         input in dynamic format.  Demonstrates that _load resolves the
         address correctly: the loaded byte should match what the
@@ -443,7 +444,7 @@ class TestBug5LoadDynamicMem:
             '0xCAFEBABEDEADBEEF.'
         )
 
-    def test_pcode_native_legacy_static_mem_still_works(self, regs):
+    def test_pcode_native_legacy_static_mem_still_works(self, regs: list[Register]) -> None:
         """The static `MEM_<hex>_<size>` format must continue to work
         for callers that build flat dicts directly with hex addresses."""
         from microtaint.simulator import _get_pcode_evaluator_class

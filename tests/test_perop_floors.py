@@ -24,7 +24,6 @@ Bounded here for CI; the full multi-thousand-case sweep runs standalone via
 `python -m tests.perop_floors_study` (see __main__ below).
 """
 # ruff: noqa: PLC0415
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,import-untyped"
 from __future__ import annotations
 
 import random

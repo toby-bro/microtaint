@@ -19,7 +19,6 @@ The distribution says how much of the corpus is exact-for-free, how much needs a
 differential at all, and how often the window has to fire.
 """
 # ruff: noqa: PLC0415
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,import-untyped"
 from __future__ import annotations
 
 from collections import Counter

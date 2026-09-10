@@ -78,7 +78,7 @@ def _cells(expr) -> int:
     return repr(expr).count('InstructionCellExpr')
 
 
-def _true_taint(sim, hexs, name, bit_end, base_vals, taint) -> int:
+def _true_taint(sim: CellSimulator, hexs, name, bit_end, base_vals, taint) -> int:
     """Non-constancy of the output over the FULL taint cube: OR of per-bit XORs of
     the output as the tainted input bits range over all 2^n assignments.  `base_vals`
     already has the tainted bits cleared.  Small taint keeps the cube cheap."""
@@ -123,7 +123,7 @@ def test_cf_declines_on_dependent_operands(label, hexs):
 
 @pytest.mark.parametrize(('label', 'hexs', 'exact'),
                          [(k, v[0], v[2]) for k, v in CLOSED.items()], ids=list(CLOSED))
-def test_sound_and_exact(label, hexs, exact, sim):
+def test_sound_and_exact(label, hexs, exact, sim: CellSimulator):
     circ, outs = _assignments(hexs)
     rng = random.Random(hash(hexs) & 0xFFFF)
     for taint in _small_taints(rng):

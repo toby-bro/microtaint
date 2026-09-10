@@ -23,13 +23,12 @@ This module is import-only (no test_ prefix); tests/test_oracle_harness.py runs 
 bounded gate, and it can be driven standalone for full-bank sweeps:
     .venv/bin/python -m tests.oracle_harness --isas AMD64 --vectors 8
 """
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,import-untyped,var-annotated"
 # ruff: noqa: PLC0415  (deferred imports: unicorn and the engine are
 # optional at collection time and expensive to import eagerly)
 from __future__ import annotations
 
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -37,7 +36,10 @@ from typing import Any
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
-from microtaint.types import Architecture, ImplicitTaintPolicy
+from microtaint.types import Architecture, ImplicitTaintPolicy, Register
+
+#: A per-output mask keyed by register or flag name.
+TaintState = dict[str, int]
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
@@ -46,13 +48,16 @@ MASK64 = 0xFFFFFFFFFFFFFFFF
 # Oracle 1: the current whole-instruction differential (bit-exact reference).
 # ---------------------------------------------------------------------------
 
-def build_circuit(arch: Architecture, code: bytes, regs):
+def build_circuit(arch: Architecture, code: bytes,
+                  regs: list[Register]) -> Any:
     """Generate the taint circuit for one instruction form (uncached, so a
     harness run never depends on LRU state)."""
     return generate_static_rule(arch, code, list(regs))
 
 
-def reference_taint(arch, code, regs, in_taint, in_values, *, circuit=None):
+def reference_taint(arch: Architecture, code: bytes, regs: list[Register],
+                    in_taint: TaintState, in_values: TaintState, *,
+                    circuit: Any = None) -> TaintState:
     """Oracle 1: circuit.evaluate -- the current whole-instruction differential.
     Register-only (no shadow); memory forms are filtered by the corpus driver."""
     if circuit is None:
@@ -64,7 +69,8 @@ def reference_taint(arch, code, regs, in_taint, in_values, *, circuit=None):
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.IGNORE,
     )
-    return circuit.evaluate(ctx)
+    out: TaintState = circuit.evaluate(ctx)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +79,9 @@ def reference_taint(arch, code, regs, in_taint, in_values, *, circuit=None):
 # reference_taint is one; this is the template for plugging in a new engine.
 # ---------------------------------------------------------------------------
 
-def engine_evaluate_c(arch, code, regs, in_taint, in_values, *, circuit=None):
+def engine_evaluate_c(arch: Architecture, code: bytes, regs: list[Register],
+                      in_taint: TaintState, in_values: TaintState, *,
+                      circuit: Any = None) -> TaintState:
     """The CURRENT C register fast path (CompiledCircuit.evaluate_c), falling
     back to the differential where it declines (None: mem / PC / wide).  Proves
     the harness detects a real (non-identity) engine matching the oracle, and is
@@ -87,13 +95,16 @@ def engine_evaluate_c(arch, code, regs, in_taint, in_values, *, circuit=None):
         reference_taint(arch, code, regs, in_taint, in_values, circuit=circuit)
         comp = getattr(circuit, '_compiled', None)
     if comp is not None and comp is not False:
-        out = comp.evaluate_c(dict(in_taint), dict(in_values), sim._pcode)
+        out: TaintState | None = comp.evaluate_c(
+            dict(in_taint), dict(in_values), sim._pcode)
         if out is not None:
             return out
     return reference_taint(arch, code, regs, in_taint, in_values, circuit=circuit)
 
 
-def engine_evaluate_c_arr(arch, code, regs, in_taint, in_values, *, circuit=None):
+def engine_evaluate_c_arr(arch: Architecture, code: bytes,
+                          regs: list[Register], in_taint: TaintState,
+                          in_values: TaintState, *, circuit: Any = None) -> TaintState:
     """The array-gather register path (CompiledCircuit.evaluate_c_arr): register
     taint/values are passed as slot-indexed lists (slot = position in `regs`), so
     the per-op input fill is an array gather, not a dict hash lookup.  Returns
@@ -120,7 +131,10 @@ def engine_evaluate_c_arr(arch, code, regs, in_taint, in_values, *, circuit=None
     return reference_taint(arch, code, regs, in_taint, in_values, circuit=circuit)
 
 
-def engine_evaluate_c_arr_ptr(arch, code, regs, in_taint, in_values, *, circuit=None):
+def engine_evaluate_c_arr_ptr(arch: Architecture, code: bytes,
+                              regs: list[Register], in_taint: TaintState,
+                              in_values: TaintState, *,
+                              circuit: Any = None) -> TaintState:
     """The live-usable pointer form (evaluate_c_arr_ptr): register taint/values
     live in raw uint64 C arrays (here ctypes arrays), indexed by slot; the eval
     writes target slots of the taint array in place (atomic).  Reads the array
@@ -244,17 +258,18 @@ def _uc_desc_ppc32be() -> UcDesc:
     import unicorn
     import unicorn.ppc_const as up
 
-    def const(name: str):
+    def const(name: str) -> int | None:
         """Unicorn spells the general registers UC_PPC_REG_0..31; the engine's
         geometry spells them R0..R31.  Matching on the literal name finds only
         CTR, LR, MSR, PC and XER, and a ground truth that watches five special
         registers agrees with anything -- which is exactly what the first run of
         this reported before the mapping was added."""
-        c = getattr(up, f'UC_PPC_REG_{name}', None)
+        c: int | None = getattr(up, f'UC_PPC_REG_{name}', None)
         if c is not None:
             return c
         if len(name) > 1 and name[0] == 'R' and name[1:].isdigit():
-            return getattr(up, f'UC_PPC_REG_{name[1:]}', None)
+            alt: int | None = getattr(up, f'UC_PPC_REG_{name[1:]}', None)
+            return alt
         return None
 
     names = [f'R{i}' for i in range(32)] + ['LR', 'CTR', 'XER']
@@ -300,8 +315,8 @@ def _uc_run(desc: UcDesc, code: bytes, vals: dict[str, int], *,
     return out
 
 
-def models_disagree(desc: UcDesc, arch, code: bytes,
-                    states) -> tuple[set[str], set[str]]:
+def models_disagree(desc: UcDesc, arch: Architecture, code: bytes,
+                    states: Iterable[TaintState]) -> tuple[set[str], set[str]]:
     """Outputs where SLEIGH and Unicorn model this instruction differently.
 
     Where an ISA leaves a flag ARCHITECTURALLY UNDEFINED -- x86 OF after a
@@ -392,7 +407,7 @@ def models_disagree(desc: UcDesc, arch, code: bytes,
     return (disagree & written), (disagree - written)
 
 
-def _engine_flag_names(arch, desc: UcDesc) -> dict[str, str]:
+def _engine_flag_names(arch: Architecture, desc: UcDesc) -> dict[str, str]:
     """Descriptor flag name -> the name this architecture's geometry uses."""
     from microtaint.debug.reg_aliases import RegisterAliases
     from microtaint.instrumentation.cell import _build_reg_maps
@@ -418,7 +433,8 @@ def _engine_flag_names(arch, desc: UcDesc) -> dict[str, str]:
     return out
 
 
-def _flags_the_lifter_writes(arch, code: bytes, desc: UcDesc) -> set[str]:
+def _flags_the_lifter_writes(arch: Architecture, code: bytes,
+                             desc: UcDesc) -> set[str]:
     """Which of this architecture's flags the p-code for `code` assigns."""
     # The descriptor names flags the way a person does (AArch64 N/Z/C/V); the
     # geometry names them the way SLEIGH does (NG/ZR/CY/OV).  Resolving through
@@ -427,7 +443,7 @@ def _flags_the_lifter_writes(arch, code: bytes, desc: UcDesc) -> set[str]:
     # every flag-setting AArch64 instruction in the bank -- and the truth.
     from microtaint.debug.reg_aliases import RegisterAliases
     from microtaint.instrumentation.cell import _build_reg_maps
-    from microtaint.sleigh.engine import get_context
+    from microtaint.sleigh.lifter import get_context
 
     offsets, _sizes = _build_reg_maps(arch)
     try:
@@ -504,7 +520,7 @@ class Verdict:
         return sum(bin(v).count('1') for v in self.under.values())
 
 
-def classify(got: dict[str, int], ref: dict[str, int], keys) -> Verdict:
+def classify(got: TaintState, ref: TaintState, keys: Iterable[str]) -> Verdict:
     """Compare an engine's output mask `got` against a reference `ref` over
     `keys` (register/flag names).  under = ref & ~got, over = got & ~ref."""
     under: dict[str, int] = {}
@@ -525,11 +541,12 @@ def classify(got: dict[str, int], ref: dict[str, int], keys) -> Verdict:
 # Input-vector fuzzing
 # ---------------------------------------------------------------------------
 
-def fuzz_vectors(reg_names, rng: random.Random, n_dense: int, n_sparse: int):
+def fuzz_vectors(reg_names: list[str], rng: random.Random, n_dense: int,
+                 n_sparse: int) -> Iterator[tuple[TaintState, TaintState]]:
     """Yield (in_taint, in_values) pairs.  Dense masks stress the differential;
     sparse masks (few bits) are what the Unicorn ground truth can enumerate
     cheaply.  Values avoid 0 to dodge div-by-zero-class faults."""
-    def rand_vals():
+    def rand_vals() -> TaintState:
         return {r: rng.randint(1, MASK64) for r in reg_names}
 
     # edge taint patterns (dense)
@@ -580,7 +597,8 @@ class Report:
         )
 
 
-def _compile_and_mem(circuit, arch, regs) -> bool:
+def _compile_and_mem(circuit: Any, arch: Architecture,
+                     regs: list[Register]) -> bool:
     """`circuit._compiled` is populated lazily on the first evaluate, so a probe
     evaluate (zero taint/values) forces compilation; then has_mem_ops is a
     reliable "reads/writes guest memory" signal (LEA stays False -> register
@@ -641,6 +659,8 @@ def run_bank(engine_fn: EngineFn, *, isas: list[str] | None = None,
                     got = engine_fn(spec.arch, ins.bytes, spec.regs,
                                     in_taint, in_values, circuit=circuit)
                     if ref == 'ground_truth':
+                        assert uc_desc is not None, \
+                            "ref='ground_truth' needs a UcDesc"
                         keys = list(uc_desc.gp) + list(uc_desc.flags)
                         refd = ground_truth(uc_desc, ins.bytes, in_taint, in_values)
                     else:

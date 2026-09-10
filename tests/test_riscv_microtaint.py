@@ -45,7 +45,6 @@ Run
     pytest test_riscv_microtaint.py -v --benchmark-warmup=on --benchmark-min-rounds=20
 """
 
-# mypy: disable-error-code="type-arg,no-any-return,no-untyped-def,attr-defined,no-untyped-call"
 # ruff: noqa: ARG001
 
 from __future__ import annotations

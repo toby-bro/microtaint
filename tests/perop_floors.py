@@ -43,7 +43,6 @@ Register/flag corpus over LE ISAs (AMD64/ARM64/RISCV64), matching the 3a study;
 memory + big-endian come with the corpus extension.  Standalone (pypcode only) --
 no engine coupling, so this cannot regress the live path.
 """
-# mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,import-untyped,var-annotated"
 from __future__ import annotations
 
 from typing import Any

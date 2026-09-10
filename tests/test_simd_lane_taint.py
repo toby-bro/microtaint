@@ -23,7 +23,6 @@ Soundness is what is asserted -- the engine mask must CONTAIN the ground-truth
 mask. Over-taint is a precision cost the engine is allowed to pay.
 """
 
-# mypy: disable-error-code="no-untyped-call"
 from __future__ import annotations
 
 import pytest

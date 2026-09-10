@@ -74,7 +74,7 @@ def sim() -> CellSimulator:
 
 
 @pytest.mark.parametrize(('asm', 'dest', 'expected'), CASES)
-def test_sparc_taint_and_generality(asm, dest, expected, sparc_regs, ks_engine, sim):
+def test_sparc_taint_and_generality(asm, dest, expected, sparc_regs: list[Register], ks_engine, sim: CellSimulator):
     bs = bytes(ks_engine.asm(asm, 0)[0])
     # Rule generation must succeed with zero engine changes.
     circ = generate_static_rule(Architecture.SPARC32BE, bs, sparc_regs)

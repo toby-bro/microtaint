@@ -24,7 +24,6 @@ Structure
                                     simulating a real taint-analysis trace
 """
 
-# mypy: disable-error-code="type-arg,no-any-return"
 # ruff: noqa: ARG001
 
 from __future__ import annotations
