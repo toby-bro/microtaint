@@ -334,7 +334,7 @@ def circuit_cache() -> dict[str, Any]:
     return {}
 
 
-def _circuit(asm: str, cache: dict[str, LogicCircuit]) -> Any:
+def _circuit(asm: str, cache: dict[str, LogicCircuit]) -> LogicCircuit:
     if asm not in cache:
         cache[asm] = generate_static_rule(
             Architecture.RISCV64,

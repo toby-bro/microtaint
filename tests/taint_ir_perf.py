@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmark.instruction_bank import ISASpec
+from microtaint.taint_ir.ir import IRProg
 from microtaint.types import Architecture
 
 BASELINE = Path(__file__).parent / 'taint_ir_perf_baseline.json'
@@ -101,7 +102,7 @@ def measure_isa(isa: str, spec: ISASpec, *, iters: int = 200000,
     alias = _engine_names(spec.arch, [r.name for r in spec.regs])
     slot_of = slot_resolver(spec.arch, slot)
 
-    progs: list[Any] = []
+    progs: list[IRProg] = []
     srcs: list[str] = []
     fnames: list[str] = []
     labels: list[str] = []

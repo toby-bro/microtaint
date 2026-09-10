@@ -31,7 +31,6 @@ import random
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any
 
 from microtaint.instrumentation.ast import EvalContext, LogicCircuit
 from microtaint.simulator import CellSimulator
@@ -49,7 +48,7 @@ MASK64 = 0xFFFFFFFFFFFFFFFF
 # ---------------------------------------------------------------------------
 
 def build_circuit(arch: Architecture, code: bytes,
-                  regs: list[Register]) -> Any:
+                  regs: list[Register]) -> LogicCircuit:
     """Generate the taint circuit for one instruction form (uncached, so a
     harness run never depends on LRU state)."""
     return generate_static_rule(arch, code, list(regs))

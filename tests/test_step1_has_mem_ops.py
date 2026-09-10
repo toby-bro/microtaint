@@ -17,11 +17,11 @@ attribute MUST be true.
 """
 
 # ruff: noqa: PT018
-from typing import Any
 
 import pytest
 
 from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.cell_c.circuit_c import CompiledCircuit
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import _cached_generate_static_rule
 from microtaint.types import Architecture, Register
@@ -49,7 +49,7 @@ X86_64_STATE = tuple(
 )
 
 
-def _compile(bs_hex: str) -> Any:
+def _compile(bs_hex: str) -> CompiledCircuit:
     """Build a LogicCircuit, trigger lazy compile-to-C, return the compiled object."""
     _cached_generate_static_rule.cache_clear()
     c = _cached_generate_static_rule(
@@ -64,7 +64,11 @@ def _compile(bs_hex: str) -> Any:
     it = {r.name: 0 for r in regs}
     ctx = EvalContext(input_values=iv, input_taint=it, simulator=sim)
     c.evaluate(ctx)
-    return c._compiled
+    compiled = c._compiled
+    # The evaluate above forces compilation, so this is never the
+    # not-yet-compiled False nor None.
+    assert compiled is not None and not isinstance(compiled, bool)
+    return compiled
 
 
 # The set below contains AMD64 instructions that should each have

@@ -23,7 +23,6 @@ here: it named four forms and there were eight.
 from __future__ import annotations
 
 import random
-from typing import Any
 
 from microtaint.types import Architecture
 
@@ -119,8 +118,8 @@ def ir_answer(arch: Architecture, code: bytes, taint: dict[str, int],
     from tests.taint_ir_bank import name_offset
 
     prog = build_ir(arch, code)
-    v: dict[tuple[Any, ...], int] = {}
-    t: dict[tuple[Any, ...], int] = {}
+    v: dict[tuple[str | int, ...], int] = {}
+    t: dict[tuple[str | int, ...], int] = {}
     for n in LANES:
         off = name_offset(arch, n)
         for sz in range(1, 9):

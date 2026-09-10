@@ -39,7 +39,7 @@ leaked into the differential evaluator's memory reads.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterator
 
 import pytest
 
@@ -90,7 +90,7 @@ BACKENDS: list[tuple[str, dict[str, bool]]] = [
 
 
 @pytest.fixture(autouse=True)
-def _clear_circuit_cache() -> Any:
+def _clear_circuit_cache() -> Iterator[None]:
     """Ensure each test starts with an empty static-rule cache so prior
     test runs cannot affect the LogicCircuit identity used here."""
     _cached_generate_static_rule.cache_clear()

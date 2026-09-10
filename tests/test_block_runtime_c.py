@@ -25,7 +25,7 @@ exactly where regioning is dangerous.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -33,6 +33,9 @@ from microtaint.emulator import blockpath_c as B
 from microtaint.taint_ir import frompcode
 from microtaint.taint_ir.blockcompile import compile_block
 from microtaint.types import Architecture
+
+if TYPE_CHECKING:                    # stub-only: an opaque PyCapsule handle
+    from microtaint.emulator.blockpath_c import _Capsule
 
 _ARCH = Architecture.AMD64
 _BASE = 0x401000
@@ -48,7 +51,7 @@ def layout() -> dict[str, int]:
     return {n: i for i, n in enumerate(names)}
 
 
-def _arena() -> Any:
+def _arena() -> _Capsule:
     m = B.mem_new(_ARENA, _ARENA_LEN)
     # Distinct bytes everywhere, so a load from the wrong address is visible in
     # the VALUE as well as in the taint.
@@ -145,7 +148,7 @@ def test_a_stored_value_reaches_a_load_that_indexes_with_it(
     values = dict(_VALUES)
     want = values['RBX'] + (values['RDX'] & 0xFF)
 
-    def prepared() -> Any:
+    def prepared() -> _Capsule:
         mem = _arena()
         B.mem_taint(mem, want, 0xFF, 1)
         return mem

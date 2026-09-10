@@ -46,7 +46,7 @@ class MemCase:
     isa: str
 
 
-def _ks(isa: str) -> Any:
+def _ks(isa: str) -> keystone.Ks:
     import keystone
     if isa == 'AMD64':
         return keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_64)

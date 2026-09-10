@@ -1092,7 +1092,7 @@ def sim_pcode() -> CellSimulator:
 
 
 @pytest.fixture(scope='session')
-def prebuilt_circuits() -> dict[str, Any]:
+def prebuilt_circuits() -> dict[str, LogicCircuit]:
     """
     Pre-compile every circuit in CORPUS once at session scope.
     Both simulators share these cached LogicCircuit objects — the

@@ -75,7 +75,7 @@ def classify_instr(ctx: Context, code: bytes) -> tuple[str, int]:
         if n in _OPAQUE or n.startswith(_OPAQUE_PREFIX):
             return 'OPAQUE', 0
 
-    producers: dict[VId, Any] = {}
+    producers: dict[VId, PcodeOp] = {}
     for o in ops:
         if o.output is not None:
             producers[_vid(o.output)] = o
