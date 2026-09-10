@@ -42,9 +42,9 @@ def test_no_new_under_taint_vs_ground_truth(isa: str, request: pytest.FixtureReq
                     f'current engine does not:\n{detail}')
 
 
-@pytest.mark.parametrize('isa,floor', [('AMD64', 0.85), ('ARM64', 0.90),
-                                       ('RISCV64', 0.85)])
-def test_coverage_does_not_collapse(isa: str, floor):
+@pytest.mark.parametrize(('isa', 'floor'), [('AMD64', 0.85), ('ARM64', 0.90),
+                                            ('RISCV64', 0.85)])
+def test_coverage_does_not_collapse(isa: str, floor: float) -> None:
     """A decline is safe but not free: it sends the instruction back to the
     slow whole-instruction differential.  Guard the fraction the pass answers so
     a rule change cannot buy correctness by quietly declining more."""

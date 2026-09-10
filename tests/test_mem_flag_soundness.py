@@ -21,7 +21,12 @@ import random
 
 import pytest
 
-from microtaint.instrumentation.ast import EvalContext, InstructionCellExpr
+from microtaint.instrumentation.ast import (
+    EvalContext,
+    InstructionCellExpr,
+    LogicCircuit,
+    TaintAssignment,
+)
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.sleigh.engine import _cached_generate_static_rule, generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
@@ -54,13 +59,32 @@ def sim() -> CellSimulator:
     return CellSimulator(ARCH)
 
 
-def _reg_targets(circ):
+def _target_name(a: TaintAssignment) -> str:
+    """The register an assignment writes.
+
+    `_reg_targets` already filtered to the assignments whose target has a
+    name; stating it keeps the memory form out of the register path rather
+    than reaching for an attribute it does not have.
+    """
+    name = getattr(a.target, 'name', None)
+    assert isinstance(name, str)
+    return name
+
+
+def _target_bits(a: TaintAssignment) -> int:
+    """The width of the slice an assignment writes, as a top bit index."""
+    return int(a.target.bit_end) - int(a.target.bit_start)   # type: ignore[union-attr]
+
+
+def _reg_targets(circ: LogicCircuit) -> list[TaintAssignment]:
     return [a for a in circ.assignments
             if getattr(a.target, 'name', None) is not None and not hasattr(a.target, 'address_expr')]
 
 
-def _true_taint(sim: CellSimulator, hexs: str, name: str, be, size: int, base, taint: dict[str, int]):
-    ice = InstructionCellExpr(ARCH, hexs, name, 0, be, {})
+def _true_taint(sim: CellSimulator, hexs: str, name: str, bit_end: int,
+                size: int, base: dict[str, int],
+                taint: dict[str, int]) -> int:
+    ice = InstructionCellExpr(ARCH, hexs, name, 0, bit_end, {})
     mk = f'MEM_{hex(RSP)}_{size}'
     pos = ([('r', r, b) for r in RN for b in range(64) if (taint.get(r, 0) >> b) & 1]
            + [('m', mk, b) for b in range(size * 8) if (taint.get(mk, 0) >> b) & 1])
@@ -99,9 +123,9 @@ def test_memory_flags_never_under_taint(label: str, hexs: str, size: int, sim: C
         got = circ.evaluate(EvalContext(input_values={**base}, input_taint=taint, simulator=sim,
                                         implicit_policy=ImplicitTaintPolicy.IGNORE))
         for a in targets:
-            nm = a.target.name
-            be = a.target.bit_end - a.target.bit_start
-            mask = (1 << (be + 1)) - 1
-            true = _true_taint(sim, hexs, nm, be, size, base, taint) & mask
+            nm = _target_name(a)
+            bit_end = _target_bits(a)
+            mask = (1 << (bit_end + 1)) - 1
+            true = _true_taint(sim, hexs, nm, bit_end, size, base, taint) & mask
             g = got.get(nm, 0) & mask
             assert (true & ~g) == 0, f'{label} {nm} UNDER-taint: true={true:#x} got={g:#x} (mem_t={mt:#x})'

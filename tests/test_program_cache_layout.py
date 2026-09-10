@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from microtaint.instrumentation.cell_c import taint_ir_c
-from microtaint.taint_ir.engine_glue import enabled, program_for
+from microtaint.taint_ir.engine_glue import Compiled, enabled, program_for
 from microtaint.types import Architecture
 
 #: `add rax, rbx` -- two register inputs, a result and five flags.
@@ -26,7 +26,8 @@ def _layout(first: str, second: str) -> dict[str, int]:
     return {n: i for i, n in enumerate(names)}
 
 
-def _taint_after(prog, layout: dict[str, int], tainted: str) -> dict[str, int]:
+def _taint_after(prog: Compiled, layout: dict[str, int],
+                 tainted: str) -> dict[str, int]:
     """Run the program with exactly one register tainted -> {name: mask}."""
     n = max(layout.values()) + 1
     values = [0] * n

@@ -37,6 +37,10 @@ from microtaint.instrumentation.cell import PCodeCellEvaluator
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
 from microtaint.types import Architecture
 
+#: Either kernel class, so one helper drives both and the two answers are
+#: compared rather than one of them being measured twice.
+Evaluator = type[PCodeCellEvaluator] | type[PCodeCellEvaluatorC]
+
 _FULL = 0xFFFFFFFFFFFFFFFF
 _KS_X86 = Ks(KS_ARCH_X86, KS_MODE_64)
 _KS_ARM = Ks(KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN)
@@ -101,7 +105,9 @@ def _lane_inputs(rng: random.Random, bases: list[int], nbytes: int,
     return values, taints
 
 
-def _cell_bytes(evaluator, arch: Architecture, instr, out_base, nbytes, or_in, and_in) -> set[int]:
+def _cell_bytes(evaluator: Evaluator, arch: Architecture, instr: str,
+                out_base: int, nbytes: int, or_in: dict[str, int],
+                and_in: dict[str, int]) -> set[int]:
     ev = evaluator(arch)
     tainted: set[int] = set()
     for k in range(0, nbytes, 8):
@@ -175,7 +181,9 @@ def test_wide_kernels_agree_and_are_exact(seed: int) -> None:
 # be exact.
 # ---------------------------------------------------------------------------
 
-def _cell_wide_native(evaluator, arch: Architecture, instr, out_base, nbytes, in_vals, in_taints) -> set[int]:
+def _cell_wide_native(evaluator: Evaluator, arch: Architecture, instr: str,
+                      out_base: int, nbytes: int, in_vals: dict[int, int],
+                      in_taints: dict[int, int]) -> set[int]:
     ev = evaluator(arch)
     or_in: dict[str, int] = {}
     and_in: dict[str, int] = {}

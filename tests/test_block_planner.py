@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from microtaint.taint_ir.blocks import instruction_starts, plan_block
+from microtaint.taint_ir.blocks import Region, instruction_starts, plan_block
 from microtaint.taint_ir.frompcode import LIFT_BASE, Emit, PointerPolicy
 from microtaint.types import Architecture
 
@@ -42,7 +42,8 @@ def _n_instructions(arch: Architecture, code: bytes) -> int:
     return len(instruction_starts(get_context(key).translate(code, LIFT_BASE).ops))
 
 
-def _assert_covers(regions, arch: Architecture, code: bytes) -> None:
+def _assert_covers(regions: list[Region], arch: Architecture,
+                   code: bytes) -> None:
     """In order, contiguous, and covering every instruction exactly once."""
     assert regions, 'the planner returned no regions at all'
     total = _n_instructions(arch, code)

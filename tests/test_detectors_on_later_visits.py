@@ -163,7 +163,8 @@ def test_use_after_free_read_at_a_site_already_seen_live() -> None:
         # the site has already been visited twice against live memory.
         poisoned: list[int] = []
 
-        def on_write(ql_, fd_, buf, count: int, *rest: object):
+        def on_write(ql_: object, fd_: int, buf: int, count: int,
+                     *rest: object) -> None:
             if not poisoned:
                 wrapper.shadow_mem.poison(blob, 64)
                 poisoned.append(1)

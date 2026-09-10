@@ -40,11 +40,14 @@ def test_flags_unpack_from_their_parent(arch: Architecture) -> None:
     regs = archregs.for_arch(arch)
     if not regs.flag_bits:
         pytest.skip(f'{arch.value} models no packed flags register')
-    values = {regs.flag_parent: (1 << 64) - 1}
+    # flag_bits is non-empty exactly when there is a parent to unpack from.
+    parent = regs.flag_parent
+    assert parent is not None, f'{arch.value} names flag bits but no parent'
+    values = {parent: (1 << 64) - 1}
     regs.unpack_flags(values)
     for name in regs.flag_bits:
         assert values[name] == 1, f'{arch.value}: {name} did not unpack'
-    values = {regs.flag_parent: 0}
+    values = {parent: 0}
     regs.unpack_flags(values)
     assert all(values[n] == 0 for n in regs.flag_bits)
 

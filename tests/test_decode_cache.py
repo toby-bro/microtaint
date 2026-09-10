@@ -34,6 +34,8 @@ import tempfile
 
 import pytest
 
+from microtaint.emulator.wrapper import MicrotaintWrapper
+
 pytestmark = pytest.mark.skipif(
     platform.system() != 'Linux', reason='emulator compilation tests require Linux',
 )
@@ -65,7 +67,7 @@ def _compile(src: str) -> str:
     return path
 
 
-def _run(binary: str, stdin_data: bytes):
+def _run(binary: str, stdin_data: bytes) -> tuple[MicrotaintWrapper, list[str]]:
     """Run the binary once; return (wrapper, findings-labels)."""
     from qiling import Qiling
     from qiling.const import QL_VERBOSE

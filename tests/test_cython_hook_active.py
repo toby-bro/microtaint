@@ -20,8 +20,12 @@ import os
 import platform
 import subprocess
 import tempfile
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from microtaint.emulator.wrapper import MicrotaintWrapper
 
 pytestmark = pytest.mark.skipif(
     platform.system() != 'Linux' or os.environ.get('MICROTAINT_DISABLE_CYTHON_HOOK') == '1',
@@ -46,7 +50,7 @@ def _compile() -> str:
     return path
 
 
-def _wrapper():
+def _wrapper() -> tuple[MicrotaintWrapper, str]:
     from qiling import Qiling
     from qiling.const import QL_VERBOSE
 

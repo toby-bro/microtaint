@@ -24,24 +24,18 @@ and the fix is to exclude it (tighten the eligibility test in
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+from collections.abc import Iterator
 
 import pytest
 
-_BENCH = Path(__file__).resolve().parent.parent / 'benchmark'
-if str(_BENCH) not in sys.path:
-    sys.path.insert(0, str(_BENCH))
-
-from instruction_bank import load_bank  # type: ignore[import-not-found]  # noqa: E402
-
-from microtaint.instrumentation.ast import EvalContext  # noqa: E402
-from microtaint.simulator import CellSimulator  # noqa: E402
-from microtaint.sleigh.engine import generate_static_rule  # noqa: E402
-from microtaint.types import ImplicitTaintPolicy  # noqa: E402
+from benchmark.instruction_bank import load_bank
+from microtaint.instrumentation.ast import EvalContext, LogicCircuit
+from microtaint.simulator import CellSimulator
+from microtaint.sleigh.engine import generate_static_rule
+from microtaint.types import ImplicitTaintPolicy
 
 
-def _clean_cases():
+def _clean_cases() -> Iterator[tuple[str, str, LogicCircuit, EvalContext]]:
     """(isa, label, circuit, context) with EVERY input taint zero."""
     for spec in load_bank().values():
         sim = CellSimulator(spec.arch)

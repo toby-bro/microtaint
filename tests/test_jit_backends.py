@@ -55,7 +55,7 @@ def _run(argv: list[str]) -> str:
 
 
 @pytest.fixture(scope='module')
-def host_harness(tmp_path_factory) -> str:
+def host_harness(tmp_path_factory: pytest.TempPathFactory) -> str:
     cc = sysconfig.get_config_var('CC') or 'cc'
     cc = cc.split()[0]
     if not shutil.which(cc):
@@ -70,7 +70,7 @@ def host_harness(tmp_path_factory) -> str:
 
 
 @pytest.fixture(scope='module')
-def a64_harness(tmp_path_factory) -> str:
+def a64_harness(tmp_path_factory: pytest.TempPathFactory) -> str:
     cc = 'aarch64-linux-gnu-gcc'
     if not shutil.which(cc):
         pytest.skip('no aarch64 cross compiler')

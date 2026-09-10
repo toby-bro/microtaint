@@ -41,7 +41,7 @@ from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
 from microtaint.types import Architecture
 
 if TYPE_CHECKING:                    # ast imports this module back
-    from microtaint.instrumentation.ast import InstructionCellExpr
+    from microtaint.instrumentation.ast import CellLike, InstructionCellExpr
 
 logger = logging.getLogger(__name__)
 
@@ -648,7 +648,7 @@ class CellSimulator:
             self._be_native = PCodeCellEvaluator(self.arch)
         return self._be_native
 
-    def _use_native_be(self, cell: InstructionCellExpr) -> bool:
+    def _use_native_be(self, cell: CellLike) -> bool:
         """True iff `cell`'s instruction should be evaluated by the native kernel
         on this (big-endian) target: only native-BE-safe instructions qualify, and
         only when Unicorn is the active concrete engine (the native `_pcode` path,
@@ -898,7 +898,7 @@ class CellSimulator:
 
             self._dirtied_memory.add(addr)
 
-    def evaluate_concrete(self, cell: InstructionCellExpr,
+    def evaluate_concrete(self, cell: CellLike,
                           v_state: MachineState) -> int:
         # --- P-code native path (use_unicorn=False) ---
         # Pass MachineState dicts directly to the pcode evaluator —

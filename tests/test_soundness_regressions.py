@@ -95,7 +95,8 @@ def _ground_truth(
             for r, v in values.items():
                 uc.reg_write(_REG_TO_UC[r], v & MASK64)
             uc.emu_start(0x1000, 0x1000 + len(code), timeout=500_000)
-            return uc.reg_read(_REG_TO_UC[target])
+            out: int = uc.reg_read(_REG_TO_UC[target])
+            return out
         except unicorn.UcError:
             return None
 

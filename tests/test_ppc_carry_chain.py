@@ -33,7 +33,7 @@ must stay on Unicorn, which gets byte order right.
 
 from __future__ import annotations
 
-from microtaint.instrumentation.ast import EvalContext
+from microtaint.instrumentation.ast import EvalContext, InstructionCellExpr
 from microtaint.simulator import CellSimulator, _native_be_safe
 from microtaint.sleigh.engine import _cached_generate_static_rule, generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
@@ -156,13 +156,8 @@ def test_little_endian_target_never_uses_native_be_path() -> None:
     x86 = CellSimulator(Architecture.X86)
     assert x86._is_big_endian is False
     # ADD EAX, EBX -- register-only, but LE, so the BE path is not eligible.
-    assert x86._use_native_be(_OutCell('01d8', 'EAX')) is False
-
-
-class _OutCell:
-    def __init__(self, instruction: str, out_reg: str) -> None:
-        self.instruction = instruction
-        self.out_reg = out_reg
+    cell = InstructionCellExpr(Architecture.X86, '01d8', 'EAX', 0, 31, {})
+    assert x86._use_native_be(cell) is False
 
 
 _MFCR = '7c600026'  # mfcr 3  -> r3 = pack(cr0..cr7 nibbles); cr0 -> r3[31:28]

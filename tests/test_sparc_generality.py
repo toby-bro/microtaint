@@ -16,6 +16,8 @@ Run: uv run pytest tests/test_sparc_generality.py -v
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from microtaint.instrumentation.ast import EvalContext
@@ -25,6 +27,9 @@ from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
 ks = pytest.importorskip('keystone')
+
+if TYPE_CHECKING:
+    import keystone
 
 FULL32 = 0xFFFFFFFF
 
@@ -64,7 +69,7 @@ def sparc_regs() -> list[Register]:
 
 
 @pytest.fixture(scope='module')
-def ks_engine():
+def ks_engine() -> keystone.Ks:
     return ks.Ks(ks.KS_ARCH_SPARC, ks.KS_MODE_SPARC32 | ks.KS_MODE_BIG_ENDIAN)
 
 
@@ -75,11 +80,11 @@ def sim() -> CellSimulator:
 
 @pytest.mark.parametrize(('asm', 'dest', 'expected'), CASES)
 def test_sparc_taint_and_generality(asm: str,
-                                    dest,
-                                    expected,
+                                    dest: str,
+                                    expected: int | None,
                                     sparc_regs: list[Register],
-                                    ks_engine,
-                                    sim: CellSimulator):
+                                    ks_engine: keystone.Ks,
+                                    sim: CellSimulator) -> None:
     bs = bytes(ks_engine.asm(asm, 0)[0])
     # Rule generation must succeed with zero engine changes.
     circ = generate_static_rule(Architecture.SPARC32BE, bs, sparc_regs)

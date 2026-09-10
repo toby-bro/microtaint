@@ -57,7 +57,7 @@ class PCodeCellEvaluator:
         """Arm (or disarm) per-evaluate frame sharing, emptying the cache and
         pool.  Called once per top-level evaluate."""
 
-    def evaluate_concrete_state_shared(self, cell: InstructionCellExpr,
+    def evaluate_concrete_state_shared(self, cell: CellLike,
                                        regs: dict[str, int],
                                        mem: dict[int, int]) -> int:
         """Frame-sharing variant of evaluate_concrete_state: run the whole
@@ -99,7 +99,7 @@ class PCodeCellEvaluator:
     def stats(self) -> dict[str, int | float]:
         """Return performance statistics."""
 
-    def evaluate_concrete_state(self, cell: InstructionCellExpr, regs: dict[str, int], mem: dict[int, int]) -> int: ...
+    def evaluate_concrete_state(self, cell: CellLike, regs: dict[str, int], mem: dict[int, int]) -> int: ...
 
 #: (offset, size) per SLEIGH register name, keyed by upper-case name.  Declared
 #: here because the module is Cython and callers outside it -- the emulator's

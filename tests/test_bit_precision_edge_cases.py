@@ -723,7 +723,8 @@ def _z64(regs: list[Register]) -> dict[str, int]:
     return {r.name: 0 for r in regs}
 
 
-def _mt64(sim: CellSimulator, regs: list[Register], code: bytes, taint: dict[str, int], values: dict[str, int]):
+def _mt64(sim: CellSimulator, regs: list[Register], code: bytes,
+          taint: dict[str, int], values: dict[str, int]) -> dict[str, int]:
     # Tests use friendly ARM names (X0.., N/Z/C/V); translate the state_format,
     # inputs and outputs through the helper so the engine sees Sleigh names only.
     engine_fmt = _ARM64_ALIASES.state_format(regs)

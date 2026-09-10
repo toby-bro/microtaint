@@ -29,6 +29,9 @@ _REEXEC = Path(__file__).resolve().parent.parent / 'microtaint' / 'reexec'
 
 
 def test_arm64_reexec_selftest_under_qemu() -> None:
+    # The module-level skipif already covers the missing-tool case; restating
+    # it here is what lets the two paths be read as strings below.
+    assert _CC is not None and _QEMU is not None
     tmp = Path(tempfile.mkdtemp(prefix='reexec_arm64_'))
     exe = tmp / 'rx_arm64'
     subprocess.run(

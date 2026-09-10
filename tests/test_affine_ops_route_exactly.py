@@ -44,14 +44,10 @@ move an entry out of the table only with a written reason.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
+from _pytest.mark import ParameterSet
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
-from instruction_bank import isa_registers  # type: ignore[import-not-found]
-
+from benchmark.instruction_bank import isa_registers
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture
 
@@ -106,7 +102,7 @@ _STILL_RE_EXECUTES = (
 )
 
 
-def _affine_params():
+def _affine_params() -> list[ParameterSet]:
     return [
         pytest.param(
             arch, label, hx,
@@ -164,7 +160,8 @@ def _routes_without_cell(arch: Architecture, hx: str) -> tuple[bool, str]:
     body = '\n'.join(str(a) for a in circ.assignments)
     result = [
         a for a in circ.assignments
-        if not a.is_mem_target and a.target.name.upper() not in _FLAG_NAMES
+        if not a.is_mem_target
+        and str(getattr(a.target, 'name', '')).upper() not in _FLAG_NAMES
     ]
     if not result:
         return False, body or '(no result assignment)'

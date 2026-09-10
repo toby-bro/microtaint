@@ -49,7 +49,6 @@ Run
 
 from __future__ import annotations
 
-from typing import Any
 
 import pytest
 import unicorn
@@ -329,7 +328,7 @@ def sim_pcode() -> CellSimulator:
 
 
 @pytest.fixture(scope='session')
-def circuit_cache() -> dict[str, Any]:
+def circuit_cache() -> dict[str, LogicCircuit]:
     """One generate_static_rule call per unique asm string, reused everywhere."""
     return {}
 

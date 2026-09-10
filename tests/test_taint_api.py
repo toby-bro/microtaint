@@ -36,11 +36,17 @@ from __future__ import annotations
 import io
 import subprocess
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
+from microtaint.emulator.reporter import Finding
 from microtaint.emulator.wrapper import MicrotaintWrapper
+
+if TYPE_CHECKING:
+    from qiling import Qiling
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,7 +69,8 @@ def _compile(c_src: str, tmp_path: Path) -> Path:
     return bin_file
 
 
-def _make_wrapper(binary: Path, *, check_sc: bool = False):
+def _make_wrapper(binary: Path, *, check_sc: bool = False,
+                  ) -> tuple[Qiling, MicrotaintWrapper]:
     """
     Instantiate Qiling + MicrotaintWrapper for a binary with a fixed empty stdin.
     Returns (ql, wrapper).
@@ -100,10 +107,10 @@ def _make_wrapper(binary: Path, *, check_sc: bool = False):
 def _run_with_taint(
     binary: Path,
     stdin_bytes: bytes,
-    taint_fn,  # callable(wrapper, buf_address) -> None
+    taint_fn: Callable[[MicrotaintWrapper, int], None],
     output_size: int = 1,
     check_sc: bool = False,
-) -> tuple[int, list[dict]]:
+) -> tuple[int, list[Finding]]:
     """
     Run `binary` under microtaint.  Override the read() syscall so that after
     writing `stdin_bytes` into the buffer, `taint_fn(wrapper, buf)` is called to
@@ -330,13 +337,13 @@ class TestHookArming:
         )
         _, wrapper = _make_wrapper(binary)
 
-        assert not wrapper._any_taint
-        assert not wrapper._instr_hook_registered
+        assert (wrapper._any_taint, wrapper._instr_hook_registered) == (False, False), \
+            'a fresh wrapper must not be armed'
 
         wrapper.taint_bit(0x1000, 0)
 
-        assert wrapper._any_taint
-        assert wrapper._instr_hook_registered
+        assert (wrapper._any_taint, wrapper._instr_hook_registered) == (True, True), \
+            'the first taint_bit must arm the deferred instruction hook'
 
     def test_taint_region_arms_deferred_hooks(self, tmp_path: Path) -> None:
         binary = _compile(
@@ -350,8 +357,8 @@ class TestHookArming:
 
         assert not wrapper._any_taint
         wrapper.taint_region(0x2000, bytes([0xFF, 0x00, 0x0F]))
-        assert wrapper._any_taint
-        assert wrapper._instr_hook_registered
+        assert (wrapper._any_taint, wrapper._instr_hook_registered) == (True, True), \
+            'the first taint_region must arm the deferred instruction hook'
 
     def test_arm_is_idempotent(self, tmp_path: Path) -> None:
         """Calling taint_bit multiple times must not double-register hooks."""

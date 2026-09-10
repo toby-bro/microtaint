@@ -32,6 +32,7 @@ import os
 import platform
 import subprocess
 import tempfile
+from collections.abc import Iterator
 from io import StringIO
 
 import pytest
@@ -61,7 +62,7 @@ void _start(){
 
 
 @pytest.fixture(scope='module')
-def binary() -> str:
+def binary() -> Iterator[str]:
     fd, path = tempfile.mkstemp(suffix='.elf')
     os.close(fd)
     try:
@@ -96,7 +97,10 @@ def _side_channel_reports(binary: str, secret_bit: int) -> list[int]:
         for i in range(size):
             wrapper.taint_region(address + i, bytes([1 << secret_bit]) if i == 0 else b'\x00')
 
-    wrapper._taint_bytes = one_bit
+    # Deliberate: the point is to substitute what the read hook injects, so the
+    # branch is tainted on exactly one visit.  Binding the instance attribute
+    # shadows the method for this wrapper only.
+    wrapper._taint_bytes = one_bit  # type: ignore[method-assign,assignment]
 
     seen: list[int] = []
     report = wrapper.reporter.side_channel
