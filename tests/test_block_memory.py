@@ -25,7 +25,7 @@ import pytest
 
 from microtaint.taint_ir import frompcode
 from microtaint.taint_ir.blocks import plan_block
-from microtaint.taint_ir.frompcode import Unsupported
+from microtaint.taint_ir.frompcode import Emit, Unsupported
 from microtaint.types import Architecture
 
 _ARCH, _KEY = Architecture.AMD64, 'AMD64'
@@ -159,7 +159,7 @@ def test_regions_agree_with_the_sequence_through_memory(kit, name: str, tainted)
     base = frompcode.LIFT_BASE
     for code in seq:
         try:
-            prog = builder.build(_pcode(code, base), base + len(code), emit='both')
+            prog = builder.build(_pcode(code, base), base + len(code), emit=Emit.BOTH)
         except Unsupported:
             pytest.skip(f'{code.hex()} does not lower on its own')
         taint, values = run(prog, values, taint, ref_machine)
@@ -193,7 +193,7 @@ def test_a_load_after_a_store_declines_in_block_mode() -> None:
         ops.extend(_pcode(code, base))
         base += len(code)
     with pytest.raises(Unsupported, match='load after store'):
-        builder.build(ops, base, emit='both', block=True)
+        builder.build(ops, base, emit=Emit.BOTH, block=True)
 
 
 def test_a_single_instruction_that_stores_and_loads_is_unaffected() -> None:
@@ -205,8 +205,8 @@ def test_a_single_instruction_that_stores_and_loads_is_unaffected() -> None:
                  bytes.fromhex('48ff4508')):     # inc qword [rbp+8]
         ops = _pcode(code, frompcode.LIFT_BASE)
         end = frompcode.LIFT_BASE + len(code)
-        plain = builder.build(ops, end, emit='both')
-        as_block = builder.build(ops, end, emit='both', block=True)
+        plain = builder.build(ops, end, emit=Emit.BOTH)
+        as_block = builder.build(ops, end, emit=Emit.BOTH, block=True)
         assert [k for k, _ in plain.outputs] == [k for k, _ in as_block.outputs], code.hex()
 
 
@@ -228,7 +228,7 @@ def test_the_decline_says_which_instruction_caused_it() -> None:
         ops.extend(_pcode(code, base))
         base += len(code)
     with pytest.raises(Unsupported) as caught:
-        builder.build(ops, base, emit='both', block=True)
+        builder.build(ops, base, emit=Emit.BOTH, block=True)
     assert caught.value.cut_at == 2, (
         f'the load is the third instruction (ordinal 2) and the decline '
         f'reported {caught.value.cut_at}; the planner would cut in the wrong '
@@ -284,7 +284,7 @@ def test_a_stored_value_reaches_a_later_load_that_uses_it_as_an_address(kit) -> 
     ref_machine, ref, ref_values = machine(), {}, dict(_SEED)
     base = frompcode.LIFT_BASE
     for code in seq:
-        prog = builder.build(_pcode(code, base), base + len(code), emit='both')
+        prog = builder.build(_pcode(code, base), base + len(code), emit=Emit.BOTH)
         ref, ref_values = run(prog, ref_values, ref, ref_machine)
         base += len(code)
     assert ref.get('RCX', 0), (

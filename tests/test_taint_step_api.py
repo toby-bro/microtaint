@@ -12,11 +12,9 @@ Two things are checked, and they are different things:
 """
 from __future__ import annotations
 
-from typing import Literal
-
 import pytest
 
-from microtaint.taint_api import default_path, explain, taint_step
+from microtaint.taint_api import TaintPath, default_path, explain, taint_step
 from microtaint.types import Architecture
 
 CASES = [
@@ -39,7 +37,7 @@ TAINT = {'RAX': 0xFF, 'X1': 0xFF}
 def test_both_paths_answer(label: str,
                            arch: Architecture,
                            code: str,
-                           path: Literal['compiled', 'differential']) -> None:
+                           path: TaintPath) -> None:
     out = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path=path)
     assert isinstance(out, dict) and out, f'{label}: {path} returned nothing'
     # The post-state, so a register nobody touched keeps what it had.
@@ -52,8 +50,8 @@ def test_both_paths_answer(label: str,
 @pytest.mark.parametrize(('label', 'arch', 'code'), CASES, ids=[c[0] for c in CASES])
 def test_the_two_paths_answer_the_same_shape(label: str, arch: Architecture, code: str) -> None:
     """Same keys from both, so `path=` is the only thing a caller changes."""
-    a = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path='compiled')
-    b = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path='differential')
+    a = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path=TaintPath.COMPILED)
+    b = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path=TaintPath.DIFFERENTIAL)
     assert set(a) == set(b), (
         f'{label}: the two paths returned different register sets; '
         f'only in compiled {set(a) - set(b)}, only in differential {set(b) - set(a)}')
@@ -68,10 +66,10 @@ def test_compiled_is_never_looser_than_it_claims(label: str, arch: Architecture,
     precision, so it is worth a test that names the cases rather than a comment
     claiming there are none.
     """
-    a, used = explain(arch, bytes.fromhex(code), TAINT, VALUES, path='compiled')
+    a, used = explain(arch, bytes.fromhex(code), TAINT, VALUES, path=TaintPath.COMPILED)
     if used != 'compiled':
         pytest.skip(f'{label}: the compiled path declined it')
-    b = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path='differential')
+    b = taint_step(arch, bytes.fromhex(code), TAINT, VALUES, path=TaintPath.DIFFERENTIAL)
     looser = {k: (hex(a[k]), hex(b[k])) for k in a if a[k] & ~b.get(k, 0)}
     assert not looser or all(a[k] >= b.get(k, 0) for k in looser), (
         f'{label}: compiled reports bits the differential does not: {looser}')
@@ -83,7 +81,7 @@ def test_explain_says_which_path_answered() -> None:
     # `push rbx` is a store, and the register-only entry point has no memory to
     # resolve it against, so it must fall back and SAY it fell back.
     _out, used = explain(Architecture.AMD64, bytes.fromhex('53'),
-                         {'RBX': 0xFF}, VALUES, path='compiled')
+                         {'RBX': 0xFF}, VALUES, path=TaintPath.COMPILED)
     assert used == 'differential', (
         'a store was answered by the compiled path without a memory to read')
 

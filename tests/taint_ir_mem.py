@@ -187,7 +187,7 @@ def _write_mem(mem: list[int], addr: int, size: int, val: int, be: bool) -> None
 def ir_mem_taint(arch: Architecture, code: bytes, reg_taint: dict[str, int],
                  reg_vals: dict[str, int], mem_taint: Sequence[int],
                  mem_vals: Sequence[int], *, be: bool = False,
-                 policy: PointerPolicy = 'avalanche',
+                 policy: PointerPolicy = PointerPolicy.AVALANCHE,
                  ) -> tuple[dict[str, int], list[int]]:
     """Run one instruction's taint program over registers and memory.
 
@@ -264,7 +264,7 @@ class MemReport:
 
 
 def run_mem_bank(isa: str = 'AMD64', n_vec: int = 4, seed: int = 7,
-                 policy: PointerPolicy = 'avalanche') -> MemReport:
+                 policy: PointerPolicy = PointerPolicy.AVALANCHE) -> MemReport:
     from microtaint.taint_ir.frompcode import Unsupported
     from microtaint.types import Architecture
     from tests.perop_c_bank import _engine_names

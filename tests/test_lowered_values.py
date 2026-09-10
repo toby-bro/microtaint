@@ -10,7 +10,7 @@ against 0.04 ns/instruction for a block hook.
 The values are already there.  `frompcode.Builder.build` runs a value frame
 beside the taint frame, aliasing identically, and publishes only the taint one;
 dead-code elimination then deletes every value no taint rule happens to read.
-`emit='value'` publishes the other frame instead, which costs the shipped path
+`emit=Emit.VALUE` publishes the other frame instead, which costs the shipped path
 nothing (the default is unchanged and the two never run together) and needs no
 backend change at all: a value program serialises, compiles and runs through
 exactly the same pipeline.
@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from microtaint.taint_ir.frompcode import Emit
 
 _ROOT = Path(__file__).resolve().parent.parent
 for _p in (str(_ROOT / 'benchmark'), str(_ROOT / 'tests')):
@@ -123,7 +125,7 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
     # ones the bank's descriptor lists: a program that mentions the program
     # counter, or any register the bank leaves out, is otherwise unplaceable and
     # gets skipped -- which on RISCV64 is all of them.
-    frompcode.build_ir(spec.arch, spec.instructions[0].bytes, emit='value')
+    frompcode.build_ir(spec.arch, spec.instructions[0].bytes, emit=Emit.VALUE)
     # Asked for by ISA, not `next(iter(...))`: the cache holds one builder per
     # ISA and the first one in it belongs to whichever ISA ran first in this
     # process.
@@ -143,7 +145,7 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
         if _is_vex(ins.bytes):
             continue
         try:
-            prog = frompcode.build_ir(spec.arch, ins.bytes, emit='value')
+            prog = frompcode.build_ir(spec.arch, ins.bytes, emit=Emit.VALUE)
         except Exception:
             continue
         # A memory program's state slots live PAST the register file, so running
@@ -224,7 +226,7 @@ def test_value_mode_does_not_change_the_taint_program() -> None:
     for ins in spec.instructions[:40]:
         try:
             a = frompcode.build_ir(spec.arch, ins.bytes)
-            b = frompcode.build_ir(spec.arch, ins.bytes, emit='taint')
+            b = frompcode.build_ir(spec.arch, ins.bytes, emit=Emit.TAINT)
         except Exception:
             continue
         assert [k for k, _ in a.outputs] == [k for k, _ in b.outputs], ins.label
@@ -248,9 +250,9 @@ def test_both_mode_agrees_with_each_alone() -> None:
     checked = 0
     for ins in spec.instructions[:120]:
         try:
-            only_t = frompcode.build_ir(spec.arch, ins.bytes, emit='taint')
-            only_v = frompcode.build_ir(spec.arch, ins.bytes, emit='value')
-            both = frompcode.build_ir(spec.arch, ins.bytes, emit='both')
+            only_t = frompcode.build_ir(spec.arch, ins.bytes, emit=Emit.TAINT)
+            only_v = frompcode.build_ir(spec.arch, ins.bytes, emit=Emit.VALUE)
+            both = frompcode.build_ir(spec.arch, ins.bytes, emit=Emit.BOTH)
         except Exception:
             continue
         # A memory form also publishes addr / addrt / sttaint, which are the
@@ -288,8 +290,8 @@ def test_publishing_values_is_nearly_free() -> None:
     spec = load_bank()['AMD64']
     ratios = []
     for ins in spec.instructions[:200]:
-        counts = {}
-        for mode in ('taint', 'both'):
+        counts: dict[Emit, int] | None = {}
+        for mode in (Emit.TAINT, Emit.BOTH):
             try:
                 prog = frompcode.build_ir(spec.arch, ins.bytes, emit=mode)
             except Exception:
@@ -308,12 +310,13 @@ def test_publishing_values_is_nearly_free() -> None:
                 return layout[nm] + (len(layout) if k[0] == 'regv' else 0)
 
             try:
+                assert counts is not None
                 counts[mode] = len(serialize_for_c(prog, slot_of)['op_ids'])
             except KeyError:
                 counts = None
                 break
-        if counts and counts.get('taint'):
-            ratios.append(counts['both'] / counts['taint'])
+        if counts and counts.get(Emit.TAINT):
+            ratios.append(counts[Emit.BOTH] / counts[Emit.TAINT])
 
     assert len(ratios) > 60, f'only {len(ratios)} forms measured'
     median = statistics.median(ratios)

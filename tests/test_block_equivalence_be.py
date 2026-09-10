@@ -32,7 +32,7 @@ for _p in (str(_ROOT / 'benchmark'), str(_ROOT / 'tests')):
         sys.path.insert(0, _p)
 
 from microtaint.taint_ir import frompcode  # noqa: E402
-from microtaint.taint_ir.frompcode import Unsupported  # noqa: E402
+from microtaint.taint_ir.frompcode import Emit, PointerPolicy, Unsupported  # noqa: E402
 from microtaint.types import Architecture  # noqa: E402
 
 _CODE = 0x1000
@@ -45,7 +45,7 @@ def _kit(isa: str):
     from microtaint.taint_ir.exec import compile_program
 
     arch = _ARCHES[isa]
-    builder = frompcode.Builder(arch, True, 'concrete')     # big-endian
+    builder = frompcode.Builder(arch, True, PointerPolicy.CONCRETE)     # big-endian
     names = sorted(set(builder.name_by_off.values()))
     layout = {n: i for i, n in enumerate(names)}
     width = 2 * len(layout)
@@ -142,7 +142,7 @@ def test_block_equivalence_big_endian(isa: str) -> None:
         taint, base = dict(seed_taint), frompcode.LIFT_BASE
         for code, state in zip(seq, states, strict=True):
             try:
-                prog = builder.build(_pcode(isa, code, base), base + len(code), emit='both')
+                prog = builder.build(_pcode(isa, code, base), base + len(code), emit=Emit.BOTH)
             except Unsupported:
                 ok = False
                 break
@@ -159,7 +159,7 @@ def test_block_equivalence_big_endian(isa: str) -> None:
             ops.extend(_pcode(isa, code, base))
             base += len(code)
         try:
-            block = builder.build(ops, base, emit='both', block=True)
+            block = builder.build(ops, base, emit=Emit.BOTH, block=True)
         except Unsupported:
             continue
         got = run(block, states[0], seed_taint)

@@ -37,7 +37,7 @@ import pytest
 from pypcode import PcodeOp
 
 from microtaint.taint_ir import frompcode
-from microtaint.taint_ir.frompcode import Unsupported
+from microtaint.taint_ir.frompcode import Emit, PointerPolicy, Unsupported
 from microtaint.taint_ir.ir import IRProg
 from microtaint.types import Architecture
 
@@ -65,14 +65,14 @@ def _ops(seq: list[bytes]) -> tuple[list[Any], int]:
 
 @pytest.fixture(scope='module')
 def builder() -> frompcode.Builder:
-    return frompcode.Builder(_ARCH, False, 'concrete')
+    return frompcode.Builder(_ARCH, False, PointerPolicy.CONCRETE)
 
 
 def test_a_blocks_loop_edge_is_an_exit_not_a_loop(builder: frompcode.Builder) -> None:
     ops, end = _ops(_LOOP_BODY)
     with pytest.raises(Unsupported, match='backward CBRANCH'):
-        builder.build(ops, end, emit='both')
-    prog = builder.build(ops, end, emit='both', block=True)
+        builder.build(ops, end, emit=Emit.BOTH)
+    prog = builder.build(ops, end, emit=Emit.BOTH, block=True)
     assert prog.outputs, 'the block lowered to a program with no outputs'
 
 
@@ -81,7 +81,7 @@ def test_the_exit_makes_the_counter_depend_on_the_condition(builder: frompcode.B
     program counter becomes secret-dependent exactly when its condition is.
     Losing that would silently drop every implicit-flow report in a block."""
     ops, end = _ops(_LOOP_BODY)
-    prog = builder.build(ops, end, emit='both', block=True)
+    prog = builder.build(ops, end, emit=Emit.BOTH, block=True)
     pc_off = builder.pc_off
     assert pc_off is not None
     written = [k for k, _ in prog.outputs if k[0] == 'reg' and k[1] == pc_off]
@@ -96,12 +96,12 @@ def test_a_single_instruction_is_unaffected(builder: frompcode.Builder) -> None:
     for code in (*_LOOP_BODY, bytes.fromhex('4801d8'), bytes.fromhex('488b4508')):
         ops, end = _ops([code])
         try:
-            plain = builder.build(ops, end, emit='both')
+            plain = builder.build(ops, end, emit=Emit.BOTH)
         except Unsupported:
             with pytest.raises(Unsupported):
-                builder.build(*_ops([code]), emit='both', block=True)
+                builder.build(*_ops([code]), emit=Emit.BOTH, block=True)
             continue
-        as_block = builder.build(*_ops([code]), emit='both', block=True)
+        as_block = builder.build(*_ops([code]), emit=Emit.BOTH, block=True)
         assert [k for k, _ in plain.outputs] == [k for k, _ in as_block.outputs], code.hex()
         assert len(plain.nodes) == len(as_block.nodes), code.hex()
 
@@ -117,9 +117,9 @@ def test_a_self_loop_still_declines_in_block_mode(builder: frompcode.Builder) ->
     repne_scasb = bytes.fromhex('f2ae')
     ops, end = _ops([repne_scasb])
     with pytest.raises(Unsupported, match='backward CBRANCH'):
-        builder.build(ops, end, emit='both')
+        builder.build(ops, end, emit=Emit.BOTH)
     with pytest.raises(Unsupported, match='backward CBRANCH'):
-        builder.build(*_ops([repne_scasb]), emit='both', block=True)
+        builder.build(*_ops([repne_scasb]), emit=Emit.BOTH, block=True)
 
 
 def test_the_block_program_is_cheaper_than_the_sum_of_its_parts(builder: frompcode.Builder) -> None:
@@ -148,10 +148,10 @@ def test_the_block_program_is_cheaper_than_the_sum_of_its_parts(builder: frompco
     separate = 0
     for code in _LOOP_BODY:
         try:
-            separate += ops_of(builder.build(*_ops([code]), emit='both'))
+            separate += ops_of(builder.build(*_ops([code]), emit=Emit.BOTH))
         except Unsupported:
             separate += 0          # the branch alone does not lower; the block does
-    together = ops_of(builder.build(*_ops(_LOOP_BODY), emit='both', block=True))
+    together = ops_of(builder.build(*_ops(_LOOP_BODY), emit=Emit.BOTH, block=True))
     assert together < separate, (
         f'the block program costs {together} ops against {separate} for its '
         f'instructions lowered separately; cross-instruction dead-code '

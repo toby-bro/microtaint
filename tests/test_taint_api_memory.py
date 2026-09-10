@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from microtaint.taint_api import Path, TaintSequence, explain
+from microtaint.taint_api import TaintPath, TaintSequence, explain
 from microtaint.taint_memory import TaintMemory
 from microtaint.types import Architecture
 
@@ -19,7 +19,7 @@ FULL = (1 << 64) - 1
 
 #: The two implementations the API exposes, typed so a loop over them
 #: carries the API's own Literal rather than widening to str.
-PATHS: list[Path] = ['compiled', 'differential']
+PATHS: list[TaintPath] = [TaintPath.COMPILED, TaintPath.DIFFERENTIAL]
 
 
 def test_memory_holds_bytes_and_taint_separately() -> None:
@@ -39,7 +39,7 @@ def test_never_written_memory_reads_as_zero() -> None:
 
 
 @pytest.mark.parametrize('path', PATHS)
-def test_a_store_puts_taint_in_memory(path: Path) -> None:
+def test_a_store_puts_taint_in_memory(path: TaintPath) -> None:
     memory = TaintMemory()
     values = {'RBX': 0xCAFEBABE, 'RSP': 0x7000}
     _out, used = explain(Architecture.AMD64, PUSH_RBX, {'RBX': FULL}, values,
@@ -50,7 +50,7 @@ def test_a_store_puts_taint_in_memory(path: Path) -> None:
 
 
 @pytest.mark.parametrize('path', PATHS)
-def test_taint_survives_a_round_trip_through_the_stack(path: Path) -> None:
+def test_taint_survives_a_round_trip_through_the_stack(path: TaintPath) -> None:
     """The question this API exists for: push a tainted register, pop it into
     another, and the taint has to arrive."""
     seq = TaintSequence(Architecture.AMD64, path=path,
@@ -74,12 +74,12 @@ def test_the_two_paths_agree_about_memory() -> None:
         after = seq.run(PUSH_RBX, POP_RAX)
         results[path] = (after.get('RAX'), seq.values.get('RAX'),
                          seq.memory.read_mask(0x6FF8, 8))
-    assert results['compiled'] == results['differential'], (
+    assert results[TaintPath.COMPILED] == results[TaintPath.DIFFERENTIAL], (
         f'the two paths disagree about a stack round trip: {results}')
 
 
 @pytest.mark.parametrize('path', PATHS)
-def test_clean_memory_does_not_invent_taint(path: Path) -> None:
+def test_clean_memory_does_not_invent_taint(path: TaintPath) -> None:
     """The direction that matters for false positives: nothing tainted in,
     nothing tainted out."""
     seq = TaintSequence(Architecture.AMD64, path=path,
@@ -91,6 +91,6 @@ def test_clean_memory_does_not_invent_taint(path: Path) -> None:
 
 def test_without_a_memory_a_store_falls_back_and_says_so() -> None:
     _out, used = explain(Architecture.AMD64, PUSH_RBX, {'RBX': FULL},
-                         {'RBX': 1, 'RSP': 0x7000}, path='compiled')
+                         {'RBX': 1, 'RSP': 0x7000}, path=TaintPath.COMPILED)
     assert used == 'differential', (
         'a store was answered by the compiled path with no memory to store into')

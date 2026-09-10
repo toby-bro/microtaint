@@ -59,7 +59,7 @@ MEM_SLOTS_PER_ACCESS = 4
 #: `MEM_<address>_<size>`, the name a resolved store output carries.
 _MEM_OUTPUT = re.compile(r'^MEM_(-?0x[0-9a-fA-F]+)_(\d+)$')
 
-class Path(StrEnum):
+class TaintPath(StrEnum):
     """Which implementation answered, or which one a caller is asking for.
 
     A StrEnum so a caller may still pass the spelling and a report may
@@ -78,7 +78,7 @@ class Path(StrEnum):
 _ENV = 'MICROTAINT_TAINT_IR'
 
 
-def default_path() -> Path:
+def default_path() -> TaintPath:
     """The implementation this process uses when the caller does not say.
 
     `MICROTAINT_TAINT_IR=0` selects the differential; anything else, including
@@ -87,7 +87,7 @@ def default_path() -> Path:
     caller who names an implementation, because comparing the two in a run
     configured for one of them is exactly what the tests need to do.
     """
-    return Path.DIFFERENTIAL if os.environ.get(_ENV) == '0' else Path.COMPILED
+    return TaintPath.DIFFERENTIAL if os.environ.get(_ENV) == '0' else TaintPath.COMPILED
 
 
 def taint_step(
@@ -96,7 +96,7 @@ def taint_step(
     in_taint: dict[str, int],
     in_values: dict[str, int] | None = None,
     *,
-    path: Path | None = None,
+    path: TaintPath | None = None,
     state_format: list[Register] | None = None,
     implicit_policy: ImplicitTaintPolicy = ImplicitTaintPolicy.IGNORE,
     memory: TaintMemory | None = None,
@@ -124,11 +124,11 @@ def explain(
     in_taint: dict[str, int],
     in_values: dict[str, int] | None = None,
     *,
-    path: Path | None = None,
+    path: TaintPath | None = None,
     state_format: list[Register] | None = None,
     implicit_policy: ImplicitTaintPolicy = ImplicitTaintPolicy.IGNORE,
     memory: TaintMemory | None = None,
-) -> tuple[dict[str, int], Path]:
+) -> tuple[dict[str, int], TaintPath]:
     """`taint_step`, plus which implementation actually answered.
 
     A benchmark that does not check this can report the compiled path's speed
@@ -142,20 +142,20 @@ def explain(
 
 
 def _dispatch(arch: Architecture, code: bytes, in_taint: dict[str, int],
-              in_values: dict[str, int], path: Path | None,
+              in_values: dict[str, int], path: TaintPath | None,
               state_format: list[Register] | None,
               implicit_policy: ImplicitTaintPolicy,
-              memory: TaintMemory | None) -> tuple[dict[str, int], Path]:
+              memory: TaintMemory | None) -> tuple[dict[str, int], TaintPath]:
     if state_format is None:
         from microtaint.emulator import archregs
         state_format = archregs.state_format(arch)
-    want = Path(path) if path is not None else default_path()
-    if want is Path.COMPILED:
+    want = TaintPath(path) if path is not None else default_path()
+    if want is TaintPath.COMPILED:
         got = _compiled(arch, code, in_taint, in_values, state_format, memory)
         if got is not None:
-            return got, Path.COMPILED
+            return got, TaintPath.COMPILED
     return _differential(arch, code, in_taint, in_values, state_format,
-                         implicit_policy, memory), Path.DIFFERENTIAL
+                         implicit_policy, memory), TaintPath.DIFFERENTIAL
 
 
 #: (arch, register names, flag names) -> the slot each name takes.
@@ -338,7 +338,7 @@ class TaintSequence:
                  values: dict[str, int] | None = None,
                  taint: dict[str, int] | None = None,
                  memory: TaintMemory | None = None,
-                 path: Path | None = None,
+                 path: TaintPath | None = None,
                  state_format: list[Register] | None = None) -> None:
         from microtaint.emulator import archregs
         from microtaint.simulator import CellSimulator
@@ -351,10 +351,10 @@ class TaintSequence:
         self.memory = memory if memory is not None else TaintMemory()
         self.path = path
         self._sim = CellSimulator(arch)
-        self._paths_used: list[Path] = []
+        self._paths_used: list[TaintPath] = []
 
     @property
-    def paths_used(self) -> list[Path]:
+    def paths_used(self) -> list[TaintPath]:
         """Which implementation answered each step, in order.
 
         Worth checking before quoting a speed: a step the compiled path

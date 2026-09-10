@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 
 from microtaint.taint_ir.blocks import instruction_starts, plan_block
-from microtaint.taint_ir.frompcode import LIFT_BASE
+from microtaint.taint_ir.frompcode import LIFT_BASE, Emit, PointerPolicy
 from microtaint.types import Architecture
 
 #: A straight-line run ending in the backward branch every loop body ends in.
@@ -98,7 +98,7 @@ def test_regions_are_maximal() -> None:
     from microtaint.taint_ir.frompcode import Builder, Unsupported
 
     arch = Architecture.AMD64
-    builder = Builder(arch, False, 'concrete')
+    builder = Builder(arch, False, PointerPolicy.CONCRETE)
     regions = plan_block(arch, _DEPENDENT_ADDRESS, builder=builder)
     ops = _translate(arch, _DEPENDENT_ADDRESS, LIFT_BASE)
     marks = instruction_starts(ops)
@@ -111,7 +111,7 @@ def test_regions_are_maximal() -> None:
         hi = marks[j][0] if j < n else len(ops)
         end = marks[j][1] if j < n else LIFT_BASE + len(_DEPENDENT_ADDRESS)
         with pytest.raises(Unsupported):
-            builder.build(ops[lo:hi], end, emit='both', block=True)
+            builder.build(ops[lo:hi], end, emit=Emit.BOTH, block=True)
 
 
 def test_the_planner_is_isa_general() -> None:
@@ -151,7 +151,7 @@ def test_the_planner_covers_blocks_on_every_bank_isa(isa: str) -> None:
         pytest.skip(f'{isa} is not in the bank')
     spec = bank[isa]
     key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
-    builder = Builder(spec.arch, key.endswith('BE'), 'concrete')
+    builder = Builder(spec.arch, key.endswith('BE'), PointerPolicy.CONCRETE)
 
     per_block, planned = 5, 0
     for start in range(0, min(len(spec.instructions), per_block * 12), per_block):

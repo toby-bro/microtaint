@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 
 from microtaint.taint_ir import frompcode
-from microtaint.taint_ir.frompcode import Unsupported
+from microtaint.taint_ir.frompcode import Emit, PointerPolicy, Unsupported
 from microtaint.types import Architecture
 
 _ARCH, _KEY = Architecture.AMD64, 'AMD64'
@@ -150,7 +150,7 @@ def kit():
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir.exec import compile_program
 
-    builder = frompcode.Builder(_ARCH, False, 'concrete')
+    builder = frompcode.Builder(_ARCH, False, PointerPolicy.CONCRETE)
     names = sorted(set(builder.name_by_off.values()))
     layout = {n: i for i, n in enumerate(names)}
 
@@ -229,7 +229,7 @@ def test_block_program_matches_the_sequence(kit, name: str, seed_i, taint_i) -> 
     base = frompcode.LIFT_BASE
     for code, state in zip(seq, states, strict=True):
         try:
-            prog = builder.build(_ops(code, base), base + len(code), emit='both')
+            prog = builder.build(_ops(code, base), base + len(code), emit=Emit.BOTH)
         except Unsupported:
             pytest.skip(f'{code.hex()} does not lower on its own')
         out, _v = run(prog, state, taint)
@@ -243,7 +243,7 @@ def test_block_program_matches_the_sequence(kit, name: str, seed_i, taint_i) -> 
         ops.extend(_ops(code, base))
         base += len(code)
     try:
-        block = builder.build(ops, base, emit='both', block=True)
+        block = builder.build(ops, base, emit=Emit.BOTH, block=True)
     except Unsupported as exc:
         pytest.skip(f'the block does not lower: {exc}')
     got, _v = run(block, states[0], taint_in)
@@ -267,7 +267,7 @@ def test_a_clean_input_stays_clean_through_a_block(name: str, kit) -> None:
         ops.extend(_ops(code, base))
         base += len(code)
     try:
-        block = builder.build(ops, base, emit='both', block=True)
+        block = builder.build(ops, base, emit=Emit.BOTH, block=True)
     except Unsupported as exc:
         pytest.skip(f'the block does not lower: {exc}')
     out, _v = run(block, _SEEDS[0], {})

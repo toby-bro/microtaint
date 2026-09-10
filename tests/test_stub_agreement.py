@@ -44,8 +44,8 @@ def _is_fiction(node: ast.ClassDef) -> bool:
     """
     if node.name.startswith('_'):
         return True
-    return any(isinstance(b, ast.Name) and b.id == 'Protocol'
-               or isinstance(b, ast.Attribute) and b.attr == 'Protocol'
+    return any((isinstance(b, ast.Name) and b.id == 'Protocol')
+               or (isinstance(b, ast.Attribute) and b.attr == 'Protocol')
                for b in node.bases)
 
 

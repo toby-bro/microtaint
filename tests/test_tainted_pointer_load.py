@@ -25,13 +25,13 @@ from __future__ import annotations
 
 import pytest
 
-from microtaint.taint_api import Path, explain
+from microtaint.taint_api import TaintPath, explain
 from microtaint.taint_memory import TaintMemory
 from microtaint.types import Architecture
 
 #: The two implementations the API exposes, typed so a loop over them
 #: carries the API's own Literal rather than widening to str.
-PATHS: list[Path] = ['compiled', 'differential']
+PATHS: list[TaintPath] = [TaintPath.COMPILED, TaintPath.DIFFERENTIAL]
 TABLE = 0x402000
 FULL = (1 << 64) - 1
 
@@ -60,7 +60,7 @@ def _table() -> TaintMemory:
                          ids=[s[0] for s in SHAPES])
 def test_a_load_through_a_tainted_address_taints_the_value(
         label: str, arch: Architecture, code: bytes, taint: dict[str, int], values: dict[str, int], dest: str,
-        path: Path) -> None:
+        path: TaintPath) -> None:
     out, used = explain(arch, code, taint, values, memory=_table(), path=path)
     assert used == path, f'{label}: asked for {path}, answered by {used}'
     assert out.get(dest, 0), (
@@ -84,12 +84,12 @@ def test_the_compiled_path_does_not_under_taint_the_differential(
         out, used = explain(arch, code, taint, values, memory=_table(), path=path)
         assert used == path, f'{label}: asked for {path}, answered by {used}'
         answers[path] = out.get(dest, 0)
-    missing = answers['differential'] & ~answers['compiled']
+    missing = answers[TaintPath.DIFFERENTIAL] & ~answers[TaintPath.COMPILED]
     # The compiled path is allowed to be TIGHTER only above the loaded word.
-    assert answers['compiled'], f'{label}: compiled says clean, differential says {answers["differential"]:#x}'
+    assert answers[TaintPath.COMPILED], f'{label}: compiled says clean, differential says {answers[TaintPath.DIFFERENTIAL]:#x}'
     assert missing == 0 or (missing & 0xFF) == 0, (
         f'{label}: compiled path drops bits the differential keeps: '
-        f'differential={answers["differential"]:#x} compiled={answers["compiled"]:#x}')
+        f'differential={answers[TaintPath.DIFFERENTIAL]:#x} compiled={answers[TaintPath.COMPILED]:#x}')
 
 
 def test_a_clean_address_into_a_clean_table_stays_clean() -> None:
