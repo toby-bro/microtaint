@@ -4,3 +4,5 @@ external/
 uv.lock
 results/
 
+fig_*.pdf
+!plot_figures.py

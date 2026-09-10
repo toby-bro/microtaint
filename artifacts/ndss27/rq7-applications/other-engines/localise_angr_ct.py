@@ -11,7 +11,7 @@ bit, matching microtaint. (Iterations are counted at the per-iteration
 `and $0x1,%eax`; angr's `exit` breakpoint fires once per successor, so the key
 branch itself would double-count.)
 
-Run: /home/jns/Documents/Telecom/PRIM/benchmark/.venv_angr/bin/python localise_angr_ct.py
+Run: ../../rq2-comparison/.venv_angr/bin/python localise_angr_ct.py
 """
 
 # Experiment script, not library code: see artifacts/ndss27/README.md,

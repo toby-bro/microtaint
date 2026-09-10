@@ -1,73 +1,50 @@
-# Machine-checked soundness of the taint-propagation rules
+# Machine-checked soundness of the rule family (Appendix A)
 
-This experiment discharges, with the Z3 SMT solver, the claim that every one of
-MicroTaint's per-instruction taint-propagation rules is **sound** — it never
-leaves a truly-tainted output bit clear (never *under-taints*).
-
-## What it proves
-
-For each taint category we encode the P-code operation `f` as a bit-vector
-function and the category's closed-form rule `R` exactly as the engine evaluates
-it, then ask Z3 for an *under-taint witness*: an input on which a genuine
-noninterference flip escapes the rule.
+Z3 discharges, per category, the claim that a rule never leaves a truly tainted
+output bit clear. Each P-code operation `f` is encoded as a bit-vector function
+and the category's closed form `R` exactly as the engine evaluates it, then Z3
+is asked for an under-taint witness:
 
 ```
-a, a'  agree on every untainted bit        (a & ~T == a' & ~T)
-flip = f(a) ^ f(a')                         # a real, witnessed dependency
-R    = rule(f, V, T)                        # the engine's rule at this state
-witness  <=>  (flip & ~R) != 0              # a truly-tainted bit the rule misses
+a, a'  agree on every untainted bit       (a & ~T == a' & ~T)
+flip = f(a) ^ f(a')                       # a real, witnessed dependency
+R    = rule(f, V, T)                      # the engine's rule at this state
+witness  <=>  (flip & ~R) != 0            # a tainted bit the rule misses
 ```
 
-`UNSAT` ⇒ no input escapes the rule ⇒ **`GT ⊆ R`** (sound) at that width.
-
-**Why the width sweep is a complete proof, not a bounded approximation.**
-MicroTaint only ever evaluates rules at operand widths `w ≤ 64` (SIMD lanes are
-split to ≤64 bits before evaluation). The query is symbolic over *all* `2^(k·w)`
-input values at each width, so sweeping `w ∈ {1..64}` discharges soundness over
-the entire input space the engine can present.
-
-## Categories covered
-
-| category | rule `R` | status |
-|----------|----------|--------|
-| **mapped** (new) | `L(T_d)` = differential (single dynamic input) | proved sound (and exact) |
-| **weldable** (new) | `⋁_j T_j` | proved sound |
-| **avalanche** (new) | `Aval(⋁_j T_j, w)` | proved sound (trivially, any `f`) |
-| monotonic (CellIFT) | `D` | re-checked sound |
-| transportable-add (CellIFT) | `D^{++} ∨ T^{sx}` | re-checked sound |
-| transportable-sub (CellIFT) | `D^{+-} ∨ T^{sx}` | re-checked sound |
-
-The three inherited categories (monotonic, transportable, translatable) were
-already proved sound at the gate level by CellIFT; the three **new** software
-categories (mapped, weldable, avalanche) are what this harness is really for.
-
-## Negative controls (the floor and the gate are load-bearing)
-
-Two deliberately-broken rules must produce an under-taint witness — and do:
-
-- **ADD without the union floor** (`D` alone, dropping `∨ T`): unsound — the
-  two polarised replicas can both miss an upward carry. Witness at `w=1`.
-- **XOR mis-routed as *mapped*** (differential over one input only, treating the
-  other tainted input as a constant): unsound — misses the second operand's
-  taint. Witness at `w=1`.
-
-These show why the additive `∨ T` floor and the routing-opcode gate that keeps
-two-dynamic-input XOR out of *mapped* are necessary for soundness.
-
-## Run
+`UNSAT` means no input escapes the rule, i.e. `GT ⊆ R` at that width. The query
+is symbolic over all `2^(k·w)` values at each width, and the engine only ever
+evaluates rules at `w <= 64` (SIMD lanes are split before evaluation), so
+sweeping `w` in 1..64 covers the whole input space the engine can present. This
+is a proof, not a bounded check.
 
 ```sh
 uv run --with z3-solver python prove_soundness.py
 ```
 
-Exit code 0 iff every category is proved sound and both negative controls fire.
-The avalanche/MULT check is capped at a small width (a 64-bit multiplier
-bit-blasts slowly and avalanche soundness is width-independent anyway).
+Exit 0 iff every category is proved sound and both negative controls fire. The
+avalanche/MULT check is capped at a small width, since a 64-bit multiplier
+bit-blasts slowly and avalanche soundness is width-independent.
 
-## Relation to the paper
+| category | rule `R` | |
+|---|---|---|
+| mapped | `L(T_d)`, the differential on the single dynamic input | sound, and exact |
+| weldable | `⋁_j T_j` | sound |
+| avalanche | `Aval(⋁_j T_j, w)` | sound for any `f` |
+| monotonic | `D` | re-checked (CellIFT) |
+| transportable-add | `D^{++} ∨ T^{sx}` | re-checked (CellIFT) |
+| transportable-sub | `D^{+-} ∨ T^{sx}` | re-checked (CellIFT) |
 
-This is the mechanised counterpart to the algebraic soundness argument
-(§ "Taint rule format"). Combined with the empirical evidence — 0 under-taints
-on the exhaustive ≤15-bit ground truth plus the single-bit-flip check over the
-full corpus — it lets the soundness claim rest on *proof for the rule family*
-plus *exhaustive testing of the pipeline*, rather than testing alone.
+The three inherited categories were already proved at gate level by CellIFT; the
+three software categories are what this is for.
+
+Two deliberately broken rules must produce a witness, and do. ADD without the
+union floor (`D` alone, dropping `∨ T`) is unsound because both polarised
+replicas can miss an upward carry, witness at `w=1`. XOR mis-routed as *mapped*
+(differential over one input, the other tainted input treated as constant) is
+unsound because it misses the second operand, witness at `w=1`. They are why the
+additive floor and the routing-opcode gate are load-bearing.
+
+The other `prove_*.py` files prove the individual terms the same way:
+comparison, equality, signed overflow with and without carry-in, variable bit
+select, variable multiply and variable shift.

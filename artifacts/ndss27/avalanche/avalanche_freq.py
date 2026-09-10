@@ -110,6 +110,11 @@ def _gta_wrapper(
     cbranch_flag_deps=None,
     is_bit_count=False,
     is_software_loop=False,
+    # The engine has grown keyword arguments since this harness was written
+    # (cbranch_cond_internal, ...).  Swallow and forward whatever it passes:
+    # a TypeError here is caught by the Unicorn callback boundary and turns
+    # into a silent zero-tainted-instruction run.
+    **extra,
 ):
     old_len = len(assignments)
     width = out_bit_end - out_bit_start + 1
@@ -141,6 +146,7 @@ def _gta_wrapper(
         cbranch_flag_deps=cbranch_flag_deps,
         is_bit_count=is_bit_count,
         is_software_loop=is_software_loop,
+        **extra,
     )
 
     for a in assignments[old_len:]:

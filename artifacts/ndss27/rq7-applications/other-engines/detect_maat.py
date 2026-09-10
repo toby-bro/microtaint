@@ -4,7 +4,7 @@ for the two RQ7 applications by running the CT and DNS drivers and folding
 their raw traces into the shared schema.
 
 Run:
-  /home/jns/Documents/Telecom/PRIM/benchmark/.venv_maat/bin/python detect_maat.py
+  ../../rq2-comparison/.venv_maat/bin/python detect_maat.py
 """
 from __future__ import annotations
 

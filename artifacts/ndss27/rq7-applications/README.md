@@ -1,45 +1,35 @@
-# RQ7 — Analyses coarser engines cannot perform
+# End-to-end applications (RQ7)
 
-**Claim (§6.7).** Bit-level precision enables two analyses that byte- and
-register-level engines cannot do: constant-time checking of a square-and-multiply
-implementation, and bit-field-precise side-channel detection in a DNS header
-parser.
+Three scenarios. The first is the memory-safety battery every production taint
+engine is expected to support, where microtaint matches them. The other two are
+where bit precision does something the coarser engines cannot: attributing a
+constant-time leak to one key bit, and separating two fields packed in one byte.
 
-The point of both is *precision*, not speed. A byte-granular engine reports the
-whole byte as tainted and cannot tell the secret-dependent bit from its
-neighbours, so it either misses the finding or drowns it.
-
-## Run
+- [`memory-safety/`](./memory-safety/) buffer overflow, use after free, side
+  channel, arbitrary indexed write.
+- `crypto/square_and_multiply/` constant-time verification (Table 7).
+- `dns/` DNS bit-field side channel (Table 8).
+- [`other-engines/`](./other-engines/) the same two analyses against angr, Maat,
+  Triton, libdft64, TaintGrind and PANDA, which is what turns "coarser engines
+  cannot" into a measurement.
 
 ```sh
 cd crypto/square_and_multiply
-uv run python check_side_channel.py        # ~5 min
-uv run python localise_side_channel.py     # ~5 min, locates the leaking branch
+uv run python check_side_channel.py      # ~5 min, is there a leak
+uv run python localise_side_channel.py   # ~5 min, which key bit
 
 cd ../../dns
-uv run python dns_experiment.py            # ~8 min
+uv run python dns_experiment.py          # ~8 min
 ```
 
-## What to look at
+Both engines agree with every baseline on the *binary* verdict, so that is not
+the claim. On square-and-multiply the exponent is consumed one bit per
+iteration, so tainting bit `k` alone should flag the branch at step `k+1` and
+nowhere else; a byte- or register-granular engine taints the whole exponent and
+flags all 32 steps. On DNS, `AND AL,0x78` provably masks `QR` away before the
+shift, so tainting `QR` must give a clean verdict and tainting `OPCODE` a leak;
+an engine with no sub-byte source reports a leak either way, which is a false
+positive.
 
-**Square-and-multiply.** `check_side_channel.py` reports whether a
-secret-dependent branch was found; `localise_side_channel.py` reports *where*.
-The claim is that the leaking branch is identified at bit granularity — the
-specific exponent bit — not merely that a leak exists somewhere.
-
-**DNS.** The parser packs several fields into one 16-bit header word. The claim
-is that a taint on one field is reported on that field alone. A byte-level
-engine cannot separate fields that share a byte, and the experiment prints the
-per-field verdict so this is visible directly rather than inferred.
-
-## Comparing against the other engines
-
-`rq7-applications/other-engines/` holds the same two analyses written against
-angr, Maat, Triton and PANDA (`detect_*`, `localise_*`). Those need the baseline
-environments from `INSTALL.md` step 4. Without them, this experiment still
-demonstrates what microtaint reports; it just cannot show the others failing to.
-
-## Tolerance
-
-Exact — these are findings, not measurements. The leaking branch and the tainted
-DNS field are either identified or they are not.
+These are findings, not measurements: the leaking step and the tainted field are
+either identified or they are not.

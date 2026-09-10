@@ -23,11 +23,10 @@ All the microtaints experiments can be run with a standard python installation r
 
 All the provided scripts use [uv](https://docs.astral.sh/uv) to manage the dependencies, python versions... we highly recommend installing it, to prevent any grueling work.
 
-The only experiment needing more software is the engine comparison one.
-To that effect we include a script which installs them all.
-For all the python libraries (triton, maat, angr, microtaint) `uv` is the only thing needed. But for panda and taintgrind docker is needed.
-
+Two experiments need more software than that.
+The engine comparison needs the six baselines, and `rq2-comparison/setup_envs.sh` installs them all: for the python libraries (triton, maat, angr, microtaint) `uv` is the only thing needed, but panda and taintgrind need docker.
 Lastly for libdft64 we made a script which patches the source code to enable it to be compiled in 2026, and compiles it.
+The taintinduce comparison needs our fork of taintinduce, which `rq1-synthesis_vs_inference/setup_taintinduce.sh` clones, pins and installs.
 Classical dev dependencies such as `make` and a C compiler are naturally required.
 
 ## Installing microtaint
@@ -58,9 +57,12 @@ A dedicated [README](./rq1-synthesis_vs_inference/README.md) is present in this 
 ### Engine comparison (`RQ2-4`)
 
 The results obtained in the paper were through a 5h long campaign (because some tools are much slower than microtaint).
-The exact command we used in [`rq2-comparison](./rq2-comparison/) is detailed in the dedicated [README](./rq2-comparison/README.md) along with indications on how to run a shorter test.
+The exact command we used in [`rq2-comparison`](./rq2-comparison/) is detailed in the dedicated [README](./rq2-comparison/README.md) along with indications on how to run a shorter test.
 
 The results that this dir produce answer the soundness (`RQ2`), as well as the precision (`RQ3`) and speed (`RQ4`) questions with a detailed comparison of all the different engines at our disposal.
+One run of `benchmark.py` scores all three, and the same directory regenerates the paper's figures and its LaTeX macros from that run.
+
+It also holds [`proofs`](./rq2-comparison/proofs/), the Z3 proofs that each category's rule can never under-taint (Appendix A).
 
 ### Overhead evaluation (`RQ5`)
 
@@ -79,12 +81,13 @@ The detailed directory of this experiment are unsurprisignly in [rq6-generalisat
 
 The last part of our evaluation shows two programs in which bit-level granularity enables security analyses that were not achievable before.
 The two examples are a DNS header parser, and a square and multiply implementation.
-We also include three vulnerable binaries to show that microtaint finds use-after-free, buffer overflows, and side channels in classical binaries.
-in the [rq7-applications](./rq7-applications/) you will find the dedicated [README](./rq7-applications/README.md)
+We also include four vulnerable binaries in [memory-safety](./rq7-applications/memory-safety/) to show that microtaint finds buffer overflows, use-after-free, side channels and writes through attacker-controlled pointers in classical binaries, which is the battery every engine is expected to have.
+In [rq7-applications](./rq7-applications/) you will find the dedicated [README](./rq7-applications/README.md), and in [other-engines](./rq7-applications/other-engines/) the same two analyses run against the six baselines.
 
 ### Avalanche's cost
 
 At the behest of our gracious reviewers we also added an experiment to caracterise where and when an avalanche was triggered, and the amount of bits which are consequence of avalanche.
+It runs on three real workloads (coreutils `base64`, the `nft_byteorder` routine of the Linux nftables module, and SipHash-2-4) and produces the two halves of the category table.
 
 All related experiments and [README](./avalanche/README.md) can be found in the [avalanche](./avalanche) directory.
 

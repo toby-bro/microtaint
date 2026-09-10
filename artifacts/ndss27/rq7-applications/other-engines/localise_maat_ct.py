@@ -10,7 +10,7 @@ satisfiable both true and false). It is flippable at exactly one step -- step
 k+1 -- for every k, i.e. Maat localises the leaking key bit, matching microtaint
 (crypto/square_and_multiply/localise_side_channel.py).
 
-Run: /home/jns/Documents/Telecom/PRIM/benchmark/.venv_maat/bin/python localise_maat_ct.py
+Run: ../../rq2-comparison/.venv_maat/bin/python localise_maat_ct.py
 """
 
 # Experiment script, not library code: see artifacts/ndss27/README.md,

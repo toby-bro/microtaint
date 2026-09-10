@@ -3,8 +3,8 @@ Throwaway prototype: port MicroTaint to MIPS64 (BE) and PowerPC64 (BE) via
 monkeypatch ONLY (no tracked files touched), lift add/sub/and/or/xor with
 generate_static_rule, and validate against a single-bit-flip Unicorn oracle.
 
-Run with the repo venv:
-    /home/jns/.../pcode-taint-engine/.venv/bin/python proto_port.py
+Run with:
+    uv run python proto_port.py
 """
 
 # Experiment script, not library code: see artifacts/ndss27/README.md,
@@ -13,9 +13,11 @@ Run with the repo venv:
 
 from __future__ import annotations
 
+import pathlib
 import sys
 
-REPO = '/home/jns/Documents/Telecom/PRIM/pcode-taint-engine'
+# The engine repo is three levels up from artifacts/ndss27/rq6-generalisation/.
+REPO = str(pathlib.Path(__file__).resolve().parents[3])
 sys.path.insert(0, REPO)
 
 import pypcode

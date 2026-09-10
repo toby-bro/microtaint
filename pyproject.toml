@@ -374,6 +374,7 @@ implicit_reexport = true
 module = [
     "angr", "claripy", "triton", "maat", "pandare", "z3",
     "taintinduce.*",  # cloned into artifacts/*/external/ by setup_taintinduce.sh
+    "matplotlib.*", "numpy",  # plot_figures.py runs under `uv run --with matplotlib`
 ]
 ignore_missing_imports = true
 
