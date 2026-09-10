@@ -186,7 +186,7 @@ def _run_with_taint(
 class TestShadowMemory:
     """Direct tests on BitPreciseShadowMemory via taint_bit/taint_region."""
 
-    def test_taint_bit_writes_correct_mask(self, tmp_path):
+    def test_taint_bit_writes_correct_mask(self, tmp_path: Path) -> None:
         binary = _compile(
             """
             #include <unistd.h>
@@ -203,7 +203,7 @@ class TestShadowMemory:
             got = wrapper.shadow_mem.read_mask(addr, 1)
             assert got == (1 << bit), f'taint_bit(addr, {bit}): expected shadow={1 << bit:#04x}, got {got:#04x}'
 
-    def test_taint_bit_or_semantics(self, tmp_path):
+    def test_taint_bit_or_semantics(self, tmp_path: Path) -> None:
         """
         taint_bit must OR the new bit into the existing shadow byte, not
         replace it.  Calling taint_bit(addr, 0) then taint_bit(addr, 1)
@@ -235,7 +235,7 @@ class TestShadowMemory:
         got = wrapper.shadow_mem.read_mask(addr, 1)
         assert got == 0x83, f'Re-tainting bit 0 changed mask: {got:#04x}'
 
-    def test_taint_region_writes_per_byte_masks(self, tmp_path):
+    def test_taint_region_writes_per_byte_masks(self, tmp_path: Path) -> None:
         binary = _compile(
             """
             #include <unistd.h>
@@ -253,7 +253,7 @@ class TestShadowMemory:
         assert wrapper.shadow_mem.read_mask(addr + 2, 1) == 0xFF
         assert wrapper.shadow_mem.read_mask(addr + 3, 1) == 0xAA
 
-    def test_taint_region_zero_mask_clears_existing_taint(self, tmp_path):
+    def test_taint_region_zero_mask_clears_existing_taint(self, tmp_path: Path) -> None:
         """
         taint_region(addr, [0x00]) must CLEAR pre-existing taint at that address.
         write_mask(addr, 0, 1) is an explicit clear (documented in shadow.pyx).
@@ -273,7 +273,7 @@ class TestShadowMemory:
         wrapper.taint_region(addr, bytes([0x00]))
         assert wrapper.shadow_mem.read_mask(addr, 1) == 0x00
 
-    def test_taint_bit_and_taint_bytes_are_different(self, tmp_path):
+    def test_taint_bit_and_taint_bytes_are_different(self, tmp_path: Path) -> None:
         """taint_bit marks one bit (0x01..0x80); _taint_bytes marks all (0xFF)."""
         binary = _compile(
             """
@@ -292,7 +292,7 @@ class TestShadowMemory:
         wrapper._taint_bytes(addr, 1)
         assert wrapper.shadow_mem.read_mask(addr, 1) == 0xFF
 
-    def test_taint_bit_invalid_bit_index_raises(self, tmp_path):
+    def test_taint_bit_invalid_bit_index_raises(self, tmp_path: Path) -> None:
         binary = _compile(
             """
             #include <unistd.h>
@@ -319,7 +319,7 @@ class TestHookArming:
     and mem-write hook, exactly like _taint_bytes does.
     """
 
-    def test_taint_bit_arms_deferred_hooks(self, tmp_path):
+    def test_taint_bit_arms_deferred_hooks(self, tmp_path: Path) -> None:
         binary = _compile(
             """
             #include <unistd.h>
@@ -337,7 +337,7 @@ class TestHookArming:
         assert wrapper._any_taint
         assert wrapper._instr_hook_registered
 
-    def test_taint_region_arms_deferred_hooks(self, tmp_path):
+    def test_taint_region_arms_deferred_hooks(self, tmp_path: Path) -> None:
         binary = _compile(
             """
             #include <unistd.h>
@@ -352,7 +352,7 @@ class TestHookArming:
         assert wrapper._any_taint
         assert wrapper._instr_hook_registered
 
-    def test_arm_is_idempotent(self, tmp_path):
+    def test_arm_is_idempotent(self, tmp_path: Path) -> None:
         """Calling taint_bit multiple times must not double-register hooks."""
         binary = _compile(
             """
@@ -382,7 +382,7 @@ class TestEndToEndPropagation:
     Compile tiny C programs and verify taint propagates through them correctly.
     """
 
-    def test_taint_bit_propagates_through_xor(self, tmp_path):
+    def test_taint_bit_propagates_through_xor(self, tmp_path: Path) -> None:
         """
         Binary: read 1 byte, XOR with 0x5A, write result.
 
@@ -412,7 +412,7 @@ class TestEndToEndPropagation:
         # XOR preserves bit identity: only bit 3 should be tainted
         assert shadow == 0x08, f'Expected shadow=0x08 (bit 3 only), got {shadow:#04x}'
 
-    def test_taint_region_partial_byte_through_xor(self, tmp_path):
+    def test_taint_region_partial_byte_through_xor(self, tmp_path: Path) -> None:
         """
         Same XOR binary, but taint only the low nibble (bits 0-3, mask=0x0F).
         Expected output shadow: 0x0F (XOR preserves each bit independently).
@@ -437,7 +437,7 @@ class TestEndToEndPropagation:
         shadow, _ = _run_with_taint(binary, b'\x00', taint, output_size=1)
         assert shadow == 0x0F, f'Expected shadow=0x0F (low nibble through XOR), got {shadow:#04x}'
 
-    def test_taint_bit_propagates_through_add_carry(self, tmp_path):
+    def test_taint_bit_propagates_through_add_carry(self, tmp_path: Path) -> None:
         """
         Binary: read 1 byte, add 1, write result.
 
@@ -469,7 +469,7 @@ class TestEndToEndPropagation:
         # At minimum, bit 0 of output must be tainted
         assert shadow & 0x01, 'Bit 0 must be tainted after ADD with tainted bit-0 input'
 
-    def test_taint_bit_does_not_infect_adjacent_input_bytes(self, tmp_path):
+    def test_taint_bit_does_not_infect_adjacent_input_bytes(self, tmp_path: Path) -> None:
         """
         Binary: read 2 bytes, write them back.
         Taint only bit 3 of the FIRST byte.  The second output byte must have
@@ -497,7 +497,7 @@ class TestEndToEndPropagation:
         assert byte0_shadow != 0, 'First byte must have taint'
         assert byte1_shadow == 0, f'Second byte must not be tainted (got shadow byte1={byte1_shadow:#04x})'
 
-    def test_taint_all_bits_of_byte_equals_full_taint(self, tmp_path):
+    def test_taint_all_bits_of_byte_equals_full_taint(self, tmp_path: Path) -> None:
         """
         Tainting all 8 bits individually must produce the same shadow as
         tainting the whole byte via taint_region(addr, [0xFF]).
@@ -534,7 +534,7 @@ class TestEndToEndPropagation:
         ), f'All-bits-individually ({shadow_a:#04x}) must equal full-byte-region ({shadow_b:#04x})'
         assert shadow_a == 0xFF, f'Expected 0xFF, got {shadow_a:#04x}'
 
-    def test_stdin_taint_still_works(self, tmp_path):
+    def test_stdin_taint_still_works(self, tmp_path: Path) -> None:
         """
         Regression: the normal stdin-taint path (_taint_bytes via _sys_read_hook)
         must still work correctly after the new API additions.
@@ -603,7 +603,7 @@ class TestEndToEndPropagation:
             captured_shadow[0] == 0xFF
         ), f'stdin taint: expected full byte shadow 0xFF at write() time, got {captured_shadow[0]:#04x}'
 
-    def test_taint_region_no_taint_zero_mask(self, tmp_path):
+    def test_taint_region_no_taint_zero_mask(self, tmp_path: Path) -> None:
         """
         taint_region with all-zero mask must write no taint.
         Output shadow must be 0 even though the byte passes through.
@@ -627,7 +627,7 @@ class TestEndToEndPropagation:
         shadow, _ = _run_with_taint(binary, b'\xaa', taint, output_size=1)
         assert shadow == 0, f'Expected zero shadow with zero-mask region, got {shadow:#04x}'
 
-    def test_taint_bit_7_msb(self, tmp_path):
+    def test_taint_bit_7_msb(self, tmp_path: Path) -> None:
         """
         Tainting bit 7 (MSB) specifically via taint_bit and verifying it
         survives through a passthrough binary.

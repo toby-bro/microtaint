@@ -25,7 +25,7 @@ import platform
 import subprocess
 import sys
 import tempfile
-from typing import Generator
+from typing import Any, Generator
 
 import pytest
 
@@ -214,7 +214,7 @@ def run_cli(
         os.unlink(payload_path)
 
 
-def _extract_json(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
+def _extract_json(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     """
     Extract the JSON object from result.stdout, tolerating any stray debug
     lines (e.g. 'DEBUG RET: ...', '[DBG] ...') that engine.py or wrapper.py
@@ -229,7 +229,8 @@ def _extract_json(result: subprocess.CompletedProcess[str]) -> dict[str, object]
 
     # Fast path: entire stdout is clean JSON (expected on a patched build)
     try:
-        return json.loads(raw)
+        doc: dict[str, Any] = json.loads(raw)
+        return doc
     except json.JSONDecodeError:
         pass
 
@@ -259,7 +260,8 @@ def _extract_json(result: subprocess.CompletedProcess[str]) -> dict[str, object]
 
     candidate = ''.join(lines[start : end + 1])
     try:
-        return json.loads(candidate)
+        doc: dict[str, Any] = json.loads(candidate)
+        return doc
     except json.JSONDecodeError as exc:
         pytest.fail(
             f'Found JSON-like block but could not parse it: {exc}\n'

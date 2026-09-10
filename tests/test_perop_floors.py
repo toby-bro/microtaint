@@ -157,7 +157,7 @@ def slicewise_report(isa, n_per, seed=11):
     return n_cases, tot_slices, clean_slices, len(new_under), new_under
 
 
-def test_perop_slicewise_sound_and_covers(request):
+def test_perop_slicewise_sound_and_covers(request: pytest.FixtureRequest) -> None:
     """The per-output-slice window is the integration model: a reconvergent flag
     no longer disqualifies a clean result register.  On the CLEAN slices, per-op
     must introduce no under-taint beyond the engine's own differential (vs ground

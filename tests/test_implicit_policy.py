@@ -6,7 +6,7 @@ from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintError, ImplicitTaintPolicy, Register
 
 
-def test_implicit_taint_policies(capsys) -> None:  # type: ignore[no-untyped-def]
+def test_implicit_taint_policies(capsys: pytest.CaptureFixture[str]) -> None:  # type: ignore[no-untyped-def]
     """
     Tests the engine's ability to intercept, warn, or stop when
     evaluating conditional branches based on tainted flags.

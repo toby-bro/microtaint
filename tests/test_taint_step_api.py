@@ -83,7 +83,7 @@ def test_explain_says_which_path_answered() -> None:
         'a store was answered by the compiled path without a memory to read')
 
 
-def test_default_path_follows_the_environment(monkeypatch) -> None:
+def test_default_path_follows_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('MICROTAINT_TAINT_IR', '0')
     assert default_path() == 'differential'
     monkeypatch.setenv('MICROTAINT_TAINT_IR', '1')

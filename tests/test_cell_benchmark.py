@@ -107,7 +107,8 @@ FULL_TAINT_8 = 0xFF
 # ===========================================================================
 
 #: (mnemonic, hex, input_values, input_taint, check_reg, expected, description)
-CORPUS: list[tuple[str, str, dict, dict, str | None, int | None, str]] = [
+CORPUS: list[tuple[str, str, dict[str, int], dict[str, int],
+                   str | None, int | None, str]] = [
     # -----------------------------------------------------------------------
     # MOV variants
     # -----------------------------------------------------------------------
@@ -1117,20 +1118,21 @@ def prebuilt_circuits() -> dict[str, Any]:
 def _run(
     sim: CellSimulator,
     circuit: Any,
-    input_values: dict,
-    input_taint: dict,
+    input_values: dict[str, int],
+    input_taint: dict[str, int],
     implicit_policy: ImplicitTaintPolicy = ImplicitTaintPolicy.KEEP,
-) -> dict:
+) -> dict[str, int]:
     ctx = EvalContext(
         input_values=input_values,
         input_taint=input_taint,
         simulator=sim,
         implicit_policy=implicit_policy,
     )
-    return circuit.evaluate(ctx)
+    out: dict[str, int] = circuit.evaluate(ctx)
+    return out
 
 
-def _extract_flag(output: dict, flag: str) -> int:
+def _extract_flag(output: dict[str, int], flag: str) -> int:
     if flag in output:
         return int(output[flag])
     eflags = output.get('EFLAGS', 0)
@@ -1148,7 +1150,7 @@ def _extract_flag(output: dict, flag: str) -> int:
     return 0
 
 
-def _get(output: dict, key: str) -> int:
+def _get(output: dict[str, int], key: str) -> int:
     """Get a register value, handling flag extraction transparently."""
     if key in ('CF', 'PF', 'ZF', 'SF', 'OF'):
         return _extract_flag(output, key)
@@ -1211,11 +1213,11 @@ def _backend_taint_diffs(
 def test_pcode_matches_unicorn(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
     mnemonic: str,
     hex_bytes: str,
-    input_values: dict,
-    input_taint: dict,
+    input_values: dict[str, int],
+    input_taint: dict[str, int],
     check_reg: str | None,
     expected_taint: int | None,
     description: str,
@@ -1276,11 +1278,11 @@ def test_pcode_matches_unicorn(
 )
 def test_expected_taint_unicorn(
     sim_unicorn: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
     mnemonic: str,
     hex_bytes: str,
-    input_values: dict,
-    input_taint: dict,
+    input_values: dict[str, int],
+    input_taint: dict[str, int],
     check_reg: str,
     expected_taint: int,
     description: str,
@@ -1301,11 +1303,11 @@ def test_expected_taint_unicorn(
 )
 def test_expected_taint_pcode(
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
     mnemonic: str,
     hex_bytes: str,
-    input_values: dict,
-    input_taint: dict,
+    input_values: dict[str, int],
+    input_taint: dict[str, int],
     check_reg: str,
     expected_taint: int,
     description: str,
@@ -1326,7 +1328,8 @@ def test_expected_taint_pcode(
 # tainted).  minimal == exact here because the only clean bits are genuinely
 # constant; keeping them separate lets the two asserts distinguish an over-taint
 # (exact fails, minimal holds) from an under-taint (both fail).
-_POW2_SCALE_TAINT_CASES: list[tuple[str, dict, dict, str, int, int, str]] = [
+_POW2_SCALE_TAINT_CASES: list[tuple[str, dict[str, int], dict[str, int],
+                                   str, int, int, str]] = [
     ('488D048500000000', {'RAX': 4}, {'RAX': FULL_TAINT_64}, 'RAX',
      0xFFFFFFFFFFFFFFFC, 0xFFFFFFFFFFFFFFFC, 'LEA RAX,[RAX*4] -> RAX<<2'),
     ('486BC302', {'RBX': 5}, {'RBX': FULL_TAINT_64}, 'RAX',
@@ -1341,10 +1344,10 @@ _POW2_SCALE_TAINT_CASES: list[tuple[str, dict, dict, str, int, int, str]] = [
 )
 def test_pow2_scale_taint_exact_and_minimal(
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
     hex_bytes: str,
-    input_values: dict,
-    input_taint: dict,
+    input_values: dict[str, int],
+    input_taint: dict[str, int],
     check_reg: str,
     exact: int,
     minimal: int,
@@ -1370,7 +1373,7 @@ def test_pow2_scale_taint_exact_and_minimal(
 #           several different taint masks to maximise differential coverage
 # ===========================================================================
 
-TAINT_SCENARIOS: list[dict] = [
+TAINT_SCENARIOS: list[dict[str, Any]] = [
     {'RAX': FULL_TAINT_64, 'RBX': 0},
     {'RAX': 0, 'RBX': FULL_TAINT_64},
     {'RAX': FULL_TAINT_64, 'RBX': FULL_TAINT_64},
@@ -1433,9 +1436,9 @@ TAINT_SCENARIOS: list[dict] = [
 def test_multi_scenario_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
     hex_bytes: str,
-    taint: dict,
+    taint: dict[str, int],
 ) -> None:
     """
     Exhaustive taint-scenario sweep: for each (instruction, taint_mask) pair
@@ -1467,7 +1470,7 @@ def test_multi_scenario_backends_agree(
 # ===========================================================================
 
 # Pick a representative mix of instruction categories
-BENCH_SINGLE: list[tuple[str, str, dict, dict]] = [
+BENCH_SINGLE: list[tuple[str, str, dict[str, int], dict[str, int]]] = [
     ('MOV_r64_r64', '4889C3', {'RAX': 0x1234, 'RBX': 0}, {'RAX': FULL_TAINT_64}),
     ('ADD_r64_r64', '4801D8', {'RAX': 1, 'RBX': 1}, {'RAX': FULL_TAINT_64}),
     ('SUB_r64_r64', '4829D8', {'RAX': 5, 'RBX': 2}, {'RAX': FULL_TAINT_64}),
@@ -1493,11 +1496,11 @@ BENCH_SINGLE: list[tuple[str, str, dict, dict]] = [
 def test_bench_single_unicorn(
     benchmark: Any,
     sim_unicorn: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
     mnemonic: str,
     hex_bytes: str,
-    input_values: dict,
-    input_taint: dict,
+    input_values: dict[str, int],
+    input_taint: dict[str, int],
 ) -> None:
     """Unicorn backend — single instruction throughput."""
     if hex_bytes not in prebuilt_circuits:
@@ -1508,7 +1511,7 @@ def test_bench_single_unicorn(
         )
     circuit = prebuilt_circuits[hex_bytes]
 
-    def _run_once() -> dict:
+    def _run_once() -> dict[str, int]:
         return _run(sim_unicorn, circuit, input_values, input_taint)
 
     result = benchmark.pedantic(_run_once, rounds=100, warmup_rounds=5)
@@ -1523,11 +1526,11 @@ def test_bench_single_unicorn(
 def test_bench_single_pcode(
     benchmark: Any,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
     mnemonic: str,
     hex_bytes: str,
-    input_values: dict,
-    input_taint: dict,
+    input_values: dict[str, int],
+    input_taint: dict[str, int],
 ) -> None:
     """P-code backend — single instruction throughput."""
     if hex_bytes not in prebuilt_circuits:
@@ -1538,7 +1541,7 @@ def test_bench_single_pcode(
         )
     circuit = prebuilt_circuits[hex_bytes]
 
-    def _run_once() -> dict:
+    def _run_once() -> dict[str, int]:
         return _run(sim_pcode, circuit, input_values, input_taint)
 
     result = benchmark.pedantic(_run_once, rounds=100, warmup_rounds=5)
@@ -1551,7 +1554,7 @@ def test_bench_single_pcode(
 # ===========================================================================
 
 
-def _run_full_corpus(sim: CellSimulator, circuits: dict) -> list[dict]:
+def _run_full_corpus(sim: CellSimulator, circuits: dict[str, Any]) -> list[dict[str, int]]:
     """Evaluate every instruction in CORPUS and return all output dicts."""
     outputs = []
     for _, hex_bytes, input_values, input_taint, _, _, _ in CORPUS:
@@ -1563,7 +1566,7 @@ def _run_full_corpus(sim: CellSimulator, circuits: dict) -> list[dict]:
 def test_bench_trace_unicorn(
     benchmark: Any,
     sim_unicorn: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
 ) -> None:
     """
     Unicorn backend — full CORPUS sequential trace.
@@ -1582,7 +1585,7 @@ def test_bench_trace_unicorn(
 def test_bench_trace_pcode(
     benchmark: Any,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
 ) -> None:
     """
     P-code backend — full CORPUS sequential trace.
@@ -1614,7 +1617,7 @@ def _run_hot_loop(sim: CellSimulator, circuit: Any, n: int) -> None:
 def test_bench_hot_loop_unicorn(
     benchmark: Any,
     sim_unicorn: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
 ) -> None:
     """
     Unicorn backend — 1 000-iteration hot loop on ADD RAX,RBX.
@@ -1632,7 +1635,7 @@ def test_bench_hot_loop_unicorn(
 def test_bench_hot_loop_pcode(
     benchmark: Any,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
 ) -> None:
     """
     P-code backend — 1 000-iteration hot loop on ADD RAX,RBX.
@@ -1655,7 +1658,7 @@ def test_bench_hot_loop_pcode(
 
 def test_pcode_fallback_rate(
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
 ) -> None:
     """
     After running the full corpus, the pcode backend's fallback rate must be
@@ -1696,7 +1699,7 @@ TAINT_CHAIN: list[tuple[str, str]] = [
 
 # Pre-compile chain circuits (same session cache)
 @pytest.fixture(scope='session')
-def chain_circuits() -> dict:
+def chain_circuits() -> dict[str, Any]:
     circuits = {}
     for _, hex_bytes in TAINT_CHAIN:
         if hex_bytes not in circuits:
@@ -1708,7 +1711,8 @@ def chain_circuits() -> dict:
     return circuits
 
 
-def _run_chain(sim: CellSimulator, circuits: dict) -> dict:
+def _run_chain(sim: CellSimulator,
+               circuits: dict[str, Any]) -> dict[str, int]:
     """
     Run the taint chain, feeding output taint of each step as input taint
     for the next.  Returns the final taint state.
@@ -1741,7 +1745,7 @@ def _run_chain(sim: CellSimulator, circuits: dict) -> dict:
 def test_chain_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    chain_circuits: dict,
+    chain_circuits: dict[str, Any],
 ) -> None:
     """
     Full 10-instruction taint chain: final taint state must be identical
@@ -1763,7 +1767,7 @@ def test_chain_backends_agree(
 def test_bench_chain_unicorn(
     benchmark: Any,
     sim_unicorn: CellSimulator,
-    chain_circuits: dict,
+    chain_circuits: dict[str, Any],
 ) -> None:
     """Unicorn backend — 10-instruction taint-propagation chain throughput."""
     benchmark.pedantic(
@@ -1777,7 +1781,7 @@ def test_bench_chain_unicorn(
 def test_bench_chain_pcode(
     benchmark: Any,
     sim_pcode: CellSimulator,
-    chain_circuits: dict,
+    chain_circuits: dict[str, Any],
 ) -> None:
     """P-code backend — 10-instruction taint-propagation chain throughput."""
     benchmark.pedantic(
@@ -1798,7 +1802,7 @@ def test_bench_chain_pcode(
 def test_diagnostic_print_all_diffs(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    prebuilt_circuits: dict,
+    prebuilt_circuits: dict[str, Any],
     capsys: Any,
 ) -> None:
     """

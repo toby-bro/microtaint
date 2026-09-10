@@ -1,3 +1,5 @@
+from typing import Any
+
 from microtaint.simulator import CellSimulator, MachineState
 from microtaint.types import Architecture
 
@@ -44,7 +46,7 @@ def test_path_explosion_scaling() -> None:
     assert out_taint != 0, 'Dataflow taint failed to propagate!'
 
 
-def test_path_explosion_speed(benchmark) -> None:  # type: ignore[no-untyped-def]
+def test_path_explosion_speed(benchmark: Any) -> None:  # type: ignore[no-untyped-def]
     """
     Optional: If you run `uv run pytest --benchmark-only`,
     this will prove the 2^100 path sequence executes in microseconds.

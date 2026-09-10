@@ -277,7 +277,7 @@ ARITHMETIC_PRIMITIVES: list[str] = (
 # Memory / control-flow / system — backend agreement only
 # ===========================================================================
 
-LOADS_STORES: list[tuple[str, dict, dict]] = [
+LOADS_STORES: list[tuple[str, dict[str, int], dict[str, int]]] = [
     ('lb t0, 8(t1)', {'T1': 0x80000100}, {}),
     ('lh t0, 8(t1)', {'T1': 0x80000100}, {}),
     ('lw t0, 8(t1)', {'T1': 0x80000100}, {}),
@@ -292,7 +292,7 @@ LOADS_STORES: list[tuple[str, dict, dict]] = [
     ('sd t2, 8(t1)', {'T1': 0x80000100, 'T2': 0xCAFEBABE}, {'T2': FULL_TAINT_64}),
 ]
 
-CONTROL_FLOW: list[tuple[str, dict, dict]] = [
+CONTROL_FLOW: list[tuple[str, dict[str, int], dict[str, int]]] = [
     # Use small forward displacement (4 = next instruction); avoids
     # Unicorn UC_ERR_EXCEPTION when the branch is taken to unmapped code
     # in microtaint's bounded CODE region.
@@ -306,7 +306,7 @@ CONTROL_FLOW: list[tuple[str, dict, dict]] = [
     ('jalr t0, t1, 0', {'T1': 0x1004}, {'T1': FULL_TAINT_64}),
 ]
 
-SYSTEM_OPS: list[tuple[str, dict, dict]] = [
+SYSTEM_OPS: list[tuple[str, dict[str, int], dict[str, int]]] = [
     ('nop', {}, {}),
     ('fence', {}, {}),
 ]
@@ -333,7 +333,7 @@ def circuit_cache() -> dict[str, Any]:
     return {}
 
 
-def _circuit(asm: str, cache: dict) -> Any:
+def _circuit(asm: str, cache: dict[str, Any]) -> Any:
     if asm not in cache:
         cache[asm] = generate_static_rule(
             Architecture.RISCV64,
@@ -348,7 +348,11 @@ def _circuit(asm: str, cache: dict) -> Any:
 # ===========================================================================
 
 
-def _run_microtaint(sim: CellSimulator, asm: str, values: dict, taint: dict, cache: dict) -> dict:
+def _run_microtaint(sim: CellSimulator,
+                    asm: str,
+                    values: dict[str, int],
+                    taint: dict[str, int],
+                    cache: dict[str, Any]) -> dict[str, int]:
     circuit = _circuit(asm, cache)
     ctx = EvalContext(
         input_values=values,
@@ -356,7 +360,8 @@ def _run_microtaint(sim: CellSimulator, asm: str, values: dict, taint: dict, cac
         simulator=sim,
         implicit_policy=ImplicitTaintPolicy.KEEP,
     )
-    return circuit.evaluate(ctx)
+    out: dict[str, int] = circuit.evaluate(ctx)
+    return out
 
 
 _BASE_CODE = 0x1000
@@ -419,7 +424,8 @@ def _true_taint_riscv(
     return result
 
 
-def _diff_dicts(a: dict, b: dict) -> dict:
+def _diff_dicts(a: dict[str, int],
+                b: dict[str, int]) -> dict[str, tuple[int, int]]:
     return {k: (a.get(k, 0), b.get(k, 0)) for k in set(a) | set(b) if a.get(k, 0) != b.get(k, 0)}
 
 
@@ -518,9 +524,9 @@ def _patterns_for(mnem: str) -> list[str]:
     return _PATTERN_SUBSETS.get(mnem, _DEFAULT_PATTERNS)
 
 
-def _build_oracle_matrix() -> list[tuple[str, str, str, dict, dict]]:
+def _build_oracle_matrix() -> list[tuple[str, str, str, dict[str, int], dict[str, int]]]:
     """Returns list of (asm, value_label, taint_label, values, taint_t1)."""
-    matrix: list[tuple[str, str, str, dict, dict]] = []
+    matrix: list[tuple[str, str, str, dict[str, int], dict[str, int]]] = []
     for asm in ARITHMETIC_PRIMITIVES:
         mnem = asm.split()[0].lower()
         patterns = _patterns_for(mnem)
@@ -568,12 +574,12 @@ _NO_T2_MNEMS: set[str] = {
 )
 def test_oracle_soundness(
     sim_unicorn: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     asm: str,
     vlabel: str,
     tlabel: str,
-    values: dict,
-    taint: dict,
+    values: dict[str, int],
+    taint: dict[str, int],
 ) -> None:
     """
     For every (instruction, value_pattern, taint_pattern) cell, microtaint
@@ -611,12 +617,12 @@ def test_oracle_soundness(
 )
 def test_oracle_soundness_t2(
     sim_unicorn: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     asm: str,
     vlabel: str,
     tlabel: str,
-    values: dict,
-    taint_t1: dict,
+    values: dict[str, int],
+    taint_t1: dict[str, int],
 ) -> None:
     """As test_oracle_soundness, but taint applied to T2."""
     mnem = asm.split(maxsplit=1)[0].lower()
@@ -657,12 +663,12 @@ def test_oracle_soundness_t2(
 def test_backends_agree_arithmetic(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     asm: str,
     vlabel: str,
     tlabel: str,
-    values: dict,
-    taint: dict,
+    values: dict[str, int],
+    taint: dict[str, int],
 ) -> None:
     """Unicorn-backed and P-code-backed CellSimulator must produce identical taint."""
     out_u = _run_microtaint(sim_unicorn, asm, values, taint, circuit_cache)
@@ -686,10 +692,10 @@ def test_backends_agree_arithmetic(
 def test_memory_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     asm: str,
-    values: dict,
-    taint: dict,
+    values: dict[str, int],
+    taint: dict[str, int],
 ) -> None:
     out_u = _run_microtaint(sim_unicorn, asm, values, taint, circuit_cache)
     out_p = _run_microtaint(sim_pcode, asm, values, taint, circuit_cache)
@@ -710,10 +716,10 @@ def test_memory_backends_agree(
 def test_controlflow_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     asm: str,
-    values: dict,
-    taint: dict,
+    values: dict[str, int],
+    taint: dict[str, int],
 ) -> None:
     """
     Backend-agreement on every register *except* PC.
@@ -750,10 +756,10 @@ def test_controlflow_backends_agree(
 def test_system_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     asm: str,
-    values: dict,
-    taint: dict,
+    values: dict[str, int],
+    taint: dict[str, int],
 ) -> None:
     out_u = _run_microtaint(sim_unicorn, asm, values, taint, circuit_cache)
     out_p = _run_microtaint(sim_pcode, asm, values, taint, circuit_cache)
@@ -765,7 +771,7 @@ def test_system_backends_agree(
 # PART 6 — Throughput benchmarks (one per representative opcode family)
 # ===========================================================================
 
-BENCH_SET: list[tuple[str, str, dict, dict]] = [
+BENCH_SET: list[tuple[str, str, dict[str, int], dict[str, int]]] = [
     ('ADD', 'add t0, t1, t2', {'T1': 1, 'T2': 1}, {'T1': FULL_TAINT_64}),
     ('SUB', 'sub t0, t1, t2', {'T1': 5, 'T2': 2}, {'T1': FULL_TAINT_64}),
     ('XOR', 'xor t0, t1, t2', {'T1': 1, 'T2': 2}, {'T1': FULL_TAINT_64}),
@@ -791,22 +797,23 @@ BENCH_SET: list[tuple[str, str, dict, dict]] = [
 def test_bench_unicorn(
     benchmark: Any,
     sim_unicorn: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     label: str,
     asm: str,
-    values: dict,
-    taint: dict,
+    values: dict[str, int],
+    taint: dict[str, int],
 ) -> None:
     circuit = _circuit(asm, circuit_cache)
 
-    def _go() -> dict:
+    def _go() -> dict[str, int]:
         ctx = EvalContext(
             input_values=values,
             input_taint=taint,
             simulator=sim_unicorn,
             implicit_policy=ImplicitTaintPolicy.KEEP,
         )
-        return circuit.evaluate(ctx)
+        out: dict[str, int] = circuit.evaluate(ctx)
+        return out
 
     benchmark.pedantic(_go, rounds=50, warmup_rounds=3)
 
@@ -819,22 +826,23 @@ def test_bench_unicorn(
 def test_bench_pcode(
     benchmark: Any,
     sim_pcode: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     label: str,
     asm: str,
-    values: dict,
-    taint: dict,
+    values: dict[str, int],
+    taint: dict[str, int],
 ) -> None:
     circuit = _circuit(asm, circuit_cache)
 
-    def _go() -> dict:
+    def _go() -> dict[str, int]:
         ctx = EvalContext(
             input_values=values,
             input_taint=taint,
             simulator=sim_pcode,
             implicit_policy=ImplicitTaintPolicy.KEEP,
         )
-        return circuit.evaluate(ctx)
+        out: dict[str, int] = circuit.evaluate(ctx)
+        return out
 
     benchmark.pedantic(_go, rounds=50, warmup_rounds=3)
 
@@ -857,9 +865,9 @@ TAINT_CHAIN: list[str] = [
 ]
 
 
-def _run_chain(sim: CellSimulator, cache: dict) -> dict:
-    values: dict = {'T0': 8, 'T1': 0x100, 'T2': 0x200, 'T3': 0x300, 'SP': _BASE_DATA + _DATA_SIZE // 2}
-    taint: dict = {'T0': FULL_TAINT_64}
+def _run_chain(sim: CellSimulator, cache: dict[str, Any]) -> dict[str, int]:
+    values: dict[str, int] = {'T0': 8, 'T1': 0x100, 'T2': 0x200, 'T3': 0x300, 'SP': _BASE_DATA + _DATA_SIZE // 2}
+    taint: dict[str, int] = {'T0': FULL_TAINT_64}
     for asm in TAINT_CHAIN:
         circuit = _circuit(asm, cache)
         ctx = EvalContext(
@@ -875,7 +883,7 @@ def _run_chain(sim: CellSimulator, cache: dict) -> dict:
 def test_chain_backends_agree(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
 ) -> None:
     final_u = _run_chain(sim_unicorn, circuit_cache)
     final_p = _run_chain(sim_pcode, circuit_cache)
@@ -893,7 +901,7 @@ def test_chain_backends_agree(
 def test_diagnostic_summary(
     sim_unicorn: CellSimulator,
     sim_pcode: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     capsys: Any,
 ) -> None:
     """
@@ -936,7 +944,7 @@ def test_diagnostic_summary(
 
 def test_pcode_fallback_rate(
     sim_pcode: CellSimulator,
-    circuit_cache: dict,
+    circuit_cache: dict[str, Any],
     capsys: Any,
 ) -> None:
     """Report the pcode→Unicorn fallback rate after running the primitive matrix."""

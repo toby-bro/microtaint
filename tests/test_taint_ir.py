@@ -101,7 +101,7 @@ def test_backends_agree(isa, label, code):
 
 
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'RISCV64'])
-def test_ir_never_under_taints_vs_ground_truth(isa, request):
+def test_ir_never_under_taints_vs_ground_truth(isa, request: pytest.FixtureRequest):
     from tests.conftest import fuzz_budget
     from tests.perop_c_bank import run_bank_perop_c
     from tests.taint_ir_bank import ir_step

@@ -25,7 +25,7 @@ from tests.perop_c_bank import run_bank_perop_c
 
 
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'RISCV64'])
-def test_no_new_under_taint_vs_ground_truth(isa, request):
+def test_no_new_under_taint_vs_ground_truth(isa, request: pytest.FixtureRequest):
     from tests.conftest import fuzz_budget
 
     rep = run_bank_perop_c(isas=[isa],

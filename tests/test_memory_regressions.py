@@ -67,6 +67,8 @@ Run with:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from microtaint.emulator.shadow import BitPreciseShadowMemory
@@ -478,7 +480,7 @@ class TestSipHashAvalanche:
     the canary for ALL of bugs 1-5: any regression in any of them
     immediately breaks the avalanche."""
 
-    def test_single_bit_taint_avalanches_through_siphash(self, tmp_path):
+    def test_single_bit_taint_avalanches_through_siphash(self, tmp_path: Path) -> None:
         import io
         import logging
         import subprocess
