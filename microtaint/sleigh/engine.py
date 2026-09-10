@@ -1102,6 +1102,26 @@ _BOOL_OUTPUT_OPCODES: frozenset[str] = frozenset({
 })
 
 
+def _register_traffic(
+    translation: Translation,
+) -> tuple[set[tuple[int, int]], set[tuple[int, int]], dict[tuple[int, int], set[str]]]:
+    """Which register-space varnodes a sequence writes, which it reads, and the
+    opcodes that wrote each -- the last of these is what tells a condition flag
+    from a byte sub-register."""
+    written: set[tuple[int, int]] = set()
+    read: set[tuple[int, int]] = set()
+    write_ops: dict[tuple[int, int], set[str]] = {}
+    for op in translation.ops:
+        if op.output is not None and op.output.space.name == 'register':
+            key = (op.output.offset, op.output.size)
+            written.add(key)
+            write_ops.setdefault(key, set()).add(op.opcode.name)
+        for inp in op.inputs:
+            if inp.space.name == 'register':
+                read.add((inp.offset, inp.size))
+    return written, read, write_ops
+
+
 def _chain_intermediate_flags(
     translation: Translation,
     sctx: Context,
@@ -1139,17 +1159,7 @@ def _chain_intermediate_flags(
     name_by_key: dict[tuple[int, int], str] = {
         (vn.offset, vn.size): nm for nm, vn in sctx.registers.items() if vn.space.name == 'register'
     }
-    written: set[tuple[int, int]] = set()
-    read: set[tuple[int, int]] = set()
-    write_ops: dict[tuple[int, int], set[str]] = {}
-    for op in translation.ops:
-        if op.output is not None and op.output.space.name == 'register':
-            key = (op.output.offset, op.output.size)
-            written.add(key)
-            write_ops.setdefault(key, set()).add(op.opcode.name)
-        for inp in op.inputs:
-            if inp.space.name == 'register':
-                read.add((inp.offset, inp.size))
+    written, read, write_ops = _register_traffic(translation)
     existing = {name for name, _ in reg_names_tuple}
     vec_bases = _vector_lane_bases(sctx, str(arch))
     extra: list[tuple[str, int]] = []
@@ -1166,19 +1176,29 @@ def _chain_intermediate_flags(
         if lanes:
             for base in lanes:
                 _emit(f'VL_{base:#x}', _VEC_LANE_BITS)
-            continue
-        if k[1] > 8:
-            continue
-        nm = name_by_key.get(k)
-        if nm is None:
-            continue
-        # A 1-byte register written only by boolean-output p-code ops is a 1-bit
-        # condition flag: thread it at 1 bit so its taint sits at bit 0 (where the
-        # carry-in reads it), matching a user-supplied 1-bit flag.  Any other
-        # intermediate (a byte GP sub-register, a wider temp) keeps its full width.
-        is_flag = k[1] == 1 and write_ops[k] <= _BOOL_OUTPUT_OPCODES
-        _emit(nm, 1 if is_flag else k[1] * 8)
+        elif k[1] <= 8:
+            _emit_scalar(k, name_by_key, write_ops, _emit)
     return tuple(extra)
+
+
+def _emit_scalar(
+    key: tuple[int, int],
+    name_by_key: dict[tuple[int, int], str],
+    write_ops: dict[tuple[int, int], set[str]],
+    emit: Callable[[str, int], None],
+) -> None:
+    """Thread one scalar intermediate at its own width.
+
+    A 1-byte register written only by boolean-output p-code ops is a 1-bit
+    condition flag: thread it at 1 bit so its taint sits at bit 0, where the
+    carry-in reads it, matching a user-supplied 1-bit flag.  Any other
+    intermediate -- a byte GP sub-register, a wider temp -- keeps its full width.
+    """
+    name = name_by_key.get(key)
+    if name is None:
+        return
+    is_flag = key[1] == 1 and write_ops[key] <= _BOOL_OUTPUT_OPCODES
+    emit(name, 1 if is_flag else key[1] * 8)
 
 
 def _all_intermediates_constant(ops: Iterable[PcodeOp]) -> bool:  # noqa: C901
@@ -3644,10 +3664,31 @@ def generate_taint_assignments(  # noqa: C901
         and slice_ops
         and slice_ops[-1].output is not None
     ):
-        # A floor needs only the disjoint-input conduit, not two distinct algebras:
-        # `bic x0,x1,x2,lsl #1` is bitwise on both sides but still owes a floor at the
+        # A floor needs only the conduit, not two distinct operations: `bic
+        # x0,x1,x2,lsl #1` is bitwise on both sides but still owes a floor at the
         # SHIFTED positions, which the raw source union cannot express.
+        #
+        # Nor does it need the two sides to read DISJOINT registers.
+        # `lea rax,[rbx+rbx*4]` is `b + (b << 2)`, so RBX is read on both sides,
+        # and requiring disjointness left the carry between the two shifted copies
+        # to the 2-corner differential, which misses it.
+        #
+        # The relaxed search is a FALLBACK rather than a replacement, so that the
+        # change can only ADD a floor.  find_waist returns the FIRST candidate that
+        # qualifies, so simply allowing shared inputs would let a shared-input waist
+        # displace the disjoint one a slice would otherwise have used, and a floor
+        # computed from a different waist is a different set of bits -- possibly a
+        # narrower one, which is an under-taint.  Asking for the disjoint waist
+        # first makes that impossible: every slice that had a floor keeps exactly
+        # the floor it had.  (The displacement is a structural risk, not one
+        # observed firing: on the RQ2 corpus the replacing form scored 24 unsound
+        # cases and isolated re-verification found all 24 to be oracle artifacts.)
         _waist = find_waist(slice_ops, slice_ops[-1].output, require_distinct_algebra=True)
+        if _waist is None:
+            _waist = find_waist(
+                slice_ops, slice_ops[-1].output,
+                require_distinct_algebra=True, require_disjoint_inputs=False,
+            )
         if (
             _waist is not None
             and _waist.upstream_algebra == ALG_BITWISE

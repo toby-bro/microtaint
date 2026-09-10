@@ -221,6 +221,7 @@ def find_waist(
     slice_ops: list[PcodeOp],
     target: Varnode,
     require_distinct_algebra: bool = True,
+    require_disjoint_inputs: bool = True,
 ) -> Waist | None:
     """Return the waist splitting `slice_ops` into two different operations.
 
@@ -235,6 +236,18 @@ def find_waist(
     is bitwise on both sides, so it is not two different operations, yet its floor
     still has to be computed at the SHIFTED bit positions.  Callers wanting a floor
     pass False.
+
+    `require_disjoint_inputs` is the same distinction applied to condition (A2).
+    Materialising the intermediate is lossless only when the two sides read
+    disjoint registers, so SPLITTING needs it.  A floor does not: it is OR-ed into
+    the rule, so over-including is a precision cost and under-including is a
+    soundness bug.  `lea rax,[rbx+rbx*4]` is the case that matters -- one register
+    fills both the base and the index, so `b + (b << 2)` reads RBX on both sides
+    and (A2) rejected the waist, leaving the carry between the two shifted copies
+    covered by nothing but the 2-corner differential.  With RBX bits 44 and 45
+    tainted the product moves bits 44 through 48 and the rule returned 44, 45 and
+    48: bits 46 and 47 were a silent under-taint.  Callers wanting a floor pass
+    False here too.
     """
     if len(slice_ops) < 2:
         return None
@@ -268,7 +281,7 @@ def find_waist(
         # (A2) disjoint architectural inputs -- the losslessness condition.
         up_regs = _register_reads(upstream)
         down_regs = _register_reads(downstream)
-        if up_regs & down_regs:
+        if require_disjoint_inputs and (up_regs & down_regs):
             continue
 
         # (B) both sides are genuine operations on data, not plumbing and not

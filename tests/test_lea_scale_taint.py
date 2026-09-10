@@ -23,8 +23,6 @@ landed between v0.6.9 and v0.6.10.
 
 from __future__ import annotations
 
-import pytest
-
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
@@ -70,7 +68,6 @@ def _truth(multiplier: int, rbx: int, taint: int) -> int:
     return moved
 
 
-@pytest.mark.xfail(strict=True, reason='lea [b+b*s] unions the two shifted positions and drops the carry between them')
 def test_lea_self_scaled_carries() -> None:
     """Every bit the multiplication actually moves must be tainted."""
     missing = {}
