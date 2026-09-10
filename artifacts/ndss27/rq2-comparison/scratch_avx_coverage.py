@@ -39,7 +39,13 @@ Run with:  ./.venv_microtaint/bin/python scratch_avx_coverage.py
 (.venv_microtaint has keystone + unicorn + microtaint together.)
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
+
+from typing import Any
 
 import unicorn
 import unicorn.x86_const as ux
@@ -91,6 +97,7 @@ def microtaint_eval(bs: bytes, state: dict[str, int], taint: dict[str, int]):
         st['RSP'] = _DEFAULT_RSP
     tt = {r.name: taint.get(r.name, 0) for r in _REGS}
     ctx = EvalContext(input_values=st, input_taint=tt, simulator=SIM)
+    assert SIM._pcode is not None
     fb0 = SIM._pcode.fallback_calls
     raw = circ.evaluate(ctx)
     fb1 = SIM._pcode.fallback_calls
@@ -133,6 +140,7 @@ def unicorn_run(bs: bytes, vals: dict[str, int]) -> dict[str, int] | None:
     """Single concrete run on the cached Uc; None if it traps."""
     global _UC_LAST_BS
     uc = _UC
+    assert uc is not None  # built once at import
     if bs != _UC_LAST_BS:
         uc.mem_write(_CODE_BASE, bs)
         _UC_LAST_BS = bs
@@ -344,7 +352,7 @@ def analyse():
     rows = []
     for label, cat, width, lines in CATALOGUE:
         asm_str = '; '.join(lines)
-        row = {'label': label, 'cat': cat, 'width': width, 'asm': asm_str}
+        row: dict[str, Any] = {'label': label, 'cat': cat, 'width': width, 'asm': asm_str}
         # (a) assemble
         try:
             bs = assemble(lines)

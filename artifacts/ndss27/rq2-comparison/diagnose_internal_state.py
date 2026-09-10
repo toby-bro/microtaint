@@ -14,11 +14,16 @@ Run with the user's broken behavior:
 Run from the benchmark directory.
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 cwd = Path.cwd()
 worker_path = next(
@@ -46,7 +51,7 @@ _REGS = (
     + [Register(f'XMM{n}_HI', 64) for n in range(8)]
 )
 
-TEST_8009 = {
+TEST_8009: dict[str, Any] = {
     'state': {'RAX': 10940498380929573403, 'RBX': 1830928842394036844, 'RCX': 19, 'RDX': 5767559093351484470},
     'taint': {'RAX': 4352, 'RBX': 2, 'RCX': 0, 'RDX': 8796093022208},
     'bytes': 'fc48894424c0488d7c24c04889d8b908000000f3aa488b4424c0',
@@ -64,7 +69,7 @@ def banner(s: str) -> None:
 
 
 def make_context(sim):
-    state = {r.name: TEST_8009['state'].get(r.name, 0) for r in _REGS}
+    state: dict[str, int] = {r.name: TEST_8009['state'].get(r.name, 0) for r in _REGS}
     if state.get('RSP', 0) == 0:
         state['RSP'] = 0x80000000
     taint = {r.name: TEST_8009['taint'].get(r.name, 0) for r in _REGS}

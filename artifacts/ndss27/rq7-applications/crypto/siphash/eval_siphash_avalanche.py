@@ -35,6 +35,10 @@ Usage
         --csv results_avalanche.csv --matrix
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import argparse
@@ -134,7 +138,7 @@ def _run_one(task: tuple) -> dict[str, Any]:
 
     class _FixedStdin:
         def read(self, n: int) -> bytes:
-            return msg[:n]
+            return bytes(msg[:n])
 
     ql.os.stdin = _FixedStdin()
     ql.os.set_syscall(1, _write_hook, QL_INTERCEPT.CALL)

@@ -23,6 +23,10 @@ Run:
   python campaign.py pass2 --in camp                 # verify pass-1 reports
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import argparse
@@ -209,7 +213,7 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
         # Uc per run means no leakage at all -- so pass 1 here already has NO false
         # positives from state leaks; pass 2 remains as an independent double-check.
         try:
-            lb = O.bitflip_lower_bound(b, code, state, taint)
+            lb = O.bitflip_lower_bound(b, code, state, taint)  # type: ignore[arg-type]  # Bench duck-types onto IsaSpec
         except Exception:
             continue
         # microtaint

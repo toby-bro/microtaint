@@ -21,6 +21,10 @@ Run on your Python 3.13 environment:
 The output is also saved to ``minimal_repro.log``.
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import logging

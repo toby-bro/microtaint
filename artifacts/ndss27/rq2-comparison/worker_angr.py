@@ -29,6 +29,10 @@ the stash existed (angr only creates the ``found`` stash on the first
 ``explore()`` call) which raised ``AttributeError`` on every test case
 and left every result errored.  The simple pattern below avoids that.
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 import io
 import json
 import logging

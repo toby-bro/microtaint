@@ -32,6 +32,10 @@ engine's own env-var switches so that every executed instruction flows through
 the introspectable Python evaluate() path.
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import argparse
@@ -39,6 +43,7 @@ import json
 import os
 import sys
 from collections import defaultdict
+from typing import Any
 
 # Force the introspectable, non-cached Python evaluation path.  These are the
 # engine's own documented debug switches (wrapper.py __init__).
@@ -80,7 +85,7 @@ STATS = {
 }
 
 _BUDGET = [0]  # max tainted instructions (0 = unlimited)
-_WRAPPER = [None]  # set to the MicrotaintWrapper so we can emu_stop
+_WRAPPER: list[Any] = [None]  # set to the MicrotaintWrapper so we can emu_stop
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +147,7 @@ def _gta_wrapper(
         CAT_BY_ID[id(a)] = label
 
 
-_engine.generate_taint_assignments = _gta_wrapper
+_engine.generate_taint_assignments = _gta_wrapper  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +283,7 @@ def _cached_proxy(arch, bytestring, state_format_tuple):
 # Patch the name the wrapper actually calls (imported into wrapper's namespace)
 import microtaint.emulator.wrapper as _wrap_mod
 
-_wrap_mod._cached_generate_static_rule = _cached_proxy
+_wrap_mod._cached_generate_static_rule = _cached_proxy  # type: ignore[attr-defined,assignment]
 # also clear any pre-existing cache so category recording sees every rule
 try:
     _orig_cached.cache_clear()

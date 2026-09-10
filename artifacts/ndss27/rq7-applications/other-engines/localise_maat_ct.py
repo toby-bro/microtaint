@@ -13,11 +13,16 @@ k+1 -- for every k, i.e. Maat localises the leaking key bit, matching microtaint
 Run: /home/jns/Documents/Telecom/PRIM/benchmark/.venv_maat/bin/python localise_maat_ct.py
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 os.dup2(2, 1)  # keep Maat's C++ ANSI logger off stdout
 
@@ -47,7 +52,7 @@ def _both_feasible(cond) -> bool:
     s_t.add(cond)
     s_f = Solver()
     s_f.add(cond.invert())
-    return s_t.check() and s_f.check()
+    return bool(s_t.check() and s_f.check())
 
 
 def localise(k: int) -> list[int]:
@@ -62,7 +67,7 @@ def localise(k: int) -> list[int]:
     eng.cpu.rdx = 101  # base, mod (public)
     eng.cpu.rsi = _exponent_with_symbolic_bit(k)
     eng.vars.set('bk', 1)
-    state = {'it': 0, 'steps': []}
+    state: dict[str, Any] = {'it': 0, 'steps': []}
 
     def on_branch(e):
         try:
@@ -82,7 +87,7 @@ def localise(k: int) -> list[int]:
     eng.hooks.add(EVENT.BRANCH, WHEN.BEFORE, callbacks=[on_branch])
     eng.hooks.add(EVENT.EXEC, WHEN.BEFORE, callbacks=[on_exec])
     eng.run_from(POW_BRANCH)
-    return state['steps']
+    return list(state['steps'])
 
 
 def main() -> int:

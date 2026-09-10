@@ -30,10 +30,15 @@ argv: 1=harness path in /work, 2=argv1 ('vuln'|'ct'), 3=payload_b64 (stdin),
       4=arm_pc hex, 5=e_slot_disp (signed int, off rbp), 6=func_lo hex,
       7=func_hi hex.
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 import base64
 import json
 import sys
 import traceback
+from typing import Any
 
 import capstone
 from pandare import Panda
@@ -72,7 +77,7 @@ for idx, names in enumerate([
     for n in names:
         _REG2IDX[n] = idx
 
-state = {
+state: dict[str, Any] = {
     'armed': False,
     'labeled_bytes': 0,
     'decoded': 0,
@@ -86,7 +91,7 @@ state = {
 }
 
 # Per-PC decoded metadata, filled lazily on first arm.
-meta = {'cond': {}, 'flag': {}}   # cond: pc->True ; flag: pc->(reg_idxs, mems)
+meta: dict[str, dict[int, Any]] = {'cond': {}, 'flag': {}}  # cond: pc->True ; flag: pc->(reg_idxs, mems)
 
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
 md.detail = True

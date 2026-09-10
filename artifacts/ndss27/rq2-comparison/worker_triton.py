@@ -21,6 +21,10 @@ The approach: set PC to BASE, then call ctx.processing() in a loop,
 incrementing the address by each instruction's size (from getSize()) until
 we've consumed all the bytes.
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 import json
 import sys
 import time

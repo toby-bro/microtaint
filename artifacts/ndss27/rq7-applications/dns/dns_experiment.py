@@ -47,6 +47,10 @@ predicted mask is asserted bit-exact equal in both directions:
   - engine <= GT  =>  precision (no over-tainting)
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import sys

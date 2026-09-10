@@ -40,6 +40,10 @@ that TCG can always execute from, bypassing guest page tables. We map 1 MB
 at EXEC_PA_BASE to accommodate the rotating addresses.
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 import os
 import sys
 
@@ -50,6 +54,7 @@ _json_out = os.fdopen(_real_stdout_fd, 'w', 1)
 import json
 import threading
 import time
+from typing import Any
 
 from pandare import Panda
 
@@ -77,7 +82,7 @@ def main():
     panda = Panda(generic='x86_64')
     ev_run = threading.Event()
     ev_done = threading.Event()
-    shared = {
+    shared: dict[str, Any] = {
         'test_case': None,
         'result': None,
         'quit': False,

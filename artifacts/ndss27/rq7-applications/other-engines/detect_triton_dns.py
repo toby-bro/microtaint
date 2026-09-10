@@ -7,10 +7,15 @@ masked away by the AND. Ground truth: taint QR only -> output clean; taint OPCOD
 "OPCODE only" are the same input and give the same output: it cannot separate the
 two fields (a false positive on QR).
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from triton import ARCH, Instruction, TritonContext
 
@@ -57,7 +62,7 @@ def run(al_value: int, taint_al: bool, label: str) -> dict:
 def probe_subbit_api() -> dict:
     """Confirm Triton's finest taint unit is a byte (no bit-level API)."""
     ctx = TritonContext(ARCH.X86_64)
-    facts = {}
+    facts: dict[str, Any] = {}
     # Smallest register you can name is an 8-bit one (al/ah); no bit selector.
     ctx.taintRegister(ctx.registers.al)
     facts['taint_al_taints_whole_al'] = bool(ctx.isRegisterTainted(ctx.registers.al))

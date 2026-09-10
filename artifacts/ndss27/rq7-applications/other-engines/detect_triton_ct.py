@@ -5,10 +5,15 @@ Emulate pow_branch / pow_ct directly, taint only the exponent (ESI, the secret),
 and count conditional branches that read a tainted flag -- i.e. branch on the
 secret. A leak = at least one such branch. base/mod are public (untainted).
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 from triton import ARCH, EXCEPTION, Instruction, MemoryAccess, TritonContext
 
@@ -59,7 +64,7 @@ def run_variant(entry: int, name: str) -> dict:
     # carries `e`; base (EDI) and mod (EDX) stay untainted (public).
     ctx.taintRegister(ctx.registers.esi)
 
-    leaks = []                 # dynamic tainted-branch executions
+    leaks: list[dict[str, Any]] = []  # dynamic tainted-branch executions
     static_leak_pcs = set()    # unique branch PCs that were tainted
     n_tainted_execs = 0        # dynamic count of tainted-branch executions
     cond_branches = 0

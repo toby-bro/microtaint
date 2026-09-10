@@ -35,11 +35,16 @@ from benchmark.GroundTruthSimulator._run_unicorn, so the recomputed outputs are
 byte-for-byte identical to the ground-truth simulator's.
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import json
 import sys
 import time
+from typing import Any
 
 import benchmark  # reuse GroundTruthSimulator, REGISTERS, MASK64 (no side effects)
 
@@ -143,7 +148,7 @@ def main() -> None:
     # finding and the exhaustive finding, it is a *known* gap, not a new one.
     undertaint_vs_exhaustive = dict.fromkeys(ENGINES, 0)
     # per-engine list of (id, category) for the covered under-taint cases
-    undertaint_ids = {e: [] for e in ENGINES}
+    undertaint_ids: dict[str, list[tuple[Any, Any]]] = {e: [] for e in ENGINES}
 
     t0 = time.time()
     for i, rec in enumerate(results):
@@ -239,7 +244,7 @@ def main() -> None:
         print('CONFIRMED: MicroTaint has ZERO under-taint against the bit-flip '
               'lower bound across all covered cases.')
     else:
-        mt_cats = {}
+        mt_cats: dict[str, int] = {}
         for _cid, _cat in undertaint_ids['microtaint']:
             mt_cats[_cat] = mt_cats.get(_cat, 0) + 1
         print(f'MicroTaint under-taints in {mt} / {covered} covered cases '

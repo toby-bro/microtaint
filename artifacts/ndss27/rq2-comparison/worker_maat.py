@@ -15,6 +15,10 @@ default, which corrupts the line-delimited JSON protocol.  We redirect
 stdout to stderr at the OS level before importing maat so the logger's
 output never reaches the orchestrator.
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 import json
 import os
 import sys
@@ -110,7 +114,7 @@ def _extract_taint_dual(engine, reg_name: str, reg_bits: int, per_reg_vars: dict
             return (1 << reg_bits) - 1
 
         _cleanup_vars(ctx, all_vars)
-        return (concrete_0 ^ concrete_1) & ((1 << reg_bits) - 1)
+        return int(concrete_0 ^ concrete_1) & ((1 << reg_bits) - 1)
     except Exception:
         return 0
 

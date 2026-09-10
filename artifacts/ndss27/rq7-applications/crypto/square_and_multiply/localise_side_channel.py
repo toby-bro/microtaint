@@ -21,6 +21,10 @@ the fired step. Run:
     env -u VIRTUAL_ENV uv run --project <engine> python localise_side_channel.py
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import re
@@ -87,7 +91,7 @@ def fired_step(binary: Path, branch_pc: int, k: int) -> int | None:
     w._taint_bytes = selective  # type: ignore[method-assign]
 
     cnt = {'n': 0}
-    fired = {'at': None}
+    fired: dict[str, int | None] = {'at': None}
     ql.hook_address(lambda ql: cnt.__setitem__('n', cnt['n'] + 1), branch_pc)
     orig = w.reporter.side_channel
 

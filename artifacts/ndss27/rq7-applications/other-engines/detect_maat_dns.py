@@ -8,6 +8,10 @@ test by dual concretization (tainted bits set to 0 vs 1) whether the output byte
 changes. Ground truth: QR -> output clean, OPCODE -> output tainted; Maat
 separates the two fields, which byte-granular engines cannot.
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 from __future__ import annotations
 
 import json

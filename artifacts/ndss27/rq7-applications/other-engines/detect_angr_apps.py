@@ -11,6 +11,10 @@ its concrete value (5) to follow one path while guards stay symbolic.
 DNS (AND al,0x78 ; SHR al,3): make the flag byte symbolic and test per-bit
 dependence of the output -- bit 7 (QR, masked away) vs bits 6..3 (OPCODE).
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 from __future__ import annotations
 
 import json
@@ -180,7 +184,7 @@ def _depends_on_bit(bit: int) -> bool:
         if j != bit:
             s.add(claripy.Extract(j, j, a) == claripy.Extract(j, j, b))
     s.add(out_a != out_b)
-    return s.satisfiable()
+    return bool(s.satisfiable())
 
 
 def run_dns() -> dict:

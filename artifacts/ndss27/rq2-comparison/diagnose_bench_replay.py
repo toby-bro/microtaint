@@ -136,12 +136,13 @@ for i in range(target_idx + 1):
         if circuit._compiled is not None and circuit._compiled is not False:
             print(f'    _compiled type:     {type(circuit._compiled).__name__}')
             try:
-                stats = circuit._compiled.stats()
+                stats = circuit._compiled.stats()  # type: ignore[union-attr]
                 print(f'    _compiled stats:    {stats}')
             except Exception as exc:
                 print(f'    _compiled stats:    error ({exc})')
         print(f'    _SIM id:            0x{id(_SIM):x}')
         print(f'    _SIM._pcode id:     0x{id(_SIM._pcode):x}')
+        assert _SIM._pcode is not None
         print(f'    _SIM._pcode native_calls:    {_SIM._pcode.native_calls}')
         print(f'    _SIM._pcode fallback_calls:  {_SIM._pcode.fallback_calls}')
         print()

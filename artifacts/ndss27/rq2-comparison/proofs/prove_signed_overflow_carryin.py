@@ -58,6 +58,10 @@ Run:  uv run --with z3-solver python prove_signed_overflow_carryin.py
       [--widths 2,3,4,5,6,7,8,16,32,64] [--precision-max-width 5]
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import argparse

@@ -24,6 +24,10 @@ argv: 1=harness path in /work, 2=payload_b64 (1 stdin flag byte),
       5=and_pc hex, 6=shr_pc hex, 7=store_pc hex, 8=out_addr hex,
       9=func_lo hex, 10=func_hi hex.
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 import base64
 import json
 import sys

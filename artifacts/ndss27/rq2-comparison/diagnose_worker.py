@@ -81,6 +81,9 @@ print(f'  Last modified: {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat
 banner('2. Worker _REGS state_format')
 
 spec = importlib.util.spec_from_file_location('worker_under_test', worker_path)
+if spec is None or spec.loader is None:
+    print(f'ERROR: {worker_path} is not importable as a module')
+    sys.exit(2)
 worker_mod = importlib.util.module_from_spec(spec)
 sys.modules['worker_under_test'] = worker_mod
 try:
@@ -190,6 +193,10 @@ proc = subprocess.Popen(
     stderr=subprocess.PIPE,
     cwd=str(cwd),
 )
+# Popen was given all three pipes above, so none of these is None.
+assert proc.stdin is not None
+assert proc.stdout is not None
+assert proc.stderr is not None
 ready_line = proc.stdout.readline().decode().strip()
 if ready_line != 'READY':
     print(f'  ERROR: worker did not say READY (got: {ready_line!r})')

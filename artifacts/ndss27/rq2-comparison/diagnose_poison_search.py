@@ -34,6 +34,10 @@ target_id defaults to 8009.
 Output is also saved to ``poison_search.log`` for sharing.
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import json

@@ -62,6 +62,10 @@ Output format
   Reg-level tools : 0 (clean) or 1 (tainted) per output register.
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 
 import argparse
 import concurrent.futures
@@ -85,6 +89,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from itertools import product as iterproduct
+from typing import Any
 
 if hasattr(_sys.stdout, 'reconfigure'):
     _sys.stdout.reconfigure(line_buffering=True)
@@ -101,9 +106,9 @@ if hasattr(_sys.stdout, 'reconfigure'):
 try:
     import sys as _sys_tqdm
 
-    from tqdm import tqdm as _tqdm_real  # type: ignore[import-not-found]
+    from tqdm import tqdm as _tqdm_real  # type: ignore[import-untyped]
 
-    def tqdm(iterable=None, **kwargs):  # type: ignore[no-redef]
+    def tqdm(iterable=None, **kwargs):
         kwargs.setdefault('file', _sys_tqdm.stdout)
         kwargs.pop('position', None)  # position= requires a real TTY; drop it
         return _tqdm_real(iterable, **kwargs)
@@ -112,7 +117,7 @@ try:
 except ImportError:
     _HAS_TQDM = False
 
-    def tqdm(iterable=None, **kwargs):  # type: ignore[no-redef]
+    def tqdm(iterable=None, **kwargs):
         if iterable is None:
 
             class _NoOpBar:
@@ -2205,8 +2210,11 @@ class BatchedWorkerPool:
         self._stderr[name] = []
 
         # Drain stderr in background
+        assert proc.stderr is not None  # started with stderr=PIPE
+        stderr_pipe = proc.stderr
+
         def _drain_stderr():
-            for chunk in iter(lambda: proc.stderr.read(4096), b''):
+            for chunk in iter(lambda: stderr_pipe.read(4096), b''):
                 self._stderr[name].append(chunk.decode(errors='replace'))
 
         threading.Thread(target=_drain_stderr, daemon=True).start()
@@ -2215,6 +2223,9 @@ class BatchedWorkerPool:
         # boot is a one-time cost and PANDA can take minutes
         ready_buf = b''
         deadline = time.monotonic() + timeout
+        # Started with stdin/stdout/stderr all set to PIPE.
+        assert proc.stdin is not None
+        assert proc.stdout is not None
         in_fd = proc.stdout.fileno()
         while b'\n' not in ready_buf:
             remaining = deadline - time.monotonic()
@@ -2397,9 +2408,12 @@ class BatchedWorkerPool:
                 break
 
             for fd in readable:
-                name = fd_to_name.get(fd)
-                if name is None or name in dead:
+                # Bind through a local so `name` stays a str for the (long)
+                # body below, which is what every use in it assumes.
+                maybe_name = fd_to_name.get(fd)
+                if maybe_name is None or maybe_name in dead:
                     continue
+                name = maybe_name
 
                 chunk = os.read(fd, 65536)
                 if not chunk:
@@ -2771,7 +2785,7 @@ def _run_c_harness(tool: str, cmd: str, tc: dict) -> dict:
                 res = json.loads(line)
                 if not res.get('time_ns'):
                     res['time_ns'] = t1 - t0
-                return res
+                return dict(res)
 
         return {
             'error': (r.stderr.strip() or r.stdout.strip() or 'no output')[:400],
@@ -2853,12 +2867,12 @@ class GroundTruthSimulator:
         # creating only when the bytestring changes (rare) keeps semantics
         # correct: x86 doesn't have lingering microarchitectural state that
         # affects emulator output.
-        self._uc = None
+        self._uc: Any = None
         self._last_bytestring: bytes | None = None
         self._STACK_BASE = 0x100000
         self._CODE_BASE = 0x1000
 
-    def _ensure_uc(self) -> object:
+    def _ensure_uc(self) -> Any:
         if self._uc is None:
             unicorn = self._uc_module
             uc = unicorn.Uc(unicorn.UC_ARCH_X86, unicorn.UC_MODE_64)
@@ -3529,6 +3543,7 @@ def generate_systematic_sweep(arch: str) -> list[dict]:
     for (asm, category), (cfg_name, cfg_taint) in iterproduct(INSTRUCTION_POOL, configs):
         enc, _ = _KS.asm(asm)
         state = _safe_state([asm])
+        taint: dict[str, int]
         if cfg_taint is None:
             taint = _rand_taint_dict_gt_friendly()
         elif cfg_taint == 'k4':
@@ -3539,7 +3554,7 @@ def generate_systematic_sweep(arch: str) -> list[dict]:
             for reg, bit in chosen:
                 taint[reg] |= 1 << bit
         else:
-            taint = cfg_taint
+            taint = cfg_taint  # type: ignore[assignment]  # not the 'k4' sentinel here
         cases.append(
             {
                 'arch': arch,
@@ -3988,7 +4003,7 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
             'total_instructions_executed': tot_instrs,
         }
 
-    out_per_cat = {}
+    out_per_cat: dict[str, dict[str, Any]] = {}
     for cat, tool_map in per_category.items():
         out_per_cat[cat] = {}
         for tool, d in tool_map.items():
@@ -4633,24 +4648,24 @@ def main():
 
     total = len(test_cases)
     # ── Start workers ──────────────────────────────────────────────────────
-    pool = BatchedWorkerPool()
+    worker_pool = BatchedWorkerPool()
     c_harness_cmds: dict[str, str] = {}
 
     for name in selected:
         if name in PYTHON_WORKERS:
             try:
-                pool.start_worker(name, PYTHON_WORKERS[name].split())
+                worker_pool.start_worker(name, PYTHON_WORKERS[name].split())
             except Exception as exc:
                 print(f'[{name}] Failed to start: {exc}', file=sys.stderr)
         elif name == 'panda':
             try:
-                pool.start_worker('panda', PANDA_DOCKER_CMD, boot_timeout=600)
+                worker_pool.start_worker('panda', PANDA_DOCKER_CMD, boot_timeout=600)
             except Exception as exc:
                 print(f'[panda] Failed to start: {exc}', file=sys.stderr)
         elif name in C_HARNESS_WORKERS:
             c_harness_cmds[name] = C_HARNESS_WORKERS[name]
 
-    persistent_names = pool.worker_names()
+    persistent_names = worker_pool.worker_names()
     active_tools = persistent_names + list(c_harness_cmds)
     if args.ground_truth:
         active_tools = [*list(active_tools), 'ground_truth']
@@ -4701,14 +4716,14 @@ def main():
     # for the cases it did finish, and marks the rest as timed-out.
     # The aggregation step (compute_metrics) then only compares cases where
     # every tool produced a real result — partial runs are still useful.
-    _run_deadline = time.monotonic() + pool.BATCH_TIMEOUT
+    _run_deadline = time.monotonic() + worker_pool.BATCH_TIMEOUT
     print(
-        f'    wall-clock budget    : {pool.BATCH_TIMEOUT}s '
-        f'(deadline in {pool.BATCH_TIMEOUT//60}m {pool.BATCH_TIMEOUT%60}s)',
+        f'    wall-clock budget    : {worker_pool.BATCH_TIMEOUT}s '
+        f'(deadline in {worker_pool.BATCH_TIMEOUT//60}m {worker_pool.BATCH_TIMEOUT%60}s)',
         flush=True,
     )
 
-    report = {
+    report: dict[str, Any] = {
         'metadata': {
             'timestamp': str(datetime.now()),
             'arch': args.arch,
@@ -4799,7 +4814,7 @@ def main():
             flush=True,
         )
         _t_batch = time.monotonic()
-        batch_results = pool.run_batch(
+        batch_results = worker_pool.run_batch(
             test_cases,
             deadline=_run_deadline,
             hb_counts=_hb_counts,
@@ -4819,7 +4834,7 @@ def main():
             gt_results = gt_future.result()
             print(f'[phase 3/4] ground-truth done in {time.monotonic()-_t_gt:.1f}s', flush=True)
         else:
-            gt_results = [None] * len(test_cases)
+            gt_results = [None] * len(test_cases)  # type: ignore[list-item]  # no GT pass requested
 
         # Stop heartbeat immediately — results are in hand
         _hb_stop.set()
@@ -4880,7 +4895,7 @@ def main():
             bar.close()
 
     finally:
-        pool.stop_all()
+        worker_pool.stop_all()
 
     # ── Metrics ───────────────────────────────────────────────────────────
     if not args.no_summary and report['results']:

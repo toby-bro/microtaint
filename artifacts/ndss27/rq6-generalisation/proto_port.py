@@ -7,6 +7,10 @@ Run with the repo venv:
     /home/jns/.../pcode-taint-engine/.venv/bin/python proto_port.py
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import sys

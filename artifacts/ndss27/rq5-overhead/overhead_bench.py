@@ -40,6 +40,10 @@ binary crashes.  If you want a clean exit (no BOF) for pure
 mix-propagation timing, use ``--gen-input 64`` instead.
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import argparse
@@ -218,6 +222,7 @@ def _run_subprocess(
     out_chunks: list[bytes] = []
     err_chunks: list[bytes] = []
     if stdin_data is not None:
+        assert proc.stdin is not None  # opened with stdin=PIPE just above
         try:
             proc.stdin.write(stdin_data)
         except BrokenPipeError:
@@ -320,6 +325,7 @@ def _run_helper_subprocess(
     out_chunks: list[bytes] = []
     err_chunks: list[bytes] = []
     if stdin_data is not None:
+        assert proc.stdin is not None  # opened with stdin=PIPE just above
         try:
             proc.stdin.write(stdin_data)
         except BrokenPipeError:
@@ -758,9 +764,10 @@ def main() -> int:
     native_wall = all_results.get('native', Measurement('native', 0, 0, 0, 0)).wall_s
 
     for label in labels_to_run:
-        m = all_results.get(label)
-        if not m:
+        summary = all_results.get(label)
+        if not summary:
             continue
+        m = summary
         cpu = m.user_cpu_s + m.sys_cpu_s
         init_s = m.extra.get('init_s')
         run_s = m.extra.get('run_s')

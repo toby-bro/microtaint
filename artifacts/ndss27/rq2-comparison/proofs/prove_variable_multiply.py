@@ -58,6 +58,10 @@ Run:  uv run --with z3-solver python prove_variable_multiply.py
       [--widths 3,4,5,6,8] [--timeout 60]
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import argparse

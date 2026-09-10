@@ -21,6 +21,10 @@ Run with the microtaint venv:
     .venv/bin/python bench_width_scaling.py
 Writes width_scaling_data.json next to itself.
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 import json
 import os
 import statistics

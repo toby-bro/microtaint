@@ -7,6 +7,10 @@ Byte granularity is the crux: CT is register-precise on the branch flags so it
 matches microtaint (vuln leaks, ct clean); DNS taints the whole flag byte, so it
 cannot separate QR from OPCODE -> byte-granularity false positive (like libdft).
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 from __future__ import annotations
 
 import base64
@@ -16,6 +20,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / 'results'
@@ -72,7 +77,7 @@ def run_container(worker_rel: str, args: list[str]) -> dict:
     if blob is None:
         tail = (proc.stdout[-2000:] + '\n---STDERR---\n' + proc.stderr[-2000:])
         raise RuntimeError(f'no RESULT_JSON. tail:\n{tail}')
-    return json.loads(blob)
+    return dict(json.loads(blob))
 
 
 def run_ct(cfg: dict) -> dict:
@@ -96,7 +101,7 @@ def run_dns() -> dict:
 
 def main() -> int:
     RESULTS.mkdir(exist_ok=True)
-    out = {'tool': 'PANDA (QEMU full-system) + taint2 byte/register dynamic taint'}
+    out: dict[str, Any] = {'tool': 'PANDA (QEMU full-system) + taint2 byte/register dynamic taint'}
 
     blocker = preflight()
     if blocker:
@@ -115,7 +120,7 @@ def main() -> int:
         return 2
 
     # ---- CT workload -------------------------------------------------------
-    ct = {'ran': False}
+    ct: dict[str, Any] = {'ran': False}
     try:
         rv = run_ct(CT_VULN)
         rc = run_ct(CT_CT)
@@ -148,9 +153,11 @@ def main() -> int:
         rd = run_dns()
         (RESULTS / '_panda_dns.json').write_text(json.dumps(rd, indent=2))
         out_tainted = bool(rd.get('out_tainted'))
+        input_flag = rd.get('input_flag')
+        out_value = rd.get('out_value')
         dns.update({
-            'input_flag_byte': hex(rd.get('input_flag')) if rd.get('input_flag') is not None else None,
-            'output_byte_value': hex(rd['out_value']) if rd.get('out_value') is not None else None,
+            'input_flag_byte': None if input_flag is None else hex(input_flag),
+            'output_byte_value': None if out_value is None else hex(out_value),
             'al_tainted_before_and': rd.get('al_tainted_before_and'),
             'al_tainted_after_and': rd.get('al_tainted_after_and'),
             'al_tainted_after_shr': rd.get('al_tainted_after_shr'),

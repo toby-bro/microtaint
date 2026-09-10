@@ -26,6 +26,10 @@ Only benchmark-derived numbers are emitted. Copy the block into main.tex, or poi
 main.tex at the --out file with \\input.
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 import argparse
 import importlib.util
 import json
@@ -67,6 +71,8 @@ def speedup(mt_tps, other_tps):
 def load_structural(benchmark_py):
     """Import benchmark.py and read the generator's template/class counts."""
     spec = importlib.util.spec_from_file_location('bench_gen', benchmark_py)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f'cannot import {benchmark_py} as a module')
     m = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(m)

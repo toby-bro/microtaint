@@ -41,6 +41,10 @@ Usage:
     score_rule.py --arch X86 --bytes 01d8 --rule results/<stamp>/rules/01d8_X86_rule.json
 """
 
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+
 from __future__ import annotations
 
 import argparse
@@ -49,6 +53,7 @@ import os
 import random
 import sys
 import time
+from typing import Any
 
 # The taintinduce package only exists inside the checkout that
 # setup_taintinduce.sh creates, and this script is meant to be run by that
@@ -461,7 +466,7 @@ def carry_witness_check(
         span = min(width, src_bits, dst_bits)
         others = [n for n in src_names if n != src_name] or [src_name]
 
-        cells = {}  # 'i,j' -> dict.  String keys, because this goes to JSON.
+        cells: dict[str, dict[str, Any]] = {}  # 'i,j' keys, because this goes to JSON
         for i in range(span):
             targets = list(range(i, span)) if shape == 'triangle' else [i]
             for j in targets:
@@ -627,8 +632,8 @@ def score(rule, observations, state_format, arch, max_examples=8):
         'over_flags': 0,
         'under_carry_like': 0,
     }
-    examples = []
-    over_examples = []
+    examples: list[dict[str, Any]] = []
+    over_examples: list[dict[str, Any]] = []
 
     for obs_dep in extract_observation_dependencies(observations):
         for input_bit, truth in obs_dep.dataflow.items():

@@ -5,6 +5,10 @@ under-taints from oracle artifacts.
 
 Usage: python triage_unsound.py fuzz_XXXX.log
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 from __future__ import annotations
 
 import ast

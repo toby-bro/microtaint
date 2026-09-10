@@ -87,3 +87,42 @@ in the [rq7-applications](./rq7-applications/) you will find the dedicated [READ
 At the behest of our gracious reviewers we also added an experiment to caracterise where and when an avalanche was triggered, and the amount of bits which are consequence of avalanche.
 
 All related experiments and [README](./avalanche/README.md) can be found in the [avalanche](./avalanche) directory.
+
+## Lint and type checking
+
+The scripts here are held to the same `ruff` and `mypy` gates as the engine, so
+`uv run ruff check artifacts/` and `uv run mypy artifacts/` both pass with no
+findings. Two deliberate relaxations, both narrow and both visible where they
+apply:
+
+**Lint.** `pyproject.toml` carries a `per-file-ignores` block for `artifacts/**`
+covering the rules that are wrong for standalone experiment scripts rather than
+merely inconvenient: `sys.path` setup before the imports it enables, per-engine
+lazy imports so a missing baseline is skipped instead of aborting a campaign,
+swallowing one engine's exception to keep scoring the rest, fixed subprocess
+command lines, emulator callback signatures we do not choose, and drivers long
+enough to read top to bottom. Every entry states its reason. Everything else in
+the lint configuration still applies here.
+
+**Types.** The substantive checks are on and every finding from them has been
+fixed: mypy caught a wrong annotation in `prove_soundness.py` (a mask fraction
+declared `bool`), an `importlib` spec used without its `None` case in two
+scripts, several `Popen` pipes read without checking they exist, and a variable
+in `benchmark.py` that held two unrelated things under one name.
+
+What is switched off, per file, is the requirement that every function carry a
+full signature:
+
+```python
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
+```
+
+That line sits in 42 of the 50 scripts. The other eight are checked strictly,
+and a new script gets no exemption unless someone adds the line to it. Deleting
+the header from a script checks that script strictly again; a command-line
+`--enable-error-code` will not, because a per-file disable wins over it.
+
+Across the tree the exemption currently covers 201 unannotated definitions, the
+361 calls into them, and 69 bare generics. Writing those signatures would mostly
+mean spelling `Any` for opaque angr, Maat, Triton and PANDA handles, so it would
+buy little on top of the checks that are on.

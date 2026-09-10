@@ -11,6 +11,7 @@ Protocol (stdin/stdout, line-delimited JSON):
 import json
 import sys
 import time
+from typing import Any
 
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
@@ -76,7 +77,7 @@ _SIM = CellSimulator(Architecture.AMD64, use_unicorn=False, use_c=True)
 _DEFAULT_RSP = 0x80000000
 
 
-def run_one(tc: dict[str, dict[str, int]]) -> dict[str, dict[str, int] | int]:
+def run_one(tc: dict[str, Any]) -> dict[str, Any]:
     bytestring = bytes.fromhex(tc['bytes'])
     circuit = generate_static_rule(Architecture.AMD64, bytestring, _REGS)
     # Fill in zeros for any register the test case doesn't mention.

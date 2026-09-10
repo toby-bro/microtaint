@@ -1,3 +1,7 @@
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 import collections
 import os
 import re
@@ -59,17 +63,17 @@ def cat(mn):
 
 
 tot = 0
-cnt = collections.Counter()
+cnt: collections.Counter[str] = collections.Counter()
 funcs = set()
 hit_funcs = set()
-percat = collections.Counter()
+percat: collections.Counter[str] = collections.Counter()
 per_bin = {}
 for b in BINS:
     p = f'/usr/bin/{b}'
     if not os.path.exists(p):
         continue
     bt = 0
-    bc = collections.Counter()
+    bc: collections.Counter[str] = collections.Counter()
     for func, mn in mnem_stream(p):
         tot += 1
         bt += 1

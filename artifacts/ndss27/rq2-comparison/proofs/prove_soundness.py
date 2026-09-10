@@ -35,6 +35,10 @@ the ones this harness is really for.
 
 Run:  uv run --with z3-solver python prove_soundness.py
 """
+
+# Experiment script, not library code: see artifacts/ndss27/README.md,
+# "Lint and type checking", for why annotations are not required here.
+# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 from __future__ import annotations
 
 import sys
@@ -134,7 +138,7 @@ def rule_mapped_wrong(f: Callable[[list[BitVec]], BitVec], U: list[BitVec], T: l
 # --------------------------------------------------------------------------- #
 # P-code operation semantics -- one bit-vector function per opcode.            #
 # --------------------------------------------------------------------------- #
-def op_and_const(mask_frac: bool) -> Callable[[list[BitVec]], BitVec]:
+def op_and_const(mask_frac: float) -> Callable[[list[BitVec]], BitVec]:
     # INT_AND with a constant mask (routing / mapped).  mask_frac in [0,1].
     def f(a):
         w = a[0].size()

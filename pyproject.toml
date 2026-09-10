@@ -335,8 +335,9 @@ namespace_packages = true
 # and aborts before checking anything.
 explicit_package_bases = true
 pretty = true
+# NB: these are regexes, not globs.
 exclude = [
-    ".venv/",
+    "\\.venv",       # .venv and the per-engine .venv_angr / .venv_maat / ... trees
     ".git/",
     "__pycache__/",
     "output/",
@@ -344,6 +345,11 @@ exclude = [
     "tools/",
     "hatch_build.py",
     "benchmark/",
+    # Vendored third-party checkouts that the artifact setup scripts clone
+    # (TaintInduce, libdft64, taintgrind, ...) and the results they produce.
+    # Not ours to type-check, and not in git either.
+    "artifacts/.*/external/",
+    "artifacts/.*/results/",
 ]
 
 # C-extension / native deps with no bundled type stubs (assemblers and emulators
@@ -353,6 +359,21 @@ module = [
     "pypcode", "pypcode.*", "unicorn", "unicorn.*", "qiling", "qiling.*",
     "capstone", "capstone.*", "keystone", "keystone.*",
     "riscv_encoder",  # test-only RISC-V encoder in tests/, on the path via pytest
+]
+ignore_missing_imports = true
+# These packages re-export their public API without an __all__, which `strict`
+# otherwise treats as private (`unicorn does not explicitly export Uc`).
+implicit_reexport = true
+
+# The baseline engines the RQ2-RQ7 comparison drives, plus Z3 for the soundness
+# proofs.  None ships type information, and each lives in its own virtualenv
+# that setup_envs.sh creates, so they are not importable from this project's
+# environment at all -- by design: a reviewer can run one engine without
+# installing the other five.
+[[tool.mypy.overrides]]
+module = [
+    "angr", "claripy", "triton", "maat", "pandare", "z3",
+    "taintinduce.*",  # cloned into artifacts/*/external/ by setup_taintinduce.sh
 ]
 ignore_missing_imports = true
 
