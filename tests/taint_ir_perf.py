@@ -20,12 +20,16 @@ import ctypes
 import json
 import random
 from pathlib import Path
+from typing import Any
+
+from benchmark.instruction_bank import ISASpec
+from microtaint.types import Architecture
 
 BASELINE = Path(__file__).parent / 'taint_ir_perf_baseline.json'
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
-def _slot_map(spec):
+def _slot_map(spec: ISASpec) -> tuple[list[str], dict[str, int]]:
     """(ordered register names, name -> slot) over the whole architecture.
 
     Every register the architecture declares gets a slot, not just the ones the
@@ -38,7 +42,8 @@ def _slot_map(spec):
     return names, {n: i for i, n in enumerate(names)}
 
 
-def _state_for(names, spec, seed, alias):
+def _state_for(names: list[str], spec: ISASpec, seed: str | int,
+               alias: dict[str, str]) -> tuple[list[int], list[int]]:
     """A pinned register state: values everywhere, taint on the operands the
     bank's instructions actually use.
 
@@ -53,7 +58,8 @@ def _state_for(names, spec, seed, alias):
     # spell the same lane differently.
     tainted_offs = {name_offset(spec.arch, alias.get(r.name, r.name))
                     for r in spec.regs[:4]}
-    vals, tnts = [], []
+    vals: list[int] = []
+    tnts: list[int] = []
     for n in names:
         m = (1 << (sizes.get(n, 8) * 8)) - 1
         vals.append(rng.randint(1, MASK64) & m)
@@ -65,7 +71,7 @@ def _state_for(names, spec, seed, alias):
 _SIZE_CACHE: dict[str, dict[str, int]] = {}
 
 
-def _sizes(arch):
+def _sizes(arch: Architecture) -> dict[str, int]:
     key = arch.value if hasattr(arch, 'value') else str(arch)
     s = _SIZE_CACHE.get(key)
     if s is None:
@@ -76,7 +82,8 @@ def _sizes(arch):
     return s
 
 
-def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
+def measure_isa(isa: str, spec: ISASpec, *, iters: int = 200000,
+                opt: str = '-O3') -> dict[str, Any] | None:
     import time
 
     from microtaint.instrumentation.cell_c import taint_ir_c
@@ -94,7 +101,10 @@ def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
     alias = _engine_names(spec.arch, [r.name for r in spec.regs])
     slot_of = slot_resolver(spec.arch, slot)
 
-    progs, srcs, fnames, labels = [], [], [], []
+    progs: list[Any] = []
+    srcs: list[str] = []
+    fnames: list[str] = []
+    labels: list[str] = []
     declined = 0
     for ins in spec.instructions:
         try:
@@ -141,8 +151,11 @@ def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
         for k in range(total):
             O[k] = tnts[k]
         call(i, V, T, O)
-        bad = [k for k, n in p.outputs
-               if slot_of(k) is not None and O[slot_of(k)] != got_i[slot_of(k)]]
+        bad = []
+        for k, _n in p.outputs:
+            s = slot_of(k)
+            if s is not None and O[s] != got_i[s]:
+                bad.append(k)
         if bad:
             mismatches.append((label, bad))
         ns_c = bench(i, V, T, O, iters)
@@ -166,14 +179,14 @@ def measure_isa(isa, spec, *, iters=200000, opt='-O3'):
             'n_jit': n_jit[0], 'jit_compile_s': jit_compile_total[0]}
 
 
-def _q(xs, q):
+def _q(xs: list[float], q: float) -> float:
     if not xs:
         return 0.0
     s = sorted(xs)
     return s[min(len(s) - 1, int(q * len(s)))]
 
 
-def summarize(isa, res):
+def summarize(isa: str, res: dict[str, Any]) -> str:
     rows = res['rows']
     ops = [r[1] for r in rows]
     cns = [r[2] for r in rows]
@@ -190,7 +203,7 @@ def summarize(isa, res):
             f'interp mean={sum(ins)/n:7.1f} ns')
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     import argparse
 
     from benchmark.instruction_bank import load_bank

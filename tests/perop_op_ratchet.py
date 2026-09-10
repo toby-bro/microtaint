@@ -32,13 +32,21 @@ import random
 from pathlib import Path
 from typing import Any
 
+#: One measured ISA: {'ops': {label: op count}, 'declined': [label, ...]}.
+Measured = dict[str, dict[str, Any]]
+#: (isa, label, baseline, now) -- baseline is 'declined' for a new answer.
+Change = tuple[str, str, Any, Any]
+#: (isa, label, baseline op count).  A decline has no 'now' to report.
+NewDecline = tuple[str, str, Any]
+
 from tests.perop_c_bank import Declined, perop_c_step
 
 BASELINE = Path(__file__).parent / 'perop_op_baseline.json'
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
-def _vector(reg_names, label):
+def _vector(reg_names: list[str], label: str,
+            ) -> tuple[dict[str, int], dict[str, int]]:
     """The pinned (taint, values) pair for one instruction.
 
     Dense taint on the first few registers: the op count must reflect the work
@@ -46,14 +54,14 @@ def _vector(reg_names, label):
     is provably clean.  Measuring the clean case would flatter every number.
     """
     rng = random.Random(f'opcount:{label}')
-    taint = {}
+    taint: dict[str, int] = {}
     for i, r in enumerate(reg_names):
         taint[r] = MASK64 if i < 4 else 0
     values = {r: rng.randint(1, MASK64) for r in reg_names}
     return taint, values
 
 
-def measure(isas=None):
+def measure(isas: list[str] | None = None) -> Measured:
     """-> {isa: {'ops': {label: n}, 'declined': [label, ...]}}"""
     from benchmark.instruction_bank import load_bank
 
@@ -79,15 +87,15 @@ def measure(isas=None):
     return out
 
 
-def _quantile(xs, q):
+def _quantile(xs: list[int], q: float) -> int:
     if not xs:
         return 0
     s = sorted(xs)
     return s[min(len(s) - 1, int(q * len(s)))]
 
 
-def summarize(measured):
-    lines = []
+def summarize(measured: Measured) -> str:
+    lines: list[str] = []
     grand_ops = grand_n = grand_dec = 0
     for isa, d in sorted(measured.items()):
         vals = list(d['ops'].values())
@@ -108,9 +116,12 @@ def summarize(measured):
     return '\n'.join(lines)
 
 
-def compare(measured, baseline):
+def compare(measured: Measured, baseline: Measured,
+            ) -> tuple[list[Change], list[Change], list[NewDecline]]:
     """-> (regressions, improvements, new_declines) with per-instruction detail."""
-    regressions, improvements, new_declines = [], [], []
+    regressions: list[Change] = []
+    improvements: list[Change] = []
+    new_declines: list[NewDecline] = []
     for isa, d in measured.items():
         base = baseline.get(isa)
         if base is None:
@@ -133,17 +144,18 @@ def compare(measured, baseline):
     return regressions, improvements, new_declines
 
 
-def load_baseline():
+def load_baseline() -> Measured | None:
     if not BASELINE.exists():
         return None
-    return json.loads(BASELINE.read_text())
+    loaded: Measured = json.loads(BASELINE.read_text())
+    return loaded
 
 
-def save_baseline(measured):
+def save_baseline(measured: Measured) -> None:
     BASELINE.write_text(json.dumps(measured, indent=1, sort_keys=True) + '\n')
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument('--update', action='store_true',

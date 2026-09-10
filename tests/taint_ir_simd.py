@@ -23,6 +23,9 @@ here: it named four forms and there were eight.
 from __future__ import annotations
 
 import random
+from typing import Any
+
+from microtaint.types import Architecture
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 CODE_ADDR = 0x1000
@@ -37,12 +40,12 @@ LANES = {
 _PROBE_MARKERS = (0xDEADBEEFCAFEBABE, 0x0123456789ABCDEF)
 
 
-def _uc_regs():
+def _uc_regs() -> dict[str, int]:
     import unicorn.x86_const as ux
     return {'XMM0': ux.UC_X86_REG_XMM0, 'XMM1': ux.UC_X86_REG_XMM1}
 
 
-def _run(code, lane_vals):
+def _run(code: bytes, lane_vals: dict[str, int]) -> dict[str, int]:
     import unicorn
     regs = _uc_regs()
     uc = unicorn.Uc(unicorn.UC_ARCH_X86, unicorn.UC_MODE_64)
@@ -58,7 +61,7 @@ def _run(code, lane_vals):
             for name, (reg, sh) in LANES.items()}
 
 
-def _unicorn_honours_the_encoding(code):
+def _unicorn_honours_the_encoding(code: bytes) -> bool:
     """Does Unicorn execute the instruction this encoding names?
 
     A VEX three-operand form never reads its destination, so the same
@@ -90,7 +93,8 @@ def _unicorn_honours_the_encoding(code):
     return outs[0] == outs[1]
 
 
-def ground_truth(code, taint, vals):
+def ground_truth(code: bytes, taint: dict[str, int],
+                 vals: dict[str, int]) -> dict[str, int]:
     base = {n: vals[n] & ~taint[n] & MASK64 for n in LANES}
     b = _run(code, base)
     res = {n: 0 for n in LANES}
@@ -109,12 +113,14 @@ def ground_truth(code, taint, vals):
     return res
 
 
-def ir_answer(arch, code, taint, vals):
+def ir_answer(arch: Architecture, code: bytes, taint: dict[str, int],
+              vals: dict[str, int]) -> dict[str, int]:
     from microtaint.taint_ir.frompcode import build_ir
     from tests.taint_ir_bank import name_offset
 
     prog = build_ir(arch, code)
-    v, t = {}, {}
+    v: dict[tuple[Any, ...], int] = {}
+    t: dict[tuple[Any, ...], int] = {}
     for n in LANES:
         off = name_offset(arch, n)
         for sz in range(1, 9):
@@ -131,7 +137,9 @@ def ir_answer(arch, code, taint, vals):
     return res
 
 
-def run_simd_bank(n_vec=5, seed=99):
+def run_simd_bank(n_vec: int = 5, seed: int = 99,
+                  ) -> tuple[int, dict[str, list[tuple[str, str, dict[str, str]]]],
+                             list[str]]:
     """-> (n_cases, {label: [(lane, missing_bits, taint)]})"""
     import unicorn
 
@@ -170,7 +178,7 @@ def run_simd_bank(n_vec=5, seed=99):
     return n, under, skipped
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     n, under, skipped = run_simd_bank()
     print(f'SIMD cases={n} instructions_with_under_taint={len(under)} '
           f'not_ground_truth={len(skipped)}')

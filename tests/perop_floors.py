@@ -43,14 +43,20 @@ Register/flag corpus over LE ISAs (AMD64/ARM64/RISCV64), matching the 3a study;
 memory + big-endian come with the corpus extension.  Standalone (pypcode only) --
 no engine coupling, so this cannot regress the live path.
 """
-# ruff: noqa: PLC0415
 # mypy: disable-error-code="no-untyped-def,no-untyped-call,attr-defined,import-untyped,var-annotated"
 from __future__ import annotations
 
-from microtaint.sleigh.lifter import get_context
-from microtaint.types import Architecture
+from typing import Any
 
-from tests.perop_prototype import Unsupported, _apply, _mask, _signed
+from microtaint.sleigh.lifter import get_context
+from tests.perop_prototype import Unsupported, _apply, _mask
+
+#: `Unsupported` is re-exported on purpose: a caller that catches
+#: NeedsMonolithic almost always catches its base too, and mypy will not
+#: honour a re-export that is not declared here.
+__all__ = ['NeedsMonolithic', 'PerOpFloors', 'Unsupported',
+           'engine_perop_floors', 'perop_floors_slicewise',
+           'perop_floors_taint']
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 
@@ -105,7 +111,8 @@ def _smear_up(m: int, om: int) -> int:
     return (~((1 << p) - 1)) & om
 
 
-def _add_carry_full(a_v, a_t, b_v, b_t, width, cin_v=0, cin_t=0):
+def _add_carry_full(a_v: int, a_t: int, b_v: int, b_t: int, width: int,
+                    cin_v: int = 0, cin_t: int = 0) -> tuple[int, int, int]:
     """EXACT per-bit taint of a + b + carry_in over `width` bits, value-aware.
 
     Ripples the carry low-to-high carrying (value, taint) for each carry bit.  A
@@ -140,12 +147,13 @@ def _add_carry_full(a_v, a_t, b_v, b_t, width, cin_v=0, cin_t=0):
     return out_t, ct, cin_msb_t
 
 
-def _add_carry_taint(a_v, a_t, b_v, b_t, width, cin_v=0, cin_t=0) -> int:
+def _add_carry_taint(a_v: int, a_t: int, b_v: int, b_t: int, width: int,
+                     cin_v: int = 0, cin_t: int = 0) -> int:
     return _add_carry_full(a_v, a_t, b_v, b_t, width, cin_v, cin_t)[0]
 
 
-def _is_const(vn) -> bool:
-    return vn.space.name == 'const'
+def _is_const(vn: Any) -> bool:
+    return bool(vn.space.name == 'const')
 
 
 #: A varnode's identity: (space name, offset, size).
@@ -297,9 +305,9 @@ class PerOpFloors:
         self.taint: dict[tuple[str, int], int] = {}  # (space, offset) -> taint byte
 
     # -- byte-wise varnode access (mirrors perop_prototype for aliasing) --
-    def _rd_val(self, vn) -> int:
+    def _rd_val(self, vn: Any) -> int:
         if vn.space.name == 'const':
-            return vn.offset & _mask(vn.size)
+            return int(vn.offset) & _mask(vn.size)
         return self._gather(self.val, vn)
 
     def _rd_taint(self, vn) -> int:
@@ -307,7 +315,7 @@ class PerOpFloors:
             return 0
         return self._gather(self.taint, vn)
 
-    def _gather(self, store, vn) -> int:
+    def _gather(self, store: dict[tuple[str, int], int], vn: Any) -> int:
         v = 0
         for i in range(vn.size):
             byte = store.get((vn.space.name, vn.offset + i), 0)
@@ -354,7 +362,7 @@ class PerOpFloors:
             return (a_t >> shift) & om
         if name == 'PIECE':
             lo_bits = 8 * op.inputs[1].size
-            return ((a_t << lo_bits) | (b_t & _mask(op.inputs[1].size))) & om
+            return int(((a_t << lo_bits) | (b_t & _mask(op.inputs[1].size))) & om)
         if name == 'INT_NEGATE':
             return a_t & om
         if name == 'INT_XOR':
@@ -432,7 +440,7 @@ class PerOpFloors:
             if not any(in_t):
                 return 0
             nbits = (8 * isz).bit_length()
-            return ((1 << nbits) - 1) & om
+            return int(((1 << nbits) - 1) & om)
         if name in _AVALANCHE:
             return om if any(in_t) else 0
 
@@ -563,9 +571,9 @@ def engine_perop_floors(arch, code, regs, in_taint, in_values, *, circuit=None):
 
 
 if __name__ == '__main__':
-    from tests.oracle_harness import classify, reference_taint
     from benchmark.instruction_bank import isa_registers
     from microtaint.types import Architecture as A
+    from tests.oracle_harness import classify, reference_taint
     regs = list(isa_registers('AMD64'))
     rn = [r.name for r in regs]
     cases = [
