@@ -13,6 +13,7 @@ import sys
 import time
 from typing import Any
 
+from microtaint.debug.reg_aliases import RegisterAliases
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
@@ -47,12 +48,22 @@ from microtaint.types import Architecture, Register
 # The XMM lanes are required for soundness on instructions that
 # transit taint through the SIMD register file (e.g.
 # movq xmm0, rax; paddq; movq rax, xmm0).
+#
+# They must be named the way the compute path names them, which is NOT
+# 'XMM0_LO': the engine tracks vector registers as geometry-derived 8-byte
+# lanes called VL_<sleigh-byte-offset>.  A state_format entry the mapper
+# cannot resolve is silently inert -- no error, just an instruction whose
+# SIMD taint has nowhere to live -- so `movq xmm0,rax; paddq xmm0,xmm1;
+# movq rax,xmm0` comes back reporting less taint than moved.  RegisterAliases
+# derives the lane names from pypcode's own register geometry, so this stays
+# correct if the offsets move.
+_ALIASES = RegisterAliases(Architecture.AMD64)
+_XMM_LANES = [name for n in range(8) for name in _ALIASES.to_engine_names(f'XMM{n}')]
 _REGS = (
     [Register('RAX', 64), Register('RBX', 64), Register('RCX', 64), Register('RDX', 64)]
     + [Register('RSI', 64), Register('RDI', 64), Register('RSP', 64), Register('RBP', 64)]
     + [Register(f'R{n}', 64) for n in range(8, 16)]
-    + [Register(f'XMM{n}_LO', 64) for n in range(8)]
-    + [Register(f'XMM{n}_HI', 64) for n in range(8)]
+    + [Register(name, 64) for name in _XMM_LANES]
 )
 
 # Module-level singleton.  Building a CellSimulator allocates a Unicorn
