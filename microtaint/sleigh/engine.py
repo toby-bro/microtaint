@@ -292,6 +292,25 @@ class DependencySet:
 # SIMD file (x86 XMM/YMM/ZMM, ARM64 NEON q/z, PPC AltiVec vs, RISC-V V) is taint-
 # tracked without being enumerated in the state_format.  This is the ISA-general
 # form of the old x86-only XMM<n>_LO/_HI lane naming: geometry, not names.
+_VEC_LANE_BYTES = 8
+_VEC_LANE_BITS = _VEC_LANE_BYTES * 8
+
+
+def _vec_lane_span(offset: int, size: int, vec_bases: frozenset[int]) -> list[int]:
+    """The geometry lanes a register-space varnode covers, or [] if it does not
+    lie wholly inside a vector region.  `vec_bases` comes from _vector_lane_bases,
+    so this is derived from the Sleigh register layout with no per-ISA table."""
+    base = offset & ~(_VEC_LANE_BYTES - 1)
+    end = offset + size
+    lanes: list[int] = []
+    while base < end:
+        if base not in vec_bases:
+            return []
+        lanes.append(base)
+        base += _VEC_LANE_BYTES
+    return lanes
+
+
 _VEC_LANE_BASES_CACHE: dict[str, frozenset[int]] = {}
 
 
@@ -1013,13 +1032,31 @@ def _chain_intermediate_flags(
     """Extra state entries a multi-instruction chain must thread: every
     register-space varnode WRITTEN by one op and READ by another in the sequence
     (an intra-sequence intermediate).  Discovered from the p-code, so it is
-    ISA-agnostic (x86 CF/OF, ARM64 C, PPC xer_ca, SPARC i_cf, ...).  Only <=8-byte
-    scalars are threaded -- a wider register-space varnode is a vector register
-    handled by the SIMD lane machinery (adding one builds a >64-bit Register and
-    corrupts the mask path).  A vector-region lane uses its geometry name
-    VL_<offset> (matching the SIMD path + caller state_format), not pypcode's
-    sub-register name (e.g. XMM0_Qa) which would not survive the caller-format
-    filter in ChainedCircuit.evaluate.  Over-inclusion is safe (filtered back)."""
+    ISA-agnostic (x86 CF/OF, ARM64 C, PPC xer_ca, SPARC i_cf, ...).
+
+    Inside a vector register the unit is the LANE, never the varnode.  One SIMD
+    sequence names the same bytes at three different widths -- `paddb` writes
+    sixteen 1-byte sub-registers, `psllq` two 8-byte ones, `pxor` the whole
+    16-byte register -- and to the rest of the engine all of them are the same
+    two 64-bit lanes.  So a varnode lying inside a vector region is threaded as
+    the whole lanes it covers, under the geometry name VL_<lane_base> that the
+    SIMD path and the caller state_format use (pypcode's sub-register name, e.g.
+    XMM0_Qa, would not survive the caller-format filter in
+    ChainedCircuit.evaluate).
+
+    Threading them at the varnode's own width instead under-tainted, two ways.
+    The intra-lane byte names (XMM0_Bb..XMM0_Bp) became fourteen separate 1-byte
+    state entries that FRAGMENT the lane the SIMD path tracks, and a caller that
+    does name its vector registers then lost the flow entirely.  A caller that
+    does not name them got the lane itself threaded at the byte varnode's width,
+    declaring a 64-bit lane 8 bits wide and truncating everything above its low
+    byte.  Measured on `movq xmm0,rax; movq xmm1,rbx; paddb; pxor; psllq xmm0,8;
+    movq rax,xmm0`, against a ground truth of 0x6080000000800000: 0x0 the first
+    way, 0xe000 the second, 0xe0e0e0e0e0e0e000 (sound) with lanes.
+
+    Everything outside a vector region is a scalar and keeps its own width; a
+    >8-byte scalar is skipped, since a wider Register corrupts the mask path.
+    Over-inclusion is safe (filtered back)."""
     name_by_key: dict[tuple[int, int], str] = {
         (vn.offset, vn.size): nm for nm, vn in ctx.registers.items() if vn.space.name == 'register'
     }
@@ -1034,12 +1071,25 @@ def _chain_intermediate_flags(
     existing = {name for name, _ in reg_names_tuple}
     vec_bases = _vector_lane_bases(ctx, str(arch))
     extra: list[tuple[str, int]] = []
+    seen: set[str] = set()
+
+    def _emit(name: str, bits: int) -> None:
+        if name in existing or name in seen:
+            return
+        seen.add(name)
+        extra.append((name, bits))
+
     for k in sorted(written & read):
+        lanes = _vec_lane_span(k[0], k[1], vec_bases)
+        if lanes:
+            for base in lanes:
+                _emit(f'VL_{base:#x}', _VEC_LANE_BITS)
+            continue
         if k[1] > 8:
             continue
-        nm = f'VL_{k[0]:#x}' if k[0] in vec_bases else name_by_key.get(k)
-        if nm is not None and nm not in existing:
-            extra.append((nm, k[1] * 8))
+        nm = name_by_key.get(k)
+        if nm is not None:
+            _emit(nm, k[1] * 8)
     return tuple(extra)
 
 
