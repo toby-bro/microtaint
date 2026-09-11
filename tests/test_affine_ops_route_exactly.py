@@ -68,37 +68,50 @@ from microtaint.types import Architecture
 # this test rather than passing quietly.  That is deliberate: the whole point is
 # to notice progress, and a non-strict marker hid seven of these for months.
 AFFINE_FORMS: list[tuple[Architecture, str, str, bool]] = [
-    # --- AMD64: pure movement (still re-executes) ---
-    (Architecture.AMD64, 'mov rax, rbx',        '4889d8',   False),
-    (Architecture.AMD64, 'mov eax, ebx',        '89d8',     False),
-    (Architecture.AMD64, 'movzx eax, bl',       '0fb6c3',   False),
+    # --- AMD64: pure movement (routes since 2026-09-11) ---
+    (Architecture.AMD64, 'mov rax, rbx',        '4889d8',   True),
+    (Architecture.AMD64, 'mov eax, ebx',        '89d8',     True),
+    (Architecture.AMD64, 'movzx eax, bl',       '0fb6c3',   True),
+    # movsx: the sign bit feeds 33 output bits, and the Expr language has no
+    # sign-extend node, so the permutation decomposition declines rather than
+    # emit 33 shift terms.  Needs a SEXT expression, not a better recogniser.
     (Architecture.AMD64, 'movsx rax, ebx',      '4863c3',   False),
+    # not / mvn: affine (L is the identity, the negation is all in a(c)), but
+    # determine_category calls INT_NEGATE Monotonic, so the slice never reaches
+    # the MAPPED branch at all.  A categoriser change, with a far wider blast
+    # radius than the routing above; deliberately not bundled with it.
     (Architecture.AMD64, 'not rax',             '48f7d0',   False),
     # --- AMD64: bitwise and constant shift (routes) ---
     (Architecture.AMD64, 'xor rax, rbx',        '4831d8',   True),
     (Architecture.AMD64, 'shl rax, 3',          '48c1e003', True),
     (Architecture.AMD64, 'shr rax, 3',          '48c1e803', True),
     # --- ARM64 ---
-    (Architecture.ARM64, 'mov x0, x1',          'e00301aa', False),
-    (Architecture.ARM64, 'mvn x0, x1',          'e00321aa', False),
+    (Architecture.ARM64, 'mov x0, x1',          'e00301aa', True),
+    (Architecture.ARM64, 'mvn x0, x1',          'e00321aa', False),   # see `not rax`
     (Architecture.ARM64, 'eor x0, x0, x1',      '000001ca', True),
     (Architecture.ARM64, 'lsl x0, x0, #3',      '00f47cd3', True),
     # --- RISCV64 ---
-    (Architecture.RISCV64, 'mv a0, a1',         '13850500', False),
+    (Architecture.RISCV64, 'mv a0, a1',         '13850500', True),
     (Architecture.RISCV64, 'xor a0, a0, a1',    '33452500', True),
     (Architecture.RISCV64, 'slli a0, a0, 3',    '13153500', True),
 ]
 
-#: Why a form that does not route is expected not to.  One reason, because it is
-#: one cause: the affine classifier halves the differential instead of
-#: eliminating it, so a movement whose linear map is the identity still executes
-#: the instruction once.  The property DOES hold on the compiled path --
-#: microtaint/taint_ir lowers `mov rax, rbx` to two operations and no cell (see
-#: tests/perop_op_ratchet.py, tests/taint_ir_perf.py) -- so this is kept as a
-#: red specification the old path fails to meet, not as a bug to be silenced.
+#: Why a form that does not route is expected not to.  The original cause -- the
+#: affine classifier halving the differential instead of eliminating it, so a
+#: movement whose linear map is the identity still executed the instruction once
+#: -- was FIXED on 2026-09-11: `make_mapped_single_call` now recovers L by
+#: probing f on the basis vectors at synthesis and emits it as shift terms when
+#: it is a permutation or selection, so the movement forms above route with no
+#: cell.  `bswap`, `and imm` and `or imm` came along for free.
+#:
+#: The two remaining entries are NOT that cause, and each names its own in the
+#: table: `movsx` needs a sign-extend Expr node, `not`/`mvn` need INT_NEGATE to
+#: stop being categorised Monotonic.  Keep them separate rather than reviving one
+#: shared excuse; a single reason string for two different causes is how the
+#: first one stayed invisible.
 _STILL_RE_EXECUTES = (
-    'the whole-instruction differential still re-executes this form in SLEIGH; '
-    'the compiled path routes it without a cell'
+    'this form still re-executes a SLEIGH cell; see its comment in AFFINE_FORMS '
+    'for which of the two remaining causes applies'
 )
 
 

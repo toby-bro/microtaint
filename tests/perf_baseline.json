@@ -13,7 +13,7 @@
     "AND r32,imm32": {
       "assigns": 7,
       "cells": 2,
-      "nodes": 124
+      "nodes": 122
     },
     "BSF r32,r32 AX": {
       "assigns": 3,
@@ -72,18 +72,18 @@
     },
     "MOV r16,r16": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "MOV r32,r32": {
       "assigns": 2,
-      "cells": 1,
-      "nodes": 30
+      "cells": 0,
+      "nodes": 28
     },
     "MOV r32,r32 zext": {
       "assigns": 2,
-      "cells": 1,
-      "nodes": 30
+      "cells": 0,
+      "nodes": 28
     },
     "MOV r64,0": {
       "assigns": 6,
@@ -97,13 +97,13 @@
     },
     "MOV r64,r64": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "MOV r8,r8": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "MOVSX r64,r16": {
       "assigns": 1,
@@ -117,18 +117,18 @@
     },
     "MOVZX r32,r16": {
       "assigns": 2,
-      "cells": 1,
-      "nodes": 30
+      "cells": 0,
+      "nodes": 28
     },
     "MOVZX r32,r8": {
       "assigns": 2,
-      "cells": 1,
-      "nodes": 30
+      "cells": 0,
+      "nodes": 28
     },
     "MOVZX r64,r8": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "NOP": {
       "assigns": 0,
@@ -393,7 +393,7 @@
     "and ax, 0x7f": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "and ax, bx": {
       "assigns": 6,
@@ -403,7 +403,7 @@
     "and eax, 0xffff": {
       "assigns": 7,
       "cells": 2,
-      "nodes": 124
+      "nodes": 122
     },
     "and eax, ebx": {
       "assigns": 7,
@@ -413,32 +413,32 @@
     "and rax, 0x7f": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "and rax, 0x7fffffff": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "and rax, 0xff0f": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "and rax, 1": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "and rax, 15": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "and rax, 3": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "and rax, rbx": {
       "assigns": 6,
@@ -677,8 +677,8 @@
     },
     "bts ax, 0x7f": {
       "assigns": 2,
-      "cells": 2,
-      "nodes": 50
+      "cells": 1,
+      "nodes": 49
     },
     "bts ax, bx": {
       "assigns": 2,
@@ -692,33 +692,33 @@
     },
     "bts rax, 0x7f": {
       "assigns": 2,
-      "cells": 2,
-      "nodes": 50
+      "cells": 1,
+      "nodes": 49
     },
     "bts rax, 1": {
       "assigns": 2,
-      "cells": 2,
-      "nodes": 50
+      "cells": 1,
+      "nodes": 49
     },
     "bts rax, 15": {
       "assigns": 2,
-      "cells": 2,
-      "nodes": 50
+      "cells": 1,
+      "nodes": 49
     },
     "bts rax, 3": {
       "assigns": 2,
-      "cells": 2,
-      "nodes": 50
+      "cells": 1,
+      "nodes": 49
     },
     "bts rax, 31": {
       "assigns": 2,
-      "cells": 2,
-      "nodes": 50
+      "cells": 1,
+      "nodes": 49
     },
     "bts rax, 63": {
       "assigns": 2,
-      "cells": 2,
-      "nodes": 50
+      "cells": 1,
+      "nodes": 49
     },
     "bts rax, rbx": {
       "assigns": 2,
@@ -1507,13 +1507,13 @@
     },
     "mov al, bl": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "mov eax, ebx": {
       "assigns": 2,
-      "cells": 1,
-      "nodes": 30
+      "cells": 0,
+      "nodes": 28
     },
     "movsx eax, bl": {
       "assigns": 2,
@@ -1542,23 +1542,23 @@
     },
     "movzx eax, bl": {
       "assigns": 2,
-      "cells": 1,
-      "nodes": 30
+      "cells": 0,
+      "nodes": 28
     },
     "movzx rax, bl": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "movzx rax, bx": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "movzx rax, cl": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "mul al": {
       "assigns": 3,
@@ -1673,7 +1673,7 @@
     "or ax, 0x7f": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "or ax, bx": {
       "assigns": 6,
@@ -1683,7 +1683,7 @@
     "or eax, 0xffff": {
       "assigns": 7,
       "cells": 2,
-      "nodes": 124
+      "nodes": 122
     },
     "or eax, ebx": {
       "assigns": 7,
@@ -1693,32 +1693,32 @@
     "or rax, 0x0ff0": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "or rax, 0x7f": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "or rax, 0x7fffffff": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "or rax, 1": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "or rax, 15": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "or rax, 3": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 109
+      "nodes": 108
     },
     "or rax, rbx": {
       "assigns": 6,
@@ -1743,17 +1743,17 @@
     "push rax; adc qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
       "cells": 7,
-      "nodes": 1042
+      "nodes": 859
     },
     "push rax; add qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 470
+      "nodes": 386
     },
     "push rax; add qword ptr [rsp], rbx; pop rcx": {
       "assigns": 9,
       "cells": 7,
-      "nodes": 684
+      "nodes": 559
     },
     "push rax; and qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
@@ -1768,17 +1768,17 @@
     "push rax; dec qword ptr [rsp]; pop rcx": {
       "assigns": 8,
       "cells": 2,
-      "nodes": 469
+      "nodes": 385
     },
     "push rax; inc qword ptr [rsp]; pop rcx": {
       "assigns": 8,
       "cells": 2,
-      "nodes": 469
+      "nodes": 385
     },
     "push rax; neg qword ptr [rsp]; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 547
+      "nodes": 463
     },
     "push rax; not qword ptr [rsp]; pop rcx": {
       "assigns": 4,
@@ -1818,12 +1818,12 @@
     "push rax; sub qword ptr [rsp], 0x33; pop rcx": {
       "assigns": 9,
       "cells": 2,
-      "nodes": 470
+      "nodes": 386
     },
     "push rax; xadd qword ptr [rsp], rbx; pop rcx": {
       "assigns": 10,
       "cells": 7,
-      "nodes": 739
+      "nodes": 614
     },
     "push rax; xchg qword ptr [rsp], rbx; pop rcx": {
       "assigns": 5,
@@ -2018,7 +2018,7 @@
     "ror al": {
       "assigns": 3,
       "cells": 2,
-      "nodes": 81
+      "nodes": 80
     },
     "ror ax, 0x7f": {
       "assigns": 3,
@@ -2098,7 +2098,7 @@
     "sar al": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 103
+      "nodes": 102
     },
     "sar ax, 0x7f": {
       "assigns": 6,
@@ -2257,13 +2257,13 @@
     },
     "setb al": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "setb r8b": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "setbe al": {
       "assigns": 1,
@@ -2277,13 +2277,13 @@
     },
     "sete al": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "sete r8b": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "setg al": {
       "assigns": 1,
@@ -2367,33 +2367,33 @@
     },
     "seto al": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "seto r8b": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "setp al": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "setp r8b": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "sets al": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "sets r8b": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "shl al": {
       "assigns": 6,
@@ -2829,8 +2829,8 @@
     },
     "movdqa xmm0, xmm1": {
       "assigns": 2,
-      "cells": 2,
-      "nodes": 30
+      "cells": 0,
+      "nodes": 28
     },
     "packuswb xmm0, xmm1": {
       "assigns": 16,
@@ -2894,8 +2894,8 @@
     },
     "vmovdqa xmm0, xmm1": {
       "assigns": 10,
-      "cells": 2,
-      "nodes": 66
+      "cells": 0,
+      "nodes": 62
     },
     "vpaddb xmm0, xmm1, xmm2": {
       "assigns": 8,
@@ -3131,13 +3131,13 @@
     },
     "and x0, x1, #0xff00ff00ff00ff": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and x0, x1, x2": {
       "assigns": 1,
@@ -3201,8 +3201,8 @@
     },
     "ands x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ands x0, x1, x2": {
       "assigns": 1,
@@ -3256,8 +3256,8 @@
     },
     "asr x0, x1, #0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "asr x0, x1, #1": {
       "assigns": 1,
@@ -3366,8 +3366,8 @@
     },
     "bic x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "bic x0, x1, x2": {
       "assigns": 1,
@@ -3416,8 +3416,8 @@
     },
     "bics x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "bics x0, x1, x2": {
       "assigns": 1,
@@ -4121,23 +4121,23 @@
     },
     "mov x0, x1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "movk x0, #0x1234": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "movk x0, #0x1234, lsl #16": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "movk x0, #0x1234, lsl #32": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "movn x0, #0x1234": {
       "assigns": 1,
@@ -4261,8 +4261,8 @@
     },
     "orn x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "orn x0, x1, x2": {
       "assigns": 1,
@@ -4316,13 +4316,13 @@
     },
     "orr x0, x1, #0x5555555555555555": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "orr x0, x1, #4095": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "orr x0, x1, x2": {
       "assigns": 1,
@@ -4926,13 +4926,13 @@
     },
     "uxtb x0, w1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "uxth x0, w1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     }
   },
   "ARM64_SIMD": {
@@ -4958,8 +4958,8 @@
     },
     "mov v0.16b, v1.16b": {
       "assigns": 4,
-      "cells": 3,
-      "nodes": 80
+      "cells": 1,
+      "nodes": 78
     },
     "mul v0.4s, v1.4s, v2.4s": {
       "assigns": 6,
@@ -5125,8 +5125,8 @@
     },
     "and $2, $4, $4": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and $2, $4, $5": {
       "assigns": 1,
@@ -5135,8 +5135,8 @@
     },
     "and $2, $4, -1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and $2, $4, 0": {
       "assigns": 1,
@@ -5145,33 +5145,33 @@
     },
     "and $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and $2, $4, 1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and $2, $4, 100": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and $2, $4, 15": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and $2, $4, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and $2, $4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "and $4, $5": {
       "assigns": 1,
@@ -5180,13 +5180,13 @@
     },
     "andi $2, $4, 0xff0f": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "andi $2, 0x1234": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "clo $2, $4": {
       "assigns": 1,
@@ -5625,38 +5625,38 @@
     },
     "or $2, $4, 0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "or $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "or $2, $4, 1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "or $2, $4, 100": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "or $2, $4, 15": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "or $2, $4, 31": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "or $2, $4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "or $4, $5": {
       "assigns": 1,
@@ -5665,13 +5665,13 @@
     },
     "ori $2, $4, 0x0ff0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ori $2, 0x1234": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "sb $4, -16($sp); lb $2, -16($sp)": {
       "assigns": 2,
@@ -5886,22 +5886,22 @@
     "srl $2, $4, 1": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 30
+      "nodes": 31
     },
     "srl $2, $4, 15": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 30
+      "nodes": 31
     },
     "srl $2, $4, 31": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 30
+      "nodes": 31
     },
     "srl $2, $4, 7": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 30
+      "nodes": 31
     },
     "srlv $2, $4, $4": {
       "assigns": 2,
@@ -6967,88 +6967,88 @@
     },
     "ori 0, 3, 4": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ori 3, 4, 0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ori 3, 4, 0x0ff0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ori 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ori 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ori 3, 4, 15": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ori 3, 4, 5": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ori 3, 4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "ori 5, 6, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "oris 0, 3, 4": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "oris 3, 4, 0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "oris 3, 4, 0x1234": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "oris 3, 4, 0x7fff": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "oris 3, 4, 15": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "oris 3, 4, 5": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "oris 3, 4, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "oris 5, 6, 7": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "rlwimi 3, 4, 1, 0, 31": {
       "assigns": 1,
@@ -7282,8 +7282,8 @@
     },
     "srawi 3, 4, 0": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "srawi 3, 4, 1": {
       "assigns": 1,
@@ -7659,8 +7659,8 @@
     },
     "andi": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "auipc": {
       "assigns": 1,
@@ -7724,8 +7724,8 @@
     },
     "ori": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 14
     },
     "rem": {
       "assigns": 1,
@@ -7829,8 +7829,8 @@
     },
     "srliw": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 18
+      "cells": 0,
+      "nodes": 19
     },
     "srlw": {
       "assigns": 1,
@@ -7860,7 +7860,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-10T02:22:15.400108+00:00",
+    "generated": "2026-09-10T23:56:56.511063+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

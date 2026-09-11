@@ -89,9 +89,24 @@ def _corners(rng: random.Random) -> Iterator[dict[str, int]]:
 
 
 @pytest.mark.parametrize(('label', 'hexs'), MAPPED_CASES.items(), ids=MAPPED_CASES.keys())
-def test_mapped_emits_single_call(label: str, hexs: str) -> None:
+def test_mapped_emits_at_most_a_single_call(label: str, hexs: str) -> None:
+    """A MAPPED slice costs at most ONE cell, and zero when L is routable.
+
+    This asserted ``== 1`` until 2026-09-11, which quietly made the single-call
+    form the goal rather than a waypoint.  It is not the goal: for an affine
+    slice `f(x) = L(x) XOR a`, L can be recovered at synthesis by probing f on
+    the basis vectors, and a permutation or selection then emits as a couple of
+    shifts with NO cell at all.  Six forms here (`mov`, `movzx`, `bswap`, `and
+    imm`, `or imm`) dropped to zero the day that landed, and an equality
+    assertion would have called that a regression.
+
+    The bound is what matters, so assert the bound.  ``test_single_call_matches_
+    the_differential`` below is what actually checks the taint is unchanged;
+    counting cells only describes the mechanism.
+    """
     _circ, expr = _rax_expr(hexs)
-    assert _cell_count(repr(expr)) == 1, f'{label}: expected single-call (1 cell), got {repr(expr)[:120]}'
+    n = _cell_count(repr(expr))
+    assert n <= 1, f'{label}: expected at most one cell, got {n}: {repr(expr)[:120]}'
 
 
 @pytest.mark.parametrize(('label', 'hexs'), CLOSED_FORM_CASES.items(), ids=CLOSED_FORM_CASES.keys())
@@ -103,6 +118,16 @@ def test_closed_form_emits_no_call(label: str, hexs: str) -> None:
 @pytest.mark.parametrize(('label', 'hexs'), {**MAPPED_CASES, **CLOSED_FORM_CASES}.items(),
                          ids=list(MAPPED_CASES) + list(CLOSED_FORM_CASES))
 def test_single_call_equals_differential(label: str, hexs: str, sim: CellSimulator) -> None:
+    """The emitted taint equals an independently computed differential.
+
+    This is the gate for BOTH shortcuts on the affine path: the one-cell form and
+    the zero-cell routed form that replaced it for permutations and selections.
+    The reference is recomputed here from `f(V|T) XOR f(V&~T)` rather than taken
+    from the rule, so a rule that agrees with itself cannot pass.
+
+    Cell counting (above) only describes the mechanism. If a shortcut is ever
+    wrong, it fails HERE.
+    """
     circ, _ = _rax_expr(hexs)
     rng = random.Random(hash(hexs) & 0xFFFF)
     for taint in _corners(rng):

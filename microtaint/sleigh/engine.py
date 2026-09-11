@@ -2931,7 +2931,13 @@ def generate_taint_assignments(  # noqa: C901
             reg_groups.add(d.name)
         if len(reg_groups) != 1:
             return None
-        if any(op.opcode.name not in ROUTING_OPCODES for op in slice_ops):
+        # Bitwise NOT is affine (`~x = x XOR M`, so L is the identity and the whole
+        # of the negation lands in the constant part a(c) this routine already
+        # folds), but it is not a mapper ROUTING op, so `not rax` / ARM64 `mvn`
+        # never reached this path and paid the full two-cell differential to
+        # compute the identity.  Widened here rather than in mapper.ROUTING_OPCODES
+        # because that set also drives determine_category.
+        if any(op.opcode.name not in _AFFINE_SINGLE_CALL_OPCODES for op in slice_ops):
             return None
         if any(op.opcode.name in CONTROL_FLOW_OPCODES for op in (all_ops or slice_ops)):
             return None
@@ -2950,6 +2956,23 @@ def generate_taint_assignments(  # noqa: C901
             return None
         # Taint mask placed at the input's register positions: (V|T) XOR (V&~T).
         taint_input = BinaryExpr(Op.XOR, cell_inputs_rep1[name], cell_inputs_rep2[name])
+
+        # If L is a permutation/selection, emit it as shifts instead of executing
+        # the instruction to compute it.  `mov rax, rbx` becomes `T_RBX & mask`
+        # rather than a cell re-execution of the identity map.
+        w_in = max(
+            (d.bit_end + 1 for d in dep_set.value_deps if isinstance(d, RegMapping) and d.name == name),
+            default=0,
+        )
+        terms = _affine_routing_terms(
+            arch, hexs, name, out_name, out_bit_start, out_bit_end, w_in, a_c,
+        )
+        if terms is not None:
+            # a(c) is the affine CONSTANT part and is already folded out of L by
+            # the probe (L(e_i) = f(e_i) XOR a), so it must NOT be XOR'd in again
+            # here the way the cell form does.
+            return _emit_routing_terms(terms, taint_input, w_in)
+
         taint_cell = InstructionCellExpr(arch, hexs, out_name, out_bit_start, out_bit_end, {name: taint_input})
         return BinaryExpr(Op.XOR, taint_cell, Constant(a_c, out_bit_end - out_bit_start + 1))
 
@@ -4404,6 +4427,117 @@ def build_polarized_reg(name: str, slices: list[tuple[int, int, int]], replica_i
     if combined_expr is None:
         raise ValueError(f'No slices found for register {name}')
     return combined_expr
+
+
+
+# Ops whose slice keeps `f(x, c) = L(x) XOR a(c)` affine over GF(2): the mapper's
+# routing (bit-permuting) set plus the two bitwise negations, which are affine
+# with L = identity.  Used ONLY by make_mapped_single_call; determine_category
+# keeps the narrower mapper set.
+_AFFINE_SINGLE_CALL_OPCODES: frozenset[str] = frozenset(ROUTING_OPCODES) | {
+    'INT_NEGATE', 'BOOL_NEGATE',
+}
+
+
+
+#: How many distinct ``delta`` groups a routed affine map may use.
+#:
+#: Each group costs an AND, a shift and an XOR, so routing trades one cell
+#: re-execution for a few AST nodes -- a good trade at one or two groups and a
+#: worsening one after that.  `bswap eax` is the case that fixes the number: it
+#: is a 4-byte permutation, so each byte needs its own delta, and routing it grew
+#: the assignment from 30 nodes to 134 while saving a single cell.  The
+#: per-instruction ratchet (tests/test_perf_ratchet.py) reported that as a
+#: regression on 10 instructions across AMD64/ARM64/MIPS64BE, which is exactly
+#: what a ratchet is for: the cell count went DOWN and the work went UP, and only
+#: something counting both would have said so.
+_MAX_ROUTE_GROUPS = 2
+
+
+def _emit_routing_terms(
+    terms: tuple[tuple[int, int], ...], taint_input: Expr, w_in: int,
+) -> Expr:
+    """``XOR_d ((T & mask_d) << d)`` as an Expr tree: the routed form of L."""
+    routed: Expr | None = None
+    for delta, mask in terms:
+        term: Expr = BinaryExpr(Op.AND, taint_input, Constant(mask, max(w_in, 1)))
+        if delta > 0:
+            term = BinaryExpr(Op.LEFT, term, Constant(delta, 8))
+        elif delta < 0:
+            term = BinaryExpr(Op.RIGHT, term, Constant(-delta, 8))
+        routed = term if routed is None else BinaryExpr(Op.XOR, routed, term)
+    assert routed is not None, '_affine_routing_terms never returns an empty tuple'
+    return routed
+
+
+@functools.lru_cache(maxsize=4096)
+def _affine_routing_terms(
+    arch: Architecture, hexs: str, name: str, out_name: str,
+    out_bit_start: int, out_bit_end: int, w_in: int, a_c: int,
+) -> tuple[tuple[int, int], ...] | None:
+    """The linear part of an affine routing slice as ``(delta, mask)`` shift terms,
+    or None if it does not decompose into a few of them.
+
+    A MAPPED slice is GF(2)-affine, ``f(x) = L(x) XOR a``, and the engine already
+    exploits that by executing the instruction ONCE on the taint mask instead of
+    twice for the differential.  But for pure MOVEMENT that is still absurd: `mov
+    rax, rbx` emits a SLEIGH cell re-execution (~776 ns, on the most common
+    instruction in any program) to compute the identity.  L is recoverable at
+    synthesis instead: probe ``f`` on the w basis vectors, take ``L(e_i) = f(e_i)
+    XOR a``, and by linearity ``L(T) = XOR_{i in T} L(e_i)``.
+
+    We emit only the case where every ``L(e_i)`` is a single bit (a permutation or
+    selection), grouped by ``delta = out_pos - i`` so the whole map becomes a
+    handful of ``(T & mask) << delta`` terms.  Fan-out (``movsx``'s sign bit feeds
+    33 output bits) would need a sign-extend node the Expr language does not have,
+    so it keeps the cell rather than emitting 33 terms.
+
+    Affineness is the CALLER's gate, not an assumption made here:
+    make_mapped_single_call only reaches this for a slice whose every op is in
+    _AFFINE_SINGLE_CALL_OPCODES with a single dynamic register input.  That is the
+    same premise the one-cell form this replaces already rests on, so routing
+    needs no further justification than it did.  Whether the emitted taint equals
+    the differential is a test's question and is asked in
+    tests/test_mapped_single_call.py, against an independently computed reference.
+    """
+    from microtaint.simulator import MachineState  # noqa: PLC0415
+
+    if w_in <= 0 or w_in > 64:
+        return None
+    sim = _synth_simulator(arch)
+    probe = InstructionCellExpr(arch, hexs, out_name, out_bit_start, out_bit_end, {})
+
+    def f(x: int) -> int:
+        return int(sim.evaluate_concrete(probe, MachineState(regs={name: x}, mem={})))
+
+    try:
+        return _decompose_linear_map(f, a_c, w_in)
+    except Exception:
+        return None
+
+
+def _decompose_linear_map(
+    f: Callable[[int], int], a_c: int, w_in: int,
+) -> tuple[tuple[int, int], ...] | None:
+    """L as ``(delta, mask)`` shift terms from the basis images, or None.
+
+    ``L(e_i) = f(e_i) XOR a`` by affineness.  A single-bit image at position o
+    means input bit i is routed to o, so it joins the group for
+    ``delta = o - i``; a zero image means the bit feeds nothing.  Anything else
+    is fan-out and declines.
+    """
+    groups: dict[int, int] = {}
+    for i in range(w_in):
+        img = f(1 << i) ^ a_c
+        if img == 0:
+            continue                           # bit i feeds nothing
+        if img & (img - 1):
+            return None                        # fan-out: more than one output bit
+        delta = img.bit_length() - 1 - i
+        groups[delta] = groups.get(delta, 0) | (1 << i)
+    if not groups or len(groups) > _MAX_ROUTE_GROUPS:
+        return None                            # no cheaper than the cell
+    return tuple(sorted(groups.items()))
 
 
 @functools.lru_cache(maxsize=None)
