@@ -393,19 +393,36 @@ each other, **the per-instruction path is right and block mode over-taints**.
 comparison can never be equal: ZF is constant however the tainted low byte
 moves, and Unicorn confirms it does not move over all eight flips.
 
-The cause is the shape of the equality rule. Block mode's lowering taints the
-program counter when the branch condition's taint is non-zero, and the
-condition's taint comes from an `INT_EQUAL` whose rule is "any tainted input bit
-taints the boolean". That is sound and value-blind. The per-instruction path
-runs a value-aware differential, so it already has zero there.
+An earlier version of this section blamed the shape of the equality rule,
+saying it was "any tainted input bit taints the boolean" and was not built. That
+was wrong, and reading the code rather than assuming would have caught it: the
+value-aware rule has been in `taint_ir` since the file was created, in both the
+narrow and the wide form.
 
-The tight rule is cheap and ISA-general: for `a == b` with taints `ta`, `tb`,
-let `clean = ~(ta | tb)`; if `(va ^ vb) & clean` is non-zero the operands differ
-in a bit neither side can change, so the result is constant and its taint is
-zero. That is a handful of IR operations and it is exact, not a heuristic. It is
-**not built**: it is a precision change on the path that has just started
-reporting findings, and it wants its own measurement of how many of the 137 it
-removes before it is worth the risk.
+The real cause was the shape of the QUESTION. A comparison sets the zero flag,
+and SLEIGH models that as `INT_EQUAL(INT_SUB(a, b), 0)`: subtract, then ask
+whether the difference is zero. Asked about the difference, the rule can only
+prove inequality when some bit of the difference is provably one. Asked about
+the operands, it can prove it whenever they differ in a bit neither side can
+change, which is a far weaker condition:
+
+| | can the rule prove it | why |
+|---|---|---|
+| operands `EAX` vs `-1` | yes | bits 8-31 are clean zero against set |
+| difference `EAX + 1` | no | in [1, 0x100], no single bit provably one |
+
+`(a - b) == 0` is exactly `a == b` in wrapping arithmetic, so the lowering now
+remembers what a difference was a difference OF and answers equality on the
+operands. The memory is keyed on the VALUE NODE rather than on the varnode:
+a node id is a fixed expression, so it cannot go stale when a `unique` offset is
+reused, which pypcode does freely. The substitution applies only against a
+constant zero, and only when the recorded width matches, because neither holds
+in general.
+
+Measured on the static-glibc guest: 42 distinct sites down to 40, and roughly
+72 ms down to 69 ms. Faster, not slower, because a branch whose flag is proved
+clean does not taint the program counter, so less taint flows downstream. The
+first timing said the opposite and was noise from too few iterations.
 
 Over-reporting is the acceptable direction, and a leak reported at a branch that
 cannot leak is a triage cost rather than a soundness failure. It is recorded

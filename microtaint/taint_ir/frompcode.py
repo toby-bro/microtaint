@@ -485,6 +485,8 @@ class Builder:
         # Predicate stack: (until_pc, saved_pred_value, saved_pred_taint).
         self.pred_v = p.const(1)
         self.pred_t = p.const(0)
+        #: value node of a difference -> (av, at, bv, bt, bits) it came from.
+        self._diff_of: dict[int, tuple[int, int, int, int, int]] = {}
         pred_stack: list[tuple[int, int, int]] = []
 
         n = len(ops)
@@ -1721,6 +1723,14 @@ class Builder:
             v = (p.mask(p.op(ADD, av, bv), obits) if name == 'INT_ADD'
                  else p.mask(p.op(SUB, av, bv), obits))
             t = p.mask(p.op(OR, p.op(XOR, lo, hi), p.op(OR, at, bt)), obits)
+            if name == 'INT_SUB':
+                # Remember what this difference was a difference OF, so that
+                # `(a - b) == 0` can be answered as `a == b`.  See the equality
+                # rule below.  Keyed on the VALUE NODE rather than on the
+                # varnode it lands in: a node id is a fixed expression, so the
+                # entry cannot go stale when a `unique` offset is reused, which
+                # pypcode does within and across instructions.
+                self._diff_of[v] = (av, at, bv, bt, obits)
             return v, t
 
         if name == 'INT_CARRY':
@@ -1736,6 +1746,26 @@ class Builder:
 
         # ---- comparisons: exact from the monotone corners ----
         if name in ('INT_EQUAL', 'INT_NOTEQUAL'):
+            # `(a - b) == 0` IS `a == b`, exactly, in wrapping arithmetic, and
+            # the second form is the one this rule can prove things about.
+            #
+            # It matters because no lifter writes the first form by choice: a
+            # comparison sets the zero flag, and SLEIGH models that as
+            # `INT_EQUAL(INT_SUB(a, b), 0)`.  Asked about the DIFFERENCE, the
+            # rule below can only prove inequality when some bit of the
+            # difference is provably one; asked about the OPERANDS it can prove
+            # it whenever they differ in any bit neither side can change, which
+            # is a far weaker condition.
+            #
+            # Measured on `movzx eax,al; cmp eax,-1`, glibc's EOF test: EAX
+            # holds a byte so bits 8-31 are clean zero, and -1 has them set, so
+            # the operands can never be equal.  As a difference it is `eax + 1`
+            # in [1, 0x100], where no single bit is provably one and the rule
+            # gives up, and the branch was reported as secret-dependent.
+            if p.is_const(bv) and p.const_val(bv) == 0:
+                got = self._diff_of.get(av)
+                if got is not None and got[4] == ibits:
+                    av, at, bv, bt = got[0], got[1], got[2], got[3]
             eq = p.op(EQ, av, bv)
             v = eq if name == 'INT_EQUAL' else p.op(XOR, eq, p.const(1))
             tu = p.op(OR, at, bt)
