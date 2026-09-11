@@ -81,6 +81,10 @@ typedef struct {
      * never fires and a rewritten block keeps running its old plan. */
     unsigned long long *code_lo, *code_hi;
     unsigned long invalidations;
+    /* Of those, how many also threw away the held block.  Counted
+     * separately because the two used to be the same number, and the
+     * difference is exactly the taint that used to be lost. */
+    unsigned long abandoned;
 } MtBlkCtx;
 
 /* Diagnostic bisect, the same idea as MICROTAINT_NULL_HOOK on the instruction
@@ -889,7 +893,13 @@ static PyObject *py_hook_finish(PyObject *self, PyObject *args) {
 static PyObject *py_hook_invalidate(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *cap;
-    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    /* The guest write that brought us here.  Optional, and a caller that omits
+     * it gets the old, indiscriminate behaviour: every plan dropped AND the
+     * held block abandoned. */
+    unsigned long long addr = 0, wsize = 0;
+    int have_range = 0;
+    if (!PyArg_ParseTuple(args, "O|KK", &cap, &addr, &wsize)) return NULL;
+    have_range = (wsize > 0);
     MtBlkCtx *b = blkctx_of(cap);
     if (!b) return NULL;
     for (int i = 0; i < BLK_CACHE_CAP; i++) {
@@ -898,10 +908,20 @@ static PyObject *py_hook_invalidate(PyObject *self, PyObject *args) {
         b->cache[i].plan = NULL;
         b->cache[i].key = 0;
     }
-    /* The held block was computed from bytes that may no longer be there, and
-     * a finding is as much its answer as its taint is. */
-    b->pend.n_reports = 0;
-    mt_blk_abandon(&b->pend);
+    /* Abandoning the HELD block is a much bigger claim than dropping the
+     * plans, and it is only true when the write landed on that block's own
+     * instructions: then it was planned from bytes it did not run, and its
+     * taint -- and its findings, which are as much its answer as its taint is
+     * -- are not to be trusted.  A write anywhere else leaves it correct, and
+     * throwing it away is an under-taint.  Measured on a guest that rewrites a
+     * four-byte function in its own text: abandoning unconditionally lost the
+     * taint of the value computed just before the rewrite, and with it the
+     * secret-dependent branch that value reached. */
+    if (!have_range || mt_blk_pending_hit(&b->pend, addr, wsize)) {
+        b->pend.n_reports = 0;
+        mt_blk_abandon(&b->pend);
+        b->abandoned++;
+    }
     b->invalidations++;
     if (b->code_lo && b->code_hi) { *b->code_lo = ~(unsigned long long)0; *b->code_hi = 0; }
     Py_RETURN_NONE;
@@ -953,12 +973,16 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     if (!miss) return NULL;
     for (int i = 0; i < MT_BLK_N_MISS; i++)
         PyList_SET_ITEM(miss, i, PyLong_FromUnsignedLong(b->miss[i]));
-    return Py_BuildValue("{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:K,s:l,s:k,s:i}",
+    /* One `s:` pair per key, and the count is NOT checked: a format string
+     * one pair short silently drops the LAST key, which is how adding
+     * `abandoned` here made `reports_pending` disappear. */
+    return Py_BuildValue("{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
                          "cache_full", b->no_slot, "regs_clean", b->regs_clean, "miss", miss,
                          "invalidations", b->invalidations,
+                         "abandoned", b->abandoned,
                          "last_bad_addr", (unsigned long long)b->env.last_bad_addr,
                          "last_bad_size", (long)b->env.last_bad_size,
                          "reports", b->rep_total, "reports_pending", b->n_rep);

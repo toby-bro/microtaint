@@ -734,7 +734,9 @@ class MicrotaintWrapper:
             ctypes.addressof(regfile._vals), regfile._n_calls, reg_slots,
             lo_addr, hi_addr)
         self._block_ctx = block_ctx
-        hook.block_invalidate = lambda: blockpath_c.hook_invalidate(block_ctx)
+        hook.block_invalidate = (
+            lambda addr=0, size=0: blockpath_c.hook_invalidate(
+                block_ctx, addr, size))
         h = ctypes.c_size_t()
         err = _uc_hook_add(self._uc_handle, ctypes.byref(h), UC_HOOK_BLOCK,
                            ctypes.c_void_p(blockpath_c.hook_ptr()),
@@ -928,12 +930,12 @@ class MicrotaintWrapper:
             self._mem_write_hook.instr_hook = (
                 hook_obj if isinstance(hook_obj, InstructionHook) else None
             )
-        # NOTE: block mode caches a PLAN per block, which goes stale the same
-        # way a decode cache does when a write lands on cached code.  It is NOT
-        # wired to the invalidation yet -- MemWriteClearHook is a cdef class
-        # with no __dict__, so it cannot simply carry a reference -- which is
-        # one of the reasons block mode is opt-in and not yet trusted on
-        # self-modifying code.
+        # Block mode's plans go stale on a write onto code the same way a
+        # decode cache does, and they ARE wired to the invalidation: the
+        # mem-write hook reaches the block context through this same
+        # InstructionHook (`block_invalidate`, set in `_install_block_hook`),
+        # and hands it the write's own address so a rewrite of the block being
+        # held can be told from a rewrite of anything else.
 
     def _syscall_number(self, name: str) -> int | None:
         """The number `name` has on THIS guest architecture, or None.

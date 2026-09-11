@@ -180,14 +180,20 @@ class InstructionHook:
         instruction."""
 
     #: Called by `invalidate_smc` when block mode is on, to drop its plan
-    #: cache too; set by the wrapper when it installs the block hook.
-    block_invalidate: Callable[[], None] | None
+    #: cache too; set by the wrapper when it installs the block hook.  Takes
+    #: the guest write's (address, size), which is what lets block mode tell a
+    #: rewrite of the block it is holding from a rewrite of anything else.
+    block_invalidate: Callable[[int, int], None] | None
 
     def code_range_addrs(self) -> tuple[int, int]:
         """Addresses of `code_lo` and `code_hi`, for the block runtime."""
 
-    def invalidate_smc(self) -> None:
-        """Drop the decode + Tier-3/Tier-4 caches after a write hit cached code."""
+    def invalidate_smc(self, address: int = ..., size: int = ...) -> None:
+        """Drop the decode + Tier-3/Tier-4 caches after a write hit cached code.
+
+        `address`/`size` describe the write, and are forwarded to
+        `block_invalidate`; they default to nothing said, which keeps the
+        blunter behaviour for a caller that has nothing to say."""
 
     def __init__(
         self,

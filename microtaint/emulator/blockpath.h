@@ -156,6 +156,11 @@ typedef struct {
 typedef struct {
   int valid;
   uint64_t address;
+  /* The held block's own byte length.  Only here so that a write onto CODE can
+   * ask whether it landed on THIS block: a rewrite anywhere else does not make
+   * a block that already ran with the bytes it was planned from any less
+   * correct, and abandoning it then is an under-taint. */
+  int size;
   uint64_t *taint; /* whole post-state, n_taint entries */
   int n_taint;
   int cap_taint;
@@ -241,6 +246,7 @@ static int mt_blk_compute(
   pend->n_writes = 0;
   pend->n_reports = 0;
   pend->address = address;
+  pend->size = plan ? plan->size : 0;
 
   if (!plan || !plan->handleable || plan->n_regions <= 0) {
     mt_blk_miss(env, MT_BLK_MISS_UNPLANNED);
@@ -408,6 +414,29 @@ static inline void mt_blk_abandon(MtBlkPending *pend) {
   pend->valid = 0;
   pend->n_writes = 0;
   pend->n_reports = 0;
+}
+
+/* Does a guest write onto [addr, addr+size) land on the held block's own
+ * instructions?
+ *
+ * The question matters because a write onto code invalidates every cached
+ * PLAN, and it used to abandon the held block along with them.  For a rewrite
+ * of the held block's own bytes that is right: the block was planned from
+ * bytes that are no longer the ones it ran.  For a rewrite anywhere else it is
+ * an UNDER-taint, and the two are easy to confuse because the hook tracks the
+ * code it has planned as a single [lo, hi) interval -- one JIT page stretches
+ * that interval across the whole image, and then every ordinary store to a
+ * global in between looks like self-modifying code and silently throws away a
+ * block's taint and its findings.
+ *
+ * A held block with no recorded extent answers yes, so an unknown stays
+ * conservative. */
+static inline int mt_blk_pending_hit(const MtBlkPending *pend,
+                                     uint64_t addr, uint64_t size) {
+  if (!pend->valid) return 0;
+  if (pend->size <= 0) return 1;
+  return addr < pend->address + (uint64_t)pend->size
+      && addr + size > pend->address;
 }
 
 /* The emitted code a region's `fn` points into is owned by the caller, which

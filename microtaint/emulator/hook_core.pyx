@@ -2009,8 +2009,15 @@ cdef class InstructionHook:
         return (<unsigned long long>&self.code_lo,
                 <unsigned long long>&self.code_hi)
 
-    cpdef void invalidate_smc(self):
+    cpdef void invalidate_smc(self, unsigned long long address=0,
+                             unsigned long long size=0):
         """Drop every address-keyed cache after a write hit cached code.
+
+        `address`/`size` describe the guest write that caused this.  They are
+        optional so a caller with nothing to say still gets the safe, blunt
+        behaviour; block mode uses them to tell a rewrite of the block it is
+        HOLDING from a rewrite of some other code, because only the first makes
+        the held block's taint wrong.
 
         Called by the mem-write hook when a guest write intersects
         [code_lo, code_hi).  The decode cache would otherwise replay the
@@ -2036,9 +2043,13 @@ cdef class InstructionHook:
         self.code_lo = 0xFFFFFFFFFFFFFFFF
         self.code_hi = 0
         # Block mode's plans are keyed by (address, size) in a separate module,
-        # and it is what widened the range that brought us here.
+        # and it is what widened the range that brought us here.  It is handed
+        # the write itself: the range this hook guards is ONE interval, so a
+        # JIT page far from the image stretches it over everything in between,
+        # and without the write's own address every ordinary store to a global
+        # would look like a rewrite of the block being held.
         if self.block_invalidate is not None:
-            self.block_invalidate()
+            self.block_invalidate(address, size)
 
     cdef object _read_pre_regs(self, bytes instruction_bytes, unsigned long long address):
         """Read this instruction's live input-register values into a dict (with
@@ -2329,7 +2340,7 @@ cdef class MemWriteClearHook:
         if (ih is not None and ih.code_hi > ih.code_lo
                 and address < ih.code_hi
                 and address + <unsigned long long>size > ih.code_lo):
-            ih.invalidate_smc()
+            ih.invalidate_smc(address, <unsigned long long>size)
 
         if self.check_uaf and sm.is_poisoned(address, size):
             self.reporter.uaf(address, size)

@@ -49,11 +49,18 @@ def runner_on_block(runner: _Capsule, plan: _Capsule, address: int,
 def runner_finish(runner: _Capsule, completed: bool) -> None: ...
 def runner_abandon(runner: _Capsule) -> None: ...
 def runner_stats(runner: _Capsule) -> dict[str, int]: ...
-def hook_invalidate(hook: _Capsule) -> None:
+def hook_invalidate(hook: _Capsule, addr: int = ..., size: int = ...) -> None:
     """Drop every cached plan after a write hit code the hook has planned.
 
     A plan is keyed by (address, size) alone, so rewritten bytes at the same
     address would otherwise run the plan compiled for what used to be there.
+
+    `addr`/`size` are the guest write itself.  Given them, the block being HELD
+    by the deferred commit is abandoned only when the write lands on that
+    block's own instructions; without them every invalidation abandons it,
+    which is the old behaviour and an under-taint whenever the rewrite was
+    somewhere else.  The range the caller guards is one interval, so "somewhere
+    else" is the common case as soon as a guest JITs anything.
     """
 
 def hook_code_range(hook: _Capsule) -> tuple[int, int]:
@@ -115,4 +122,9 @@ def hook_stats(hook: _Capsule) -> dict[str, int]:
 
     `reports` is every finding the runtime made, counted even when the ring
     overflowed, so a drain that returns fewer can be told from a run that found
-    fewer."""
+    fewer.
+
+    `invalidations` is how often a write onto code dropped the cached plans;
+    `abandoned` is how many of those ALSO threw away the block being held.  The
+    two used to be the same number, and the difference between them is exactly
+    the taint that used to be lost to a rewrite of some other code."""
