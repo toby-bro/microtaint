@@ -141,12 +141,24 @@ jobs:
       - name: Install the project
         run: uv sync --locked --all-extras --dev
 
+      # The key carries the COMMIT, and the restore falls back on the prefix.
+      # A GitHub Actions cache entry is immutable: saving to a key that already
+      # exists is a silent no-op.  With one fixed key the baseline was
+      # therefore frozen at whatever the first master push recorded, and every
+      # later save did nothing -- so a deliberate, explained increase (the
+      # p-code loop unrolling added thousands of operations to buy soundness)
+      # would have failed this job on every PR from then on, with no way to
+      # accept it.  A rotating key plus `restore-keys` gives the intended
+      # behaviour: compare against the most recent master, and let master
+      # advance.
       - name: Restore baseline
         id: cache-bench
         uses: actions/cache/restore@v4
         with:
           path: .bench_baseline.json
-          key: benchmark-baseline-${{ runner.os }}-py313
+          key: benchmark-baseline-${{ runner.os }}-py313-${{ github.sha }}
+          restore-keys: |
+            benchmark-baseline-${{ runner.os }}-py313-
 
       - name: Run the performance suite
         run: uv run python benchmark/bench_suite.py --json .bench_current.json
@@ -273,4 +285,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .bench_baseline.json
-          key: benchmark-baseline-${{ runner.os }}-py313
+          key: benchmark-baseline-${{ runner.os }}-py313-${{ github.sha }}

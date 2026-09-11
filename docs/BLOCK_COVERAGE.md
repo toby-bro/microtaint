@@ -167,7 +167,12 @@ every write in the body becomes a select.
 Bounding the unrolling by the operand width halves the 32-bit case **with no
 change in precision at all** (the same 18 over-taints before and after, still
 zero under-taints), because the iterations it drops are ones that can never run.
-The 64-bit case is unchanged, correctly. `tests/test_pcode_loop_lowering.py`
+The 64-bit case is unchanged, correctly.
+
+Over the whole instruction bank that is **-12.6% of `AMD64_total_ops`**, 30,575
+to 26,732 across 394 lowered forms, with every other ISA byte-identical and no
+change to what lowers or declines. Ten of those 394 forms are bit scans, which
+is how one bound moves an eighth of the total. `tests/test_pcode_loop_lowering.py`
 pins the ratio rather than the two numbers, so it keeps its meaning when the
 lowering gets cheaper for other reasons.
 
