@@ -255,13 +255,38 @@ instruction check in the hot path; a block ends at its branch, so for the case
 this catches it is the branch, and the same address the per-instruction path
 gives.
 
-## Still open
+## Where the two paths still differ, and which is right
 
-The per-instruction path reports the delimiter test at `0x407017` but not the
-EOF test at `0x40700e`, which executes first and branches on the same tainted
-`EAX`. Block mode reports both. Either the per-instruction path under-reports
-there or the two disagree about when that taint arrives; it has not been scored
-against ground truth, and until it is, which one is right is not known.
+Both differences that turned up here are now settled, and neither is an
+under-taint.
 
-The register-level `RAX` difference that started this investigation is
-explained: it was the shorter trace, caused by `emu_stop` on the first finding.
+**The register-level `RAX` difference** that started the investigation was an
+artifact: the per-instruction path calls `emu_stop` on its first finding, so its
+trace is shorter, and an entry-by-entry diff reads the truncated tail as loss.
+
+**Block mode reports a branch the per-instruction path does not**, at
+`0x40700e`: `cmp $-1,%eax; je`, glibc's EOF test, which runs *before* the
+delimiter test both paths report. Scored against hardware rather than against
+each other, **the per-instruction path is right and block mode over-taints**.
+`EAX` there holds a byte `__uflow` returned, so bits 8-31 are known zero and the
+comparison can never be equal: ZF is constant however the tainted low byte
+moves, and Unicorn confirms it does not move over all eight flips.
+
+The cause is the shape of the equality rule. Block mode's lowering taints the
+program counter when the branch condition's taint is non-zero, and the
+condition's taint comes from an `INT_EQUAL` whose rule is "any tainted input bit
+taints the boolean". That is sound and value-blind. The per-instruction path
+runs a value-aware differential, so it already has zero there.
+
+The tight rule is cheap and ISA-general: for `a == b` with taints `ta`, `tb`,
+let `clean = ~(ta | tb)`; if `(va ^ vb) & clean` is non-zero the operands differ
+in a bit neither side can change, so the result is constant and its taint is
+zero. That is a handful of IR operations and it is exact, not a heuristic. It is
+**not built** — it is a precision change on the path that has just started
+reporting findings, and it wants its own measurement of how many of the 137 it
+removes before it is worth the risk.
+
+Over-reporting is the acceptable direction, and a leak reported at a branch that
+cannot leak is a triage cost rather than a soundness failure. It is recorded
+here because for the fuzzing and concolic milestones, triage cost is the thing
+that decides whether the findings get used.
