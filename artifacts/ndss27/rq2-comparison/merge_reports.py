@@ -116,6 +116,7 @@ def main() -> int:
     ref['metrics']['ground_truth']['per_tool']['microtaint'] = \
         new['metrics']['ground_truth']['per_tool']['microtaint']
 
+    n_zero = 0
     if timing_path is not None:
         timed = json.load(open(timing_path))
         tk = [case_key(r) for r in timed['results']]
@@ -133,11 +134,26 @@ def main() -> int:
         n_zero = sum(1 for r in timed['results']
                      if (r['tool_results'].get('microtaint') or {}).get('time_ns') == 0
                      and not (r['tool_results'].get('microtaint') or {}).get('error'))
-        if n_err or n_zero:
-            print(f'REFUSED: the timing run has {n_err} errored and {n_zero} zero-latency '
-                  f'microtaint cases out of {len(tk)}. Splicing it would publish those as '
-                  f'completed runs of zero duration. Fix the worker and re-run.')
+        if n_err:
+            print(f'REFUSED: the timing run has {n_err} errored microtaint cases out of '
+                  f'{len(tk)}. An errored case carries time_ns 0, and splicing drops the '
+                  f'error but keeps the zero, so it publishes as a completed run of no '
+                  f'duration. Fix the worker and re-run.')
             return 1
+        # A zero with NO error is a different thing: process_time_ns has coarse
+        # granularity, and a routed form (`movzx`, `and imm`, `mov ah,bh`) can now
+        # finish inside one tick.  Those are real results, not failures.  Still
+        # report them, because a zero is unusable in a latency distribution and a
+        # rising count means the clock has stopped resolving the fast path.
+        zero_frac = n_zero / max(len(tk), 1)
+        if zero_frac > 0.005:
+            print(f'REFUSED: {n_zero} of {len(tk)} microtaint cases ({zero_frac:.1%}) measured '
+                  f'0 ns with no error. Above 0.5% that is no longer clock granularity; the '
+                  f'timer is not resolving the fast path and the percentiles are meaningless.')
+            return 1
+        if n_zero:
+            print(f'note: {n_zero} of {len(tk)} cases measured 0 ns with no error '
+                  f"({zero_frac:.2%}); below the clock's resolution, not failures")
 
         ref['metrics']['per_tool']['microtaint'] = timed['metrics']['per_tool']['microtaint']
         # Per-CASE timings too, not just the summary: otherwise anything that
@@ -157,6 +173,7 @@ def main() -> int:
     ref['metadata']['merged_from'] = {
         'baselines': ref_path, 'microtaint': new_path,
         'timing': timing_path,
+        'zero_latency_cases': n_zero if timing_path is not None else None,
         'note': 'six baselines from the reference run; microtaint re-measured on the same corpus',
     }
     json.dump(ref, open(out_path, 'w'))
