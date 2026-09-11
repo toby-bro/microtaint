@@ -150,34 +150,111 @@ def test_the_sweep_can_actually_fail() -> None:
         'instruction known to over-approximate, so it is not measuring')
 
 
-def test_an_unrolled_loop_is_not_free() -> None:
-    """What unrolling costs, pinned so a change to the limit is visible.
+def test_a_recognised_scan_costs_about_what_an_ordinary_instruction_does() -> None:
+    """The point of recognising the loop, stated as a number.
 
-    A bit scan lowers to thousands of operations where an ordinary instruction
-    takes tens.  That is the price of not skipping the block, and it is paid
-    only by blocks that contain one -- but it should not grow silently.
+    It used to unroll to 2562 operations against 94 for an ordinary
+    instruction, and those are paid on every execution of the block containing
+    it, not once.  A closed form is the same order as anything else.
     """
-    prog = build_ir(_ARCH, bytes.fromhex('0fbcc0'))
-    assert 500 < prog.cost() < 20000, (
-        f'a 32-bit bit scan lowers to {prog.cost()} operations; if the unroll '
-        f'limit moved, say so here')
+    scan = build_ir(_ARCH, bytes.fromhex('0fbcc0')).cost()      # bsf eax,eax
+    plain = build_ir(_ARCH, bytes.fromhex('4801d8')).cost()     # add rax,rbx
+    assert scan < 6 * plain, (
+        f'a bit scan lowers to {scan} operations against {plain} for an '
+        f'ordinary instruction; if it stopped being recognised it is back to '
+        f'unrolling, which is two orders of magnitude more')
 
 
-def test_a_narrow_scan_costs_about_half_a_wide_one() -> None:
-    """The unrolling is bounded by the OPERAND, not by a flat maximum.
+@pytest.mark.parametrize(('label', 'hexs'), [
+    ('pext eax,ebx,ecx', 'c4e262f5c1'),
+    ('pdep eax,ebx,ecx', 'c4e263f5c1'),
+])
+def test_a_loop_that_is_not_a_count_is_refused(label: str, hexs: str) -> None:
+    """The recogniser must say no to what it cannot justify.
 
-    A loop over bit positions cannot run more times than its widest operand has
-    bits, so a 32-bit scan paying for 64 iterations was paying for 32 that can
-    never run -- and each one costs around 80 operations, because every write
-    in the body becomes a select.  Measured, that halved the 32-bit case with
-    no change in precision at all.
-
-    Pinned as a RATIO rather than as two numbers, so it keeps its meaning when
-    the lowering gets cheaper for unrelated reasons.
+    `pext` and `pdep` lift as loops too, and they are not counting operations:
+    the monotonicity argument that lets two corners stand in for the whole taint
+    cube says nothing about them.  Refusing is the whole reason the recogniser
+    can be trusted on the forms it does accept, so it is worth a test of its
+    own rather than being left implicit.
     """
-    narrow = build_ir(_ARCH, bytes.fromhex('0fbcc0')).cost()      # bsf eax,eax
-    wide = build_ir(_ARCH, bytes.fromhex('480fbcc2')).cost()      # bsf rax,rdx
-    assert narrow < wide * 0.75, (
-        f'a 32-bit scan costs {narrow} operations against the 64-bit form at '
-        f'{wide}; it should be bounded by its own operand width, so well under '
-        f'the wide one rather than close to it')
+    from microtaint.sleigh.lifter import get_context
+    from microtaint.taint_ir.loopform import recognise_loop
+
+    ops = get_context('AMD64').translate(bytes.fromhex(hexs), 0x1000).ops
+    loops = [
+        (i + (o.inputs[0].offset - (1 << 32)), i)
+        for i, o in enumerate(ops)
+        if o.opcode.name in ('BRANCH', 'CBRANCH') and o.inputs
+        and o.inputs[0].space.name == 'const'
+        and (o.inputs[0].offset & 0x80000000)
+    ]
+    assert loops, f'{label} no longer lifts to a p-code loop, so this proves nothing'
+    for target, end in loops:
+        assert recognise_loop(ops, target, end, be=False) is None, (
+            f'{label}: the recogniser accepted a loop that is not a counting '
+            f'operation, so the corner rule it will emit is unjustified')
+
+
+def _taint_of(code: bytes, values: dict[str, int],
+              taint: dict[str, int]) -> dict[str, int]:
+    from tests.taint_ir_bank import ir_step
+
+    regs = list(isa_registers('AMD64'))
+    names = [r.name for r in regs]
+    v = dict.fromkeys(names, 0) | values
+    t = dict.fromkeys(names, 0) | taint
+    got, _mem, _cost = ir_step(_ARCH, code, regs, t, v)
+    return got
+
+
+@pytest.mark.parametrize(('label', 'hexs'), _BIT_SCANS.items(), ids=list(_BIT_SCANS))
+def test_the_closed_form_never_says_less_than_the_unrolling(
+        label: str, hexs: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fast path against the slow path it replaced, over many inputs.
+
+    Unrolling is the reference here because it was the shipped answer and is
+    exact while it lasts.  The closed form may be TIGHTER -- and measured, it
+    is: `bsf eax,eax` went from 18 over-taints to 5 against hardware -- but it
+    may never claim less taint than the unrolling did on any input, because
+    that direction is the one that loses a leak.
+
+    Recognition is disabled by making it refuse, which is the same door a loop
+    it cannot identify goes through, so this also exercises the fallback.
+    """
+    import random
+
+    from microtaint.taint_ir import frompcode as fp
+
+    code = bytes.fromhex(hexs)
+    regs = list(isa_registers('AMD64'))
+    names = [r.name for r in regs]
+    rng = random.Random(hash(hexs) & 0xFFFF)
+    cases = []
+    for _ in range(24):
+        values = {k: rng.getrandbits(64) for k in names}
+        taint = dict.fromkeys(names, 0)
+        for k in ('RAX', 'RDX'):
+            taint[k] = rng.getrandbits(12)
+        cases.append((values, taint))
+
+    fast = [_taint_of(code, v, t) for v, t in cases]
+
+    # Both the shared Builders and their recognition memo have to go, or the
+    # second half of this test re-reads the first half's answer and compares
+    # the closed form against itself.
+    monkeypatch.setattr(fp, 'recognise_loop', lambda *_a, **_k: None)
+    monkeypatch.setattr(fp, '_BUILDERS', {})
+    slow = [_taint_of(code, v, t) for v, t in cases]
+
+    compared = 0
+    for i, (a, b) in enumerate(zip(fast, slow, strict=True)):
+        for k in set(a) | set(b):
+            compared += 1
+            missing = b.get(k, 0) & ~a.get(k, 0)
+            assert not missing, (
+                f'{label} case {i}: the closed form dropped {missing:#x} of '
+                f'{k} that the unrolling reported '
+                f'(unrolled {b.get(k, 0):#x}, closed form {a.get(k, 0):#x})')
+    assert compared > 100, (
+        f'{label}: only {compared} outputs compared between the two lowerings')

@@ -35,6 +35,7 @@ from microtaint.taint_ir.ir import (
     MASK64,
     MUL,
     MULHI,
+    NEG,
     NEZ,
     NOT,
     OR,
@@ -53,6 +54,7 @@ from microtaint.taint_ir.ir import (
     Access,
     IRProg,
 )
+from microtaint.taint_ir.loopform import CounterKind, LoopForm, recognise_loop
 from microtaint.types import ArchLike
 
 LIFT_BASE = 0x1000
@@ -89,6 +91,22 @@ class Unsupported(Exception):
 
 def _mask_of(size: int) -> int:
     return MASK64 if size >= 8 else ((1 << (size * 8)) - 1)
+
+
+def _ops_signature(ops: list[PcodeOp], end: int) -> tuple[object, ...]:
+    """A hashable identity for `ops[:end + 1]`, holding no lifter objects.
+
+    Opcode, input coordinates and output coordinates pin the p-code exactly, so
+    two instructions with this signature compute the same thing and a
+    recognition of one is a recognition of the other.
+    """
+    return tuple(
+        (o.opcode.name,
+         tuple((v.space.name, v.offset, v.size) for v in o.inputs),
+         (o.output.space.name, o.output.offset, o.output.size)
+         if o.output is not None else None)
+        for o in ops[:end + 1]
+    )
 
 
 def _smear_right(p: IRProg, n: int, bits: int) -> int:
@@ -409,6 +427,10 @@ class Builder:
         self.names = {n for n, _s in declared.values()}
         self.be = be
         self.arch = arch
+        #: Recognised p-code loops, keyed by the p-code itself.  Lives on the
+        #: Builder because `builder_for` shares one per architecture, so the
+        #: answer is computed once however many blocks contain the instruction.
+        self._loop_cache: dict[tuple[object, ...], LoopForm | None] = {}
 
     def build(self, ops: list[PcodeOp], end_addr: int, *,  # noqa: C901
               emit: Emit = Emit.TAINT, block: bool = False,
@@ -494,6 +516,9 @@ class Builder:
         #: How many times each backward branch has been taken, so a p-code loop
         #: is unrolled a bounded number of times rather than declined.
         unrolled: dict[int, int] = {}
+        #: Loops whose meaning was RECOGNISED, keyed by the op they start at.
+        #: Each is emitted as a closed form and its body skipped entirely.
+        loop_forms = self._recognise_loops(ops)
         pc = -1
         while True:
             pc += 1
@@ -501,6 +526,12 @@ class Builder:
                 break
             while pred_stack and pred_stack[-1][0] == pc:
                 _u, self.pred_v, self.pred_t = pred_stack.pop()
+            found = loop_forms.get(pc)
+            if found is not None:
+                form, body_end = found
+                self._emit_counter(form)
+                pc = body_end        # the increment at the top steps past it
+                continue
             op = ops[pc]
             self.cur_instr = self.instr_ord[pc]
             name = op.opcode.name
@@ -1031,23 +1062,33 @@ class Builder:
         is what makes predicated instructions (cmov, csel, csinc) and a lifter's
         conditional flag macros correct without a fallback.
         """
-        p = self.p
         sp = vn.space.name
         if sp == 'ram' and self.abs_ram:
             self._ram_store(vn, val, tnt)
             return
         if sp not in ('register', 'unique'):
             raise Unsupported(f'output space {sp}')
+        self._predicated_write_at(sp, vn.offset, vn.size, val, tnt)
+
+    def _predicated_write_at(self, sp: str, off: int, size: int,
+                             val: int, tnt: int) -> None:
+        """`_predicated_write` addressed by (space, offset, size).
+
+        Split out so a caller holding plain varnode COORDINATES rather than a
+        varnode object shares this join rather than restating it.  Restating a
+        soundness-critical join is how two of them drift apart.
+        """
+        p = self.p
         if p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1 \
                 and p.is_const(self.pred_t) and p.const_val(self.pred_t) == 0:
-            self.v.write(sp, vn.offset, vn.size, val)
-            self.t.write(sp, vn.offset, vn.size, tnt)
+            self.v.write(sp, off, size, val)
+            self.t.write(sp, off, size, tnt)
             return
-        old_v = self.v.read(sp, vn.offset, vn.size)
-        old_t = self.t.read(sp, vn.offset, vn.size)
+        old_v = self.v.read(sp, off, size)
+        old_t = self.t.read(sp, off, size)
         new_v, new_t = self._join_under_predicate(old_v, old_t, val, tnt)
-        self.v.write(sp, vn.offset, vn.size, new_v)
-        self.t.write(sp, vn.offset, vn.size, new_t)
+        self.v.write(sp, off, size, new_v)
+        self.t.write(sp, off, size, new_t)
 
     def _join_under_predicate(self, old_v: int, old_t: int,
                               val: int, tnt: int) -> tuple[int, int]:
@@ -1197,6 +1238,99 @@ class Builder:
             return True
 
         return False
+
+    # -- p-code loops recognised as a closed form -----------------------
+    def _recognise_loops(
+        self, ops: list[PcodeOp],
+    ) -> dict[int, tuple[LoopForm, int]]:
+        """Loops whose meaning is known, keyed by the op their body starts at.
+
+        Cheap when there is nothing to find: a scan for a backward branch, and
+        on this instruction set that is fewer than ten forms in five hundred.
+        Recognition itself runs the loop concretely on about a hundred inputs,
+        which is microseconds and happens once per distinct instruction, against
+        the tens of milliseconds unrolling the same loop costs.
+        """
+        out: dict[int, tuple[LoopForm, int]] = {}
+        for i, op in enumerate(ops):
+            if op.opcode.name not in ('BRANCH', 'CBRANCH') or not op.inputs:
+                continue
+            tgt = op.inputs[0]
+            if tgt.space.name != 'const' or not (tgt.offset & 0x80000000):
+                continue
+            target = i + (tgt.offset - (1 << 32))
+            if not (0 <= target < i) or self.instr_pc[target] != self.instr_pc[i]:
+                continue
+            # Memoised on the p-code itself.  Recognition runs the loop about a
+            # hundred times, and the planner lowers the same instruction many
+            # times while it searches for region boundaries, so without this the
+            # probe is paid over and over for one answer that cannot change.
+            key = (_ops_signature(ops, i), target, i, self.be)
+            if key in self._loop_cache:
+                form = self._loop_cache[key]
+            else:
+                form = recognise_loop(ops, target, i, self.be)
+                self._loop_cache[key] = form
+            if form is not None:
+                out[target] = (form, i)
+        return out
+
+    def _count_expr(self, kind: CounterKind, v: int, w: int) -> int:
+        """The counter's VALUE, as IR, for an operand already masked to `w`."""
+        p = self.p
+        if kind is CounterKind.POPCOUNT:
+            return p.op(POPCNT, v)
+        if kind is CounterKind.CLZ:
+            return p.op(SUB, p.op(CLZ, v), p.const(64 - w))
+        if kind is CounterKind.MSB_INDEX:
+            return p.op(SUB, p.const(w - 1),
+                        p.op(SUB, p.op(CLZ, v), p.const(64 - w)))
+        # Trailing zeros, without a trailing-zero opcode: `v & -v` isolates the
+        # lowest set bit, one less than it is every bit below, and their count is
+        # the answer.  A zero operand gives an all-ones mask, so the result is
+        # the full width -- which is what a trailing-zero count of zero means.
+        low = p.op(AND, v, p.op(NEG, v))
+        return p.op(POPCNT, p.mask(p.op(SUB, low, p.const(1)), w))
+
+    def _emit_counter(self, form: LoopForm) -> None:
+        """Emit a recognised loop as a closed form instead of unrolling it.
+
+        The TAINT comes from the two corners of the taint cube -- every tainted
+        bit cleared, and every one set.  They bracket the whole reachable range
+        because each recognised form is monotone or antitone in every input bit,
+        which is the property `loopform` establishes and the only reason a
+        two-point evaluation may stand in for the cube.  The bits that can
+        differ are then the bits below where the endpoints first differ.  Same
+        rule the lowering already applies to the `POPCOUNT` and `LZCOUNT`
+        opcodes; this is the same question asked of a loop.
+        """
+        p = self.p
+        w = form.width
+        sv, st = (self.v.read(*form.src), self.t.read(*form.src))
+        sv, st = p.mask(sv, w), p.mask(st, w)
+        lo_v = p.mask(p.op(AND, sv, p.op(NOT, st)), w)
+        hi_v = p.mask(p.op(OR, sv, st), w)
+
+        nb = max(1, w.bit_length())
+        span = p.const((1 << nb) - 1)
+        varies = _smear_right(
+            p, p.op(XOR, self._count_expr(form.kind, lo_v, w),
+                    self._count_expr(form.kind, hi_v, w)), nb)
+        tnt = p.op(AND, span, varies)
+
+        if form.zero_is_special:
+            # The one input where monotonicity fails, so the corners say
+            # nothing: `bsf` leaves 0 where the trailing-zero count is the
+            # operand width, and setting a bit from there RAISES the answer
+            # where everywhere else it lowers it.  Zero is reachable exactly
+            # when clearing every tainted bit leaves nothing, and the honest
+            # answer there is the whole span.
+            reachable = p.op(EQ, lo_v, p.const(0))
+            tnt = p.op(OR, tnt, p.op(AND, span, p.splat(reachable)))
+
+        sp, off, size = form.dst
+        self._predicated_write_at(sp, off, size,
+                                  self._count_expr(form.kind, sv, w), tnt)
 
     def _unroll(self, ops: list[PcodeOp], target: int, pc: int,
                 unrolled: dict[int, int]) -> bool:
