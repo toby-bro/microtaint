@@ -98,16 +98,21 @@ A representative result (3,768,369 guest instructions, idle machine, 5 runs):
 
 | layer | ns/instr | marginal | x qiling | attributable to |
 |---|---|---|---|---|
-| native | 0.9 | | 0.0 | baseline |
-| qiling-only | 34.4 | +33.5 | 1.0 | emulator |
-| c-codehook (per-instruction control, pure C) | 51.7 | +17.3 | 1.5 | emulator |
-| c-codehook-regs (+ read 4 guest registers) | 104.4 | +52.8 | 3.0 | emulator |
-| microtaint-plumbing (engine armed, nothing tainted) | 614.8 | +510.4 | 17.9 | **plumbing** |
-| microtaint-none | 1188.4 | +573.6 | 34.6 | **propagation** |
-| microtaint-all | 1314.2 | +125.8 | 38.2 | **detectors** |
+| native | 0.4 | | 0.0 | baseline |
+| qiling-only | 23.7 | +23.3 | 1.0 | emulator |
+| c-codehook (per-instruction control, pure C) | 43.3 | +19.6 | 1.8 | emulator |
+| c-codehook-regs (+ read 4 guest registers) | 99.4 | +56.1 | 4.2 | emulator |
+| microtaint-plumbing (engine armed, nothing tainted) | 493.7 | +394.2 | 20.8 | **plumbing** |
+| microtaint-none | 1149.8 | +656.2 | 48.5 | **propagation** |
+| microtaint-all | 1251.6 | +101.8 | 52.8 | **detectors** |
 | *blockhook* (empty per-block Python hook) | *142* | | | *reference* |
 | *codehook* (empty per-instruction Python hook) | *1963* | | | *reference* |
 | *codehook-regs* (same, reading 4 registers) | *19705* | | | *reference* |
+
+**Run-to-run spread on the microtaint rungs is about 1-2%, and single runs have
+been seen 9% out.** Compare builds with repeated measurements, not with one
+ladder each: an apparent 1188 -> 1295 "regression" on 2026-09-11 was one
+anomalous rung, and a 5x5 A/B of the same two builds put them within 1%.
 
 The three Python rows are slow to measure and cannot move when the engine
 changes, so `--only` re-runs just the chain after an optimisation; their figures
