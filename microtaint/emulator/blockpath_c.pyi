@@ -20,7 +20,7 @@ def mem_mask(mem: _Capsule, addr: int, size: int) -> int: ...
 def plan_new(
     size: int,
     regions: Sequence[tuple[int, int, Sequence[tuple[int, int, int]],
-                            int, int, int, int]],
+                            int, int, int, int, Sequence[int]]],
     keepalive: object,
     ids_addr: int = ...,
     ptrs_addr: int = ...,
@@ -33,6 +33,11 @@ def plan_new(
 
     `keepalive` is held for the plan's lifetime; the emitted code the function
     addresses point into belongs to it, and the C runtime does not refcount.
+
+    A region's last element is the register slots whose VALUE it publishes.
+    The runtime seeds and threads only those instead of copying the whole
+    register file twice per region; omit it and it copies wholesale, which is
+    what it always did.
 
     The trailing arguments are the block's OWN uc_reg_read_batch descriptor:
     which registers it reads and where they land.  Reading the whole register

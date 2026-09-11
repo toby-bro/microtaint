@@ -125,6 +125,15 @@ typedef struct {
   signed char acc_kind[MT_BLK_MAX_ACC]; /* 0 load, 1 store */
   signed char acc_size[MT_BLK_MAX_ACC];
   signed char acc_needval[MT_BLK_MAX_ACC]; /* the program reads the word */
+  /* The register slots whose VALUE this region publishes, and how many.  Only
+   * a LATER region of the same block can want one, so it is a handful where
+   * the whole register file used to be copied twice: once to seed the value
+   * half of the output array so an unwritten slot reads back its current
+   * value, and once to thread the published values into the next region.
+   * `n_pub < 0` means the plan did not say, and the runtime keeps the old
+   * wholesale copies -- a caller that predates this stays correct. */
+  int *pub_slots;
+  int n_pub;
 } MtBlkRegion;
 
 typedef struct {
@@ -287,8 +296,19 @@ static int mt_blk_compute(
      * output array.  Seeding the VALUE half with the register's current value
      * is what makes "not written" and "written zero" distinguishable; without
      * it a register the block legitimately zeroes keeps a stale value.
-     * Nothing reads these slots as inputs, so seeding them is free. */
-    memcpy(st + MT_BLK_VAL_BASE, sv, nb);
+     *
+     * Only the slots this region PUBLISHES are ever read back out of that
+     * half, so when the plan says which those are, seeding the rest is work
+     * nobody looks at.  A region publishes only what a later region of the
+     * same block reads, and the last region of a block publishes nothing. */
+    if (reg->n_pub < 0) {
+      memcpy(st + MT_BLK_VAL_BASE, sv, nb);
+    } else {
+      for (int i = 0; i < reg->n_pub; i++) {
+        const int sl = reg->pub_slots[i];
+        if (sl >= 0 && sl < n_slots) st[MT_BLK_VAL_BASE + sl] = sv[sl];
+      }
+    }
     const size_t accb = (size_t)MT_BLK_PER_ACC * (size_t)reg->n_acc
                         * sizeof(uint64_t);
     memset(sv + MT_BLK_MEM_BASE, 0, accb);
@@ -376,8 +396,17 @@ static int mt_blk_compute(
 
     /* Thread this region's answer into the next.  `st` already holds the new
      * taint (pass 2 ran in place); the values it published move into `sv`,
-     * which is where the next region reads them from. */
-    memcpy(sv, st + MT_BLK_VAL_BASE, nb);
+     * which is where the next region reads them from.  Only the published
+     * slots can have changed, and a slot nobody published keeps the value it
+     * already had in `sv`, which is the same answer the wholesale copy gave. */
+    if (reg->n_pub < 0) {
+      memcpy(sv, st + MT_BLK_VAL_BASE, nb);
+    } else {
+      for (int i = 0; i < reg->n_pub; i++) {
+        const int sl = reg->pub_slots[i];
+        if (sl >= 0 && sl < n_slots) sv[sl] = st[MT_BLK_VAL_BASE + sl];
+      }
+    }
 
     /* A region that made the program counter secret-dependent.  The whole
      * region has run by the time this is known, so the finest address the
@@ -468,6 +497,9 @@ static inline int mt_blk_pending_hit(const MtBlkPending *pend,
  * must keep it alive for the plan's lifetime.  Nothing here refcounts. */
 static void mt_blk_plan_free(MtBlkPlan *p) {
   if (!p) return;
+  if (p->regions) {
+    for (int i = 0; i < p->n_regions; i++) free(p->regions[i].pub_slots);
+  }
   free(p->regions);
   free(p->val_slots);
   free(p);

@@ -379,11 +379,29 @@ static PyObject *py_plan_new(PyObject *self, PyObject *args) {
         PyObject *item = PySequence_Fast_GET_ITEM(seq, i);
         unsigned long long fn_addr, region_addr, addr_fn = 0;
         unsigned long long prog = 0, addr_prog = 0, last_addr = 0;
-        PyObject *accs;
-        if (!PyArg_ParseTuple(item, "KKO|KKKK", &fn_addr, &region_addr, &accs,
-                              &addr_fn, &prog, &addr_prog, &last_addr))
+        PyObject *accs, *pub = NULL;
+        if (!PyArg_ParseTuple(item, "KKO|KKKKO", &fn_addr, &region_addr, &accs,
+                              &addr_fn, &prog, &addr_prog, &last_addr, &pub))
             goto fail;
         MtBlkRegion *r = &plan->regions[i];
+        /* Negative until the plan says otherwise, so a caller that does not
+         * pass the published slots gets the wholesale copies it always got. */
+        r->n_pub = -1;
+        r->pub_slots = NULL;
+        if (pub && pub != Py_None) {
+            PyObject *ps = PySequence_Fast(pub, "published slots must be a sequence");
+            if (!ps) goto fail;
+            const Py_ssize_t np = PySequence_Fast_GET_SIZE(ps);
+            r->pub_slots = (int *)calloc((size_t)(np > 0 ? np : 1), sizeof(int));
+            if (!r->pub_slots) { Py_DECREF(ps); goto fail; }
+            for (Py_ssize_t j = 0; j < np; j++) {
+                long v = PyLong_AsLong(PySequence_Fast_GET_ITEM(ps, j));
+                if (v == -1 && PyErr_Occurred()) { Py_DECREF(ps); goto fail; }
+                r->pub_slots[j] = (int)v;
+            }
+            r->n_pub = (int)np;
+            Py_DECREF(ps);
+        }
         r->fn = (void *)(uintptr_t)fn_addr;
         r->addr_fn = (void *)(uintptr_t)addr_fn;
         r->prog = (void *)(uintptr_t)prog;

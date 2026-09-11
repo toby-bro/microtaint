@@ -27,8 +27,8 @@ from run 2 onward -- and run 2 onward is the only regime a fuzzer is ever in.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
-from types import ModuleType
+from collections.abc import Callable, Mapping
+from types import MappingProxyType, ModuleType
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:                    # stub-only: opaque PyCapsule handles
@@ -54,10 +54,20 @@ __all__ = ['block_slot_resolver', 'cache_clear', 'cache_stats', 'compile_block']
 SlotOf = _SlotOf
 
 
-def _layout() -> dict[str, int]:
-    from microtaint.emulator import blockpath_c  # noqa: PLC0415
+#: The slot layout, which is a compile-time constant of the C extension and
+#: cannot change within a process.  Asking for it cost 4.31 us and it was asked
+#: once per `compile_block`, warm path included: 18% of what a cached block
+#: costs to hand to a caller.  Read-only by contract, and a proxy rather than a
+#: dict so that is enforced rather than asked for.
+_LAYOUT: list[MappingProxyType[str, int]] = []
 
-    return dict(blockpath_c.layout())
+
+def _layout() -> Mapping[str, int]:
+    if not _LAYOUT:
+        from microtaint.emulator import blockpath_c  # noqa: PLC0415
+
+        _LAYOUT.append(MappingProxyType(dict(blockpath_c.layout())))
+    return _LAYOUT[0]
 
 
 def block_slot_resolver(arch: ArchLike, name_to_slot: dict[str, int]) -> SlotOf:
@@ -105,7 +115,11 @@ def block_slot_resolver(arch: ArchLike, name_to_slot: dict[str, int]) -> SlotOf:
 #: declined to emit a function; a region with neither is one that did not lower
 #: at all.  The last address is what a finding names: the runtime learns the
 #: program counter is secret-dependent only once the whole region has run.
-RegionSpec = tuple[int, int, tuple[tuple[int, int, int], ...], int, int, int, int]
+#: The trailing element is the register slots whose VALUE this region
+#: publishes.  The runtime seeds and threads only those, instead of copying the
+#: whole register file twice per region.
+RegionSpec = tuple[int, int, tuple[tuple[int, int, int], ...], int, int, int,
+                   int, tuple[int, ...]]
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +326,7 @@ def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str
 
 
 def _compile_one(arch: ArchLike, code: bytes, base: int,
-                 name_to_slot: dict[str, int], lay: dict[str, int],
+                 name_to_slot: dict[str, int], lay: Mapping[str, int],
                  builder: Builder | None,
                  publish_all_values: bool) -> _Compiled | None:
     """Lift, lower and emit one block.  The expensive part, and the only part.
@@ -361,7 +375,7 @@ def _plan_from(built: _Compiled, descriptor: Descriptor | None,
 
 
 def _compile_regions(regions: list[Region], slot_of: SlotOf,
-                     lay: dict[str, int], publish_all_values: bool,
+                     lay: Mapping[str, int], publish_all_values: bool,
                      ) -> tuple[list[RegionSpec], list[object], set[int]] | None:
     """Emit each region, and collect what the block reads."""
     from microtaint.instrumentation.cell_c import taint_ir_c  # noqa: PLC0415
@@ -441,12 +455,24 @@ def _compile_regions(regions: list[Region], slot_of: SlotOf,
                 keep.append(addr_cap)
         # A TUPLE of accesses, not a list: a spec outlives one caller now that
         # compiled blocks are cached, so nothing it holds should be mutable.
+        # The register slots whose VALUE this region publishes.  Only a later
+        # region of the same block can want one (`_keep_only_needed_values`
+        # has already dropped the rest), so this is a handful of slots where
+        # the runtime used to copy all of them: two whole-register-file
+        # memcpys per region, one to seed the value half of the output array
+        # and one to thread it back.  The last region of a block publishes
+        # nothing at all, and then neither copy happens.
+        pub = sorted({
+            sl - lay['val_base']
+            for k, _n in prog.outputs
+            if isinstance(k, tuple) and k[0] == 'regv'
+            and (sl := slot_of(k)) is not None})
         specs.append((addr, region.addr,
                       tuple((0 if a['kind'] == 'load' else 1, a['size'],
                              1 if k in live_mem else 0)
                             for k, a in enumerate(accesses)),
                       addr_fn, prog_addr, addr_prog,
-                      region.last or region.addr))
+                      region.last or region.addr, tuple(pub)))
 
     return specs, keep, reads
 
