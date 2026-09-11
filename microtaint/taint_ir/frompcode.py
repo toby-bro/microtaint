@@ -311,11 +311,34 @@ class Emit(StrEnum):
 #: opt-in.
 DEFAULT_POINTER_POLICY: PointerPolicy = PointerPolicy.AVALANCHE
 
-#: How many times a p-code loop is unrolled before the residual case is
+#: The most times a p-code loop is unrolled before the residual case is
 #: floored.  A bit scan -- which is what SLEIGH models `bsf` and `bsr` as, a
 #: loop over bit positions rather than an opcode -- runs at most as many times
 #: as its operand is wide, so 64 covers every width there is.
 _UNROLL_LIMIT = 64
+
+
+def _body_width_bits(ops: list[PcodeOp], lo: int, hi: int) -> int:
+    """The widest varnode the loop body touches, in bits.
+
+    A loop over bit positions cannot run more times than its widest operand has
+    bits, so this bounds the unrolling far more tightly than the flat maximum
+    for anything narrower than a machine word: a 32-bit `bsf` was paying for 64
+    iterations of which the last 32 can never run, and each iteration costs
+    around 80 IR operations because every write in the body becomes a select.
+
+    Read off varnode SIZES rather than off opcodes, so it is a fact about the
+    p-code and not a rule about one instruction set.  Getting it too small
+    costs precision and never soundness -- the floor covers whatever the
+    unrolling did not reach -- so the widest operand is the safe way to be
+    wrong.
+    """
+    widest = 1
+    for o in ops[lo:hi]:
+        for v in (*o.inputs, o.output):
+            if v is not None and v.size > widest:
+                widest = v.size
+    return widest * 8
 
 
 class Builder:
@@ -1184,8 +1207,9 @@ class Builder:
         the answer stays sound rather than silently wrong.
         """
         p = self.p
+        limit = min(_UNROLL_LIMIT, _body_width_bits(ops, target, pc + 1))
         unrolled[target] = unrolled.get(target, 0) + 1
-        if unrolled[target] <= _UNROLL_LIMIT:
+        if unrolled[target] <= limit:
             return True
         if p.is_const(self.pred_v) and p.const_val(self.pred_v) == 0:
             return False                 # provably finished: exact

@@ -83,16 +83,20 @@ See below.
 
 ## p-code loops: unrolled, floored, or declined
 
-The loop is **unrolled** up to `_UNROLL_LIMIT` (64, which covers every operand
-width there is). Unrolling is exact while it lasts, because the predication
-machinery already turns each exit test into a select: iteration *k*'s writes
-land under "still looping after *k*", which is precisely the loop's meaning.
+The loop is **unrolled**, up to the smaller of `_UNROLL_LIMIT` (64) and the
+widest varnode the body touches, in bits. A loop over bit positions cannot run
+more times than its widest operand has bits, and the bound is read off varnode
+SIZES rather than off opcodes, so it is a fact about the p-code and not a rule
+about one instruction set. Unrolling is exact while it lasts, because the
+predication machinery already turns each exit test into a select: iteration
+*k*'s writes land under "still looping after *k*", which is precisely the
+loop's meaning.
 
 When the unrollings run out, the residual predicate says whether the loop could
 still be running:
 
 - **It folds to a constant zero** — the unrolling was complete and there is
-  nothing left to do. This is the common case and it is exact.
+  nothing left to do. **No bit scan takes this exit**; see below.
 - **It does not fold, and the body writes only registers** — everything the
   body writes is marked fully tainted *under that predicate*. The VALUE may be
   wrong there, but it is then a tainted value, so a load through it avalanches
@@ -104,6 +108,20 @@ still be running:
   touch, which is unbounded. A `rep movsb` with a count above the limit would
   otherwise have its later stores simply not modelled. Declining is worse than
   handling it and far better than being wrong.
+
+### Bit scans floor; the floor costs nothing at runtime
+
+Measured rather than assumed: **every bit scan takes the FLOOR exit**, not the
+fold. SLEIGH's loop exits on the operand's own bits, so the predicate is a
+function of a runtime value and there is nothing for the constant folder to do.
+
+That is not the imprecision it looks like, because **the floor is a runtime
+guard, not a compile-time widening**. It contributes `splat(NEZ(pred))`, and
+with concrete values a scan has provably stopped long before the limit, so
+`pred` is zero and the floor adds nothing. Scored against Unicorn per-bit truth
+over 168 outputs each: `bsf` over-taints its destination in 18 and 13 cases
+(32-bit and 64-bit), `bsr` in none, flags are exact everywhere, and **none of
+the three ever under-taints**.
 
 So `rep`-prefixed string operations still decline. **No binary tested so far
 executes one**, but that is luck rather than design, and the honest way to
@@ -131,17 +149,36 @@ that climbs back up.
 
 ## What this costs
 
-Unrolling is not free. A 32-bit bit scan lowers to roughly five thousand
-operations where an ordinary instruction takes tens. It is paid once per
-distinct block, and only by blocks that contain one: measured on the three
-density benchmarks, which contain none, end-to-end block-mode time moved by
-less than 4%. `tests/test_pcode_loop_lowering.py` pins the figure so a change
-to the limit is visible rather than silent.
+Unrolling is not free, and the figure is worth having exactly, because the
+block compiler is most of block mode's wall clock (87-93%) at around 8 ms per
+distinct block. Lowering one instruction, measured:
 
-A closed form would be far cheaper — `ctz(x) = popcnt((x & -x) - 1)`, and the
-IR already has POPCNT — and would fit the codebase's existing closed-form
-recognisers. It is not built, because correctness came first and the cost lands
-only where a bit scan does.
+| | ms | IR ops |
+|---|---|---|
+| an ordinary ALU instruction | 2.0 | 85 |
+| `bsf eax,eax`, flat limit of 64 | 54.5 | 5121 |
+| `bsf eax,eax`, bounded by the operand | 26.5 | 2562 |
+| `bsf rax,rdx` (64-bit, so unchanged) | 48.9 | 4694 |
+
+So a bit scan is the **p100 of block compilation**: one instruction costing more
+than six ordinary blocks. Each iteration is around 80 IR operations, because
+every write in the body becomes a select.
+
+Bounding the unrolling by the operand width halves the 32-bit case **with no
+change in precision at all** (the same 18 over-taints before and after, still
+zero under-taints), because the iterations it drops are ones that can never run.
+The 64-bit case is unchanged, correctly. `tests/test_pcode_loop_lowering.py`
+pins the ratio rather than the two numbers, so it keeps its meaning when the
+lowering gets cheaper for other reasons.
+
+A closed form — `ctz(x) = popcnt((x & -x) - 1)`, and the IR already has POPCNT
+— would take this to a handful of operations and would also remove the residual
+over-taint. It is **not built**, and the reason is a real tension rather than a
+shortage of time: recognising "this p-code loop is a bit scan" means matching a
+shape that SLEIGH chose for one instruction set, which is exactly the kind of
+x86 specialisation the rest of the lowering avoids. The width bound above is
+the part of the win that can be had from varnode sizes alone. Taking the rest
+is a deliberate decision about generality, not a cleanup.
 
 ## Measuring it yourself
 

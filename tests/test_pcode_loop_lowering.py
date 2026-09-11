@@ -161,3 +161,23 @@ def test_an_unrolled_loop_is_not_free() -> None:
     assert 500 < prog.cost() < 20000, (
         f'a 32-bit bit scan lowers to {prog.cost()} operations; if the unroll '
         f'limit moved, say so here')
+
+
+def test_a_narrow_scan_costs_about_half_a_wide_one() -> None:
+    """The unrolling is bounded by the OPERAND, not by a flat maximum.
+
+    A loop over bit positions cannot run more times than its widest operand has
+    bits, so a 32-bit scan paying for 64 iterations was paying for 32 that can
+    never run -- and each one costs around 80 operations, because every write
+    in the body becomes a select.  Measured, that halved the 32-bit case with
+    no change in precision at all.
+
+    Pinned as a RATIO rather than as two numbers, so it keeps its meaning when
+    the lowering gets cheaper for unrelated reasons.
+    """
+    narrow = build_ir(_ARCH, bytes.fromhex('0fbcc0')).cost()      # bsf eax,eax
+    wide = build_ir(_ARCH, bytes.fromhex('480fbcc2')).cost()      # bsf rax,rdx
+    assert narrow < wide * 0.75, (
+        f'a 32-bit scan costs {narrow} operations against the 64-bit form at '
+        f'{wide}; it should be bounded by its own operand width, so well under '
+        f'the wide one rather than close to it')
