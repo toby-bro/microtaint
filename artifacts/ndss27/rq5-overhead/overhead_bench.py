@@ -795,6 +795,14 @@ def aggregate(measurements: list[Measurement]) -> Measurement:
             'guest_bytes': _min_or_none(m.extra.get('guest_bytes') for m in measurements),
             'stdin_bytes': measurements[0].extra.get('stdin_bytes'),
             'wrapper_stats': measurements[0].extra.get('wrapper_stats', {}),
+            # Which engine path ran.  Carried into the aggregate deliberately: the
+            # per-run validation already refused a taint_ir run, but a reader of the
+            # JSON months later has only the JSON, and "it must have been fine
+            # because the harness checked" is exactly the reasoning that let the
+            # 2026-05 numbers stand.
+            'env_taint_ir': measurements[0].extra.get('env_taint_ir'),
+            'env_block': measurements[0].extra.get('env_block'),
+            'taint_ir_modules': measurements[0].extra.get('taint_ir_modules'),
         },
     )
 
@@ -1154,6 +1162,8 @@ def _main_single(args, p) -> int:
             'guest_instructions': n_instrs,
             'stdin_bytes': len(stdin_data) if stdin_data else 0,
             'stdin_source': stdin_path,
+            'engine_path': 'per-instruction LogicCircuit (taint_ir and block mode pinned off)',
+            'artifact_engine_env': ARTIFACT_ENGINE_ENV,
             'runs_per_config': args.runs,
             'rootfs': args.rootfs,
             'min_guest_bytes': args.min_guest_bytes,
