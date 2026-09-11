@@ -98,21 +98,25 @@ A representative result (3,768,369 guest instructions, idle machine, 5 runs):
 
 | layer | ns/instr | marginal | x qiling | attributable to |
 |---|---|---|---|---|
-| native | 0.4 | | 0.0 | baseline |
-| qiling-only | 23.7 | +23.3 | 1.0 | emulator |
-| c-codehook (per-instruction control, pure C) | 43.3 | +19.6 | 1.8 | emulator |
-| c-codehook-regs (+ read 4 guest registers) | 99.4 | +56.1 | 4.2 | emulator |
-| microtaint-plumbing (engine armed, nothing tainted) | 493.7 | +394.2 | 20.8 | **plumbing** |
-| microtaint-none | 1149.8 | +656.2 | 48.5 | **propagation** |
-| microtaint-all | 1251.6 | +101.8 | 52.8 | **detectors** |
-| *blockhook* (empty per-block Python hook) | *142* | | | *reference* |
-| *codehook* (empty per-instruction Python hook) | *1963* | | | *reference* |
-| *codehook-regs* (same, reading 4 registers) | *19705* | | | *reference* |
+| native | 0.5 | | 0.0 | baseline |
+| qiling-only | 24.2 | +23.7 | 1.0 | emulator |
+| c-blockhook (pure-C per-BLOCK hook, empty) | 24.7 | +0.5 | 1.0 | emulator |
+| c-codehook (pure-C per-INSTRUCTION hook, empty) | 45.6 | +20.9 | 1.9 | emulator |
+| c-codehook-regs (+ read 4 guest registers) | 102.9 | +57.3 | 4.3 | emulator |
+| microtaint-plumbing (engine armed, nothing tainted) | 495.2 | +392.3 | 20.5 | **plumbing** |
+| microtaint-none | 1162.1 | +666.9 | 48.1 | **propagation** |
+| microtaint-all | 1290.7 | +128.6 | 53.4 | **detectors** |
+| *blockhook* (empty per-block Python hook) | *139.4* | | *5.8* | *reference* |
+| *codehook* (empty per-instruction Python hook) | *2037.5* | | *84.2* | *reference* |
+| *codehook-regs* (same, reading 4 registers) | *20370.9* | | *842.3* | *reference* |
+| *spawn* (fork+exec of a do-nothing binary) | *0.2* | | *0.0* | *reference* |
 
-**Run-to-run spread on the microtaint rungs is about 1-2%, and single runs have
-been seen 9% out.** Compare builds with repeated measurements, not with one
-ladder each: an apparent 1188 -> 1295 "regression" on 2026-09-11 was one
-anomalous rung, and a 5x5 A/B of the same two builds put them within 1%.
+**`c-blockhook` settles what block chaining costs: +0.5 ns/instr.** Losing
+Unicorn's translation-block chaining is free in practice, so the +21 that
+`c-codehook` adds is per-instruction DISPATCH and nothing else. An earlier
+reading of this ladder blamed chaining for the empty per-block PYTHON hook's
+139 ns/instr; that was CPython, not chaining, and the C rung is what
+distinguishes them.
 
 The three Python rows are slow to measure and cannot move when the engine
 changes, so `--only` re-runs just the chain after an optimisation; their figures

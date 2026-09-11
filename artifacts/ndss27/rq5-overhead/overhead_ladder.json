@@ -7,7 +7,7 @@
   },
   "layers": {
     "native": {
-      "run_s": 0.0016858777962625027,
+      "run_s": 0.0017923410050570965,
       "desc": "the binary, run directly",
       "per_block_hook": false,
       "guest_bytes": 16,
@@ -20,7 +20,7 @@
       "taint_ir_modules": null
     },
     "qiling-only": {
-      "run_s": 0.0893433541059494,
+      "run_s": 0.09113615984097123,
       "desc": "Qiling/Unicorn emulation, no hooks",
       "per_block_hook": false,
       "guest_bytes": 16,
@@ -32,8 +32,21 @@
       "env_taint_ir": "0",
       "taint_ir_modules": []
     },
+    "c-blockhook": {
+      "run_s": 0.0929981623776257,
+      "desc": "per-BLOCK control, pure C, empty body",
+      "per_block_hook": true,
+      "guest_bytes": 16,
+      "n_runs": 5,
+      "c_hook_calls_per_run": 206382,
+      "hook_instr_total": null,
+      "hook_prefilter_hits": null,
+      "residual_register_taint": 0,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    },
     "c-codehook": {
-      "run_s": 0.16308155190199614,
+      "run_s": 0.17174375522881746,
       "desc": "per-instruction control, pure C, empty body",
       "per_block_hook": false,
       "guest_bytes": 16,
@@ -46,7 +59,7 @@
       "taint_ir_modules": []
     },
     "c-codehook-regs": {
-      "run_s": 0.3746053781360388,
+      "run_s": 0.38773910887539387,
       "desc": "the same, reading 4 guest registers",
       "per_block_hook": false,
       "guest_bytes": 16,
@@ -59,7 +72,7 @@
       "taint_ir_modules": []
     },
     "microtaint-plumbing": {
-      "run_s": 1.8602663651108742,
+      "run_s": 1.8661197554320097,
       "desc": "the real engine, armed, but nothing tainted",
       "per_block_hook": false,
       "guest_bytes": 16,
@@ -72,7 +85,7 @@
       "taint_ir_modules": []
     },
     "microtaint-none": {
-      "run_s": 4.33304321905598,
+      "run_s": 4.379224605858326,
       "desc": "bit-precise taint propagation, no detectors",
       "per_block_hook": false,
       "guest_bytes": 16,
@@ -85,7 +98,7 @@
       "taint_ir_modules": []
     },
     "microtaint-all": {
-      "run_s": 4.716572990640998,
+      "run_s": 4.864002846181393,
       "desc": "plus the four detectors",
       "per_block_hook": false,
       "guest_bytes": 16,
@@ -96,6 +109,58 @@
       "residual_register_taint": 0,
       "env_taint_ir": "0",
       "taint_ir_modules": []
+    },
+    "blockhook": {
+      "run_s": 0.5253741620108485,
+      "desc": "empty per-BLOCK Python hook",
+      "per_block_hook": false,
+      "guest_bytes": 16,
+      "n_runs": 5,
+      "c_hook_calls_per_run": null,
+      "hook_instr_total": null,
+      "hook_prefilter_hits": null,
+      "residual_register_taint": 0,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    },
+    "codehook": {
+      "run_s": 7.678173336200416,
+      "desc": "empty per-INSTRUCTION Python hook",
+      "per_block_hook": false,
+      "guest_bytes": 16,
+      "n_runs": 5,
+      "c_hook_calls_per_run": null,
+      "hook_instr_total": null,
+      "hook_prefilter_hits": null,
+      "residual_register_taint": 0,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    },
+    "codehook-regs": {
+      "run_s": 76.76517583196983,
+      "desc": "per-instruction Python hook reading 4 regs",
+      "per_block_hook": false,
+      "guest_bytes": 16,
+      "n_runs": 5,
+      "c_hook_calls_per_run": null,
+      "hook_instr_total": null,
+      "hook_prefilter_hits": null,
+      "residual_register_taint": 0,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    },
+    "spawn": {
+      "run_s": 0.0006947568617761135,
+      "desc": "fork+exec of a do-nothing binary (not the workload)",
+      "per_block_hook": false,
+      "guest_bytes": 0,
+      "n_runs": 5,
+      "c_hook_calls_per_run": null,
+      "hook_instr_total": null,
+      "hook_prefilter_hits": null,
+      "residual_register_taint": null,
+      "env_taint_ir": null,
+      "taint_ir_modules": null
     }
   }
 }
