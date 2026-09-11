@@ -294,13 +294,23 @@ static int mt_blk_compute(
     memset(sv + MT_BLK_MEM_BASE, 0, accb);
     memset(st + MT_BLK_MEM_BASE, 0, accb);
 
+    if (env->stop_after == 7) { continue; }
+
     /* Pass 1 exists only to learn where the LOADS land: a store's address
      * comes out of pass 2 with everything else.  A region that only stores
      * therefore needs one pass, not two. */
     if (reg->n_load > 0) {
-      memcpy(so, st, nb);
-      memcpy(so + MT_BLK_VAL_BASE, st + MT_BLK_VAL_BASE, nb);
+      /* `so` receives pass 1's outputs, and the ONLY thing read back out of it
+       * is `so[... A_ADDR]` for each load.  Seeding it with the register file
+       * the way pass 2's output array is seeded is therefore dead work: that
+       * seeding exists so a slot the program does not write reads back its old
+       * value, and no such slot is read here.  Zeroing the access area still
+       * matters, because an address the slice fails to write must come back 0
+       * and fail the guest read rather than carry whatever was there.
+       * Measured on bench_dense: 9.8 ns/instr, against 5.7 for the address
+       * slice those copies were setting up. */
       memset(so + MT_BLK_MEM_BASE, 0, accb);
+      if (env->stop_after == 8) { continue; }
       if (reg->addr_fn || reg->addr_prog) {
         mt_blk_call(reg->addr_fn, reg->addr_prog, sv, st, so);
       } else {
@@ -327,6 +337,11 @@ static int mt_blk_compute(
         sv[base + MT_BLK_A_MEM] = val;
         st[base + MT_BLK_A_MEM] = msk;
       }
+    } else if (env->stop_after == 5 || env->stop_after == 8) {
+      /* A region with no loads has to stop where a loading one stops, or the
+       * stage measures a mixture: those regions used to run to completion
+       * under stage 5 and the rung read as more expensive than it is. */
+      continue;
     }
 
     if (env->stop_after == 6) { continue; }

@@ -95,6 +95,21 @@ typedef struct {
  *   2  ... after the plan-cache lookup
  *   3  ... after the register-file read
  *   4  ... after computing, without committing
+ *
+ * and inside the computation itself, which is half of a block's cost and was
+ * one undivided number until these existed:
+ *
+ *   7  ... after a region's own state copies
+ *   8  ... after the copies pass 1 needs
+ *   5  ... after pass 1, the address slice
+ *   6  ... after resolving the loads it found
+ *
+ * Read in the order 3, 7, 8, 5, 6, 4.  Measured that way on bench_dense, the
+ * ~89 ns/instr of "computing a block" came apart as 12.1 for the per-region
+ * copies, 9.8 for the copies pass 1 needed, 5.7 for the address slice itself,
+ * 31.5 for resolving the loads, and 29.8 for pass 2 and the stores.  The
+ * address slice doing its job in 5.7 ns while its SETUP cost 9.8 is what
+ * pointed at the dead seeding removed from `mt_blk_compute`.
  */
 static int blk_stop_after = -1;
 
