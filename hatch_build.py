@@ -131,6 +131,29 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
             # cell_c gains the native re-exec path on x86_64 hosts.
             extra_sources: list[Path] = []
             extra_flags: list[str] = []
+            if module_name == 'circuit_c':
+                # The circuit interpreter keeps its operand stack in a local
+                # array, and GCC's SLP vectoriser turns every two-operand op
+                # into a 16-byte load of stack[sp-2..sp-1], a lane shift and a
+                # vector add:
+                #
+                #     vmovdqu 0x190(%rsp,%rax,8),%xmm0
+                #     vpsrldq $0x8,%xmm0,%xmm1
+                #     vpaddq  %xmm1,%xmm0,%xmm0
+                #     vmovq   %xmm0,0x190(%rsp,%rax,8)
+                #
+                # That 16-byte load overlaps the two 8-byte stores that just
+                # pushed those operands, so it cannot store-forward and stalls.
+                # Measured with perf annotate, those three instructions were
+                # 25% of eval_program, itself 27.65% of the run; turning the
+                # vectoriser off on THIS FILE took the RQ5 workload from 5.87s
+                # to 4.89s (-17%) with no other change.
+                #
+                # Scoped to circuit_c deliberately: vectorisation is worth
+                # having in the cell kernel, which does real bulk work. The
+                # problem here is a stack machine whose "vectors" are two
+                # adjacent operands it just wrote.
+                extra_flags = ['-fno-tree-slp-vectorize']
             if module_name == 'blockpath_c':
                 # The block runtime runs a taint-IR program through the
                 # interpreter the emitter's declines fall back to, so it needs
