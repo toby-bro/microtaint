@@ -105,11 +105,38 @@ typedef struct {
 } AssignmentProg;
 
 /* Per-circuit compiled form */
-/* One memory READ's address program (see mem_reads on CompiledCircuit). */
+/* One term of an address reduced to affine form: ((v[idx] >> bit_start) & mask) << shift,
+ * added or subtracted. */
+#define MT_AFFINE_MAX_TERMS 4
 typedef struct {
-    uint32_t *bc;
-    int       bc_len;
-    int       size_bytes;
+    int      idx;         /* string-pool index of the register read */
+    uint8_t  bit_start;
+    uint8_t  shift;       /* left shift applied after the field extract */
+    uint8_t  negate;      /* subtracted rather than added */
+    uint64_t mask;        /* (1 << width) - 1 */
+} MtAffineTerm;
+
+/* One memory READ's address program (see mem_reads on CompiledCircuit).
+ *
+ * `affine_ok` means the program was reduced at COMPILE time to
+ *     konst + SUM_i (+/-) ((v[idx_i] >> bs_i) & mask_i) << sh_i
+ * which is what `base + index*scale + disp` compiles to, i.e. essentially every
+ * address a compiler emits.  Evaluating that directly skips a call to
+ * eval_program, and eval_program is not a cheap call: 12 parameters, a 2528-byte
+ * frame, and a switch dispatch whose indirect branch was ~30% of the function in
+ * perf.  Running ~5 opcodes through it to add a register and a displacement is
+ * mostly prologue.
+ *
+ * When the reduction does not apply the bytecode is still there and still used,
+ * so this is an accelerator, not a second semantics. */
+typedef struct {
+    uint32_t     *bc;
+    int           bc_len;
+    int           size_bytes;
+    int           affine_ok;
+    int           n_terms;
+    uint64_t      konst;
+    MtAffineTerm  terms[MT_AFFINE_MAX_TERMS];
 } MemReadSite;
 
 typedef struct {
@@ -467,6 +494,118 @@ static int pylong_to_u64(PyObject *v, uint64_t *out) {
  * compile_expr appends any cell it meets to cc->cells, so the second compile is
  * rolled back to the prior length; otherwise a rejected capture would leave a
  * duplicate cell behind. */
+
+static uint64_t mask_range(int width);   /* defined with the interpreter below */
+
+/* ── affine address reduction ─────────────────────────────────────────────
+ *
+ * Abstractly interpret an address program at COMPILE time over values of the
+ * form  konst + SUM (+/-) ((v[idx] >> bs) & mask) << shift.  Every opcode that
+ * cannot be represented that way declines, and a decline just means the site
+ * keeps using the bytecode interpreter.
+ *
+ * The arithmetic mirrors eval_program's exactly -- plain uint64 wraparound for
+ * ADD/SUB, `& 63` on shift counts -- because the two paths must agree on every
+ * address, including the ones that wrap.
+ */
+typedef struct {
+    uint64_t     konst;
+    int          n_terms;
+    MtAffineTerm terms[MT_AFFINE_MAX_TERMS];
+} MtAffineVal;
+
+static int mt_affine_add(MtAffineVal *dst, const MtAffineVal *src, int negate) {
+    if (dst->n_terms + src->n_terms > MT_AFFINE_MAX_TERMS) return 0;
+    dst->konst = negate ? (dst->konst - src->konst) : (dst->konst + src->konst);
+    for (int i = 0; i < src->n_terms; i++) {
+        MtAffineTerm t = src->terms[i];
+        if (negate) t.negate = (uint8_t)!t.negate;
+        dst->terms[dst->n_terms++] = t;
+    }
+    return 1;
+}
+
+/* Reduce site->bc to affine form, setting site->affine_ok on success. */
+static void mt_try_affine(CompiledCircuit *cc, MemReadSite *site) {
+    MtAffineVal st[8];
+    int sp = 0, pc = 0;
+    site->affine_ok = 0;
+
+    while (pc < site->bc_len) {
+        uint32_t op = site->bc[pc++];
+        switch (op) {
+        case OP_PUSH_VALUE: {
+            if (sp >= 8) return;
+            int idx = (int)site->bc[pc++];
+            int bs  = (int)site->bc[pc++];
+            int be  = (int)site->bc[pc++];
+            int width = be - bs + 1;
+            if (idx < 0 || bs < 0 || bs > 63 || width < 1 || width > 64) return;
+            MtAffineVal v = {0, 1, {{0, 0, 0, 0, 0}}};
+            v.terms[0].idx       = idx;
+            v.terms[0].bit_start = (uint8_t)bs;
+            v.terms[0].shift     = 0;
+            v.terms[0].negate    = 0;
+            v.terms[0].mask      = mask_range(width);
+            st[sp++] = v;
+            break;
+        }
+        case OP_PUSH_CONST: {
+            if (sp >= 8) return;
+            int ci = (int)site->bc[pc++];
+            if (ci < 0 || ci >= cc->n_const_u64) return;
+            MtAffineVal v = {cc->const_u64[ci], 0, {{0, 0, 0, 0, 0}}};
+            st[sp++] = v;
+            break;
+        }
+        case OP_ADD:
+        case OP_SUB: {
+            if (sp < 2) return;
+            sp--;
+            if (!mt_affine_add(&st[sp - 1], &st[sp], op == OP_SUB)) return;
+            break;
+        }
+        case OP_SHL: {
+            if (sp < 2) return;
+            sp--;
+            if (st[sp].n_terms != 0) return;        /* shift count must be constant */
+            uint64_t k = st[sp].konst & 63;
+            MtAffineVal *a = &st[sp - 1];
+            a->konst <<= k;
+            for (int i = 0; i < a->n_terms; i++) {
+                int sh = a->terms[i].shift + (int)k;
+                if (sh > 63) return;                /* would need a wider model */
+                a->terms[i].shift = (uint8_t)sh;
+            }
+            break;
+        }
+        case OP_END:
+            if (sp != 1) return;
+            site->konst   = st[0].konst;
+            site->n_terms = st[0].n_terms;
+            for (int i = 0; i < st[0].n_terms; i++) site->terms[i] = st[0].terms[i];
+            site->affine_ok = 1;
+            return;
+        default:
+            return;                                  /* anything else: keep the interpreter */
+        }
+    }
+}
+
+/* Evaluate the reduced form.  `slot_of` maps a pool index to a global slot. */
+static inline uint64_t mt_affine_addr(const MemReadSite *site, const int *pool_to_slot,
+                                      const uint64_t *g_v, int n_slots) {
+    uint64_t addr = site->konst;
+    for (int i = 0; i < site->n_terms; i++) {
+        const MtAffineTerm *t = &site->terms[i];
+        int slot = pool_to_slot[t->idx];
+        uint64_t v = (slot >= 0 && slot < n_slots) ? g_v[slot] : 0;
+        v = ((v >> t->bit_start) & t->mask) << t->shift;
+        addr = t->negate ? (addr - v) : (addr + v);
+    }
+    return addr;
+}
+
 static void record_mem_read(CompiledCircuit *cc, PyObject *addr_e, int size_bytes) {
     if (!cc->mem_reads_ok) return;
     if (size_bytes <= 0 || size_bytes > 8) { cc->mem_reads_ok = 0; return; }
@@ -491,6 +630,7 @@ static void record_mem_read(CompiledCircuit *cc, PyObject *addr_e, int size_byte
     memcpy(site->bc, ae.buf, sizeof(uint32_t) * (size_t)ae.len);
     site->bc_len = ae.len;
     site->size_bytes = size_bytes;
+    site->affine_ok = 0;     /* decided after compilation; see mt_try_affine's caller */
     cc->n_mem_reads++;
 }
 
@@ -1226,6 +1366,17 @@ static PyObject *py_compile_circuit(PyObject *self, PyObject *args) {
         }
         cc->c_evaluable = const_ok && !cc->has_python_fallback && !cc->has_mem_ops;
         cc->c_mem_evaluable = const_ok && !cc->has_python_fallback;
+
+        /* Reduce the address programs to affine form NOW, not in record_mem_read.
+         * `const_u64` is built here, after every assignment has compiled, so a
+         * reduction attempted earlier saw an empty constant table and declined
+         * every address that had a displacement -- which is very nearly all of
+         * them.  Measured on the RQ5 workload before this was moved: 16.1% of
+         * memory-instruction executions took the fast path, and the decliners
+         * were `mov eax,[rbp-4]` and friends, i.e. exactly the ones it is for. */
+        for (int r = 0; r < cc->n_mem_reads; r++) {
+            mt_try_affine(cc, &cc->mem_reads[r]);
+        }
     }
 
     /* Resolve the cell capsules once (see cell_h in the struct).  Slots that are
@@ -2409,10 +2560,20 @@ static PyObject *CompiledCircuit_stats(CompiledCircuit *self, PyObject *_unused)
         if (self->progs[i].python_assignment) fallback++;
         else compiled++;
     }
-    return Py_BuildValue("{s:i,s:i,s:i}",
+    /* Memory-read sites and how many reduced to affine form.  Reported because a
+     * SINGLE non-affine site drops the whole circuit off the fast address path,
+     * so "it fires sometimes" and "it fires here" are different questions and
+     * only the counts distinguish them. */
+    int aff = 0;
+    for (int i = 0; i < self->n_mem_reads; i++) {
+        if (self->mem_reads[i].affine_ok) aff++;
+    }
+    return Py_BuildValue("{s:i,s:i,s:i,s:i,s:i}",
         "n_assignments", self->n_progs,
         "compiled", compiled,
-        "python_fallback", fallback);
+        "python_fallback", fallback,
+        "n_mem_reads", self->n_mem_reads,
+        "n_mem_reads_affine", aff);
 }
 
 /* evaluate_c(input_taint, input_values) -> output_taint dict, computed on the
@@ -3125,6 +3286,25 @@ static int capi_mem_reads_clean(PyObject *compiled, uint64_t *g_t, uint64_t *g_v
 
     int npool = (int)PyList_GET_SIZE(cc->string_pool);
     if (ensure_pool_to_slot(cc, name_to_slot, npool) != 0) { PyErr_Clear(); return 0; }
+
+    /* All-affine is the common case: every address here is `base + index*scale +
+     * disp`.  Taking it avoids both the O(npool) scratch fill below and a call
+     * into eval_program per site, neither of which this check needs -- it wants
+     * one address and one shadow lookup.  A single non-affine site drops the
+     * whole circuit to the general path, which is correct either way. */
+    int all_affine = 1;
+    for (int r = 0; r < cc->n_mem_reads; r++) {
+        if (!cc->mem_reads[r].affine_ok) { all_affine = 0; break; }
+    }
+    if (all_affine) {
+        for (int r = 0; r < cc->n_mem_reads; r++) {
+            MemReadSite *site = &cc->mem_reads[r];
+            uint64_t addr = mt_affine_addr(site, cc->pool_to_slot, g_v, n_slots);
+            if (g_shadow_capi->read_mask(shadow, addr, site->size_bytes) != 0) return 0;
+        }
+        return 1;
+    }
+
     if (ensure_scratch(cc, npool) != 0) { PyErr_Clear(); return 0; }
 
     uint64_t *in_t = cc->scratch_t, *in_v = cc->scratch_v;
