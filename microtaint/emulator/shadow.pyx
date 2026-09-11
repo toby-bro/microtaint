@@ -174,7 +174,23 @@ cdef class BitPreciseShadowMemory:
 
     cdef uint64_t read_mask_c(self, uint64_t address, int size) noexcept nogil:
         """Pure-C core of read_mask.  Same little-endian packing, same page
-        caching across the byte loop; just no Python anywhere."""
+        caching across the byte loop; just no Python anywhere.
+
+        Two shapes, because the common one is much cheaper than the general one.
+        An access that lies wholly inside a single page -- which is every
+        naturally-sized load that does not straddle a 4 KiB boundary, i.e. nearly
+        all of them -- looks the page up ONCE.  If that page has never been
+        written, the whole access is clean and the answer is 0 with no per-byte
+        work at all.
+
+        That absent-page exit is the case worth having.  The loop below costs
+        `size` iterations whatever it finds, so an 8-byte read of clean memory
+        used to cost eight iterations of (add, mask, compare, branch) to produce
+        zero, and clean memory is the overwhelming majority: the taint lives in a
+        few hundred bytes while the program touches stack and globals constantly.
+        Measured on the RQ5 workload, read_mask_c was 9.49% of the engine's
+        plumbing with every page clean.
+        """
         cdef uint64_t result = 0
         cdef int i
         cdef uint64_t addr, pb
@@ -182,6 +198,18 @@ cdef class BitPreciseShadowMemory:
         cdef bint have = False
         cdef unsigned char *page = NULL
         cdef unsigned char tb
+        cdef int off = <int>(address & <uint64_t>PAGE_MASK)
+
+        if off + size <= PAGE_SIZE:
+            page = pm_get(&self.taint_map, address & ~<uint64_t>PAGE_MASK)
+            if page == NULL:
+                return 0
+            for i in range(size):
+                tb = page[off + i]
+                if tb:
+                    result |= (<uint64_t>tb) << (i * 8)
+            return result
+
         for i in range(size):
             addr = address + <uint64_t>i
             pb = addr & ~<uint64_t>PAGE_MASK
@@ -196,18 +224,34 @@ cdef class BitPreciseShadowMemory:
         return result
 
     cdef void write_mask_c(self, uint64_t address, uint64_t mask, int size) noexcept nogil:
-        """Pure-C core of write_mask.  Writing 0 explicitly clears, exactly as
-        before, so an all-zero mask still allocates the page and zeroes it."""
+        """Pure-C core of write_mask.  Writing 0 clears, as before.
+
+        An all-zero mask does NOT create the page any more.  Clearing taint in a
+        page that has never held any is a no-op -- it is already zero -- and
+        creating it anyway had a cost far from this function: it made the page
+        PRESENT, so every later read of that address took the per-byte loop in
+        read_mask_c instead of its absent-page exit.
+
+        A program clears far more shadow than it sets: every untainted store
+        writes a zero mask, so the stack and the globals filled up with zeroed
+        4 KiB pages, and the shadow ended dense with pages that held nothing.
+        Keeping them absent is what makes the read fast path reachable.
+        """
         cdef int i
         cdef uint64_t addr, pb
         cdef uint64_t cur_pb = 0
         cdef bint have = False
         cdef unsigned char *page = NULL
+        cdef bint clearing = (mask == 0)
         for i in range(size):
             addr = address + <uint64_t>i
             pb = addr & ~<uint64_t>PAGE_MASK
             if not have or pb != cur_pb:
-                page = pm_get_or_create(&self.taint_map, pb, PAGE_SIZE)
+                if clearing:
+                    # Absent stays absent; an existing page still gets cleared.
+                    page = pm_get(&self.taint_map, pb)
+                else:
+                    page = pm_get_or_create(&self.taint_map, pb, PAGE_SIZE)
                 cur_pb = pb
                 have = True
             if page != NULL:
