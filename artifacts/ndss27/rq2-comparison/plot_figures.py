@@ -20,6 +20,7 @@ read the benchmark report.
 # mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
 
 import json
+import os
 import sys
 
 import matplotlib as mpl
@@ -240,38 +241,54 @@ def plot_perf_throughput():
 # Figure 8 - RQ5, end-to-end overhead                                          #
 # --------------------------------------------------------------------------- #
 def plot_overhead():
-    with open(OVERHEAD_PATH) as f:
-        ovh = json.load(f)
-    keys = ['native', 'qiling-only', 'microtaint-all']
-    configs = ['native', 'qiling-only', 'MicroTaint-all']
-    wall_s = [ovh[k]['wall_s'] for k in keys]
-    cpu_s = [ovh[k]['user_cpu_s'] + ovh[k]['sys_cpu_s'] for k in keys]
-    rss_mib = [ovh[k]['peak_rss_mib'] for k in keys]
+    """The overhead ladder: four rungs, wall time and peak memory.
 
-    x = np.arange(len(configs))
-    width = 0.25
+    Reads rq5-overhead/overhead_ladder.json rather than overhead_results.json.
+    The ladder is what makes the number attributable: `native` and
+    `microtaint-all` alone say how slow, not whose cost it is, and the two rungs
+    between them carry the answer.  `Qiling + hooks` is a pure-C per-instruction
+    hook that reads four guest registers -- the plumbing any per-instruction
+    dynamic analysis owes -- and `MicroTaint plumbing` is the real engine armed
+    with nothing tainted, so no propagation runs.
+
+    Time is LOG scale, deliberately: the range is 0.002 s to 5.037 s, a factor of
+    2,756, and on a linear axis the native bar is invisible and Qiling+hooks
+    nearly so, which erases exactly the two rungs the figure exists to show.
+    Memory is linear, where the range is only about 6x and the growth is the
+    point.  Exact values are in the appendix table rather than on the bars, which
+    keeps this the same size as the two-panel figure it replaces.
+    """
+    ladder_path = os.path.join(os.path.dirname(OVERHEAD_PATH), 'overhead_ladder.json')
+    with open(ladder_path) as f:
+        lad = json.load(f)
+
+    keys = ['native', 'c-codehook-regs', 'microtaint-plumbing', 'microtaint-all']
+    labels = ['native', 'Qiling + hooks', 'MicroTaint plumbing', 'MicroTaint all']
+    # Wall seconds of the measured phase: ql.run() for the emulated rungs, the
+    # whole subprocess for `native`, which has no ql.run to isolate.
+    wall_s = [lad['layers'][k]['run_s'] for k in keys]
+    rss_mib = [lad['layers'][k].get('peak_rss_mib') or 0.0 for k in keys]
+    colors = [OTHER_COLOR, OTHER_COLOR, MICROTAINT_COLOR, MICROTAINT_COLOR]
+    x = np.arange(len(keys))
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(5.2, 2.5 * PLOT_SCALE))
 
-    # ---- left: wall and CPU time ----
-    colors = [OTHER_COLOR, OTHER_COLOR, MICROTAINT_COLOR]
-    ax1.bar(x - width / 2, wall_s, width, label='Wall (s)', color=colors, edgecolor='black', linewidth=0.6)
-    ax1.bar(x + width / 2, cpu_s, width, label='CPU (s)', color=colors, edgecolor='black', linewidth=0.6, hatch='//')
-    ax1.set_ylabel('Time (s)', fontsize=10)
-    ax1.set_title('Wall and CPU time')
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(configs, rotation=20, ha='right', fontsize=10)
-    ax1.legend(fontsize=10)
+    ax1.bar(x, wall_s, 0.6, color=colors, edgecolor='black', linewidth=0.6)
+    ax1.set_yscale('log')
+    ax1.set_ylabel('Wall time (s)', fontsize=10)
+    ax1.set_title('Time', fontsize=10)
 
-    # ---- right: peak RSS ----
-    ax2.bar(configs, rss_mib, color=colors, edgecolor='black', linewidth=0.6)
+    ax2.bar(x, rss_mib, 0.6, color=colors, edgecolor='black', linewidth=0.6)
     ax2.set_ylabel('Peak RSS (MiB)', fontsize=10)
-    ax2.set_title('Peak memory usage')
-    ax2.set_xticks(range(len(configs)))
-    ax2.set_xticklabels(configs, rotation=20, ha='right', fontsize=10)
+    ax2.set_title('Peak memory', fontsize=10)
+    ax2.set_ylim(0)
 
     for ax in (ax1, ax2):
-        ax.set_ylim(0)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=20, ha='right', fontsize=9)
+        ax.tick_params(axis='y', labelsize=8)
+        ax.grid(axis='y', alpha=0.3, linewidth=0.5)
+        ax.set_axisbelow(True)
 
     fig.tight_layout()
     save(fig, 'fig_overhead.pdf')

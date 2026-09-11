@@ -72,7 +72,7 @@ if layer == "blockhook":
     ql.hook_block(lambda *a: None)
 elif layer == "codehook":
     ql.hook_code(lambda *a: None)
-elif layer.startswith("c-codehook") or layer == "c-blockhook":
+elif layer.startswith("c-"):
     # Pure-C UC_HOOK_CODE: no GIL, no Python frame, no marshalling.  Isolates
     # what Unicorn itself pays to call out on every instruction.
     import ctypes
@@ -80,10 +80,12 @@ elif layer.startswith("c-codehook") or layer == "c-blockhook":
     import unicorn.x86_const as ux
     lib = ctypes.CDLL(hooklib_path)
     lib.ladder_count.restype = ctypes.c_uint64
+    lib.ladder_mem_count.restype = ctypes.c_uint64
     uclib = _U3.uclib
     lib.ladder_init(
         ctypes.cast(uclib.uc_hook_add, ctypes.c_void_p),
         ctypes.cast(uclib.uc_reg_read, ctypes.c_void_p),
+        ctypes.cast(uclib.uc_mem_read, ctypes.c_void_p),
         ux.UC_X86_REG_RAX, ux.UC_X86_REG_RBX, ux.UC_X86_REG_RCX, ux.UC_X86_REG_RDX,
     )
     from unicorn import UC_HOOK_BLOCK, UC_HOOK_CODE
@@ -162,6 +164,7 @@ print(json.dumps({
     # ladder exists to avoid, so the harness checks it against the instruction
     # count rather than trusting uc_hook_add's return value.
     "c_hook_calls": int(c_hook_lib.ladder_count()) if c_hook_lib is not None else None,
+    "c_mem_hook_calls": int(c_hook_lib.ladder_mem_count()) if c_hook_lib is not None else None,
     "instr_hook_registered": getattr(wrapper, "_instr_hook_registered", None),
     # For microtaint rungs: how many instructions the hook actually saw, and how
     # many took the untainted prefilter exit.  The plumbing rung is only honest
@@ -222,79 +225,88 @@ LAYERS = [
     ('c-blockhook',          'per-BLOCK control, pure C, empty body',         'emulator',   True),
     ('c-codehook',           'per-instruction control, pure C, empty body',   'emulator',   True),
     ('c-codehook-regs',      'the same, reading 4 guest registers',           'emulator',   True),
+    ('c-codehook-mem',       'the same, plus an 8-byte guest memory read',    'emulator',   True),
+    ('c-memhook',            'the same, plus a UC\\_HOOK\\_MEM callback',        'emulator',   True),
+    ('codehook',             'the same in PYTHON, empty body',                'hosting',    True),
+    ('codehook-regs',        'the same in PYTHON, reading 4 registers',       'hosting',    True),
     ('microtaint-plumbing',  'the real engine, armed, but nothing tainted',   'plumbing',   True),
     ('microtaint-none',      'bit-precise taint propagation, no detectors',   'microtaint', True),
     ('microtaint-all',       'plus the four detectors',                       'microtaint', True),
     ('blockhook',            'empty per-BLOCK Python hook',                   'reference',  False),
-    ('codehook',             'empty per-INSTRUCTION Python hook',             'reference',  False),
-    ('codehook-regs',        'per-instruction Python hook reading 4 regs',    'reference',  False),
-    # How much of `native` is not the workload at all.  `native` is timed as
-    # WALL CLOCK around fork+exec, while every emulated rung reports the
-    # in-process `run_s` of `ql.run()` alone, so the baseline carries a process
-    # start the others do not.  On a short workload that is most of it:
-    # measured on bench_dense.elf, 435 us of process start against 139 us of
-    # actual work, which would divide every x-native figure by about four.
-    # This rung prices the start so the reader can subtract it, rather than
-    # leaving it folded invisibly into the denominator.
-    ('spawn',                'fork+exec of a do-nothing binary (not the workload)',
-                                                                              'reference',  False),
 ]
 
 
 def _run(argv, stdin_data, timeout, env=None):
+    """Run a child to completion.  Returns (wall_s, stdout, stderr, metrics).
+
+    `metrics` carries wall time, CPU time (user+sys) and peak RSS for the child.
+    All three are reported because they answer different questions: `ql.run` is
+    the taint phase, `wall` includes interpreter start-up and emulator
+    construction that a user of the tool also waits for, and `cpu` says whether
+    the difference between them is work or waiting.
+
+    Peak RSS comes from wait4's rusage for THIS child rather than from polling
+    /proc: a poll can miss a short-lived peak, and the rung that matters here
+    (the shadow memory growing with the tainted address space) is exactly the
+    kind of thing that would be missed intermittently and then look like noise.
+    """
     t0 = time.perf_counter()
     proc = subprocess.Popen(
         argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env={**os.environ, **env} if env else None,
     )
-    out, err = proc.communicate(stdin_data, timeout=timeout)
-    return time.perf_counter() - t0, out, err
-
-
-#: A binary that does nothing but exit.  Built once, and only so the `spawn`
-#: rung has something to time; it is deliberately not linked against libc, so
-#: what it measures is fork+exec and nothing else.
-_SPAWN_SRC = ('void _start(void){ __asm__ volatile("syscall"::"a"(60),"D"(0)); '
-              '__builtin_unreachable(); }\n')
-
-
-def _spawn_binary():
-    """Path to the do-nothing binary, or None when it cannot be built."""
-    path = '/tmp/_ladder_nul.elf'
-    if os.path.exists(path):
-        return path
-    src = '/tmp/_ladder_nul.c'
-    with open(src, 'w') as f:
-        f.write(_SPAWN_SRC)
-    rc = subprocess.run(['gcc', '-static', '-nostdlib', '-O1', '-o', path, src],
-                        capture_output=True, check=False).returncode
-    return path if rc == 0 else None
+    out_chunks, err_chunks = [], []
+    import threading
+    def _drain(stream, sink):
+        try:
+            sink.append(stream.read())
+        except Exception:
+            pass
+    if stdin_data is not None and proc.stdin is not None:
+        try:
+            proc.stdin.write(stdin_data)
+        except BrokenPipeError:
+            pass
+        try:
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass
+    to = threading.Thread(target=_drain, args=(proc.stdout, out_chunks))
+    te = threading.Thread(target=_drain, args=(proc.stderr, err_chunks))
+    to.start()
+    te.start()
+    _pid, status, rusage = os.wait4(proc.pid, 0)
+    proc.returncode = os.waitstatus_to_exitcode(status)
+    to.join(timeout)
+    te.join(timeout)
+    wall = time.perf_counter() - t0
+    out = out_chunks[0] if out_chunks else b''
+    err = err_chunks[0] if err_chunks else b''
+    metrics = {
+        'wall_s': wall,
+        'cpu_s': (rusage.ru_utime + rusage.ru_stime) if rusage else 0.0,
+        'peak_rss_mib': (rusage.ru_maxrss / 1024.0) if rusage else 0.0,
+    }
+    return wall, out, err, metrics
 
 
 def measure(layer, binary, rootfs, stdin_data, timeout):
     """One run of one rung.  Returns (run_s, guest_bytes, extra) or None."""
     if layer == 'native':
-        wall, out, _ = _run([binary], stdin_data, timeout)
-        return wall, len(out), {}
-    if layer == 'spawn':
-        nul = _spawn_binary()
-        if nul is None:
-            raise RuntimeError('cannot build the do-nothing binary')
-        # Timed exactly as `native` is, because the only useful thing to do
-        # with this number is subtract it from that one.
-        wall, out, _ = _run([nul], stdin_data, timeout)
-        return wall, len(out), {}
+        wall, out, _err, m = _run([binary], stdin_data, timeout)
+        return wall, len(out), dict(m)
     path = '/tmp/_ladder_helper.py'
     with open(path, 'w') as f:
         f.write(HELPER)
     hooklib = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ladder_hooks.so')
-    _, out, err = _run([sys.executable, path, binary, rootfs, layer, hooklib],
-                       stdin_data, timeout, env=ARTIFACT_ENGINE_ENV)
+    _, out, err, m = _run([sys.executable, path, binary, rootfs, layer, hooklib],
+                          stdin_data, timeout, env=ARTIFACT_ENGINE_ENV)
     text = out.decode('utf-8', 'replace')
     idx = text.rfind('{')
     if idx < 0:
         raise RuntimeError(f'{layer}: helper produced no JSON\n{err.decode()[-400:]}')
     d = json.loads(text[idx:])
+    d.update(m)
     return d['run_s'], d['guest_bytes'], d
 
 
@@ -302,7 +314,7 @@ def count_instructions(binary, rootfs, stdin_data, timeout):
     path = '/tmp/_ladder_count.py'
     with open(path, 'w') as f:
         f.write(COUNT_HELPER)
-    _, _, err = _run([sys.executable, path, binary, rootfs], stdin_data, timeout)
+    _, _, err, _m = _run([sys.executable, path, binary, rootfs], stdin_data, timeout)
     text = err.decode('utf-8', 'replace')
     idx = text.rfind('{')
     return int(json.loads(text[idx:])['instrs']) if idx >= 0 else None
@@ -370,11 +382,9 @@ def main() -> int:
                 break
         if not samples:
             continue
-        # `spawn` is the one rung that is SUPPOSED to run no workload: it prices
-        # process start so it can be subtracted from `native`.  Everything else
-        # writing nothing means the guest never got going, and a rung that
+        # A rung writing nothing means the guest never got going, and a rung that
         # measures an empty run would read as gloriously fast.
-        if not gb and layer != 'spawn':
+        if not gb:
             raise SystemExit(f'{layer}: the guest wrote 0 bytes, so the workload never ran')
         # Each run is its own subprocess, so the counter starts at zero every time
         # and `calls` is already PER RUN -- dividing by len(samples) was wrong, and
@@ -422,9 +432,13 @@ def main() -> int:
             'run_s': statistics.median(samples), 'desc': desc,
             'per_block_hook': bool(extra.get('per_block_hook')),
             'guest_bytes': gb, 'n_runs': len(samples),
+            'peak_rss_mib': extra.get('peak_rss_mib'),
+            'wall_s': extra.get('wall_s'),
+            'cpu_s': extra.get('cpu_s'),
             'c_hook_calls_per_run': calls,
             'hook_instr_total': extra.get('hook_instr_total'),
             'hook_prefilter_hits': extra.get('hook_prefilter_hits'),
+            'c_mem_hook_calls': extra.get('c_mem_hook_calls'),
             'residual_register_taint': extra.get('residual_register_taint'),
             'env_taint_ir': extra.get('env_taint_ir'),
             'taint_ir_modules': extra.get('taint_ir_modules'),
@@ -444,12 +458,19 @@ def main() -> int:
     for layer, _desc, bucket, chain in LAYERS:
         if not chain or layer not in results:
             continue
+        _bucket = bucket
         ns = ns_of(layer)
-        marg = (ns - prev_ns) if (ns is not None and prev_ns is not None) else None
+        # A PYTHON rung is not an increment on the C rung above it -- it is the
+        # same granularity measured in the other host language -- so it gets no
+        # marginal, and the chain resumes from the last C rung.
+        is_hosting = (_bucket == 'hosting')
+        marg = (None if is_hosting
+                else (ns - prev_ns) if (ns is not None and prev_ns is not None) else None)
         xq = (ns / qil) if (ns and qil) else None
         print(f'{layer:<22} {results[layer]["run_s"]:>9.3f} {_fmt(ns, 10)} {_fmt(marg, 10)} '
               f'{_fmt(xq, 9)}  {bucket:<12}')
-        prev_ns = ns
+        if not is_hosting:
+            prev_ns = ns
     print('-' * 100)
     print('  reference points (NOT rungs microtaint stands on: it uses a C hook, not these)')
     for layer, desc, _bucket, chain in LAYERS:
@@ -467,7 +488,10 @@ def main() -> int:
     cch = ns_of('c-codehook')
     cchr = ns_of('c-codehook-regs')
     print('What the ladder says:')
-    print(f'  * the emulator costs {qil:.0f} ns/instr with nothing hooked.')
+    # Every line below is guarded: --only can select any subset, and a summary
+    # that assumes a rung was measured crashes on the subset that omits it.
+    if qil:
+        print(f'  * the emulator costs {qil:.0f} ns/instr with nothing hooked.')
     cbh = ns_of('c-blockhook')
     if cbh and qil:
         # This used to be asserted in the prose of the rung above.  It is a
@@ -476,7 +500,7 @@ def main() -> int:
         # else, so this rung is the chaining loss on its own.
         print(f"  * losing Unicorn's block chaining costs {cbh - qil:+.0f} ns/instr: that is a")
         print('    pure-C hook that fires once per basic block and does nothing.')
-    if cch and qil:
+    if cch and qil and cbh:
         print(f'  * getting control on EVERY instruction in pure C costs {cch:.0f} ns/instr,')
         base = cbh if cbh else qil
         via = 'over a per-block hook' if cbh else 'over bare emulation'
@@ -487,7 +511,7 @@ def main() -> int:
         print(f'    so control plus the state a taint engine needs is {cchr:.0f} ns/instr.')
     plumb = ns_of('microtaint-plumbing')
     if mt and cchr and plumb:
-        print(f'  * the engine\'s PLUMBING is {plumb:.0f} ns/instr ({plumb - cchr:+.0f} over that):')
+        print(f"  * the engine's PLUMBING is {plumb:.0f} ns/instr ({plumb - cchr:+.0f} over that):")
         print('    the hook, reading the operands the instruction actually uses, the')
         print('    address->circuit cache, the prefilter, and for a memory operand an')
         print('    effective address and a shadow lookup. No taint is computed; this is')
