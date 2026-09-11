@@ -20,6 +20,7 @@ def _vn_range(vn: VarnodeLike) -> tuple[str, int, int]:
 def slice_backward(
     ops: list[PcodeOp],
     target_varnode: VarnodeLike,
+    follow_load_ptr: bool = True,
 ) -> list[PcodeOp]:
     """
     Given an ordered list of P-code operations and a target output varnode,
@@ -29,6 +30,11 @@ def slice_backward(
     Varnode cannot be constructed from Python: a caller that wants the slice of
     a register the lifter never names outright -- a flag, say -- has no way to
     hand one over, and only the (space, offset, size) triple is read here.
+
+    `follow_load_ptr=False` returns the DATA slice only: the traversal stops at a
+    LOAD's pointer operand, so address arithmetic does not appear.  Callers that
+    ask what the loaded bits DO (the taint category) want this; callers that ask
+    what the instruction depends on (the dependency set) want the default.
 
     Overlap-aware: an op's output is included in the slice if its byte range
     overlaps ANY varnode currently in the worklist within the same address
@@ -62,7 +68,20 @@ def slice_backward(
             slice_ops.append(op)
 
             # Track all inputs (including LOAD memory pointers).
-            for inp in op.inputs:
+            #
+            # `follow_load_ptr=False` stops at a LOAD's pointer instead, giving
+            # the DATA slice: the ops that decide how the loaded bits reach the
+            # output, without the ops that decide WHICH address is read.  The
+            # distinction is not cosmetic.  `mov eax,[rbp]` lifts to LOAD/COPY/
+            # INT_ZEXT and categorises Mapped, so it takes the load-like path and
+            # needs no cell; `mov eax,[rbp-4]` lifts to the same thing plus one
+            # INT_ADD for the displacement, categorises Transportable, and pays a
+            # two-cell differential per output.  The arithmetic is in the address,
+            # and the address is already carried separately as an addr_dep.
+            inputs = op.inputs
+            if not follow_load_ptr and op.opcode.name == 'LOAD':
+                inputs = inputs[:1]     # input[1] is the pointer; input[0] is a const space id
+            for inp in inputs:
                 if inp.space.name != 'const':
                     worklist.append(_vn_range(inp))
 

@@ -2862,8 +2862,45 @@ def generate_taint_assignments(  # noqa: C901
             mem_taint_exprs.append(dep_expr)
 
     # --- LOAD-LIKE DETECTION ---
+    #
+    # The category is taken from the DATA slice, not the whole slice.  `cat` is
+    # computed over every op the output depends on, address arithmetic included,
+    # so one displacement decides it: `mov eax,[rbp]` lifts to LOAD/COPY/INT_ZEXT
+    # and is Mapped, while `mov eax,[rbp-4]` adds an INT_ADD for the displacement
+    # and becomes Transportable.  Same data movement, same taint, but the second
+    # loses the load-like path and pays a two-cell differential on each of its two
+    # outputs.  On -O0 code that is the most common instruction there is: measured
+    # on the RQ5 workload, stack loads with a displacement were the top consumers
+    # of cell re-execution.
+    #
+    # Dropping the address ops here is not a relaxation.  A load's output taint is
+    # the taint of the memory it reads; the address decides WHICH bytes are read,
+    # not how they reach the output, and it is already carried separately as an
+    # addr_dep (the pointer avalanche below is built from exactly those).
+    # Two conditions, both learned from the suite rather than reasoned up front.
+    #
+    # NO STORE anywhere in the instruction.  The load-like form answers with the
+    # SHADOW's taint at the address, which is only the whole answer if nothing in
+    # this same circuit wrote that memory.  `push rax; pop rbx` lifts to one
+    # circuit containing both, and the shortcut made RBX come back clean: a
+    # register-through-stack-to-register under-taint, which the differential
+    # carried correctly.
+    #
+    # NO CONTROL FLOW.  `rep stosb` lifts to a loop, and its taint depends on
+    # floors keyed to the iteration, not on a single load's source; the shortcut
+    # dropped the floor entirely.
+    _load_cat = cat
+    _all = all_ops or slice_ops
+    if (load_ops and cat != InstructionCategory.MAPPED and slice_ops
+            and not any(o.opcode.name == 'STORE' for o in _all)
+            and not any(o.opcode.name in CONTROL_FLOW_OPCODES for o in _all)):
+        _last_out = slice_ops[-1].output
+        if _last_out is not None:
+            _load_cat = determine_category(
+                slice_backward(slice_ops, _last_out, follow_load_ptr=False))
+
     is_load_like = False
-    if load_ops and cat == InstructionCategory.MAPPED:
+    if load_ops and _load_cat == InstructionCategory.MAPPED:
         for load_op in load_ops:
             if load_op.output is None:
                 continue
