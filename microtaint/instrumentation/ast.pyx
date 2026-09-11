@@ -1446,17 +1446,28 @@ def _run_concrete_step(sub, dict values, sim):
         if name in values:
             regs[name] = values[name]
 
-    # On a big-endian target Unicorn cannot seed or read the PPC XER carry/overflow
-    # varnodes, so threading concrete state through it silently drops the carry bit
-    # (and any GPR whose value depends on a carry-in).  Read the whole post-state
-    # back from the native p-code kernel instead, which models those varnodes and
-    # is byte-order agnostic for native-BE-safe instructions (see _native_be_safe).
-    cdef bint be_native
+    # Prefer the native p-code kernel for the whole post-state.
+    #
+    # It started as a big-endian correctness fix (Unicorn cannot seed or read the
+    # PPC XER carry/overflow varnodes, so threading through it silently drops the
+    # carry bit) and stayed gated on endianness, but `_native_be_safe` is the
+    # actual safety predicate and it holds on little-endian too.  Meanwhile the
+    # Unicorn path below costs a full clear + reseed + TB invalidation + emu_start
+    # PER CHAIN STEP: measured 477.6 us against 6.9 us for the taint evaluation it
+    # exists to support, which is 98.6% of a ChainedCircuit step and the whole of
+    # microtaint's RQ2 p95/p99/p100 tail.  Every other engine in that comparison
+    # gets FASTER per step on a sequence, by amortising; this got 81x slower, and
+    # none of it was taint propagation.
+    #
+    # Memory operands still fall through to Unicorn: `_native_be_safe` declines
+    # LOAD/STORE, and widening that is a separate question about memory layout in
+    # the native register file, not about endianness.
+    cdef bint native_ok
     try:
-        be_native = sim._is_big_endian and _native_be_safe(sim.arch, sub.instruction)
+        native_ok = _native_be_safe(sim.arch, sub.instruction)
     except Exception:
-        be_native = False
-    if be_native:
+        native_ok = False
+    if native_ok:
         new_values = dict(values)
         try:
             # Execute ONCE and read every state register off that single frame,
