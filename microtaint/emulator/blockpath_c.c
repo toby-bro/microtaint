@@ -110,6 +110,12 @@ typedef struct {
  * 31.5 for resolving the loads, and 29.8 for pass 2 and the stores.  The
  * address slice doing its job in 5.7 ns while its SETUP cost 9.8 is what
  * pointed at the dead seeding removed from `mt_blk_compute`.
+ *
+ * Resolving the loads is three calls interleaved per access, so 9, 10 and 11
+ * REMOVE one each instead of stopping.  Against stage 4 they price the guest
+ * memory read at 31.7 ns/instr, the shadow read at 3.9 and the store overlay
+ * at 1.3: the guest read alone is roughly a fifth of block mode, and the
+ * largest single cost the engine still controls.
  */
 static int blk_stop_after = -1;
 

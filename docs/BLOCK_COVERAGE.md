@@ -19,7 +19,7 @@ trace is big enough to mean something.
 ## Where it started
 
 | | distinct blocks refused | block executions skipped |
-|---|---|---|
+| --- | --- | --- |
 | before | 49 of 381 (12.9%) | 71 of 642 (11.1%) |
 | now | 0 | 0 |
 
@@ -100,7 +100,7 @@ Surveyed across the whole instruction bank plus the forms it does not carry,
 **every looping instruction on every supported ISA is AMD64**. Fifteen forms:
 
 | form | kind | handling | IR ops |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `bsf`, `bsr`, `tzcnt` (7 forms) | relative | recognised, closed form | 37-59 |
 | `pext`, `pdep` (3 forms) | relative | unrolled, then floored | 2259-5575 |
 | `rep movsb`/`stosb`/`movsq` | self-address | **declined** | - |
@@ -189,7 +189,7 @@ needs no oracle and is exactly what was broken.
 Lowering one instruction, measured:
 
 | | ms | IR ops | over-taints vs hardware |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | an ordinary ALU instruction | 1.6 | 94 | - |
 | `bsf eax,eax`, unrolled | 26.5 | 2562 | 18 of 168 |
 | `bsf eax,eax`, recognised | **7.4** | **64** | **5 of 168** |
@@ -234,7 +234,7 @@ block compiler is most of block mode's wall clock (87-93%) at around 8 ms per
 distinct block. Lowering one instruction, measured:
 
 | | ms | IR ops |
-|---|---|---|
+| --- | --- | --- |
 | an ordinary ALU instruction | 2.0 | 85 |
 | `bsf eax,eax`, flat limit of 64 | 54.5 | 5121 |
 | `bsf eax,eax`, bounded by the operand | 26.5 | 2562 |
@@ -268,7 +268,7 @@ running, and could be scored against each other.
 Measured on `eax, ebx` forms, 256 outputs each, against Unicorn per-bit truth:
 
 | | IR ops | over-tainted | under |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `lzcnt` (closed form, old avalanche taint rule) | 31 | 62 | 0 |
 | `tzcnt` (p-code loop, unrolled) | 2589 | 27 | 0 |
 | `lzcnt` (closed form, corner taint rule) | **40** | **0** | 0 |
@@ -407,7 +407,7 @@ the operands, it can prove it whenever they differ in a bit neither side can
 change, which is a far weaker condition:
 
 | | can the rule prove it | why |
-|---|---|---|
+| --- | --- | --- |
 | operands `EAX` vs `-1` | yes | bits 8-31 are clean zero against set |
 | difference `EAX + 1` | no | in [1, 0x100], no single bit provably one |
 
@@ -436,7 +436,7 @@ to the path it replaces on every run after the first. Three consecutive runs of
 `bench_dense.elf` in one process, before any cache:
 
 | | run 1 | run 2 | run 3 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | block mode | 451.8 ms | 428.6 ms | 426.8 ms |
 | *of which the compiler* | 360.2 | 354.7 | 353.3 |
 | per instruction | 659.5 ms | 170.7 ms | 170.1 ms |
@@ -468,7 +468,7 @@ and `tests/test_block_plan_cache.py` has a behavioural test per part that fails
 when it is dropped.
 
 | part | what goes wrong without it |
-|---|---|
+| --- | --- |
 | the base address | blocks are compiled with `abs_ram=True`, so a PC-relative operand's `ram` address is baked in; the same bytes at another address would read wherever the block first ran |
 | the CODE, not its address | rewritten bytes would inherit the plan compiled for what used to be there |
 | the slot map | emitted code addresses engine slots by index, so a program compiled against one layout writes its answer to the wrong register under another |
@@ -562,7 +562,7 @@ Measured on a static-glibc guest, which is where compiler output actually uses
 the idiom:
 
 | | time | side-channel findings | distinct sites |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | before | 79.6 ms | 110 | 47 |
 | after | 72.4 ms | 105 | 42 |
 
@@ -571,3 +571,75 @@ dead-code elimination delete whatever was computing it: `xor rax,rax` goes from
 40 IR nodes to 20 and `sub rax,rax` from 93 to 73. There is no change on
 `bench_dense`, which is hand-written `-nostdlib` code that does not zero
 registers this way, so the win is real but workload-shaped.
+
+## Where a block's cost actually goes
+
+Measured on `bench_dense.elf`, 379,795 guest instructions, steady state so
+compilation is amortised. The rungs come from the staged bisect in
+`blockpath_c.c` (`MICROTAINT_BLOCK_STOP`), read in the order 1, 2, 3, 7, 8, 5,
+6, 4, plus the three skip probes 9, 10 and 11 inside the access loop.
+
+| what it adds | ns/instr | share of 181 |
+| --- | --- | --- |
+| bare Qiling and Unicorn | 21.7 | 12% |
+| an empty pure-C block hook | 0.9 | 0.5% |
+| the engine attached, block body off | 51.4 | 28% |
+| the plan-cache lookup | 8.1 | 4% |
+| the register-file read | 8.0 | 4% |
+| computing the block | 79 | 44% |
+| the commit | 4.3 | 2% |
+
+and inside "computing the block", before the dead seeding was removed:
+
+| | ns/instr |
+| --- | --- |
+| per-region state copies | 12.1 |
+| the copies pass 1 needed | 9.8 |
+| pass 1, the address slice | 5.7 |
+| resolving the loads it found | 31.5 |
+| pass 2, the stores, threading | 29.8 |
+
+and inside resolving the loads:
+
+| | ns/instr |
+| --- | --- |
+| the guest memory read | 31.7 |
+| the shadow read | 3.9 |
+| the store overlay | 1.3 |
+
+### What this says, and what it rules out
+
+**The emulator floor is 12%, not 40%.** An empty pure-C block hook costs 0.9
+ns/instr, so losing Unicorn's translation-block chaining is free, and the 51.4
+that the engine adds before computing anything is OURS rather than Unicorn's.
+
+**That 51.4 is not recoverable, and measuring it settled the question.** It is
+the cost of having a `UC_HOOK_MEM_WRITE` registered at all, not of running it:
+the hook body, the detectors and the deferred registration each cost nothing,
+and restricting the hook's address range does not help because Unicorn filters
+in the dispatcher after paying for the instrumentation. Removing the hook makes
+the engine 3x slower in block mode and 23x on the per-instruction path, because
+clearing taint is what keeps the shadow sparse and instructions on the cheap
+untainted path. It also loses precision: block plans under-clear on their own,
+and block mode reports 57 sites instead of 41 without it.
+
+**The address slice works.** 1.93 addresses out of a program costing 5.7
+ns/instr against the full program's 29.8, which is what it was built for. Its
+setup cost 9.8, nearly twice the program, and that was dead: `so` is pass 1's
+output array and the only thing read back out of it is each load's address.
+
+**The guest memory read is the largest thing still under our control**, 31.7
+ns/instr, roughly a fifth of block mode. 76% of loads genuinely need their
+value, so dead-code elimination has already pruned what it can, and there are
+only 1.2 loads per region so there is little to batch. `uc_mem_read` costs the
+same for 8 bytes as for 64, so it is per-call overhead, and the only way past it
+is to stop going through Unicorn's memory API: map guest memory with
+`uc_mem_map_ptr` so the engine holds host pointers and a load becomes one
+instruction. That is an architectural change, not a tweak.
+
+**The remaining per-region copies are 12.1 ns/instr** and the same argument that
+killed the pass-1 seeding may apply: the plan knows at compile time which value
+slots each region publishes, so the two whole-register-file copies could become
+a short list. It is worth 6-7%, and it is subtle enough to want its own careful
+pass: getting the array and slot convention wrong there produces wrong VALUES,
+which become wrong addresses, which become under-taints.

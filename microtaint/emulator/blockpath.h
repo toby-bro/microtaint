@@ -323,17 +323,27 @@ static int mt_blk_compute(
         const int base = MT_BLK_MEM_BASE + MT_BLK_PER_ACC * k;
         const uint64_t addr = so[base + MT_BLK_A_ADDR];
         const int size = reg->acc_size[k];
+        /* Resolving a load is three calls, and 9/10/11 REMOVE one each rather
+         * than stopping, because they are interleaved per access and nothing
+         * useful can be cut between them.  Measured on bench_dense against
+         * stage 4: the guest read is 31.7 ns/instr, the shadow read 3.9, the
+         * overlay 1.3.  The read is the single largest thing the engine can
+         * still control, and the tests cost nothing measurable: block mode is
+         * 66.4-68.8 ms with them and 66.4-68.2 ms without. */
         uint64_t val = 0;
-        if (reg->acc_needval[k] && env->mem_read) {
+        if (reg->acc_needval[k] && env->mem_read && env->stop_after != 9) {
           if (env->mem_read(env->mem_ctx, addr, size, &val) != 0) {
             mt_blk_miss(env, MT_BLK_MISS_MEM);
             return MT_BLK_DECLINED;
           }
         }
         uint64_t msk =
-          env->shadow_read ? env->shadow_read(env->shadow, addr, size) : 0;
+          (env->shadow_read && env->stop_after != 10)
+            ? env->shadow_read(env->shadow, addr, size) : 0;
         /* What this block has already stored wins over both. */
-        mt_blk_overlay(pend->writes, pend->n_writes, addr, size, &val, &msk);
+        if (env->stop_after != 11) {
+          mt_blk_overlay(pend->writes, pend->n_writes, addr, size, &val, &msk);
+        }
         sv[base + MT_BLK_A_MEM] = val;
         st[base + MT_BLK_A_MEM] = msk;
       }
