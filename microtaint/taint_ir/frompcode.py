@@ -1255,8 +1255,10 @@ class Builder:
             if off % 8 or off + osz > isz:
                 return False
             av, at = self._read_lane(op.inputs[0], off, osz)
+            # SUBPIECE is a movement op: see `_emit_op`.  It can be carrying
+            # an invented value, so it never claims `proved`.
             self._predicated_write(self._out(op), p.mask(av, osz * 8),
-                                   p.mask(at, osz * 8), proved=True)
+                                   p.mask(at, osz * 8))
             return True
 
         # 128-bit product, truncated to 128 bits: the high lane needs the high
@@ -1656,7 +1658,18 @@ class Builder:
         om = _mask_of(osz)
 
         val, tnt = self._rule(name, op, av, at, bv, bt, isz, obits, ibits, om)
-        self._predicated_write(self._out(op), val, tnt, proved=True)
+        # A MOVEMENT op may be carrying a fabrication.  `_invention_stays_opaque`
+        # lets an unmodelled operation's invented value travel through COPY,
+        # INT_ZEXT, INT_SEXT, SUBPIECE and PIECE precisely because their taint
+        # rule reads taint alone -- but their VALUE is then the invented
+        # constant, and calling that `proved` clears a taint that must stay.
+        # Measured: `crc32 eax, bl` is a CALLOTHER into EAX and an INT_ZEXT into
+        # RAX, and marking the zext proved reported RAX clean however the inputs
+        # were tainted.  Nothing is lost by excluding them: an idiom that zeroes
+        # a register has already had its taint cleared by the op that computed
+        # the zero, and the movement simply copies that zero forward.
+        self._predicated_write(self._out(op), val, tnt,
+                               proved=name not in self._MOVEMENT_OPS)
 
     def _sext(self, node: int, bits: int) -> int:
         p = self.p

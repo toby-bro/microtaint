@@ -108,6 +108,14 @@ _CASES: list[tuple[str, str, str, str, bool]] = [
     # An operation p-code does not model.  Its value is a fabricated zero, and
     # clearing on it is exactly the under-taint this rule had to be fixed for.
     ('crc32 rax,cl',  'AMD64', 'f2480f38f0c1', 'RAX', False),
+    # The 32-bit forms, which are a CALLOTHER into EAX followed by an INT_ZEXT
+    # into RAX.  They are here because the first version of this rule marked
+    # EVERY op's write as proved, including the movement ops an invented value
+    # is deliberately allowed to travel through, so the zext saw a `const 0`
+    # value and cleared the avalanche: RAX came back clean however the inputs
+    # were tainted.  The 64-bit form above has no zext and did not catch it.
+    ('crc32 eax,bl',  'AMD64', 'f20f38f0c3',   'RAX', False),
+    ('crc32 eax,ebx', 'AMD64', 'f20f38f0c3',   'RAX', False),
 ]
 
 #: The same idioms where another ISA spells them differently.  Added separately
@@ -240,6 +248,24 @@ def test_an_unmodelled_operation_never_says_proved() -> None:
     assert 'proved' not in src, (
         'an operation p-code cannot model now claims its value is proved; its '
         'value is a fabricated zero and clearing taint on it is an under-taint')
+
+
+def test_a_movement_op_never_says_proved() -> None:
+    """The other half of the polarity, and the one that was got wrong.
+
+    `_invention_stays_opaque` lets an unmodelled operation's invented value
+    travel through COPY, INT_ZEXT, INT_SEXT, SUBPIECE and PIECE, because their
+    taint rule reads taint alone and moving a lie does not make it a worse lie.
+    But their VALUE is then the invented constant, so a movement op claiming
+    `proved` clears taint that must stay.  Read from the source, because the
+    failure is a missing condition rather than something observable at runtime.
+    """
+    import inspect
+
+    src = inspect.getsource(frompcode.Builder._emit_op)
+    assert 'proved=name not in self._MOVEMENT_OPS' in src, (
+        'the general op path no longer excludes movement ops from `proved`; a '
+        'CALLOTHER value moving through a zext will clear its own avalanche')
 
 
 def test_proved_is_off_by_default() -> None:

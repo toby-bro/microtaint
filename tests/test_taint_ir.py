@@ -117,11 +117,29 @@ def test_backends_agree(isa: str, label: str, code: str) -> None:
 
 @pytest.mark.parametrize('isa', ['AMD64', 'ARM64', 'RISCV64'])
 def test_ir_never_under_taints_vs_ground_truth(isa: str, request: pytest.FixtureRequest) -> None:
+    """The backstop: no instruction in the bank may report less taint than the
+    hardware does.
+
+    The budget is 8 rather than 2, and that is not a round-up.  `fuzz_budget`
+    takes a quarter outside the slow tier with a floor of one, so 2 became ONE
+    sparse vector in the fast tier.  A real under-taint (`crc32 eax, bl`, whose
+    CALLOTHER result moves through an INT_ZEXT) needed TWO to surface, so it sat
+    in a fully green gate: 15,022 tests passed with a live under-taint in the
+    engine.  Eight gives the fast tier two and a release eight.
+
+    A soundness backstop is the last place to be economical with vectors.  If
+    this needs to be cheaper, make the bank smaller and say so, rather than
+    quietly probing each instruction once.
+    """
     from tests.conftest import fuzz_budget
     from tests.perop_c_bank import run_bank_perop_c
     from tests.taint_ir_bank import ir_step
 
-    rep = run_bank_perop_c(isas=[isa], n_sparse=fuzz_budget(2, request.config),
+    n_sparse = fuzz_budget(8, request.config)
+    assert n_sparse >= 2, (
+        f'{n_sparse} sparse vector(s): one probe per instruction cannot see an '
+        f'under-taint that needs two, which is how this gate missed one')
+    rep = run_bank_perop_c(isas=[isa], n_sparse=n_sparse,
                            ref=Ref.GROUND_TRUTH, step=ir_step)
     assert rep.n_cases > 0
     if rep.n_under_new:

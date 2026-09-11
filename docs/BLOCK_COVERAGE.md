@@ -530,9 +530,29 @@ keeping the taint at avalanche. So `const 0` in the IR means either "proved
 zero" or "no idea", and clearing on the second loses real taint. Measured, it
 lost bit 8 of `crc32 rax, cl`, and the per-bit ground-truth sweep caught it.
 
-So the rule is opt-IN. `proved` defaults to false, and only the five callers
-that write what p-code semantics actually computed pass it; `_emit_callother`
-does not. That polarity is the point: a caller that invents a value gets the
+So the rule is opt-IN. `proved` defaults to false, and only callers that write
+what p-code semantics actually computed pass it; `_emit_callother` does not.
+
+Getting the polarity right was not enough on its own: the first shipped version
+opted in too broadly and was an under-taint of its own.
+`_invention_stays_opaque` deliberately lets an invented value travel through
+COPY, INT_ZEXT, INT_SEXT, SUBPIECE and PIECE, because their taint rule reads
+taint alone and moving a lie does not make it a worse lie. But their VALUE is
+then the invented constant, so a movement op claiming `proved` clears the
+avalanche it was carrying. Measured: `crc32 eax, bl` is a CALLOTHER into EAX
+and an INT_ZEXT into RAX, and it reported RAX clean however the inputs were
+tainted, while the 64-bit `crc32 rax, cl`, which has no zext, was correct.
+Movement ops never claim `proved`, and nothing is lost by that: a zeroing idiom
+has already had its taint cleared by the op that computed the zero, so the
+movement copies that zero forward.
+
+That bug was live in a gate reporting 15,022 passing tests, which is the more
+useful half of the story. `test_ir_never_under_taints_vs_ground_truth` drew its
+vectors from `fuzz_budget(2)`, and `fuzz_budget` takes a quarter outside the
+slow tier with a floor of one, so the fast tier probed each instruction ONCE.
+This under-taint needs two sparse vectors to surface. The gate now asks for
+eight, so the fast tier gets two, and refuses to run at one rather than probing
+once and reporting success. That polarity is the point: a caller that invents a value gets the
 safe answer by saying nothing, and a future one that forgets loses an
 optimisation rather than silently under-tainting. Two tests pin it, one
 asserting the default and one reading `_emit_callother` to check it never
