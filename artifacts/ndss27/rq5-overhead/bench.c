@@ -38,7 +38,10 @@ static void sys_exit(int code) {
 
 /* ── constants ────────────────────────────────────────────────────────── */
 #define INPUT_SIZE 256
-#define ROUNDS 100
+#ifndef ROUNDS
+#define ROUNDS 100      /* -DROUNDS=N scales the workload; overhead_bench.py
+                           --rounds-sweep uses it to plot cost against size */
+#endif
 #define SBOX_SIZE 256
 
 /* A fixed S-box (non-tainted) — but indexing into it with a tainted index

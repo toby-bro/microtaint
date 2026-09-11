@@ -299,8 +299,31 @@ def _run_subprocess(
     )
 
 
+#: The engine configuration the ARTIFACT is about, pinned for every microtaint run.
+#:
+#: Both of these default to ON in the engine, and both replace the per-instruction
+#: LogicCircuit evaluation this paper describes:
+#:
+#:   * MICROTAINT_TAINT_IR -- `taint_ir/engine_glue.program_for` compiles each
+#:     instruction to a native taint program and the hot path calls that instead
+#:     of evaluating the circuit.  `engine_glue` says so plainly: "This is the hot
+#:     path's default."  Measured without this pin, every number here describes
+#:     taint_ir rather than the artifact.
+#:   * MICROTAINT_BLOCK -- block-at-a-time taint, which also goes through taint_ir
+#:     (`taint_ir/blockcompile.compile_block`).  Opt-in already, pinned anyway so
+#:     an inherited environment cannot switch it on.
+#:
+#: taint_ir is later work and is deliberately OUT of scope for these artifacts, so
+#: it is turned off here rather than left to whatever the shell happens to export.
+ARTIFACT_ENGINE_ENV = {
+    'MICROTAINT_TAINT_IR': '0',
+    'MICROTAINT_BLOCK': '0',
+}
+
+
 def _run_helper_subprocess(
     label: str, argv: list[str], stdin_data: bytes | None, timeout: float = 1800.0,
+    env: dict | None = None,
 ) -> Measurement:
     """Run a helper subprocess that emits a JSON timing line on stdout.
     Same accounting as _run_subprocess plus parses the breakdown JSON."""
@@ -312,6 +335,7 @@ def _run_helper_subprocess(
         stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env={**os.environ, **env} if env else None,
     )
     polled_peak_kb = [0]
     poller_stop = threading.Event()
@@ -428,6 +452,9 @@ def _run_helper_subprocess(
             'run_s': breakdown.get('run_s'),
             'guest_bytes': breakdown.get('guest_bytes'),
             'stdin_bytes': breakdown.get('stdin_bytes'),
+            'taint_ir_modules': breakdown.get('taint_ir_modules'),
+            'env_taint_ir': breakdown.get('env_taint_ir'),
+            'env_block': breakdown.get('env_block'),
             'wrapper_stats': breakdown.get('wrapper_stats', {}),
             # Kept even on success: the instruction-count helper reports through
             # stderr precisely so the guest's own stdout cannot corrupt its JSON.
@@ -630,12 +657,20 @@ for attr in ("_instr_cache_hits", "_instr_cache_misses", "_instr_hook_registered
     if hasattr(wrapper, attr):
         extra[attr.lstrip("_")] = getattr(wrapper, attr)
 
+# Which engine path actually ran.  taint_ir is later work and is out of scope
+# for these artifacts, but it is the engine's DEFAULT, so "we did not ask for it"
+# is not evidence -- report what was imported and let the harness check.
+taint_ir_used = sorted(m for m in sys.modules if m.startswith("microtaint.taint_ir"))
+
 print(json.dumps({
     "import_s": t_import1 - t_import0,
     "init_s":   t_init1 - t_init0,
     "run_s":    t_run1 - t_run0,
     "guest_bytes": guest_bytes,
     "stdin_bytes": len(stdin_data),
+    "taint_ir_modules": taint_ir_used,
+    "env_taint_ir": os.environ.get("MICROTAINT_TAINT_IR", "<unset>"),
+    "env_block": os.environ.get("MICROTAINT_BLOCK", "<unset>"),
     "wrapper_stats": extra,
 }))
 """
@@ -660,6 +695,7 @@ def measure_microtaint(
         argv=[sys.executable, helper_path, binary, rootfs, flag_string, *binary_args],
         stdin_data=stdin_data,
         timeout=timeout,
+        env=ARTIFACT_ENGINE_ENV,
     )
 
 
@@ -795,6 +831,17 @@ class VacuousRunError(RuntimeError):
     """
 
 
+class WrongEnginePathError(RuntimeError):
+    """The run exercised taint_ir rather than the per-instruction circuit path.
+
+    taint_ir is later work and out of scope for these artifacts, but it is the
+    engine's default (`taint_ir/engine_glue`: "This is the hot path's default"),
+    so simply not asking for it measures it anyway.  The first corrected RQ5 run
+    on 2026-09-11 did exactly that, and only reading engine_glue.enabled() caught
+    it: nothing in the output looked wrong.
+    """
+
+
 def validate_not_vacuous(m: Measurement, min_guest_bytes: int) -> None:
     """Raise unless this measurement shows the guest actually ran the workload."""
     got = m.extra.get('guest_bytes')
@@ -814,6 +861,13 @@ def validate_not_vacuous(m: Measurement, min_guest_bytes: int) -> None:
             f'{m.label}: the per-instruction hook was never registered, so no taint '
             f'was propagated. microtaint installs it lazily, only once taint exists, '
             f'so this timing measures an uninstrumented run.')
+    env_ir = m.extra.get('env_taint_ir')
+    if env_ir is not None and env_ir not in ('0', '<unset>'):
+        raise WrongEnginePathError(
+            f'{m.label}: MICROTAINT_TAINT_IR={env_ir}. taint_ir replaces the '
+            f'per-instruction circuit evaluation this artifact measures, and it is the '
+            f'engine DEFAULT, so a run that does not pin it off describes later work '
+            f'instead of this paper.')
 
 
 # ---------------------------------------------------------------------------
@@ -828,6 +882,46 @@ CONFIGS = [
     ('microtaint-aiw', {'aiw'}),
     ('microtaint-all', {'bof', 'uaf', 'sc', 'aiw'}),
 ]
+
+
+
+def _run_rounds_sweep(args, parser) -> int:
+    """Run the whole configuration set once per -DROUNDS value.
+
+    A single workload size gives one point and no way to tell a fixed cost from a
+    per-instruction one: startup, JIT warm-up and rule synthesis are all paid once,
+    while propagation scales with instructions executed.  Sweeping ROUNDS separates
+    them, and the instruction count measured at each size is the x-axis.
+
+    Each size is a full independent run, including its own instruction count and
+    its own workload-ran check, and is written to `<json>` keyed by size.
+    """
+    sizes = [int(x) for x in str(args.rounds_sweep).split(',') if x.strip()]
+    if not sizes:
+        parser.error('--rounds-sweep needs at least one integer')
+    out_path = args.json
+    series: dict[str, object] = {}
+    for n in sizes:
+        sys.stderr.write(f'\n===== ROUNDS={n} =====\n')
+        binary = build_bench(args.build_bench, out_path=f'bench_r{n}.elf',
+                             extra_flags=[f'-DROUNDS={n}'])
+        sub = argparse.Namespace(**vars(args))
+        sub.rounds_sweep = None
+        sub.build_bench = None
+        sub.binary = binary
+        sub.instr_count = True          # the sweep is meaningless without the x-axis
+        sub.json = f'{out_path}.rounds{n}.json' if out_path else None
+        rc = _main_single(sub, parser)
+        if rc != 0:
+            return rc
+        if sub.json:
+            with open(sub.json) as f:
+                series[str(n)] = json.load(f)
+    if out_path:
+        with open(out_path, 'w') as f:
+            json.dump({'rounds_sweep': series}, f, indent=2)
+        print(f'\nSweep written to {out_path}')
+    return 0
 
 
 def main() -> int:
@@ -873,6 +967,13 @@ def main() -> int:
              'Only for debugging the harness itself; results are not publishable.',
     )
     p.add_argument(
+        '--rounds-sweep', default=None, metavar='N,N,...',
+        help='Rebuild bench.c at each -DROUNDS value and run the whole config set for each, '
+             'giving cost as a function of workload size rather than a single point. '
+             'Requires --build-bench. Implies --instr-count, since the whole purpose is to '
+             'relate time to instructions executed.',
+    )
+    p.add_argument(
         '--instr-count', action='store_true',
         help='Additionally run the guest once under a counting hook and report guest instructions '
              'executed, so every timing can be expressed per propagation step (ns/instr).',
@@ -882,6 +983,19 @@ def main() -> int:
     args = p.parse_args()
 
     # Resolve binary path: either use --build-bench result or the positional arg
+    if args.rounds_sweep and not args.build_bench:
+        p.error('--rounds-sweep needs --build-bench: it recompiles bench.c at each -DROUNDS')
+
+    if args.rounds_sweep:
+        return _run_rounds_sweep(args, p)
+
+    return _main_single(args, p)
+
+
+def _main_single(args, p) -> int:
+    """One complete measurement: build/resolve the binary, run every configuration,
+    print the table, write the JSON.  Factored out of main() so --rounds-sweep can
+    call it once per workload size."""
     if args.build_bench:
         binary = build_bench(args.build_bench)
     elif args.binary:
@@ -961,7 +1075,10 @@ def main() -> int:
                         sys.stderr.write(f'  ! VACUOUS (recorded anyway): {exc}\n')
                         m.extra['vacuous'] = str(exc)
                 runs.append(m)
-            except VacuousRunError:
+            except (VacuousRunError, WrongEnginePathError):
+                # --allow-vacuous does NOT cover WrongEnginePathError: that one is
+                # not about whether the workload ran but about which engine ran,
+                # and there is no debugging reason to publish the wrong one.
                 raise
             except RuntimeError as exc:
                 # Timeout from a single run — log and continue
