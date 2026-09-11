@@ -243,6 +243,14 @@ def main() -> int:
     p.add_argument('--runs', type=int, default=3)
     p.add_argument('--timeout', type=float, default=1800.0)
     p.add_argument('--json', default=None)
+    p.add_argument(
+        '--only', action='append', default=[],
+        help='Run ONLY these rungs (repeatable). The chain rungs are cheap; the three '
+             'Python reference rungs are not (codehook-regs alone is ~75s per run), so '
+             '--only is how you re-measure after an engine change without paying for '
+             'reference points that cannot have moved.',
+    )
+    p.add_argument('--skip', action='append', default=[], help='Skip a rung (repeatable)')
     args = p.parse_args()
 
     binary = os.path.abspath(args.binary)
@@ -258,8 +266,12 @@ def main() -> int:
     print('# taint_ir and block mode pinned OFF (per-instruction LogicCircuit path)')
     print()
 
+    wanted = [ly for ly, _d, _b, _c in LAYERS
+              if (not args.only or ly in args.only) and ly not in args.skip]
     results = {}
     for layer, desc, _bucket, _chain in LAYERS:
+        if layer not in wanted:
+            continue
         samples = []
         gb = None
         extra = {}

@@ -94,19 +94,23 @@ uv run python overhead_ladder.py bench.elf --gen-input 64 --runs 3 \
     --json overhead_ladder.json
 ```
 
-A representative result (3,768,369 guest instructions):
+A representative result (3,768,369 guest instructions, idle machine, 5 runs):
 
 | layer | ns/instr | marginal | x qiling | attributable to |
 |---|---|---|---|---|
-| native | 0.6 | | 0.0 | baseline |
-| qiling-only | 25.4 | +24.9 | 1.0 | emulator |
-| c-codehook (per-instruction control, pure C) | 48.3 | +22.9 | 1.9 | emulator |
-| c-codehook-regs (+ read 4 guest registers) | 104.2 | +55.9 | 4.1 | emulator |
-| microtaint-none | 1590.3 | +1486.1 | 62.5 | **microtaint** |
-| microtaint-all | 1723.5 | +133.2 | 67.8 | **microtaint** |
-| *blockhook* (empty per-block Python hook) | *142.4* | | *5.6* | *reference* |
-| *codehook* (empty per-instruction Python hook) | *1962.8* | | *77.2* | *reference* |
-| *codehook-regs* (same, reading 4 registers) | *19704.5* | | *774.9* | *reference* |
+| native | 0.5 | | 0.0 | baseline |
+| qiling-only | 24.1 | +23.6 | 1.0 | emulator |
+| c-codehook (per-instruction control, pure C) | 43.4 | +19.3 | 1.8 | emulator |
+| c-codehook-regs (+ read 4 guest registers) | 100.6 | +57.2 | 4.2 | emulator |
+| microtaint-none | 1207.9 | +1107.3 | 50.2 | **microtaint** |
+| microtaint-all | 1318.9 | +111.0 | 54.8 | **microtaint** |
+| *blockhook* (empty per-block Python hook) | *142* | | *5.9* | *reference* |
+| *codehook* (empty per-instruction Python hook) | *1963* | | *81* | *reference* |
+| *codehook-regs* (same, reading 4 registers) | *19705* | | *818* | *reference* |
+
+The three Python rows are slow to measure and cannot move when the engine
+changes, so `--only` re-runs just the chain after an optimisation; their figures
+above are from the 2026-09-11 full run.
 
 **Per-instruction hooking is not what costs.** A pure-C `UC_HOOK_CODE` with an
 empty body is 48 ns/instr, only +23 over bare emulation, and that already
