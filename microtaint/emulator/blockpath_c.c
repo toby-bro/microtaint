@@ -42,6 +42,8 @@ typedef struct {
     PyObject  *capsule;          /* owned: the plan and its emitted code */
 } BlkCacheEnt;
 
+#define BLK_MAX_REP 256
+
 typedef struct {
     MtFastCtx   *fc;             /* borrowed: the instruction path's context */
     MtBlkEnv     env;
@@ -60,6 +62,19 @@ typedef struct {
     unsigned long miss[MT_BLK_N_MISS];
     unsigned long no_plan, no_regs, no_slot;
     unsigned long regs_clean;    /* blocks entered with no register tainted */
+    /* Findings the runtime computed and nobody had yet collected.  The runtime
+     * detects a secret-dependent program counter and leaves it in `pend`;
+     * until this existed the HOOK simply dropped it on the next commit, so
+     * block mode ran a real binary, found the leak, and reported nothing.  The
+     * runner has had this since it was written, which is exactly why no test
+     * caught it: the tests drove the runner and the binaries drove the hook.
+     *
+     * A ring rather than a callback because this runs without the GIL.
+     * `rep_total` counts every finding even when the ring is full, so a run
+     * that overflows says so instead of quietly reporting fewer leaks. */
+    uint64_t rep_addr[BLK_MAX_REP], rep_mask[BLK_MAX_REP];
+    int n_rep;
+    unsigned long rep_total;
     /* The instruction hook's [code_lo, code_hi): the bytes some cache holds a
      * decode of.  Block mode plans blocks the instruction hook never sees, so
      * without widening this the mem-write hook's self-modifying-code guard
@@ -338,16 +353,18 @@ static PyObject *py_plan_new(PyObject *self, PyObject *args) {
     for (Py_ssize_t i = 0; i < n; i++) {
         PyObject *item = PySequence_Fast_GET_ITEM(seq, i);
         unsigned long long fn_addr, region_addr, addr_fn = 0;
-        unsigned long long prog = 0, addr_prog = 0;
+        unsigned long long prog = 0, addr_prog = 0, last_addr = 0;
         PyObject *accs;
-        if (!PyArg_ParseTuple(item, "KKO|KKK", &fn_addr, &region_addr, &accs,
-                              &addr_fn, &prog, &addr_prog)) goto fail;
+        if (!PyArg_ParseTuple(item, "KKO|KKKK", &fn_addr, &region_addr, &accs,
+                              &addr_fn, &prog, &addr_prog, &last_addr))
+            goto fail;
         MtBlkRegion *r = &plan->regions[i];
         r->fn = (void *)(uintptr_t)fn_addr;
         r->addr_fn = (void *)(uintptr_t)addr_fn;
         r->prog = (void *)(uintptr_t)prog;
         r->addr_prog = (void *)(uintptr_t)addr_prog;
         r->addr = region_addr;
+        r->last = last_addr ? last_addr : region_addr;
         /* A region is handleable when it can be RUN, by an emitted function or
          * by the interpreter.  Requiring an emitted one turned a program the
          * emitter merely declined into a skipped block. */
@@ -645,6 +662,24 @@ static PyObject *py_runner_reports(PyObject *self, PyObject *args) {
     return out;
 }
 
+/* Take a completed block's findings before the pending is cleared.
+ *
+ * Called at exactly the two places the block's taint is committed, because a
+ * finding and the taint it came from are the same claim: a block that faults
+ * partway through never happened, so neither its taint nor its report may
+ * stand.  Counting is unconditional; storing stops at the ring's end. */
+static void blkctx_take_reports(MtBlkCtx *b) {
+    if (!b->pend.valid) return;
+    for (int i = 0; i < b->pend.n_reports; i++) {
+        b->rep_total++;
+        if (b->n_rep >= BLK_MAX_REP) continue;
+        b->rep_addr[b->n_rep] = b->pend.rep_addr[i];
+        b->rep_mask[b->n_rep] = b->pend.rep_mask[i];
+        b->n_rep++;
+    }
+    b->pend.n_reports = 0;
+}
+
 /* The trampoline.  No GIL except on a plan-cache miss. */
 static void mt_blk_hook(void *uc, uint64_t address, uint32_t size, void *user_data) {
     (void)uc;
@@ -703,7 +738,10 @@ static void mt_blk_hook(void *uc, uint64_t address, uint32_t size, void *user_da
     if (stage == 2) return;
 
     /* Reaching a new block proves the held one completed. */
-    if (b->pend.valid) mt_blk_commit(&b->pend, &b->env, *c->g_taint, *c->n_slots);
+    if (b->pend.valid) {
+        blkctx_take_reports(b);
+        mt_blk_commit(&b->pend, &b->env, *c->g_taint, *c->n_slots);
+    }
 
     /* How often is the whole register state clean at a block boundary?  That
      * is the cheap sound condition for skipping a block entirely: nothing to
@@ -831,8 +869,10 @@ static PyObject *py_hook_finish(PyObject *self, PyObject *args) {
     MtBlkCtx *b = blkctx_of(cap);
     if (!b) return NULL;
     if (completed) {
-        if (b->pend.valid)
+        if (b->pend.valid) {
+            blkctx_take_reports(b);
             mt_blk_commit(&b->pend, &b->env, *b->fc->g_taint, *b->fc->n_slots);
+        }
     } else {
         mt_blk_abandon(&b->pend);
     }
@@ -858,7 +898,9 @@ static PyObject *py_hook_invalidate(PyObject *self, PyObject *args) {
         b->cache[i].plan = NULL;
         b->cache[i].key = 0;
     }
-    /* The held block was computed from bytes that may no longer be there. */
+    /* The held block was computed from bytes that may no longer be there, and
+     * a finding is as much its answer as its taint is. */
+    b->pend.n_reports = 0;
     mt_blk_abandon(&b->pend);
     b->invalidations++;
     if (b->code_lo && b->code_hi) { *b->code_lo = ~(unsigned long long)0; *b->code_hi = 0; }
@@ -877,6 +919,30 @@ static PyObject *py_hook_code_range(PyObject *self, PyObject *args) {
                          b->code_hi ? *b->code_hi : (unsigned long long)0);
 }
 
+/* hook_reports(hook) -> [(address, taint mask), ...], and forget them.
+ *
+ * Draining is Python and therefore cold: the caller does it at the end of the
+ * run, or whenever it wants to emit what has been found so far.  Forgetting on
+ * read is what lets a long run be drained repeatedly without the ring
+ * overflowing. */
+static PyObject *py_hook_reports(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    MtBlkCtx *b = blkctx_of(cap);
+    if (!b) return NULL;
+    PyObject *out = PyList_New(b->n_rep);
+    if (!out) return NULL;
+    for (int i = 0; i < b->n_rep; i++) {
+        PyObject *it = Py_BuildValue("(KK)", (unsigned long long)b->rep_addr[i],
+                                     (unsigned long long)b->rep_mask[i]);
+        if (!it) { Py_DECREF(out); return NULL; }
+        PyList_SET_ITEM(out, i, it);
+    }
+    b->n_rep = 0;
+    return out;
+}
+
 static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *cap;
@@ -887,14 +953,15 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     if (!miss) return NULL;
     for (int i = 0; i < MT_BLK_N_MISS; i++)
         PyList_SET_ITEM(miss, i, PyLong_FromUnsignedLong(b->miss[i]));
-    return Py_BuildValue("{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:K,s:l}",
+    return Py_BuildValue("{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:K,s:l,s:k,s:i}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
                          "cache_full", b->no_slot, "regs_clean", b->regs_clean, "miss", miss,
                          "invalidations", b->invalidations,
                          "last_bad_addr", (unsigned long long)b->env.last_bad_addr,
-                         "last_bad_size", (long)b->env.last_bad_size);
+                         "last_bad_size", (long)b->env.last_bad_size,
+                         "reports", b->rep_total, "reports_pending", b->n_rep);
 }
 
 static PyObject *py_layout(PyObject *self, PyObject *args) {
@@ -937,6 +1004,8 @@ static PyMethodDef Methods[] = {
     {"hook_ptr", py_hook_ptr, METH_NOARGS, "hook_ptr() -> the C trampoline's address"},
     {"hook_ud", py_hook_ud, METH_VARARGS, "hook_ud(hook) -> its user_data address"},
     {"hook_finish", py_hook_finish, METH_VARARGS, "hook_finish(hook, completed)"},
+    {"hook_reports", py_hook_reports, METH_VARARGS,
+     "hook_reports(hook) -> [(address, mask)], draining them"},
     {"hook_stats", py_hook_stats, METH_VARARGS, "hook_stats(hook) -> dict"},
     {"hook_invalidate", py_hook_invalidate, METH_VARARGS,
      "hook_invalidate(hook) -- drop every cached plan (self-modifying code)"},

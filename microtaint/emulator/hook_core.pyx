@@ -812,6 +812,15 @@ cdef class InstructionHook:
           * the C guest-memory read context.  Measured the same way: with the
             handle resolved but this still zeroed, 10,240 of those blocks
             declined on the memory read alone.
+          * the PROGRAM COUNTER's slot.  The block runtime tests it after every
+            region to find a secret-dependent branch, and it was resolved only
+            on the per-instruction path -- the one block mode replaces.  So it
+            stayed -1, the test `pc_slot >= 0` was false for the whole run, and
+            block mode found no control-flow leak in any binary, ever.  It has
+            to be interned HERE, before the caller copies `slot_map` for the
+            block compiler, or the compiler and the runtime would disagree
+            about which slot the counter is and the program's PC-taint output
+            would be written somewhere nothing reads.
 
         Called once, before the run.
         """
@@ -822,6 +831,8 @@ cdef class InstructionHook:
             self._init_mem_ctx()
         for name in names:
             last = self._slot_for(name)
+        if self.rip_slot < 0:
+            self.rip_slot = self._slot_for(self._pc_name())
         # The array is the state for the whole run: the per-instruction hook is
         # never armed alongside block mode, so nothing else loads the seed in or
         # syncs the answer back.  Without this, register taint seeded by the

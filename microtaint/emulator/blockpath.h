@@ -119,6 +119,7 @@ typedef struct {
    * and merely slower. */
   void *addr_fn;
   uint64_t addr; /* the region's first guest address */
+  uint64_t last; /* ... and its LAST instruction's, which a finding names */
   int n_acc;
   int n_load;  /* of them, how many are loads: pass 1 is for those */
   signed char acc_kind[MT_BLK_MAX_ACC]; /* 0 load, 1 store */
@@ -347,15 +348,19 @@ static int mt_blk_compute(
      * which is where the next region reads them from. */
     memcpy(sv, st + MT_BLK_VAL_BASE, nb);
 
-    /* A region that made the program counter secret-dependent.  The report
-     * carries the REGION's address, so a finding still names where the leak
-     * is even though it is emitted a block late. */
+    /* A region that made the program counter secret-dependent.  The whole
+     * region has run by the time this is known, so the finest address the
+     * runtime can name is the region's LAST instruction -- and a block ends at
+     * its branch, so for the case this actually catches that IS the branch,
+     * and the same address the per-instruction path reports.  The report is
+     * emitted a block late, with the deferred commit, because a block that
+     * faults partway through never happened. */
     if (env->pc_slot >= 0 && env->pc_slot < n_slots && st[env->pc_slot]) {
       if (pend->n_reports >= MT_BLK_MAX_REPORTS) {
         mt_blk_miss(env, MT_BLK_MISS_REPORTS);
         return MT_BLK_DECLINED;
       }
-      pend->rep_addr[pend->n_reports] = reg->addr;
+      pend->rep_addr[pend->n_reports] = reg->last ? reg->last : reg->addr;
       pend->rep_mask[pend->n_reports] = st[env->pc_slot];
       pend->n_reports++;
       st[env->pc_slot] = 0;

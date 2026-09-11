@@ -746,17 +746,69 @@ class MicrotaintWrapper:
         return True
 
     def block_mode_finish(self, completed: bool = True) -> None:
-        """End of the run: commit the last block, or drop it.
+        """End of the run: commit the last block, or drop it, and report.
 
         The caller knows whether the run finished.  A block's taint is held
         until the NEXT block proves it completed, so the last one has nobody to
-        prove it and has to be told.
+        prove it and has to be told.  The findings are held by the same rule
+        and released here for the same reason, which is why the drain comes
+        after the commit rather than before it.
         """
         if self._block_ctx is None:
             return
         from microtaint.emulator import blockpath_c  # noqa: PLC0415
 
         blockpath_c.hook_finish(self._block_ctx, completed)
+        self.block_mode_drain_reports()
+
+    def block_mode_drain_reports(self) -> int:
+        """Emit the secret-dependent branches block mode has found.  -> count.
+
+        The C runtime detects them without the GIL and leaves them in a ring;
+        turning one into a finding is Python, so it happens here, off the hot
+        path.  Until this existed the ring had no reader on the hook path at
+        all: block mode ran a real binary, computed that the program counter
+        was secret-dependent, and reported nothing.
+
+        Block mode does NOT stop the emulator the way the per-instruction path
+        does.  The report is already a block late, so stopping would not
+        prevent anything, and these milestones are analyses rather than
+        mitigations: the run continues and every later leak is found too.
+        """
+        if self._block_ctx is None:
+            return 0
+        from microtaint.emulator import blockpath_c  # noqa: PLC0415
+
+        drained = blockpath_c.hook_reports(self._block_ctx)
+        for address, mask in drained:
+            self._report_tainted_pc(address, mask)
+        return len(drained)
+
+    def _report_tainted_pc(self, address: int, mask: int) -> None:
+        """One secret-dependent program counter, as the right KIND of finding.
+
+        The same split the per-instruction path makes: a tainted return or
+        indirect jump is control-flow hijack, anything else is a branch whose
+        direction leaks.  Read from the instruction rather than from the
+        opcode so it is not an x86 rule -- an ISA whose return is spelled
+        differently still lands in the right bucket via its own disassembler,
+        and one that says nothing at all degrades to the side-channel report
+        rather than to silence.
+        """
+        mnemonic = ''
+        asm_str = ''
+        try:
+            code = bytes(self.ql.mem.read(address, 16))
+        except Exception:
+            code = b''
+        if code:
+            mnemonic, asm_str = self._disasm(code, address)
+        is_hijack = mnemonic.startswith('ret') or mnemonic in ('jmp', 'call')
+        if is_hijack and self.check_bof:
+            self.reporter.bof(address, instruction=asm_str)
+        elif not is_hijack and self.check_sc:
+            self.reporter.side_channel(address, instruction=asm_str,
+                                       taint_mask=mask)
 
     def block_mode_stats(self) -> dict[str, int] | None:
         """Blocks seen, handled, and NOT handled.

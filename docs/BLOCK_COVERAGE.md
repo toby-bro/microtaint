@@ -166,10 +166,60 @@ ISA leaves undefined (`benchmark/ISA_UNDEFINED_FLAGS.md`) — a bit scan leaves
 CF, OF, SF, AF and PF undefined, the hardware moves them, and no engine reading
 that p-code can know what it left.
 
+## The leak block mode found and did not report
+
+"Nothing is skipped" was not "block mode is sound end to end", and the thing it
+was hiding was not a lost bit of taint. It was the **finding**.
+
+The runtime has always detected a secret-dependent program counter: it tests
+the PC slot's taint after every region and files a report. Two things then went
+wrong, independently, and each one alone was enough to lose every finding:
+
+- **The PC had no slot.** `rip_slot` was resolved lazily by the
+  per-instruction hook, which is exactly the path block mode replaces, so it
+  stayed at its initial `-1` for the whole run and the runtime's
+  `pc_slot >= 0` test was false every time. Nothing was ever detected.
+- **Nobody read the reports.** The reports live in the pending block, released
+  by the same commit that releases its taint, because a block that faults
+  partway through never happened. The test RUNNER had drained them since the
+  day it was written. The live hook never did, so on the next commit they were
+  overwritten.
+
+That is why no test caught it: the tests drove the runner and the binaries
+drove the hook, and only one of the two had a reader. **Block mode ran a real
+binary, computed that a branch depended on stdin, and reported nothing.**
+
+On the static-glibc guest the per-instruction path reports one side channel (it
+calls `emu_stop` on the first, which is also why its trace is shorter and why an
+entry-by-entry register diff shows the tail as a "loss" that is nothing of the
+kind). Block mode now reports **137**, including that one: the delimiter test in
+`_IO_getline_info`, the EOF test beside it, the guest's own byte loop and hash
+loop, and `_itoa_word`'s digit loop inside `snprintf`. All of them are genuine
+secret-dependent branches, and all but the first were invisible before, on
+either path.
+
+Block mode deliberately does **not** stop the run. The report is already a block
+late, so stopping prevents nothing, and these milestones are analyses rather
+than mitigations: continuing is what turns one finding into the whole set. That
+is the one respect in which the two paths are meant to disagree, so the gate
+(`tests/test_block_reports_leaks.py`) is one-directional: every address the
+per-instruction path reports must be in block mode's answer, and block mode may
+report more.
+
+A finding names the **last instruction of the region** that computed it. The
+runtime learns the counter is secret-dependent only once a whole region has run,
+so that is the finest address available without spending ops on a per-
+instruction check in the hot path; a block ends at its branch, so for the case
+this catches it is the branch, and the same address the per-instruction path
+gives.
+
 ## Still open
 
-Block mode and the per-instruction path disagree on `RAX` and four flags at the
-end of the static-glibc run, with **zero blocks skipped** and memory agreeing
-exactly. So it is not the refusals, and it predates this work. It has not been
-scored against ground truth yet, and until it is, it is not known whether block
-mode is losing taint there or is simply tighter.
+The per-instruction path reports the delimiter test at `0x407017` but not the
+EOF test at `0x40700e`, which executes first and branches on the same tainted
+`EAX`. Block mode reports both. Either the per-instruction path under-reports
+there or the two disagree about when that taint arrives; it has not been scored
+against ground truth, and until it is, which one is right is not known.
+
+The register-level `RAX` difference that started this investigation is
+explained: it was the shorter trace, caused by `emu_stop` on the first finding.

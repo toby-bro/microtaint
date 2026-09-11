@@ -19,7 +19,7 @@ def mem_mask(mem: _Capsule, addr: int, size: int) -> int: ...
 
 def plan_new(
     size: int,
-    regions: list[tuple[int, int, list[tuple[int, int, int]], int, int, int]],
+    regions: list[tuple[int, int, list[tuple[int, int, int]], int, int, int, int]],
     keepalive: object,
     ids_addr: int = ...,
     ptrs_addr: int = ...,
@@ -98,6 +98,20 @@ def hook_finish(hook: _Capsule, completed: bool) -> None:
     taint is held until the NEXT block proves it completed.
     """
 
+def hook_reports(hook: _Capsule) -> list[tuple[int, int]]:
+    """(address, taint mask) for each secret-dependent program counter found,
+    draining them so a long run can be drained repeatedly.
+
+    The address is the last instruction of the region that computed it, which
+    for a block ending in a branch is the branch.  Reports are held with the
+    block's taint and released by the same commit, because a block that faulted
+    partway through never happened.
+    """
+
 def hook_stats(hook: _Capsule) -> dict[str, int]:
     """Blocks seen, handled, and NOT handled.  `unhandled` is unanalysed code,
-    so it is counted rather than ignored."""
+    so it is counted rather than ignored.
+
+    `reports` is every finding the runtime made, counted even when the ring
+    overflowed, so a drain that returns fewer can be told from a run that found
+    fewer."""

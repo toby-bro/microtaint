@@ -46,6 +46,16 @@ class Region:
 
     `first` and `count` index the block's instructions; `addr` and `end` are
     guest addresses, so a caller can map a region back to what it covers.
+
+    `last` is the address of the region's LAST instruction, which is not
+    derivable from the other four: `end` is one past the region, and the step
+    back to the final instruction needs the instruction lengths.  It is what a
+    finding names.  The runtime discovers a secret-dependent program counter
+    only after a whole region has run, so without it a report could say no more
+    than "somewhere in this region", and for a block that ends in a branch --
+    which is every block that can leak this way -- the last instruction IS the
+    branch, so this makes the block path name the same address the
+    per-instruction path does.
     """
 
     first: int
@@ -53,6 +63,7 @@ class Region:
     addr: int
     end: int
     prog: IRProg | None          # None if this region lowers nowhere
+    last: int = 0                # address of the region's last instruction
 
 
 def _translate(arch: ArchLike, code: bytes, base: int) -> list[PcodeOp]:
@@ -194,9 +205,11 @@ def _greedy(n: int, marks: list[tuple[int, int, int]], end_of: list[int],
             # This one instruction lowers nowhere.  Emit it as a region with no
             # program so the caller still sees complete coverage of the block
             # and can send it down the per-instruction path.
-            regions.append(Region(i, 1, marks[i][1], end_of[i], None))
+            regions.append(Region(i, 1, marks[i][1], end_of[i], None,
+                                  last=marks[i][1]))
             i += 1
             continue
-        regions.append(Region(i, taken, marks[i][1], end_of[i + taken - 1], prog))
+        regions.append(Region(i, taken, marks[i][1], end_of[i + taken - 1], prog,
+                              last=marks[i + taken - 1][1]))
         i += taken
     return regions

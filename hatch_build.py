@@ -57,6 +57,9 @@ _REEXEC_SOURCES = ['microtaint/reexec/reexec.c', _REEXEC_ASM] if _REEXEC_AVAILAB
 # Both modules live in microtaint/instrumentation/cell_c/ alongside the
 # Cython modules so the runtime can find them via a single sys.path entry.
 # --------------------------------------------------------------------------
+#: Where taint_ir_c's public header lives; blockpath_c.c includes it.
+_TAINT_IR_C_DIR = 'microtaint/instrumentation/cell_c'
+
 C_EXTENSIONS: list[tuple[str, str]] = [
     ('microtaint/instrumentation/cell_c/cell_c.c', 'cell_c'),
     ('microtaint/instrumentation/cell_c/circuit_c.c', 'circuit_c'),
@@ -128,6 +131,14 @@ class MicrotaintCExtBuildHook(BuildHookInterface):
             # cell_c gains the native re-exec path on x86_64 hosts.
             extra_sources: list[Path] = []
             extra_flags: list[str] = []
+            if module_name == 'blockpath_c':
+                # The block runtime runs a taint-IR program through the
+                # interpreter the emitter's declines fall back to, so it needs
+                # taint_ir_c's public header -- and that lives beside
+                # taint_ir_c.c, not beside blockpath_c.c.  Only the source's
+                # own directory is on the include path by default, so without
+                # this a clean build fails outright.
+                extra_flags = [f'-I{Path(self.root) / _TAINT_IR_C_DIR}']
             if module_name == 'cell_c' and _REEXEC_AVAILABLE:
                 extra_sources = [Path(self.root) / s for s in _REEXEC_SOURCES]
                 extra_flags = ['-DMICROTAINT_HAVE_REEXEC=1', f'-I{Path(self.root) / _REEXEC_DIR}']

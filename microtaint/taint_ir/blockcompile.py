@@ -86,10 +86,12 @@ def block_slot_resolver(arch: ArchLike, name_to_slot: dict[str, int]) -> SlotOf:
 
 #: One region as the C runtime wants it: (function address, guest address,
 #: [(kind, size, needs the loaded value)], address-slice function address,
-#: program address, address-slice program address).  The program addresses are
-#: what the runtime interprets when the emitter declined to emit a function;
-#: a region with neither is one that did not lower at all.
-RegionSpec = tuple[int, int, list[tuple[int, int, int]], int, int, int]
+#: program address, address-slice program address, last instruction address).
+#: The program addresses are what the runtime interprets when the emitter
+#: declined to emit a function; a region with neither is one that did not lower
+#: at all.  The last address is what a finding names: the runtime learns the
+#: program counter is secret-dependent only once the whole region has run.
+RegionSpec = tuple[int, int, list[tuple[int, int, int]], int, int, int, int]
 
 
 def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str, int],
@@ -218,7 +220,8 @@ def _compile_regions(regions: list[Region], slot_of: SlotOf,
                       [(0 if a['kind'] == 'load' else 1, a['size'],
                         1 if k in live_mem else 0)
                        for k, a in enumerate(accesses)],
-                      addr_fn, prog_addr, addr_prog))
+                      addr_fn, prog_addr, addr_prog,
+                      region.last or region.addr))
 
     return specs, keep, reads
 
