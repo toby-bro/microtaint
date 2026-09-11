@@ -72,7 +72,7 @@ if layer == "blockhook":
     ql.hook_block(lambda *a: None)
 elif layer == "codehook":
     ql.hook_code(lambda *a: None)
-elif layer.startswith("c-codehook"):
+elif layer.startswith("c-codehook") or layer == "c-blockhook":
     # Pure-C UC_HOOK_CODE: no GIL, no Python frame, no marshalling.  Isolates
     # what Unicorn itself pays to call out on every instruction.
     import ctypes
@@ -86,9 +86,16 @@ elif layer.startswith("c-codehook"):
         ctypes.cast(uclib.uc_reg_read, ctypes.c_void_p),
         ux.UC_X86_REG_RAX, ux.UC_X86_REG_RBX, ux.UC_X86_REG_RCX, ux.UC_X86_REG_RDX,
     )
-    from unicorn import UC_HOOK_CODE
-    which = 0 if layer == "c-codehook" else 1
-    rc = lib.ladder_install(ql.uc._uch, UC_HOOK_CODE, which)
+    from unicorn import UC_HOOK_BLOCK, UC_HOOK_CODE
+    # `ladder_install` already takes the hook TYPE, so the block rung needs no
+    # new C: the same empty callback, registered per block instead of per
+    # instruction.  That is what separates the two costs a per-instruction hook
+    # pays at once -- see the `c-blockhook` entry in LAYERS.
+    if layer == "c-blockhook":
+        hook_type, which = UC_HOOK_BLOCK, 0
+    else:
+        hook_type, which = UC_HOOK_CODE, (0 if layer == "c-codehook" else 1)
+    rc = lib.ladder_install(ql.uc._uch, hook_type, which)
     if rc != 0:
         raise SystemExit(f"uc_hook_add failed: {rc}")
     c_hook_lib = lib
@@ -147,6 +154,7 @@ tf.seek(0, 2); guest_bytes = tf.tell(); tf.close()
 
 print(json.dumps({
     "layer": layer,
+    "per_block_hook": layer == "c-blockhook",
     "run_s": run_s,
     "guest_bytes": guest_bytes,
     # How many times the C callback actually ran.  A C hook that silently never
@@ -211,6 +219,7 @@ sys.stderr.write(json.dumps({"instrs": n[0]}))
 LAYERS = [
     ('native',               'the binary, run directly',                      'baseline',   True),
     ('qiling-only',          'Qiling/Unicorn emulation, no hooks',            'emulator',   True),
+    ('c-blockhook',          'per-BLOCK control, pure C, empty body',         'emulator',   True),
     ('c-codehook',           'per-instruction control, pure C, empty body',   'emulator',   True),
     ('c-codehook-regs',      'the same, reading 4 guest registers',           'emulator',   True),
     ('microtaint-plumbing',  'the real engine, armed, but nothing tainted',   'plumbing',   True),
@@ -219,6 +228,16 @@ LAYERS = [
     ('blockhook',            'empty per-BLOCK Python hook',                   'reference',  False),
     ('codehook',             'empty per-INSTRUCTION Python hook',             'reference',  False),
     ('codehook-regs',        'per-instruction Python hook reading 4 regs',    'reference',  False),
+    # How much of `native` is not the workload at all.  `native` is timed as
+    # WALL CLOCK around fork+exec, while every emulated rung reports the
+    # in-process `run_s` of `ql.run()` alone, so the baseline carries a process
+    # start the others do not.  On a short workload that is most of it:
+    # measured on bench_dense.elf, 435 us of process start against 139 us of
+    # actual work, which would divide every x-native figure by about four.
+    # This rung prices the start so the reader can subtract it, rather than
+    # leaving it folded invisibly into the denominator.
+    ('spawn',                'fork+exec of a do-nothing binary (not the workload)',
+                                                                              'reference',  False),
 ]
 
 
@@ -232,10 +251,38 @@ def _run(argv, stdin_data, timeout, env=None):
     return time.perf_counter() - t0, out, err
 
 
+#: A binary that does nothing but exit.  Built once, and only so the `spawn`
+#: rung has something to time; it is deliberately not linked against libc, so
+#: what it measures is fork+exec and nothing else.
+_SPAWN_SRC = ('void _start(void){ __asm__ volatile("syscall"::"a"(60),"D"(0)); '
+              '__builtin_unreachable(); }\n')
+
+
+def _spawn_binary():
+    """Path to the do-nothing binary, or None when it cannot be built."""
+    path = '/tmp/_ladder_nul.elf'
+    if os.path.exists(path):
+        return path
+    src = '/tmp/_ladder_nul.c'
+    with open(src, 'w') as f:
+        f.write(_SPAWN_SRC)
+    rc = subprocess.run(['gcc', '-static', '-nostdlib', '-O1', '-o', path, src],
+                        capture_output=True, check=False).returncode
+    return path if rc == 0 else None
+
+
 def measure(layer, binary, rootfs, stdin_data, timeout):
     """One run of one rung.  Returns (run_s, guest_bytes, extra) or None."""
     if layer == 'native':
         wall, out, _ = _run([binary], stdin_data, timeout)
+        return wall, len(out), {}
+    if layer == 'spawn':
+        nul = _spawn_binary()
+        if nul is None:
+            raise RuntimeError('cannot build the do-nothing binary')
+        # Timed exactly as `native` is, because the only useful thing to do
+        # with this number is subtract it from that one.
+        wall, out, _ = _run([nul], stdin_data, timeout)
         return wall, len(out), {}
     path = '/tmp/_ladder_helper.py'
     with open(path, 'w') as f:
@@ -323,7 +370,11 @@ def main() -> int:
                 break
         if not samples:
             continue
-        if not gb:
+        # `spawn` is the one rung that is SUPPOSED to run no workload: it prices
+        # process start so it can be subtracted from `native`.  Everything else
+        # writing nothing means the guest never got going, and a rung that
+        # measures an empty run would read as gloriously fast.
+        if not gb and layer != 'spawn':
             raise SystemExit(f'{layer}: the guest wrote 0 bytes, so the workload never ran')
         # Each run is its own subprocess, so the counter starts at zero every time
         # and `calls` is already PER RUN -- dividing by len(samples) was wrong, and
@@ -352,11 +403,24 @@ def main() -> int:
             if not calls:
                 raise SystemExit(f'{layer}: the C hook never fired, so this rung would '
                                  f'report the cost of not being called')
-            if abs(calls - n_instrs) > 0.02 * n_instrs:
+            if extra.get('per_block_hook'):
+                # A per-BLOCK hook fires once per basic block, so it must be
+                # FEWER calls than instructions and not more: a block hook that
+                # somehow fired per instruction would be pricing the wrong
+                # thing.  A block averages ~15 instructions on these binaries,
+                # so anything above a third is suspicious rather than merely
+                # short-blocked.
+                if calls > n_instrs / 3:
+                    raise SystemExit(
+                        f'{layer}: the block hook fired {calls:,} times against '
+                        f'{n_instrs:,} instructions, which is too many to be '
+                        f'once per basic block')
+            elif abs(calls - n_instrs) > 0.02 * n_instrs:
                 raise SystemExit(f'{layer}: the C hook fired {calls:,} times against '
                                  f'{n_instrs:,} instructions; it is not hooking every one')
         results[layer] = {
             'run_s': statistics.median(samples), 'desc': desc,
+            'per_block_hook': bool(extra.get('per_block_hook')),
             'guest_bytes': gb, 'n_runs': len(samples),
             'c_hook_calls_per_run': calls,
             'hook_instr_total': extra.get('hook_instr_total'),
@@ -404,10 +468,20 @@ def main() -> int:
     cchr = ns_of('c-codehook-regs')
     print('What the ladder says:')
     print(f'  * the emulator costs {qil:.0f} ns/instr with nothing hooked.')
+    cbh = ns_of('c-blockhook')
+    if cbh and qil:
+        # This used to be asserted in the prose of the rung above.  It is a
+        # measurement now: a hook of ANY kind costs Unicorn its translation
+        # block chaining, and a per-BLOCK hook pays that and almost nothing
+        # else, so this rung is the chaining loss on its own.
+        print(f"  * losing Unicorn's block chaining costs {cbh - qil:+.0f} ns/instr: that is a")
+        print('    pure-C hook that fires once per basic block and does nothing.')
     if cch and qil:
         print(f'  * getting control on EVERY instruction in pure C costs {cch:.0f} ns/instr,')
-        print(f'    only {cch - qil:+.0f} over bare emulation. Per-instruction hooking is not')
-        print("    inherently expensive, and losing Unicorn's block chaining is cheap.")
+        base = cbh if cbh else qil
+        via = 'over a per-block hook' if cbh else 'over bare emulation'
+        print(f'    {cch - base:+.0f} {via}. That difference is per-instruction')
+        print('    DISPATCH, with the chaining loss already paid above.')
     if cch and cchr:
         print(f'  * reading 4 guest registers from that C callback adds {cchr - cch:+.0f} ns/instr,')
         print(f'    so control plus the state a taint engine needs is {cchr:.0f} ns/instr.')
