@@ -81,3 +81,50 @@ of two under load, in every phase including plain module import.
 `--check-bof` detects; expect the guest to fault or spin on the corrupted return
 address afterwards, so give it a generous timeout. Either way the mix rounds run
 in full, because `state` is 256 bytes regardless of how many were read.
+
+## Whose overhead is it? (`overhead_ladder.py`)
+
+`overhead_bench.py` says how much slower the whole thing is. It does not say
+whose cost that is, and the single number invites the wrong reading. Run
+
+```sh
+uv run python overhead_ladder.py bench.elf --gen-input 64 --runs 3 \
+    --json overhead_ladder.json
+```
+
+which runs the same workload under a ladder that each time adds exactly one
+thing, and measures two reference points besides. A representative result
+(3,768,369 guest instructions):
+
+| layer | ns/instr | marginal | x qiling | attributable to |
+|---|---|---|---|---|
+| native | 0.5 | | 0.0 | baseline |
+| qiling-only | 23.5 | +23.0 | 1.0 | emulator |
+| blockhook (empty per-block hook) | 140.1 | +116.7 | 6.0 | emulator |
+| microtaint-none | 1559.8 | +1419.7 | 66.5 | microtaint |
+| microtaint-all | 1677.0 | +117.2 | 71.5 | microtaint |
+| *codehook* (empty per-instruction Python hook) | *1966.9* | | *83.8* | *reference* |
+| *codehook-regs* (same, reading 4 registers) | *19820.1* | | *844.7* | *reference* |
+
+Three things the ladder separates that the single ratio does not:
+
+- **The emulator is 23 ns/instr**, and merely *registering* a hook costs
+  another 117 before any callback body runs, because Unicorn stops chaining
+  translation blocks once one is installed. Neither is attributable to taint
+  analysis; any tool in this stack pays both.
+- **An empty per-instruction Python hook costs 1967 ns/instr.** microtaint,
+  doing full bit-precise propagation, costs 1560: *less than being called and
+  returning immediately*. A Python hook that merely reads four registers costs
+  12.7x microtaint's entire engine. The cost of per-instruction control in this
+  stack dominates the cost of the analysis done with it.
+- **The four detectors add 8%.** Almost all the cost is propagation, so
+  disabling checks is not a speed-up worth having.
+
+The last two rows are **reference points, not rungs**: microtaint uses a C hook
+and does not stand on the Python ones. Subtracting a reference row from a
+microtaint row is meaningless, and the script keeps them out of the marginal
+column for that reason (when they were in it, the marginal went negative, which
+is how the mistake announces itself).
+
+What this does *not* excuse: 1560 ns/instr is still 66x the emulator, and the
+tail belongs to microtaint. The ladder locates the cost, it does not dissolve it.

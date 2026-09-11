@@ -1,0 +1,66 @@
+{
+  "guest_instructions": 3768369,
+  "stdin_bytes": 64,
+  "engine_env": {
+    "MICROTAINT_TAINT_IR": "0",
+    "MICROTAINT_BLOCK": "0"
+  },
+  "layers": {
+    "native": {
+      "run_s": 0.0018400088883936405,
+      "desc": "the binary, run directly",
+      "guest_bytes": 16,
+      "n_runs": 3,
+      "env_taint_ir": null,
+      "taint_ir_modules": null
+    },
+    "qiling-only": {
+      "run_s": 0.0884160059504211,
+      "desc": "Qiling/Unicorn emulation, no hooks",
+      "guest_bytes": 16,
+      "n_runs": 3,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    },
+    "blockhook": {
+      "run_s": 0.5280075971968472,
+      "desc": "empty per-BLOCK Python hook",
+      "guest_bytes": 16,
+      "n_runs": 3,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    },
+    "microtaint-none": {
+      "run_s": 5.877965190913528,
+      "desc": "bit-precise taint propagation, no detectors",
+      "guest_bytes": 16,
+      "n_runs": 3,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    },
+    "microtaint-all": {
+      "run_s": 6.319662508089095,
+      "desc": "plus the four detectors",
+      "guest_bytes": 16,
+      "n_runs": 3,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    },
+    "codehook": {
+      "run_s": 7.411852645222098,
+      "desc": "empty per-INSTRUCTION Python hook",
+      "guest_bytes": 16,
+      "n_runs": 3,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    },
+    "codehook-regs": {
+      "run_s": 74.68937154021114,
+      "desc": "per-instruction Python hook reading 4 regs",
+      "guest_bytes": 16,
+      "n_runs": 3,
+      "env_taint_ir": "0",
+      "taint_ir_modules": []
+    }
+  }
+}
