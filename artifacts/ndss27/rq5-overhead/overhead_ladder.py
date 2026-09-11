@@ -4,27 +4,31 @@
 "whose cost is it", by running the SAME workload under a ladder of
 configurations that each add exactly one thing:
 
-    native                  the binary, run directly
-    qiling-only             + Qiling/Unicorn emulation, no hooks at all
-    qiling+blockhook        + an EMPTY per-block Python hook
-    qiling+codehook         + an EMPTY per-instruction Python hook
-    qiling+codehook-regs    + a per-instruction hook that reads 4 registers
-    microtaint-none         + microtaint, full bit-precise propagation
-    microtaint-all          + the four detectors
+    native                the binary, run directly
+    qiling-only           + Qiling/Unicorn emulation, no hooks at all
+    c-codehook            + control on every instruction, PURE C, empty body
+    c-codehook-regs       + reading the 4 guest registers a taint engine needs
+    microtaint-none       + bit-precise taint propagation
+    microtaint-all        + the four detectors
 
-The two empty hooks are the interesting rungs, because they cost something
-without doing anything a taint engine would call work:
+The C rungs are what make the ladder attributable.  microtaint's hook is compiled
+C, so `c-codehook` is the floor it actually stands on, and the difference between
+them is the analysis rather than the plumbing:
 
-  * `blockhook` isolates what merely REGISTERING a hook costs.  Unicorn stops
-    chaining translation blocks once any hook is installed, so the emulator gets
-    slower before a single callback body has run.
-  * `codehook` isolates per-instruction callback DISPATCH: the GIL acquire, the
-    Python frame, the argument marshalling.  Nothing in it is attributable to
-    taint analysis; any tool hooking every instruction from Python pays it.
+  * `c-codehook` prices per-instruction control with no Python anywhere: no GIL,
+    no frame, no marshalling.  It also absorbs the loss of Unicorn's translation
+    block chaining, which happens as soon as any hook exists.  Measured, the two
+    together are about +20 ns/instr over bare emulation, so getting called on
+    every instruction is NOT inherently expensive.
+  * `c-codehook-regs` adds the guest state a taint engine has to read anyway.
 
-Read the ladder by its MARGINAL column, not the cumulative one.  The question
-"is the overhead microtaint's fault" is answered by comparing the microtaint
-rungs against `codehook`, not against `native`.
+Three Python rungs are measured as REFERENCE points, out of the chain.  They
+price the hosting language, not the analysis: an empty per-instruction Python
+hook costs more than microtaint's entire engine, so "hooks every instruction from
+Python" explains more of a tool's cost than anything it computes.
+
+Read the MARGINAL column.  "Is the overhead microtaint's fault" is answered by
+`microtaint-none` minus `c-codehook-regs`, not by the x-native column.
 
 Usage:
     python overhead_ladder.py bench.elf --gen-input 64 --runs 3
@@ -49,6 +53,7 @@ HELPER = r"""
 import io, json, os, sys, tempfile, time
 
 binary, rootfs, layer = sys.argv[1], sys.argv[2], sys.argv[3]
+hooklib_path = sys.argv[4] if len(sys.argv) > 4 else ""
 stdin_data = sys.stdin.buffer.read() if not sys.stdin.isatty() else b""
 
 from qiling import Qiling
@@ -62,10 +67,31 @@ if stdin_data:
         pass
 
 wrapper = None
+c_hook_lib = None
 if layer == "blockhook":
     ql.hook_block(lambda *a: None)
 elif layer == "codehook":
     ql.hook_code(lambda *a: None)
+elif layer.startswith("c-codehook"):
+    # Pure-C UC_HOOK_CODE: no GIL, no Python frame, no marshalling.  Isolates
+    # what Unicorn itself pays to call out on every instruction.
+    import ctypes
+    import unicorn.unicorn_py3.unicorn as _U3
+    import unicorn.x86_const as ux
+    lib = ctypes.CDLL(hooklib_path)
+    lib.ladder_count.restype = ctypes.c_uint64
+    uclib = _U3.uclib
+    lib.ladder_init(
+        ctypes.cast(uclib.uc_hook_add, ctypes.c_void_p),
+        ctypes.cast(uclib.uc_reg_read, ctypes.c_void_p),
+        ux.UC_X86_REG_RAX, ux.UC_X86_REG_RBX, ux.UC_X86_REG_RCX, ux.UC_X86_REG_RDX,
+    )
+    from unicorn import UC_HOOK_CODE
+    which = 0 if layer == "c-codehook" else 1
+    rc = lib.ladder_install(ql.uc._uch, UC_HOOK_CODE, which)
+    if rc != 0:
+        raise SystemExit(f"uc_hook_add failed: {rc}")
+    c_hook_lib = lib
 elif layer == "codehook-regs":
     # A hook that actually touches guest state, so the rung separates "being
     # called" from "reading anything".  Four GP registers, the same four the
@@ -106,6 +132,11 @@ print(json.dumps({
     "layer": layer,
     "run_s": run_s,
     "guest_bytes": guest_bytes,
+    # How many times the C callback actually ran.  A C hook that silently never
+    # fires would read as "free", which is the kind of fast wrong number this
+    # ladder exists to avoid, so the harness checks it against the instruction
+    # count rather than trusting uc_hook_add's return value.
+    "c_hook_calls": int(c_hook_lib.ladder_count()) if c_hook_lib is not None else None,
     "instr_hook_registered": getattr(wrapper, "_instr_hook_registered", None),
     "taint_ir_modules": sorted(m for m in sys.modules if m.startswith("microtaint.taint_ir")),
     "env_taint_ir": os.environ.get("MICROTAINT_TAINT_IR", "<unset>"),
@@ -135,18 +166,24 @@ sys.stderr.write(json.dumps({"instrs": n[0]}))
 
 #: (name, description, attribution, in_chain).
 #:
-#: `in_chain` matters.  The ladder is NOT one nested sequence: microtaint does not
-#: build on the Python-hook rungs, it replaces them with a C hook.  Subtracting a
-#: Python rung from a microtaint rung would be meaningless (and negative, which is
-#: how the mistake announces itself).  The Python rungs are REFERENCE points: what
-#: it costs to be called on every instruction from Python and do nothing, and to
-#: do almost nothing.  They bound the cost of per-instruction control itself.
+#: `in_chain` matters.  The chain is genuinely nested: emulate, get control on
+#: every instruction, read the guest state a taint engine needs, compute the
+#: taint, run the detectors.  microtaint's hook is compiled C, so the C rungs are
+#: the floor it actually sits on and subtracting them means something.
+#:
+#: The PYTHON rungs are reference points and deliberately OUT of the chain:
+#: microtaint does not build on them, it replaces them.  They price the hosting
+#: language rather than the analysis.  An earlier version had them in the chain
+#: and the marginal column went negative, which is how that mistake announces
+#: itself.
 LAYERS = [
     ('native',               'the binary, run directly',                      'baseline',   True),
     ('qiling-only',          'Qiling/Unicorn emulation, no hooks',            'emulator',   True),
-    ('blockhook',            'empty per-BLOCK Python hook',                   'emulator',   True),
+    ('c-codehook',           'per-instruction control, pure C, empty body',   'emulator',   True),
+    ('c-codehook-regs',      'the same, reading 4 guest registers',           'emulator',   True),
     ('microtaint-none',      'bit-precise taint propagation, no detectors',   'microtaint', True),
     ('microtaint-all',       'plus the four detectors',                       'microtaint', True),
+    ('blockhook',            'empty per-BLOCK Python hook',                   'reference',  False),
     ('codehook',             'empty per-INSTRUCTION Python hook',             'reference',  False),
     ('codehook-regs',        'per-instruction Python hook reading 4 regs',    'reference',  False),
 ]
@@ -170,7 +207,8 @@ def measure(layer, binary, rootfs, stdin_data, timeout):
     path = '/tmp/_ladder_helper.py'
     with open(path, 'w') as f:
         f.write(HELPER)
-    _, out, err = _run([sys.executable, path, binary, rootfs, layer],
+    hooklib = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ladder_hooks.so')
+    _, out, err = _run([sys.executable, path, binary, rootfs, layer, hooklib],
                        stdin_data, timeout, env=ARTIFACT_ENGINE_ENV)
     text = out.decode('utf-8', 'replace')
     idx = text.rfind('{')
@@ -231,15 +269,32 @@ def main() -> int:
                 run_s, gb, extra = measure(layer, binary, args.rootfs, stdin_data, args.timeout)
                 samples.append(run_s)
             except Exception as exc:
+                if layer.startswith('c-'):
+                    raise SystemExit(
+                        f'{layer} failed: {exc}\n'
+                        f'Build the C hooks first:  gcc -O2 -fPIC -shared '
+                        f'-o ladder_hooks.so ladder_hooks.c') from exc
                 sys.stderr.write(f'  ! {layer} failed: {exc}\n')
                 break
         if not samples:
             continue
         if not gb:
             raise SystemExit(f'{layer}: the guest wrote 0 bytes, so the workload never ran')
+        # Each run is its own subprocess, so the counter starts at zero every time
+        # and `calls` is already PER RUN -- dividing by len(samples) was wrong, and
+        # the check caught it (1,256,123 x 3 = 3,768,369 exactly).
+        calls = extra.get('c_hook_calls')
+        if layer.startswith('c-') and n_instrs:
+            if not calls:
+                raise SystemExit(f'{layer}: the C hook never fired, so this rung would '
+                                 f'report the cost of not being called')
+            if abs(calls - n_instrs) > 0.02 * n_instrs:
+                raise SystemExit(f'{layer}: the C hook fired {calls:,} times against '
+                                 f'{n_instrs:,} instructions; it is not hooking every one')
         results[layer] = {
             'run_s': statistics.median(samples), 'desc': desc,
             'guest_bytes': gb, 'n_runs': len(samples),
+            'c_hook_calls_per_run': calls,
             'env_taint_ir': extra.get('env_taint_ir'),
             'taint_ir_modules': extra.get('taint_ir_modules'),
         }
@@ -278,19 +333,26 @@ def main() -> int:
 
     mt = ns_of('microtaint-none')
     ch = ns_of('codehook')
-    chr_ = ns_of('codehook-regs')
+    cch = ns_of('c-codehook')
+    cchr = ns_of('c-codehook-regs')
     print('What the ladder says:')
-    print(f'  * the emulator costs {ns_of("qiling-only"):.0f} ns/instr before anything is hooked;')
-    print(f'    registering ANY hook costs {ns_of("blockhook") - ns_of("qiling-only"):+.0f} ns/instr more, because')
-    print('    Unicorn stops chaining translation blocks. Neither is attributable to taint.')
-    if mt and ch:
-        print(f'  * an EMPTY per-instruction Python hook costs {ch:.0f} ns/instr. microtaint,')
-        print(f'    doing full bit-precise propagation, costs {mt:.0f} ns/instr, i.e.')
-        print(f'    {"LESS" if mt < ch else "MORE"} than being called and returning immediately'
-              f' ({ch / mt:.2f}x).')
-    if mt and chr_:
-        print(f'  * a Python hook that merely reads 4 registers costs {chr_:.0f} ns/instr,')
-        print(f"    {chr_ / mt:.1f}x microtaint's whole engine.")
+    print(f'  * the emulator costs {qil:.0f} ns/instr with nothing hooked.')
+    if cch and qil:
+        print(f'  * getting control on EVERY instruction in pure C costs {cch:.0f} ns/instr,')
+        print(f'    only {cch - qil:+.0f} over bare emulation. Per-instruction hooking is not')
+        print("    inherently expensive, and losing Unicorn's block chaining is cheap.")
+    if cch and cchr:
+        print(f'  * reading 4 guest registers from that C callback adds {cchr - cch:+.0f} ns/instr,')
+        print(f'    so control plus the state a taint engine needs is {cchr:.0f} ns/instr.')
+    if mt and cchr:
+        print(f'  * microtaint computes the taint in {mt - cchr:+.0f} ns/instr on top of that,')
+        print(f'    {mt / cchr:.0f}x the cost of merely reading the same registers.')
+        print('    THAT is the part that is ours, and the honest number to attack.')
+    if ch and cch and mt:
+        print(f'  * for scale: the same empty hook written in PYTHON costs {ch:.0f} ns/instr,')
+        print(f"    {ch / cch:.0f}x the C one, and more than microtaint's entire engine ({mt:.0f}).")
+        print('    The hosting language dominates the analysis, so a Python-hooked tool')
+        print('    is not slow because of what it computes.')
     if ns_of('microtaint-all') and mt:
         print(f'  * the four detectors add {ns_of("microtaint-all") - mt:+.0f} ns/instr '
               f'({100 * (ns_of("microtaint-all") / mt - 1):.0f}%).')

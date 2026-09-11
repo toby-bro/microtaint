@@ -85,46 +85,50 @@ in full, because `state` is 256 bytes regardless of how many were read.
 ## Whose overhead is it? (`overhead_ladder.py`)
 
 `overhead_bench.py` says how much slower the whole thing is. It does not say
-whose cost that is, and the single number invites the wrong reading. Run
+whose cost that is, and the single number invites the wrong reading. Build the
+pure-C hooks once, then run the ladder:
 
 ```sh
+gcc -O2 -fPIC -shared -o ladder_hooks.so ladder_hooks.c
 uv run python overhead_ladder.py bench.elf --gen-input 64 --runs 3 \
     --json overhead_ladder.json
 ```
 
-which runs the same workload under a ladder that each time adds exactly one
-thing, and measures two reference points besides. A representative result
-(3,768,369 guest instructions):
+A representative result (3,768,369 guest instructions):
 
 | layer | ns/instr | marginal | x qiling | attributable to |
 |---|---|---|---|---|
-| native | 0.5 | | 0.0 | baseline |
-| qiling-only | 23.5 | +23.0 | 1.0 | emulator |
-| blockhook (empty per-block hook) | 140.1 | +116.7 | 6.0 | emulator |
-| microtaint-none | 1559.8 | +1419.7 | 66.5 | microtaint |
-| microtaint-all | 1677.0 | +117.2 | 71.5 | microtaint |
-| *codehook* (empty per-instruction Python hook) | *1966.9* | | *83.8* | *reference* |
-| *codehook-regs* (same, reading 4 registers) | *19820.1* | | *844.7* | *reference* |
+| native | 0.6 | | 0.0 | baseline |
+| qiling-only | 25.4 | +24.9 | 1.0 | emulator |
+| c-codehook (per-instruction control, pure C) | 48.3 | +22.9 | 1.9 | emulator |
+| c-codehook-regs (+ read 4 guest registers) | 104.2 | +55.9 | 4.1 | emulator |
+| microtaint-none | 1590.3 | +1486.1 | 62.5 | **microtaint** |
+| microtaint-all | 1723.5 | +133.2 | 67.8 | **microtaint** |
+| *blockhook* (empty per-block Python hook) | *142.4* | | *5.6* | *reference* |
+| *codehook* (empty per-instruction Python hook) | *1962.8* | | *77.2* | *reference* |
+| *codehook-regs* (same, reading 4 registers) | *19704.5* | | *774.9* | *reference* |
 
-Three things the ladder separates that the single ratio does not:
+**Per-instruction hooking is not what costs.** A pure-C `UC_HOOK_CODE` with an
+empty body is 48 ns/instr, only +23 over bare emulation, and that already
+includes losing Unicorn's translation-block chaining. Reading the four guest
+registers a taint engine needs brings it to 104. So the plumbing a
+per-instruction dynamic analysis cannot avoid is about 4x the emulator, not 60x.
 
-- **The emulator is 23 ns/instr**, and merely *registering* a hook costs
-  another 117 before any callback body runs, because Unicorn stops chaining
-  translation blocks once one is installed. Neither is attributable to taint
-  analysis; any tool in this stack pays both.
-- **An empty per-instruction Python hook costs 1967 ns/instr.** microtaint,
-  doing full bit-precise propagation, costs 1560: *less than being called and
-  returning immediately*. A Python hook that merely reads four registers costs
-  12.7x microtaint's entire engine. The cost of per-instruction control in this
-  stack dominates the cost of the analysis done with it.
-- **The four detectors add 8%.** Almost all the cost is propagation, so
-  disabling checks is not a speed-up worth having.
+**The remaining 1486 ns/instr is microtaint's**, 15x the cost of merely reading
+the same registers. That is the honest number to attack, and it is not
+explained away by the emulator or by hooking.
 
-The last two rows are **reference points, not rungs**: microtaint uses a C hook
-and does not stand on the Python ones. Subtracting a reference row from a
-microtaint row is meaningless, and the script keeps them out of the marginal
-column for that reason (when they were in it, the marginal went negative, which
-is how the mistake announces itself).
+**The hosting language dominates the analysis.** The same empty hook written in
+Python costs 1963 ns/instr, 41x the C one, and more than microtaint's entire
+engine. A Python hook that merely reads four registers costs 19,705 ns/instr,
+12x microtaint doing full bit-precise propagation. Any tool that hooks every
+instruction from Python is slow for reasons unrelated to what it computes.
 
-What this does *not* excuse: 1560 ns/instr is still 66x the emulator, and the
-tail belongs to microtaint. The ladder locates the cost, it does not dissolve it.
+**The detectors add 8%,** so disabling checks is not a speed-up worth having.
+
+The Python rows are **reference points, not rungs**: microtaint uses a C hook
+and does not stand on them, so subtracting them is meaningless. An earlier
+version had them in the chain and the marginal column went negative, which is
+how that mistake announces itself. `ladder_hooks.c` counts its own invocations
+and the harness checks that count against the instruction count, because a C
+hook that silently never fired would read as "free".
