@@ -25,7 +25,7 @@ trace is big enough to mean something.
 
 ## The causes, and what each needed
 
-**Thread-local storage — 25 blocks.** SLEIGH names the x86-64 segment bases
+**Thread-local storage, 25 blocks.** SLEIGH names the x86-64 segment bases
 `FS_OFFSET` / `GS_OFFSET`; Unicorn names them `FS_BASE` / `GS_BASE`; the alias
 table connecting the two spellings had entries only for PowerPC. The engine
 therefore could not read the FS base at all, which is worse than not tracking
@@ -34,33 +34,33 @@ address was computed from the wrong base. glibc reaches thread-local storage
 that way constantly (stack canary, `errno`, malloc arena). Fixed by adding the
 aliases; block mode then has a slot for it and the value is read from Unicorn.
 
-**Wide (SIMD) loads and stores — 7 blocks.** The lowering already split wide
+**Wide (SIMD) loads and stores, 7 blocks.** The lowering already split wide
 *register* varnodes into 8-byte lanes and refused wide *memory*, which is what
 every `movdqu` is. Now split the same way, one access per lane at
 `address + lane`, which is what the runtime resolves and what the shadow is
 addressed in.
 
-**Wide cross-lane shifts — 8 blocks.** `pslldq` / `psrldq` lift to a single
+**Wide cross-lane shifts, 8 blocks.** `pslldq` / `psrldq` lift to a single
 `INT_LEFT` / `INT_RIGHT` on a 16-byte varnode. Not bit-parallel across lanes,
 so the lane path declined. Still **exact**, not approximated, because the
 distance is an immediate: lane *i* of the result is a funnel shift of two input
 lanes, and taint follows the identical routing, a shift being a pure
 permutation of bit positions.
 
-**Predicated stores — 4 blocks.** A predicated register write had always been
+**Predicated stores, 4 blocks.** A predicated register write had always been
 handled; the store was declined. It is the same question about a different
 place: read the old contents, join them with the new under the predicate, store
 the result. Both now share one `_join_under_predicate`, so they cannot drift,
 and the join is exact including the implicit-flow term when the predicate
 itself is tainted.
 
-**Access-limit overflow — 2 blocks.** Exceeding the runtime's per-program
+**Access-limit overflow, 2 blocks.** Exceeding the runtime's per-program
 access limit refused the whole block. That is the wrong shape of answer, and
 splitting wide accesses into lanes made it more likely. The lowering is now
 told the limit, declines at the instruction that overflowed, and the planner
 **cuts the region** there instead.
 
-**A program the emitter declined — 1 block.** The host emitter declines
+**A program the emitter declined, 1 block.** The host emitter declines
 division and count-leading-zeros on purpose (both want fixed registers or a CPU
 feature check out of proportion to how rarely a taint rule reaches them) and
 the contract has always been that the caller keeps the **interpreter**. The
@@ -70,62 +70,142 @@ region carries its program alongside its emitted function. This is structural:
 it covers every opcode the emitter lacks today or tomorrow.
 
 That block also had to lower in the first place, and does because **a wide
-divide whose high lane has a provably zero VALUE is the narrow one** — exactly
+divide whose high lane has a provably zero VALUE is the narrow one**, exactly
 how a compiler sets up a 64-bit division (`xor %edx,%edx` folds the value,
 while the XOR taint rule keeps an over-approximation, so the value is what
 decides).
 
-**p-code loops — 3 blocks.** SLEIGH models some instructions as loops rather
+**p-code loops, 3 blocks.** SLEIGH models some instructions as loops rather
 than opcodes. Every instance here was `bsf` inside memchr and strlen: a bit
 scan is a walk over bit positions, so it arrives as a backward BRANCH to the
 instruction's own IMARK, and the taint IR is straight-line by construction.
 See below.
 
-## p-code loops: unrolled, floored, or declined
+## p-code loops: every one of them, and what happens to it
 
-The loop is **unrolled**, up to the smaller of `_UNROLL_LIMIT` (64) and the
-widest varnode the body touches, in bits. A loop over bit positions cannot run
-more times than its widest operand has bits, and the bound is read off varnode
-SIZES rather than off opcodes, so it is a fact about the p-code and not a rule
-about one instruction set. Unrolling is exact while it lasts, because the
-predication machinery already turns each exit test into a select: iteration
-*k*'s writes land under "still looping after *k*", which is precisely the
-loop's meaning.
+A p-code loop is the one shape the taint IR cannot lower directly, being
+straight-line by construction. There are **two kinds**, and they are easy to
+conflate because only one of them looks like a loop:
 
-When the unrollings run out, the residual predicate says whether the loop could
-still be running:
+- **relative**: a BRANCH or CBRANCH to a negative offset in `const` space,
+  which jumps within the instruction's own p-code. The bit scans and the bit
+  deposit/extract instructions.
+- **self-address**: a BRANCH to the instruction's own address in `ram` space,
+  so the instruction re-executes. The `rep`-prefixed string operations. A
+  detector that looks only at `const` space misses these entirely, which is
+  worth knowing because the first survey written for this document did exactly
+  that and reported `rep movsb` as having no loop.
 
-- **It folds to a constant zero** — the unrolling was complete and there is
-  nothing left to do. **No bit scan takes this exit**; see below.
-- **It does not fold, and the body writes only registers** — everything the
-  body writes is marked fully tainted *under that predicate*. The VALUE may be
-  wrong there, but it is then a tainted value, so a load through it avalanches
-  and a store through it is reported: the engine's existing policies carry it,
-  and the answer stays sound rather than silently wrong.
-- **It does not fold, and the body writes MEMORY** — **declined**. Flooring
-  says "everything this wrote is unknown"; for a register that is a mask we can
-  widen, for memory it would be every address the remaining iterations might
-  touch, which is unbounded. A `rep movsb` with a count above the limit would
-  otherwise have its later stores simply not modelled. Declining is worse than
-  handling it and far better than being wrong.
+Surveyed across the whole instruction bank plus the forms it does not carry,
+**every looping instruction on every supported ISA is AMD64**. Fifteen forms:
 
-### Bit scans floor; the floor costs nothing at runtime
+| form | kind | handling | IR ops |
+|---|---|---|---|
+| `bsf`, `bsr`, `tzcnt` (7 forms) | relative | recognised, closed form | 37-59 |
+| `pext`, `pdep` (3 forms) | relative | unrolled, then floored | 2259-5575 |
+| `rep movsb`/`stosb`/`movsq` | self-address | **declined** | - |
+| `rep cmpsb`, `repne scasb` | self-address | **declined** | - |
 
-Measured rather than assumed: **every bit scan takes the FLOOR exit**, not the
-fold. SLEIGH's loop exits on the operand's own bits, so the predicate is a
-function of a runtime value and there is nothing for the constant folder to do.
+Every other instruction set's count lifts to the `LZCOUNT` opcode instead, so
+nothing there loops at all: AArch64 `clz`/`cls`, MIPS `clz`/`clo`/`dclz`/`dclo`
+and PowerPC `cntlzw` are all two to five p-code operations.
 
-That is not the imprecision it looks like, because **the floor is a runtime
-guard, not a compile-time widening**. It contributes `splat(NEZ(pred))`, and
-with concrete values a scan has provably stopped long before the limit, so
-`pred` is zero and the floor adds nothing. Scored against Unicorn per-bit truth
-over 168 outputs each: `bsf` over-taints its destination in 18 and 13 cases
-(32-bit and 64-bit), `bsr` in none, flags are exact everywhere, and **none of
-the three ever under-taints**.
+### Recognised: run the loop and ask what it computed
 
-So `rep`-prefixed string operations still decline. **No binary tested so far
-executes one**, but that is luck rather than design, and the honest way to
-handle them is not a bigger unroll.
+A loop is first offered to `taint_ir/loopform.py`, which **runs it concretely**
+on about forty chosen inputs and compares the answers against the counting forms
+it knows (trailing zeros, leading zeros, highest-set-bit index, population
+count). Agreement on every probe means the closed form is used; disagreement on
+any means the caller unrolls exactly as before.
+
+This is deliberately not pattern matching. A pattern is a fact about one
+instruction set's specification, it breaks when Ghidra rewrites the spec, and it
+cannot say whether the match was right. Running the loop asks what it DOES, so
+recognition is semantic, self-checking, and mentions no architecture.
+
+Why a COUNT and nothing else: each recognised form is monotone or antitone in
+every input bit, so the two corners of the taint cube (every tainted bit
+cleared, and every one set) bracket the whole reachable range. That is the
+same rule applied to the `POPCOUNT` and `LZCOUNT` opcodes elsewhere in this
+lowering, asked of a loop instead. A loop computing something else has no such
+argument, which is why `pext` and `pdep` are refused.
+
+`bsf` at zero is the one place the argument fails: SLEIGH leaves 0 there where
+the trailing-zero count is the operand width, so setting a bit RAISES the answer
+where everywhere else it lowers it. Zero is reachable exactly when clearing
+every tainted bit leaves nothing, and the emission widens to the full span
+there. `tzcnt` has no such point and pays nothing for it.
+
+### Unrolled and floored: the fallback
+
+An unrecognised loop is **unrolled**, up to the smaller of `_UNROLL_LIMIT` (64)
+and the widest varnode the body touches in bits, since a loop over bit positions
+cannot run more times than its widest operand has bits. Unrolling is exact while
+it lasts, because the predication machinery turns each exit test into a select:
+iteration *k*'s writes land under "still looping after *k*", which is precisely
+the loop's meaning.
+
+When the unrollings run out the residual predicate says whether the loop could
+still be running. If it folds to constant zero the unrolling was complete. If it
+does not fold and the body writes only REGISTERS, everything the body writes is
+marked fully tainted under that predicate. The value may be wrong there, but it
+is then a tainted value, so a load through it avalanches and a store through it
+is reported. If it does not fold and the body writes MEMORY, the lowering
+**declines**: flooring would have to name every address the remaining iterations
+might touch, which is unbounded.
+
+The floor is a RUNTIME guard rather than a compile-time widening. It contributes
+`splat(NEZ(pred))`, and with concrete values a scan has provably stopped long
+before the limit, so the guard is zero and the floor adds nothing.
+
+### The epilogue has to survive the loop
+
+A backward CBRANCH means "go round again", and the lowering ANDed that into the
+predicate without taking it back out. The unrolling stops EXACTLY when "go round
+again" folds to false, so everything after the loop was then lowered under a
+false predicate and discarded.
+
+`pext eax,ebx,ecx` came out carrying nothing but the previous taint of its own
+destination: read off the lowered program, the answer was
+`(T_RAX & 0xffffffff00000000) | (T_RAX & 0xffffffff)`, the old RAX and nothing
+else. Checked against Unicorn by hand, eight tainted bits of EBX move eight bits
+of the result and the engine reported zero. The value predicate is now restored
+to what it was when the loop was entered; `pred_t` is not, because it has
+accumulated the implicit flow of every exit test and the rest of the instruction
+inherits that.
+
+`bsf` never showed it: its back-edge is an unconditional BRANCH, which does not
+touch the predicate. Only the CBRANCH-backed loops were affected, and the two of
+them were reporting nothing at all.
+
+**`pext` and `pdep` are not scored against Unicorn**, which mis-executes these
+VEX forms: it does not zero the destination's upper half for a 32-bit `pdep`,
+so a per-bit comparison reports under-taints that are the emulator's. They are
+gated on DEPENDENCE instead: a tainted source must reach the destination, which
+needs no oracle and is exactly what was broken.
+
+## What this costs
+
+Lowering one instruction, measured:
+
+| | ms | IR ops | over-taints vs hardware |
+|---|---|---|---|
+| an ordinary ALU instruction | 1.6 | 94 | - |
+| `bsf eax,eax`, unrolled | 26.5 | 2562 | 18 of 168 |
+| `bsf eax,eax`, recognised | **7.4** | **64** | **5 of 168** |
+| `bsf rax,rdx`, unrolled | 48.9 | 4694 | 13 of 168 |
+| `bsf rax,rdx`, recognised | **16.9** | **53** | **1 of 168** |
+
+Faster to compile as well as to run, and tighter, with zero under-taints
+throughout. The compile-time win is not obvious and took a measurement: the
+probe was 391 ms for a 64-bit scan until it was compiled to plain tuples once,
+because reading a varnode's space through the lifter binding on every step was
+most of the cost. The result is memoised on the p-code itself, since the planner
+lowers the same instruction many times while it searches for region boundaries.
+
+Those IR operations are paid on every EXECUTION of a block containing the
+instruction, not once at compile time, which is what makes the difference
+between 2562 and 64 matter more than the milliseconds.
 
 ### How `rep` should be handled, when it is needed
 
@@ -231,7 +311,7 @@ decision left open, and it is now a much easier one than it looked.
 `hook_stats()` reports `unhandled`, and why: `no_plan`, `no_regs`,
 `cache_full`. Any non-zero `unhandled` is unanalysed code. To find out which
 blocks and why, wrap `microtaint.taint_ir.blockcompile.compile_block`, keep the
-ones that return `None`, and re-plan them — but note that re-planning with a
+ones that return `None`, and re-plan them, but note that re-planning with a
 *synthetic* slot map answers a different question and will mislead you; the
 engine's own map is what trips the biggest gate.
 
@@ -245,7 +325,7 @@ pypcode retention has to bisect caches instead.
 as losses.** Block mode is legitimately tighter in places: it leaves SF clean
 after `and $0x1,%edi`, and Unicorn agrees that flipping every bit of RDI moves
 PF and ZF and never SF. Score against ground truth, and exclude the flags the
-ISA leaves undefined (`benchmark/ISA_UNDEFINED_FLAGS.md`) — a bit scan leaves
+ISA leaves undefined (`benchmark/ISA_UNDEFINED_FLAGS.md`). A bit scan leaves
 CF, OF, SF, AF and PF undefined, the hardware moves them, and no engine reading
 that p-code can know what it left.
 
@@ -323,7 +403,7 @@ The tight rule is cheap and ISA-general: for `a == b` with taints `ta`, `tb`,
 let `clean = ~(ta | tb)`; if `(va ^ vb) & clean` is non-zero the operands differ
 in a bit neither side can change, so the result is constant and its taint is
 zero. That is a handful of IR operations and it is exact, not a heuristic. It is
-**not built** — it is a precision change on the path that has just started
+**not built**: it is a precision change on the path that has just started
 reporting findings, and it wants its own measurement of how many of the 137 it
 removes before it is worth the risk.
 
