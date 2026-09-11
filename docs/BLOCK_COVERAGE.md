@@ -493,14 +493,44 @@ invalidation is now handed the write's own address and abandons the held block
 only on a real overlap; `hook_stats` counts `abandoned` separately from
 `invalidations` so the difference is visible.
 
-**Still open: `xor reg,reg` does not clear taint.** The IR folds the VALUE of
-`XOR(x, x)` to a constant, but the taint rule for a binary op is `t_a | t_b`
-and does not notice that a provably constant result cannot depend on anything.
-Reproduced against the C runtime with no guest at all: compile `48 31 c0` with
-`RAX` tainted and `RAX` comes back fully tainted, and `ZF` too although the
-instruction always sets it. The per-instruction path gets this right. It is an
-over-taint, so it is a precision and triage cost rather than a soundness
-failure, but the idiom is how every compiler on every architecture zeroes a
-register, so it is worth more than its size. The general form of the fix is
-"when the value expression folded to a constant, its taint is zero", which also
-covers `sub reg,reg`, `and reg,0` and `mul reg,0`.
+**Fixed: `xor reg,reg` now clears taint.** The IR folded the VALUE of
+`XOR(x, x)` to a constant, but the taint rule for a binary op is `t_a | t_b`,
+which for two copies of the same node is `t | t = t`, so full taint walked
+through a register that provably holds zero. The two halves were computed side
+by side and never consulted each other.
+
+The rule is asked once, where a result is written: if the value is a constant,
+no input bit can move it, so its taint is zero. It covers `sub reg,reg`,
+`and reg,0`, `or reg,-1` and the flags those set, and it is in the lowering
+rather than an x86 table, so ARM64's `eor` and RISCV64's `xor` get it too.
+Partial widths stay correct because the lowering already models them: `xor
+eax,eax` clears all 64 bits, `xor ax,ax` leaves bits 63:16 tainted.
+
+The first version of the rule was an UNDER-taint, and the shape of the mistake
+is worth keeping. An operation p-code does not model writes an invented value:
+`_emit_callother` writes a literal zero because it has to write something, while
+keeping the taint at avalanche. So `const 0` in the IR means either "proved
+zero" or "no idea", and clearing on the second loses real taint. Measured, it
+lost bit 8 of `crc32 rax, cl`, and the per-bit ground-truth sweep caught it.
+
+So the rule is opt-IN. `proved` defaults to false, and only the five callers
+that write what p-code semantics actually computed pass it; `_emit_callother`
+does not. That polarity is the point: a caller that invents a value gets the
+safe answer by saying nothing, and a future one that forgets loses an
+optimisation rather than silently under-tainting. Two tests pin it, one
+asserting the default and one reading `_emit_callother` to check it never
+claims `proved`.
+
+Measured on a static-glibc guest, which is where compiler output actually uses
+the idiom:
+
+| | time | side-channel findings | distinct sites |
+|---|---|---|---|
+| before | 79.6 ms | 110 | 47 |
+| after | 72.4 ms | 105 | 42 |
+
+Five fewer sites to triage, and 9% faster, because a taint of constant zero lets
+dead-code elimination delete whatever was computing it: `xor rax,rax` goes from
+40 IR nodes to 20 and `sub rax,rax` from 93 to 73. There is no change on
+`bench_dense`, which is hand-written `-nostdlib` code that does not zero
+registers this way, so the win is real but workload-shaped.

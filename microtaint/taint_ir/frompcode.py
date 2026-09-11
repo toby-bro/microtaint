@@ -844,7 +844,7 @@ class Builder:
             tnt = p.op(OR, tnt,
                        p.op(AND, p.const(_mask_of(size)),
                             p.splat(p.op(NEZ, addr_t))))
-        self._predicated_write(self._out(op), val, tnt)
+        self._predicated_write(self._out(op), val, tnt, proved=True)
 
     def _lane_taint(self, tnt: int, addr_t: int, lsz: int) -> int:
         """A loaded lane's taint, with the pointer policy applied.
@@ -1078,8 +1078,16 @@ class Builder:
             return self._ram_load(vn)
         raise Unsupported(f'input space {sp}')
 
-    def _predicated_write(self, vn: Varnode, val: int, tnt: int) -> None:
+    def _predicated_write(self, vn: Varnode, val: int, tnt: int,
+                          *, proved: bool = False) -> None:
         """Commit one output under the current predicate.
+
+        `proved` says the VALUE is what p-code semantics computed, so that a
+        value which folded to a constant folded because it is constant for
+        every input.  It defaults to FALSE, and that polarity is the whole
+        point: a caller writing a value it invented gets the safe answer by
+        saying nothing, and a future one that forgets loses an optimisation
+        rather than under-tainting.  See `_predicated_write_at`.
 
         With a KNOWN predicate this folds to a plain write (the constant SEL
         disappears).  With an UNKNOWN but untainted predicate it becomes a
@@ -1097,10 +1105,10 @@ class Builder:
             return
         if sp not in ('register', 'unique'):
             raise Unsupported(f'output space {sp}')
-        self._predicated_write_at(sp, vn.offset, vn.size, val, tnt)
+        self._predicated_write_at(sp, vn.offset, vn.size, val, tnt, proved=proved)
 
     def _predicated_write_at(self, sp: str, off: int, size: int,
-                             val: int, tnt: int) -> None:
+                             val: int, tnt: int, *, proved: bool = False) -> None:
         """`_predicated_write` addressed by (space, offset, size).
 
         Split out so a caller holding plain varnode COORDINATES rather than a
@@ -1110,6 +1118,27 @@ class Builder:
         p = self.p
         if p.is_const(self.pred_v) and p.const_val(self.pred_v) == 1 \
                 and p.is_const(self.pred_t) and p.const_val(self.pred_t) == 0:
+            # A value that is the same constant whatever the inputs are cannot
+            # carry taint: there is no input bit an attacker can move that
+            # changes it.  `xor rax,rax` is the everyday case -- it is how every
+            # compiler on every architecture zeroes a register -- and the taint
+            # rule for a binary op is `t_a | t_b`, which for two copies of the
+            # same node is `t | t = t`, so the taint walked straight through a
+            # register that provably holds zero.  The IR had already folded the
+            # VALUE to a constant; the two halves simply never consulted each
+            # other.  Also covers `sub reg,reg`, `and reg,0`, `or reg,-1`, and
+            # the flags those set, which is where most of the over-taint was.
+            #
+            # `proved` is load-bearing, and is not the same question as
+            # `is_const`.  An operation p-code does not model writes an INVENTED
+            # value -- `_emit_callother` writes a literal zero because it has to
+            # write something -- so `const 0` in the IR means either "proved
+            # zero" or "no idea".  Clearing on the second is an under-taint:
+            # measured, it lost bit 8 of `crc32 rax,cl` and the ground-truth
+            # sweep caught it.  Only the callers that write what p-code
+            # semantics actually computed say `proved`.
+            if proved and p.is_const(val):
+                tnt = p.const(0)
             self.v.write(sp, off, size, val)
             self.t.write(sp, off, size, tnt)
             return
@@ -1225,7 +1254,7 @@ class Builder:
                 return False
             av, at = self._read_lane(op.inputs[0], off, osz)
             self._predicated_write(self._out(op), p.mask(av, osz * 8),
-                                   p.mask(at, osz * 8))
+                                   p.mask(at, osz * 8), proved=True)
             return True
 
         # 128-bit product, truncated to 128 bits: the high lane needs the high
@@ -1263,7 +1292,7 @@ class Builder:
             can_true = p.op(EQ, bad, p.const(0))
             can_false = p.op(NEZ, anyv)
             self._predicated_write(self._out(op), v,
-                                   p.op(AND, can_true, can_false))
+                                   p.op(AND, can_true, can_false), proved=True)
             return True
 
         return False
@@ -1359,7 +1388,8 @@ class Builder:
 
         sp, off, size = form.dst
         self._predicated_write_at(sp, off, size,
-                                  self._count_expr(form.kind, sv, w), tnt)
+                                  self._count_expr(form.kind, sv, w), tnt,
+                                  proved=True)
 
     def _unroll(self, ops: list[PcodeOp], target: int, pc: int,
                 unrolled: dict[int, int]) -> bool:
@@ -1624,7 +1654,7 @@ class Builder:
         om = _mask_of(osz)
 
         val, tnt = self._rule(name, op, av, at, bv, bt, isz, obits, ibits, om)
-        self._predicated_write(self._out(op), val, tnt)
+        self._predicated_write(self._out(op), val, tnt, proved=True)
 
     def _sext(self, node: int, bits: int) -> int:
         p = self.p
