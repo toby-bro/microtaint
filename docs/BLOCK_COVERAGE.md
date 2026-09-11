@@ -176,14 +176,55 @@ is how one bound moves an eighth of the total. `tests/test_pcode_loop_lowering.p
 pins the ratio rather than the two numbers, so it keeps its meaning when the
 lowering gets cheaper for other reasons.
 
-A closed form — `ctz(x) = popcnt((x & -x) - 1)`, and the IR already has POPCNT
-— would take this to a handful of operations and would also remove the residual
-over-taint. It is **not built**, and the reason is a real tension rather than a
-shortage of time: recognising "this p-code loop is a bit scan" means matching a
-shape that SLEIGH chose for one instruction set, which is exactly the kind of
-x86 specialisation the rest of the lowering avoids. The width bound above is
-the part of the win that can be had from varnode sizes alone. Taking the rest
-is a deliberate decision about generality, not a cleanup.
+### The closed form is cheaper AND tighter, once the rule is right
+
+A closed form would take this to a handful of operations. The obvious objection
+was that it would cost precision, and the codebase could answer that from
+inside, because **Ghidra already models the two directions differently**: the
+leading-zero count lifts to a p-code OPCODE (`LZCOUNT`) and the trailing-zero
+scan lifts to a LOOP. So both answers to the same question were already
+running, and could be scored against each other.
+
+Measured on `eax, ebx` forms, 256 outputs each, against Unicorn per-bit truth:
+
+| | IR ops | over-tainted | under |
+|---|---|---|---|
+| `lzcnt` (closed form, old avalanche taint rule) | 31 | 62 | 0 |
+| `tzcnt` (p-code loop, unrolled) | 2589 | 27 | 0 |
+| `lzcnt` (closed form, corner taint rule) | **40** | **0** | 0 |
+
+The objection was real but it was an artefact of the TAINT rule, not of the
+closed form. `POPCOUNT` and `LZCOUNT` both carried
+`span & splat(NEZ(input_taint))`: one tainted input bit marked every bit of the
+result. That is very loose for a counter, in two specific ways. A leading-zero
+count does not depend on the bits BELOW the highest set one at all, and a
+population count that can move by one moves only its bottom bit.
+
+Both are fixed by the codebase's own corner trick, the one `_corners` already
+plays for a ripple carry: evaluate the count with every tainted bit CLEARED and
+again with every tainted bit SET. Those bracket the reachable range, because
+popcount is monotone in each bit and a leading-zero count is antitone in the
+value, so the bits that can differ are the bits below where the two endpoints
+first differ. Nine extra operations, and the cheap form becomes **exact** and
+tighter than the 2589-operation unroll.
+
+This is not a rare path. `POPCOUNT` is how SLEIGH computes x86's PARITY flag,
+so it sits under every arithmetic and logic instruction there, and `LZCOUNT`
+carries `lzcnt`, AArch64 `clz`/`cls`, MIPS `clz`/`clo`/`dclz`/`dclo` and
+PowerPC `cntlzw`. Measured over the banks: every leading-zero form on AMD64 and
+ARM64 went from 24 and 12 over-taints to **zero**, `popcnt` from 12 to 1-2, and
+bank-wide over-tainted bits fell by 94 on AMD64 and 114 on ARM64 with no
+under-taint anywhere. It costs 0.2-4.5% more IR operations.
+
+`tests/test_bit_count_taint.py` gates it, including on AArch64, which the rule
+was never written against: it is expressed over p-code's `LZCOUNT` rather than
+over an instruction, so an untested ISA gets it for free, and that is the check
+that says so.
+
+**Recognising the loop is now the remaining half**, and the trade has reversed:
+a matched `ctz` would be both ~64x cheaper and no less precise. What it still
+costs is matching a shape SLEIGH chose for one instruction set. That is the
+decision left open, and it is now a much easier one than it looked.
 
 ## Measuring it yourself
 

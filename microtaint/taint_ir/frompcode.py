@@ -91,6 +91,21 @@ def _mask_of(size: int) -> int:
     return MASK64 if size >= 8 else ((1 << (size * 8)) - 1)
 
 
+def _smear_right(p: IRProg, n: int, bits: int) -> int:
+    """Fill every bit below the highest set one, over a `bits`-wide value.
+
+    Turns "the endpoints of a range differ HERE" into "every bit from there
+    down can differ", which is what a taint mask has to say about a counter
+    whose value moves within a range.  log2(bits) shift-or steps, so three for
+    the seven-bit span a 64-bit count needs.
+    """
+    sh = 1
+    while sh < bits:
+        n = p.op(OR, n, p.op(SHR, n, p.const(sh)))
+        sh *= 2
+    return n
+
+
 # ── the signed-overflow taint table ──────────────────────────────────
 #
 # OF = (a XNOR b) AND (a XOR c): the operand sign bits and the carry into the
@@ -1555,13 +1570,43 @@ class Builder:
             return v, p.op(AND, M, p.splat(p.op(NEZ, p.op(OR, at, bt))))
 
         if name in ('POPCOUNT', 'LZCOUNT'):
-            if name == 'POPCOUNT':
-                v = p.op(POPCNT, p.mask(av, ibits))
-            else:
-                v = p.op(SUB, p.op(CLZ, p.mask(av, ibits)), p.const(64 - ibits))
+            # Both count something about the operand, so the answer is a small
+            # number and the honest question is which values it can take.  The
+            # taint cube has two CORNERS -- every tainted bit cleared, and every
+            # one set -- and for a counter they bracket the whole reachable
+            # range: popcount is monotone in each bit, and a leading-zero count
+            # is antitone in the value.  So evaluate the count at both corners,
+            # and the bits that can differ are the bits below where they first
+            # differ.  The same trick `_corners` plays for a ripple carry.
+            #
+            # This replaces "any tainted input bit taints the whole span", which
+            # was sound and very loose.  It is loose in two ways that matter:
+            #
+            #  * a LEADING-ZERO count does not depend on bits below the highest
+            #    set one at all, so taint down there moved nothing and was
+            #    reported anyway.  Measured on `lzcnt eax,ebx`, 62 of 256
+            #    outputs over-tainted; with this, far fewer.
+            #  * a POPCOUNT that can move by one or two moves only its bottom
+            #    bit or two, never all seven.
+            #
+            # POPCOUNT is not a rare opcode: it is how SLEIGH computes x86's
+            # PARITY flag, so this rule is on the path of every arithmetic and
+            # logic instruction there.  LZCOUNT carries `lzcnt`, AArch64
+            # `clz`/`cls`, MIPS `clz`/`clo`/`dclz`/`dclo` and PowerPC `cntlzw`.
+            x = p.mask(av, ibits)
+            t = p.mask(at, ibits)
+
+            def count(node: int) -> int:
+                if name == 'POPCOUNT':
+                    return p.op(POPCNT, node)
+                return p.op(SUB, p.op(CLZ, node), p.const(64 - ibits))
+
+            v = count(x)
+            lo = count(p.op(AND, x, p.op(NOT, t)))
+            hi = count(p.op(OR, x, t))
             nb = max(1, (ibits).bit_length())
             span = p.const(((1 << nb) - 1) & om)
-            return v, p.op(AND, span, p.splat(p.op(NEZ, at)))
+            return v, p.op(AND, span, _smear_right(p, p.op(XOR, lo, hi), nb))
 
         raise Unsupported(name)
 
