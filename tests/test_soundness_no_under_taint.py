@@ -976,40 +976,37 @@ def test_worker_style_pattern_fuzz(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# KNOWN FAILING CASES — documented and tracked but expected to fail today.
+# SBB chains — once a known under-taint, now a regression guard.
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# SBB chains: ``sbb dst, src; sbb dst2, dst; sbb dst3, dst2``.
+# ``sbb dst, src; sbb dst2, dst; sbb dst3, dst2``.  Under heavy random taint
+# the second ``sbb`` under-tainted bit 0 of its destination by one bit, while
+# the third propagated correctly -- so the engine tracked CF across SBB but
+# mishandled the fan-in into the subtracted register.  The ADC chain with the
+# same fuzz was sound, which pointed at ``sbb``'s lifting (INT_SBORROW giving
+# an op signature the classifier handled differently from INT_CARRY).
 #
-# Under heavy/random taint, the second ``sbb`` (sbb rcx, rax) under-taints
-# bit 0 of its destination by 1 bit.  The third sbb propagates correctly,
-# so RDX bit 0 IS tainted even though RCX bit 0 isn't — proving the
-# engine does track CF across SBB instructions but mishandles the fan-in
-# into the subtracted register.
-#
-# Reproduction (random.Random(6), worker register list, KEEP policy):
+# Reproduction (random.Random(6), worker register list, KEEP policy), kept
+# because the exact numbers are what make this case worth having:
 #   asm:    sbb rax, rbx; sbb rcx, rax; sbb rdx, rcx
-#   state:  RAX=0x92e5dfe8cb1855ff RBX=0x14a03569d26b9497
-#           RCX=0xc320a4737c2b3abf RDX=0x96d373742f9a03a
-#   taint:  RAX=0xbc1e3ac1c27db4ec RBX=0xc527e27951c34250
-#           RCX=0xae9af1698a0c5100 RDX=0xaf895f5b9c2c0ac2
 #   truth RCX=0xfffffffbdffffffd  got RCX=0xfffffffffffffffc  missing 0x1
 #
-# The ADC chain ``adc rax, rbx`` x3 with the same fuzz IS sound, so the
-# bug is specific to ``sbb``'s P-code lifting (likely INT_SBORROW
-# producing an op signature the bit-precise classifier handles slightly
-# differently from INT_CARRY).
+# It is FIXED.  Re-measured 2026-09-11: the ground truth is still exactly
+# 0xfffffffbdffffffd and the engine now answers 0xfffffffffffffffd, so bit 0 --
+# the one bit that went missing -- is covered, and the case under-taints
+# nothing.  The general carry-threading work is the likeliest cause; no commit
+# was ever attributed to it specifically.
 #
-# Until fixed, this is documented as @pytest.mark.xfail.  When you fix
-# the SBB lifter / classifier, flip the marker to .xpass-strict to
-# guard against regressions.
+# The prose here said "expected to fail today" and "flip the marker" long after
+# there was any marker to flip, which is its own small lesson: a test that says
+# it should fail, and passes, is telling you the note is stale.
 
 
-def test_known_failing_sbb_chain() -> None:
-    """Known unsound case: sbb cascade across 3 registers.
+def test_sbb_chain_carry_fan_in_stays_sound() -> None:
+    """The SBB cascade that used to lose bit 0 of the middle destination.
 
-    This test should xfail today.  When the engine bug is fixed, change
-    the strict=False to strict=True so a future regression flips it back.
+    Not vacuous: the ground truth carries 61 bits on RCX alone, and the bit the
+    defect dropped is checked by the under-taint comparison like any other.
     """
     seq = ['sbb rax, rbx', 'sbb rcx, rax', 'sbb rdx, rcx']
     state = {

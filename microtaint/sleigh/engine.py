@@ -3628,7 +3628,8 @@ def generate_taint_assignments(  # noqa: C901
                     #       has T_CF=0 but T_RAX, T_RBX both partially tainted,
                     #       and INT_LESS can still cancel between high/low
                     #       replicas — observed as the SBB-cascade
-                    #       under-tainting in test_known_failing_sbb_chain.)
+                    #       under-tainting in
+                    #       test_sbb_chain_carry_fan_in_stays_sound.)
                     #
                     #   (B) ONE dep with a FULL-MASK taint.  Example: neg rax
                     #       with T_RAX=MASK64.  OF = (RAX == MIN_INT).  The
