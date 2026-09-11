@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from typing import TYPE_CHECKING
 
@@ -619,7 +619,7 @@ class MicrotaintWrapper:
         return os.environ.get('MICROTAINT_BLOCK', '') not in ('', '0')
 
     def _block_read_descriptor(self, offsets: frozenset[int],
-                           slot_map: dict[str, int],
+                           slot_map: Mapping[str, int],
                            cache: dict[frozenset[int], BlockReadDescriptor],
                            ) -> BlockReadDescriptor:
         """A minimal uc_reg_read_batch descriptor for one block's reads.
@@ -693,14 +693,21 @@ class MicrotaintWrapper:
         from unicorn import UC_HOOK_BLOCK  # noqa: PLC0415
 
         from microtaint.emulator import blockpath_c  # noqa: PLC0415
-        from microtaint.taint_ir.blockcompile import compile_block  # noqa: PLC0415
+        from microtaint.taint_ir.blockcompile import (  # noqa: PLC0415
+            SlotMap,
+            compile_block,
+        )
 
         regfile = self._regfile
         # Every register needs a slot before the first block compiles: the
         # per-instruction path interns them as instructions mention them, and
         # that path never runs here.
         hook.prepare_block_mode(regfile.all_names)
-        slot_map = dict(hook.slot_map)
+        # A SlotMap rather than a dict: the compiled-block cache is keyed partly
+        # on this, and identifying it was over half the cost of a cache HIT
+        # (43.5 us of ~76 per distinct block per run).  It answers with a token
+        # instead, computed once here.
+        slot_map = SlotMap(hook.slot_map)
         reg_slots = [slot_map.get(n, -1) for n in regfile.all_names]
 
         desc_cache: dict[frozenset[int], BlockReadDescriptor] = {}

@@ -525,6 +525,64 @@ def test_the_keepalive_the_cache_holds_cannot_be_appended_to(
         assert isinstance(entry.specs, tuple), type(entry.specs)
 
 
+def test_a_slot_map_token_is_exact_not_a_hash(
+        layout: dict[str, int], other_layout: dict[str, int]) -> None:
+    """The token stands in for the slot map in the cache key.
+
+    Identifying the map was over half the cost of a cache hit, so a `SlotMap`
+    answers with a small integer instead of the set of its pairs.  That is only
+    safe while the integer is EXACT: two maps that differ sharing a token would
+    hand a caller the plan compiled for the other one's layout, and emitted
+    code addresses engine slots by index, so every write would land on the
+    wrong register.
+    """
+    a = bc.SlotMap(layout)
+    b = bc.SlotMap(dict(layout))          # same content, different object
+    c = bc.SlotMap(other_layout)          # every name at a different slot
+    assert a.token == b.token, 'equal maps disagree, so the cache cannot hit'
+    assert a.token != c.token, (
+        'two DIFFERENT slot maps share a token; a block compiled against one '
+        'would be handed back for the other')
+    # and one differing in a single slot
+    tweaked = dict(layout)
+    name = next(iter(tweaked))
+    tweaked[name] = tweaked[name] + 1000
+    assert bc.SlotMap(tweaked).token != a.token, (
+        'a map differing in one slot shares a token with the original')
+
+
+def test_a_slot_map_does_not_follow_the_dict_it_was_built_from(
+        layout: dict[str, int]) -> None:
+    """It copies, and that is what makes the token safe.
+
+    A token computed once from a mapping that is later edited would stand for
+    something that no longer exists, which is the silent wrong answer the
+    cache key is there to prevent.
+    """
+    src = dict(layout)
+    sm = bc.SlotMap(src)
+    before = sm.token
+    name = next(iter(src))
+    src[name] = src[name] + 4242
+    assert sm.token == before, 'the token moved when the source dict was edited'
+    assert sm[name] == layout[name], 'the SlotMap followed the edit'
+    assert len(sm) == len(layout)
+
+
+def test_a_slot_map_compiles_to_the_same_answer_as_its_dict(
+        layout: dict[str, int]) -> None:
+    """Behavioural: the token is a faster spelling, not a different map."""
+    as_dict = compile_block(_ARCH, _MOV_RAX_RBX, _BASE, layout, cache=False)
+    as_map = compile_block(_ARCH, _MOV_RAX_RBX, _BASE, bc.SlotMap(layout),
+                           cache=False)
+    assert as_dict is not None
+    assert as_map is not None
+    a, _ = _run(as_dict[0], layout, _BASE, values={'RBX': 1}, taint={'RBX': 0xFF})
+    b, _ = _run(as_map[0], layout, _BASE, values={'RBX': 1}, taint={'RBX': 0xFF})
+    assert a['RAX'] == 0xFF, 'the dict form stopped moving the taint'
+    assert b == a, 'the SlotMap form computed something different'
+
+
 def test_a_cache_hit_hands_back_the_same_regions(layout: dict[str, int]) -> None:
     """Stated so it is a contract rather than a surprise.
 

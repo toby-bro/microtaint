@@ -27,7 +27,8 @@ from run 2 onward -- and run 2 onward is the only regime a fuzzer is ever in.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Set as AbstractSet
 from types import MappingProxyType, ModuleType
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -47,7 +48,59 @@ from microtaint.types import ArchLike
 #: block reads no register value at all.
 Descriptor = Callable[[frozenset[int]], 'tuple[int, int, int, int, list[int], bool, object] | None']
 
-__all__ = ['block_slot_resolver', 'cache_clear', 'cache_stats', 'compile_block']
+__all__ = ['SlotMap', 'block_slot_resolver', 'cache_clear', 'cache_stats',
+           'compile_block']
+
+#: Every distinct slot map this process has seen, and the small integer that
+#: stands for it.  Keyed by the map's CONTENT, so two maps that agree get the
+#: same token and two that differ never can: the token is exact, not a hash.
+_SLOT_TOKENS: dict[frozenset[tuple[str, int]], int] = {}
+
+
+class SlotMap(Mapping[str, int]):
+    """A register-name to slot map that remembers what it is.
+
+    The compiled-block cache is keyed partly on the slot map, because emitted
+    code addresses engine slots by index and a program compiled against one
+    layout writes its answer to the wrong register under another.  The obvious
+    exact key is the set of pairs, and it is what this used to build on every
+    lookup.  Measured on a static-glibc guest, per distinct block per run:
+    12.5 us to build the frozenset and 31.2 us for the dictionary to hash and
+    compare it, against ~76 us for the whole warm path.  Over half the cost of
+    a CACHE HIT was identifying the map.
+
+    So the map is asked once, at construction, and carries a token afterwards.
+    The token comes from a registry keyed on the content, so it is exact rather
+    than a hash: two maps that agree share a token, two that differ cannot.
+    Copying the dict is what makes that safe -- a token that outlived an edit
+    to the map it stands for would be precisely the silent wrong answer the
+    cache key exists to prevent.
+    """
+
+    __slots__ = ('_d', '_token')
+
+    def __init__(self, mapping: Mapping[str, int]) -> None:
+        self._d: dict[str, int] = dict(mapping)
+        content = frozenset(self._d.items())
+        tok = _SLOT_TOKENS.get(content)
+        if tok is None:
+            tok = _SLOT_TOKENS[content] = len(_SLOT_TOKENS)
+        self._token = tok
+
+    def __getitem__(self, key: str) -> int:
+        return self._d[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._d)
+
+    def __len__(self) -> int:
+        return len(self._d)
+
+    @property
+    def token(self) -> int:
+        """What the cache key uses instead of the map itself."""
+        return self._token
+
 
 #: An IR key is either a name or a tuple like ('reg', offset) / ('mem', k).
 #: Re-exported from the IR, which defines what a key is.
@@ -70,7 +123,8 @@ def _layout() -> Mapping[str, int]:
     return _LAYOUT[0]
 
 
-def block_slot_resolver(arch: ArchLike, name_to_slot: dict[str, int]) -> SlotOf:
+def block_slot_resolver(arch: ArchLike,
+                        name_to_slot: Mapping[str, int]) -> SlotOf:
     """`slot_of` for a BLOCK program, in the layout blockpath.h runs.
 
     Register taint sits at the caller's own slot, the register's VALUE at
@@ -178,7 +232,8 @@ _STATS = {'hits': 0, 'misses': 0, 'refusals': 0, 'evictions': 0}
 
 
 def _cache_key(arch: ArchLike, code: bytes, base: int,
-               name_to_slot: dict[str, int], publish_all_values: bool) -> object:
+               name_to_slot: Mapping[str, int],
+               publish_all_values: bool) -> object:
     """What two compilations must agree on to be the same compilation.
 
     Each part earns its place by a way the cache would otherwise be WRONG,
@@ -202,8 +257,11 @@ def _cache_key(arch: ArchLike, code: bytes, base: int,
     extension, so it cannot differ between two calls in one process.
     """
     arch_key = arch.value if hasattr(arch, 'value') else str(arch)
-    return (arch_key, base, code, publish_all_values,
-            frozenset(name_to_slot.items()))
+    # A `SlotMap` answers in O(1); anything else pays for the set of pairs, and
+    # is exactly as correct, just slower.  The engine passes a SlotMap.
+    slots: object = (name_to_slot.token if isinstance(name_to_slot, SlotMap)
+                     else frozenset(name_to_slot.items()))
+    return (arch_key, base, code, publish_all_values, slots)
 
 
 #: A sentinel distinct from a cached `None`, which is itself a real answer.
@@ -263,7 +321,8 @@ def cache_clear() -> None:
         _STATS[k] = 0
 
 
-def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str, int],
+def compile_block(arch: ArchLike, code: bytes, base: int,
+                  name_to_slot: Mapping[str, int],
                   *, builder: Builder | None = None,
                   descriptor: Descriptor | None = None,
                   publish_all_values: bool = False,
@@ -326,7 +385,7 @@ def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str
 
 
 def _compile_one(arch: ArchLike, code: bytes, base: int,
-                 name_to_slot: dict[str, int], lay: Mapping[str, int],
+                 name_to_slot: Mapping[str, int], lay: Mapping[str, int],
                  builder: Builder | None,
                  publish_all_values: bool) -> _Compiled | None:
     """Lift, lower and emit one block.  The expensive part, and the only part.
@@ -369,7 +428,10 @@ def _plan_from(built: _Compiled, descriptor: Descriptor | None,
     from microtaint.emulator import blockpath_c  # noqa: PLC0415
 
     keep = list(built.keep)
-    desc = _read_descriptor(descriptor, set(built.reads), keep)
+    # `built.reads` is already a frozenset, and it is what the descriptor is
+    # keyed on.  Converting it to a set and back again was two passes over it
+    # per block per run for nothing.
+    desc = _read_descriptor(descriptor, built.reads, keep)
     plan = blockpath_c.plan_new(built.size, list(built.specs), keep, *desc)
     return plan, list(built.regions), set(built.reads)
 
@@ -542,17 +604,20 @@ def _address_slice(prog: IRProg, slot_of: SlotOf,
         prog.finish()
 
 
-def _read_descriptor(descriptor: Descriptor | None, reads: set[int],
+def _read_descriptor(descriptor: Descriptor | None, reads: AbstractSet[int],
                      keep: list[object],
                      ) -> tuple[int, int, int, int, list[int] | None, bool]:
     """The block's own uc_reg_read_batch descriptor, or an empty one.
 
     Empty means the C runtime reads nothing, which is correct for a block whose
     programs read no register value at all.
+
+    `reads` is taken as it comes and only converted when it is not already a
+    frozenset: the caller holds one, and it is what the descriptor is keyed on.
     """
     if descriptor is None:
         return (0, 0, 0, 0, None, False)
-    got = descriptor(frozenset(reads))
+    got = descriptor(reads if isinstance(reads, frozenset) else frozenset(reads))
     if got is None:
         return (0, 0, 0, 0, None, False)
     ids, ptrs, vals, n_calls, val_slots, need_flags, hold = got
