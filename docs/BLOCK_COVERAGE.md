@@ -411,3 +411,96 @@ Over-reporting is the acceptable direction, and a leak reported at a branch that
 cannot leak is a triage cost rather than a soundness failure. It is recorded
 here because for the fuzzing and concolic milestones, triage cost is the thing
 that decides whether the findings get used.
+
+## Compiling a block is a one-time cost, not a per-run one
+
+Block mode was faster per instruction from the day it was wired, and still lost
+to the path it replaces on every run after the first. Three consecutive runs of
+`bench_dense.elf` in one process, before any cache:
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| block mode | 451.8 ms | 428.6 ms | 426.8 ms |
+| *of which the compiler* | 360.2 | 354.7 | 353.3 |
+| per instruction | 659.5 ms | 170.7 ms | 170.1 ms |
+
+The per-instruction path has a process-wide rule cache, so its second run is
+3.9x faster than its first. Block mode had none: its plan cache lived in the C
+hook context, which is created per wrapper and dies with it, so all 38 blocks
+were lifted, lowered and emitted again on every run. From run 2 onward the
+slower path won by 2.5x, and run 2 onward is the only regime a fuzzer is ever
+in.
+
+`taint_ir/blockcompile.py` now keeps the compiled block for the process. The
+split is what makes this safe: of `compile_block`'s 6.08 ms for a ten
+instruction AMD64 block, 5.13 ms is the lift and lowering and 0.64 ms the emit,
+while turning the result into a plan is 1.1 us. So the first two are cached and
+the plan is still built per caller, because a plan carries the addresses of ONE
+wrapper's Unicorn register-read buffers. Sharing those would have a second
+emulator read its register file into the first one's scratch, and nothing would
+raise.
+
+Afterwards, same binary, same process: **771 ms, then 82 ms, then 82 ms**, with
+0 compilations on runs 2 and 3. Against the per-instruction path's steady 171
+ms, block mode is now 2.1x faster rather than 2.5x slower.
+
+### What the key carries, and why each part is there
+
+Each part earns its place by a way the cache would otherwise be silently wrong,
+and `tests/test_block_plan_cache.py` has a behavioural test per part that fails
+when it is dropped.
+
+| part | what goes wrong without it |
+|---|---|
+| the base address | blocks are compiled with `abs_ram=True`, so a PC-relative operand's `ram` address is baked in; the same bytes at another address would read wherever the block first ran |
+| the CODE, not its address | rewritten bytes would inherit the plan compiled for what used to be there |
+| the slot map | emitted code addresses engine slots by index, so a program compiled against one layout writes its answer to the wrong register under another |
+| the architecture | the same bytes decode differently on each |
+| `publish_all_values` | a block that publishes nothing has had the code producing those values deleted, so a caller chaining regions by hand gets stale registers |
+
+Keying on the bytes rather than on the address is also what makes
+self-modifying and JIT'd code safe: rewritten bytes are a different key and
+miss. A refusal is cached too, because learning that a block does not lower
+costs a full lift and real binaries are mostly such blocks.
+
+`MICROTAINT_BLOCK_PLAN_CACHE=0` bypasses the cache entirely, which is the switch
+to reach for when a compiled block is suspected of being wrong.
+
+### Two defects this surfaced, and one still open
+
+Writing the tests for the cache turned up two bugs that had nothing to do with
+it, both of which reproduce with the cache disabled.
+
+**Lowering was not thread-safe.** `builder_for` hands every caller the same
+stateful `Builder`, so two threads lowering at once walk over each other's
+predicate stack. Six threads lowering nine short blocks raised `IndexError` out
+of `prog.live[n]` on about one run in three. Lowering is now serialised under
+`frompcode.BUILDER_LOCK`, and the cache lookup is inside that lock so two
+threads asking for the same block produce one compilation and one hit. It costs
+nothing: this runs once per distinct block per process.
+
+**A write onto code threw away the held block's taint.** The deferred commit
+holds a block until the next block proves it completed, and `hook_invalidate`
+used to call `mt_blk_abandon` on every invalidation. That is right when the
+write rewrote the held block's own instructions, and an UNDER-taint every other
+time. The two are easy to confuse because the hook tracks the code it has
+planned as a single `[lo, hi)` interval: one JIT page stretches that interval
+across the whole image, and then every ordinary store to a global in between
+looks like self-modifying code. Measured on a guest that mmaps an RWX page,
+writes a four-byte stub and calls it, the value the stub returned came back
+clean and the secret-dependent branch it fed was never reported. The
+invalidation is now handed the write's own address and abandons the held block
+only on a real overlap; `hook_stats` counts `abandoned` separately from
+`invalidations` so the difference is visible.
+
+**Still open: `xor reg,reg` does not clear taint.** The IR folds the VALUE of
+`XOR(x, x)` to a constant, but the taint rule for a binary op is `t_a | t_b`
+and does not notice that a provably constant result cannot depend on anything.
+Reproduced against the C runtime with no guest at all: compile `48 31 c0` with
+`RAX` tainted and `RAX` comes back fully tainted, and `ZF` too although the
+instruction always sets it. The per-instruction path gets this right. It is an
+over-taint, so it is a precision and triage cost rather than a soundness
+failure, but the idiom is how every compiler on every architecture zeroes a
+register, so it is worth more than its size. The general form of the fix is
+"when the value expression folded to a constant, its taint is zero", which also
+covers `sub reg,reg`, `and reg,0` and `mul reg,0`.
