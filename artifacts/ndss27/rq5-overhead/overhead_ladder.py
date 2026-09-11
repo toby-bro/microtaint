@@ -106,13 +106,30 @@ elif layer == "codehook-regs":
 elif layer.startswith("microtaint"):
     from microtaint.emulator.reporter import Reporter
     from microtaint.emulator.wrapper import MicrotaintWrapper
-    flags = set() if layer == "microtaint-none" else {"bof", "uaf", "sc", "aiw"}
+    flags = set() if layer in ("microtaint-none", "microtaint-plumbing") else {"bof", "uaf", "sc", "aiw"}
     wrapper = MicrotaintWrapper(
         ql,
         check_bof=("bof" in flags), check_uaf=("uaf" in flags),
         check_sc=("sc" in flags), check_aiw=("aiw" in flags),
         reporter=Reporter(json_mode=False, stream=open(os.devnull, "w")),
     )
+    if layer == "microtaint-plumbing":
+        # The REAL engine, hook armed on every instruction, but nothing is ever
+        # tainted.  Every instruction then takes the untainted prefilter exit:
+        # hook entry, guest register reads, the address->circuit cache, the
+        # prefilter test, and for a memory operand an effective-address
+        # computation and a shadow lookup.  All of that is work a byte-granular
+        # taint engine owes per instruction no matter how its propagation is
+        # written; what is missing is only the propagation itself.
+        #
+        # Arming is normally deferred until the first taint arrives, so arm it
+        # by hand and then stop the taint sources: _taint_bytes is what the read
+        # syscall hook calls, and the two public injectors are the other doors.
+        wrapper._arm_deferred_hooks()
+        _noop = lambda *a, **k: None
+        wrapper._taint_bytes = _noop
+        wrapper.taint_bit = _noop
+        wrapper.taint_region = _noop
 
 # Guest stdout is redirected so its bytes cannot corrupt this JSON, and so the
 # byte count proves the workload ran (bench.c writes its hash after the rounds).
@@ -138,6 +155,21 @@ print(json.dumps({
     # count rather than trusting uc_hook_add's return value.
     "c_hook_calls": int(c_hook_lib.ladder_count()) if c_hook_lib is not None else None,
     "instr_hook_registered": getattr(wrapper, "_instr_hook_registered", None),
+    # For microtaint rungs: how many instructions the hook actually saw, and how
+    # many took the untainted prefilter exit.  The plumbing rung is only honest
+    # if the hook ran on every instruction and every one of them prefiltered;
+    # without these it could silently be measuring an unarmed hook, which is
+    # fast and meaningless -- the exact failure this ladder exists to catch.
+    "hook_instr_total": getattr(getattr(wrapper, "_instr_hook_obj", None), "instr_total", None),
+    "hook_prefilter_hits": getattr(getattr(wrapper, "_instr_hook_obj", None), "prefilter_hits", None),
+    # The rung's actual claim is "nothing was ever tainted".  Check THAT rather
+    # than the prefilter share: ~5% of instructions are prefilter-INELIGIBLE by
+    # structure (a PC target needs the implicit-taint decision, a memory write
+    # needs the store path), so they evaluate even with a clean machine, and a
+    # threshold on the share would be measuring circuit shape, not taint.
+    "residual_register_taint": sum(
+        1 for _v in (getattr(wrapper, "register_taint", {}) or {}).values() if _v
+    ),
     "taint_ir_modules": sorted(m for m in sys.modules if m.startswith("microtaint.taint_ir")),
     "env_taint_ir": os.environ.get("MICROTAINT_TAINT_IR", "<unset>"),
 }))
@@ -181,6 +213,7 @@ LAYERS = [
     ('qiling-only',          'Qiling/Unicorn emulation, no hooks',            'emulator',   True),
     ('c-codehook',           'per-instruction control, pure C, empty body',   'emulator',   True),
     ('c-codehook-regs',      'the same, reading 4 guest registers',           'emulator',   True),
+    ('microtaint-plumbing',  'the real engine, armed, but nothing tainted',   'plumbing',   True),
     ('microtaint-none',      'bit-precise taint propagation, no detectors',   'microtaint', True),
     ('microtaint-all',       'plus the four detectors',                       'microtaint', True),
     ('blockhook',            'empty per-BLOCK Python hook',                   'reference',  False),
@@ -295,6 +328,25 @@ def main() -> int:
         # Each run is its own subprocess, so the counter starts at zero every time
         # and `calls` is already PER RUN -- dividing by len(samples) was wrong, and
         # the check caught it (1,256,123 x 3 = 3,768,369 exactly).
+        if layer == 'microtaint-plumbing' and n_instrs:
+            seen = extra.get('hook_instr_total') or 0
+            pre = extra.get('hook_prefilter_hits') or 0
+            if abs(seen - n_instrs) > 0.02 * n_instrs:
+                raise SystemExit(
+                    f'{layer}: the hook saw {seen:,} instructions against {n_instrs:,}; '
+                    f'it is not armed on every one, so this rung would price an '
+                    f'uninstrumented run')
+            res = extra.get('residual_register_taint')
+            if res:
+                raise SystemExit(
+                    f'{layer}: {res} registers ended tainted, so taint WAS propagated '
+                    f'and this is not a plumbing measurement')
+            if seen:
+                sys.stderr.write(
+                    f'  [{layer}] {100 * pre / seen:.1f}% of instructions took the '
+                    f'untainted prefilter exit; the rest are prefilter-ineligible '
+                    f'circuits (PC targets, memory writes)\n')
+
         calls = extra.get('c_hook_calls')
         if layer.startswith('c-') and n_instrs:
             if not calls:
@@ -307,6 +359,9 @@ def main() -> int:
             'run_s': statistics.median(samples), 'desc': desc,
             'guest_bytes': gb, 'n_runs': len(samples),
             'c_hook_calls_per_run': calls,
+            'hook_instr_total': extra.get('hook_instr_total'),
+            'hook_prefilter_hits': extra.get('hook_prefilter_hits'),
+            'residual_register_taint': extra.get('residual_register_taint'),
             'env_taint_ir': extra.get('env_taint_ir'),
             'taint_ir_modules': extra.get('taint_ir_modules'),
         }
@@ -356,10 +411,19 @@ def main() -> int:
     if cch and cchr:
         print(f'  * reading 4 guest registers from that C callback adds {cchr - cch:+.0f} ns/instr,')
         print(f'    so control plus the state a taint engine needs is {cchr:.0f} ns/instr.')
-    if mt and cchr:
+    plumb = ns_of('microtaint-plumbing')
+    if mt and cchr and plumb:
+        print(f'  * the engine\'s PLUMBING is {plumb:.0f} ns/instr ({plumb - cchr:+.0f} over that):')
+        print('    the hook, reading the operands the instruction actually uses, the')
+        print('    address->circuit cache, the prefilter, and for a memory operand an')
+        print('    effective address and a shadow lookup. No taint is computed; this is')
+        print('    what a byte-granular engine owes per instruction however it is written.')
+        print(f'  * PROPAGATION adds {mt - plumb:+.0f} ns/instr on top ({100 * (mt - plumb) / mt:.0f}% of the total).')
+        print('    That is the taint algebra, and the honest number to attack.')
+    elif mt and cchr:
         print(f'  * microtaint computes the taint in {mt - cchr:+.0f} ns/instr on top of that,')
         print(f'    {mt / cchr:.0f}x the cost of merely reading the same registers.')
-        print('    THAT is the part that is ours, and the honest number to attack.')
+        print('    Add the microtaint-plumbing rung to split that into plumbing and algebra.')
     if ch and cch and mt:
         print(f'  * for scale: the same empty hook written in PYTHON costs {ch:.0f} ns/instr,')
         print(f"    {ch / cch:.0f}x the C one, and more than microtaint's entire engine ({mt:.0f}).")

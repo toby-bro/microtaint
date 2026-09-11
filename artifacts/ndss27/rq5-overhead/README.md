@@ -98,19 +98,35 @@ A representative result (3,768,369 guest instructions, idle machine, 5 runs):
 
 | layer | ns/instr | marginal | x qiling | attributable to |
 |---|---|---|---|---|
-| native | 0.5 | | 0.0 | baseline |
-| qiling-only | 24.1 | +23.6 | 1.0 | emulator |
-| c-codehook (per-instruction control, pure C) | 43.4 | +19.3 | 1.8 | emulator |
-| c-codehook-regs (+ read 4 guest registers) | 100.6 | +57.2 | 4.2 | emulator |
-| microtaint-none | 1207.9 | +1107.3 | 50.2 | **microtaint** |
-| microtaint-all | 1318.9 | +111.0 | 54.8 | **microtaint** |
-| *blockhook* (empty per-block Python hook) | *142* | | *5.9* | *reference* |
-| *codehook* (empty per-instruction Python hook) | *1963* | | *81* | *reference* |
-| *codehook-regs* (same, reading 4 registers) | *19705* | | *818* | *reference* |
+| native | 0.9 | | 0.0 | baseline |
+| qiling-only | 34.4 | +33.5 | 1.0 | emulator |
+| c-codehook (per-instruction control, pure C) | 51.7 | +17.3 | 1.5 | emulator |
+| c-codehook-regs (+ read 4 guest registers) | 104.4 | +52.8 | 3.0 | emulator |
+| microtaint-plumbing (engine armed, nothing tainted) | 614.8 | +510.4 | 17.9 | **plumbing** |
+| microtaint-none | 1188.4 | +573.6 | 34.6 | **propagation** |
+| microtaint-all | 1314.2 | +125.8 | 38.2 | **detectors** |
+| *blockhook* (empty per-block Python hook) | *142* | | | *reference* |
+| *codehook* (empty per-instruction Python hook) | *1963* | | | *reference* |
+| *codehook-regs* (same, reading 4 registers) | *19705* | | | *reference* |
 
 The three Python rows are slow to measure and cannot move when the engine
 changes, so `--only` re-runs just the chain after an optimisation; their figures
 above are from the 2026-09-11 full run.
+
+**`microtaint-plumbing` is the rung that makes the rest attributable.** It is
+the real engine with the hook armed on every instruction, but with every taint
+source stubbed out, so nothing is ever tainted and no propagation happens. What
+remains is the hook entry, reading the operands the instruction actually uses,
+the address-to-circuit cache, the prefilter test, and for a memory operand an
+effective-address computation and a shadow lookup. That is work a byte-granular
+taint engine owes per instruction however its propagation is written.
+
+It reports `residual_register_taint` and fails the run if any register ended
+tainted, because "nothing was tainted" is the rung's whole claim. It does NOT
+gate on the prefilter share: about 5% of instructions are prefilter-ineligible
+by structure (a PC target needs the implicit-taint decision, a memory write
+needs the store path) and evaluate even on a clean machine, so a threshold there
+would be measuring circuit shape rather than taint.
 
 **Per-instruction hooking is not what costs.** A pure-C `UC_HOOK_CODE` with an
 empty body is 48 ns/instr, only +23 over bare emulation, and that already
@@ -118,9 +134,11 @@ includes losing Unicorn's translation-block chaining. Reading the four guest
 registers a taint engine needs brings it to 104. So the plumbing a
 per-instruction dynamic analysis cannot avoid is about 4x the emulator, not 60x.
 
-**The remaining 1486 ns/instr is microtaint's**, 15x the cost of merely reading
-the same registers. That is the honest number to attack, and it is not
-explained away by the emulator or by hooking.
+**The rest splits roughly in half.** Of microtaint-none's 1188 ns/instr, 510 is
+plumbing and 574 is propagation, so the taint algebra is about 48% of the
+engine's cost rather than all of it. Both halves are ours; they are just
+different work, and only the propagation half is affected by making the taint
+formulas cheaper.
 
 **The hosting language dominates the analysis.** The same empty hook written in
 Python costs 1963 ns/instr, 41x the C one, and more than microtaint's entire
