@@ -107,13 +107,13 @@
     },
     "MOVSX r64,r16": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "MOVSX r64,r8": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "MOVZX r32,r16": {
       "assigns": 2,
@@ -737,8 +737,8 @@
     },
     "cbw": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "cdq": {
       "assigns": 2,
@@ -747,8 +747,8 @@
     },
     "cdqe": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "cmova ax, bx": {
       "assigns": 2,
@@ -1337,8 +1337,8 @@
     },
     "cwde": {
       "assigns": 2,
-      "cells": 1,
-      "nodes": 30
+      "cells": 0,
+      "nodes": 70
     },
     "dec al": {
       "assigns": 5,
@@ -1517,28 +1517,28 @@
     },
     "movsx eax, bl": {
       "assigns": 2,
-      "cells": 1,
-      "nodes": 30
+      "cells": 0,
+      "nodes": 70
     },
     "movsx rax, bl": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "movsx rax, bx": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "movsx rax, cl": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "movsxd rax, ebx": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "movzx eax, bl": {
       "assigns": 2,
@@ -4761,43 +4761,43 @@
     },
     "sxtb w0, w1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "sxtb x0, w1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "sxtb x1, x2": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "sxth w0, w1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "sxth x0, w1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "sxth x1, x2": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "sxtw x0, w1": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "sxtw x1, x2": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "tst w0, w1": {
       "assigns": 0,
@@ -5716,7 +5716,7 @@
     "sll $2, $4, 0": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 30
+      "nodes": 50
     },
     "sll $2, $4, 1": {
       "assigns": 2,
@@ -5731,7 +5731,7 @@
     "sll $2, $4, 31": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 30
+      "nodes": 35
     },
     "sll $2, $4, 7": {
       "assigns": 2,
@@ -5851,7 +5851,7 @@
     "sra $2, $4, 0": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 30
+      "nodes": 50
     },
     "sra $2, $4, 1": {
       "assigns": 2,
@@ -5881,7 +5881,7 @@
     "srl $2, $4, 0": {
       "assigns": 2,
       "cells": 1,
-      "nodes": 30
+      "nodes": 50
     },
     "srl $2, $4, 1": {
       "assigns": 2,
@@ -6672,13 +6672,13 @@
     },
     "extsb 3, 4": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "extsh 3, 4": {
       "assigns": 1,
-      "cells": 1,
-      "nodes": 15
+      "cells": 0,
+      "nodes": 35
     },
     "mulhw 0, 3, 4": {
       "assigns": 1,
@@ -7860,7 +7860,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-11T03:34:34.185179+00:00",
+    "generated": "2026-09-11T03:53:23.596822+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

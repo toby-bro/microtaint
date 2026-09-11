@@ -2977,14 +2977,15 @@ def generate_taint_assignments(  # noqa: C901
             (d.bit_end + 1 for d in dep_set.value_deps if isinstance(d, RegMapping) and d.name == name),
             default=0,
         )
-        terms = _affine_routing_terms(
+        plan = _affine_routing_terms(
             arch, hexs, name, out_name, out_bit_start, out_bit_end, w_in, a_c,
         )
-        if terms is not None:
+        if plan is not None:
+            terms, sext = plan
             # a(c) is the affine CONSTANT part and is already folded out of L by
             # the probe (L(e_i) = f(e_i) XOR a), so it must NOT be XOR'd in again
             # here the way the cell form does.
-            return _emit_routing_terms(terms, taint_input, w_in)
+            return _emit_routing_terms(terms, sext, taint_input, w_in)
 
         taint_cell = InstructionCellExpr(arch, hexs, out_name, out_bit_start, out_bit_end, {name: taint_input})
         return BinaryExpr(Op.XOR, taint_cell, Constant(a_c, out_bit_end - out_bit_start + 1))
@@ -4467,7 +4468,8 @@ _MAX_ROUTE_GROUPS = 2
 
 
 def _emit_routing_terms(
-    terms: tuple[tuple[int, int], ...], taint_input: Expr, w_in: int,
+    terms: tuple[tuple[int, int], ...], sext: tuple[int, int] | None,
+    taint_input: Expr, w_in: int,
 ) -> Expr:
     """``XOR_d ((T & mask_d) << d)`` as an Expr tree: the routed form of L."""
     routed: Expr | None = None
@@ -4478,15 +4480,45 @@ def _emit_routing_terms(
         elif delta < 0:
             term = BinaryExpr(Op.RIGHT, term, Constant(-delta, 8))
         routed = term if routed is None else BinaryExpr(Op.XOR, routed, term)
-    assert routed is not None, '_affine_routing_terms never returns an empty tuple'
+    if sext is not None:
+        # One input bit reaching a contiguous run of outputs: a SIGN EXTENSION.
+        # `L(e_k) = img`, so the term contributes `img` exactly when bit k of the
+        # taint is set, which is the two's-complement splat `0 - bit` masked to
+        # the run.  Same construction `flag_closed_form._arith_right` uses for
+        # the sign fill of an arithmetic shift, and exact for the same reason:
+        # on a taint MASK it routes bits without mixing them.
+        #
+        # Emitted as its own term rather than as shift groups because the run is
+        # 33 bits wide for `movsx rax, ebx`, and one group per output bit is
+        # ~99 nodes against a cell's ~776 ns -- a worse trade than the cell it
+        # replaces.  This is six operations.
+        src, img = sext
+        signbit = BinaryExpr(
+            Op.AND,
+            BinaryExpr(Op.RIGHT, taint_input, Constant(src, 8)),
+            Constant(1, 8),
+        )
+        fill: Expr = BinaryExpr(
+            Op.AND, BinaryExpr(Op.SUB, Constant(0, 8), signbit), Constant(img, 64),
+        )
+        routed = fill if routed is None else BinaryExpr(Op.XOR, routed, fill)
+    assert routed is not None, '_affine_routing_terms never returns an empty plan'
     return routed
+
+
+#: The linear part of an affine routing slice: `(delta, mask)` shift terms plus
+#: at most one SIGN EXTENSION `(source bit, image mask)`.  A permutation or
+#: selection needs only the terms; `movsx` needs the second half, because its
+#: sign bit reaches 33 outputs and one shift term per output would cost more
+#: than the cell re-execution it is replacing.
+AffinePlan = tuple[tuple[tuple[int, int], ...], tuple[int, int] | None]
 
 
 @functools.lru_cache(maxsize=4096)
 def _affine_routing_terms(
     arch: Architecture, hexs: str, name: str, out_name: str,
     out_bit_start: int, out_bit_end: int, w_in: int, a_c: int,
-) -> tuple[tuple[int, int], ...] | None:
+) -> AffinePlan | None:
     """The linear part of an affine routing slice as ``(delta, mask)`` shift terms,
     or None if it does not decompose into a few of them.
 
@@ -4498,11 +4530,13 @@ def _affine_routing_terms(
     synthesis instead: probe ``f`` on the w basis vectors, take ``L(e_i) = f(e_i)
     XOR a``, and by linearity ``L(T) = XOR_{i in T} L(e_i)``.
 
-    We emit only the case where every ``L(e_i)`` is a single bit (a permutation or
-    selection), grouped by ``delta = out_pos - i`` so the whole map becomes a
-    handful of ``(T & mask) << delta`` terms.  Fan-out (``movsx``'s sign bit feeds
-    33 output bits) would need a sign-extend node the Expr language does not have,
-    so it keeps the cell rather than emitting 33 terms.
+    Where every ``L(e_i)`` is a single bit (a permutation or selection) the map
+    is grouped by ``delta = out_pos - i``, so it becomes a handful of
+    ``(T & mask) << delta`` terms.  One input bit may instead reach a CONTIGUOUS
+    RUN starting at its own position -- that is a sign extension, and
+    ``movsx``'s sign bit reaching 33 outputs is the case -- and that is emitted
+    as a two's-complement splat masked to the run.  Any other fan-out declines:
+    it would need a group per output bit, which costs more than the cell.
 
     Affineness is the CALLER's gate, not an assumption made here:
     make_mapped_single_call only reaches this for a slice whose every op is in
@@ -4530,7 +4564,7 @@ def _affine_routing_terms(
 
 def _decompose_linear_map(
     f: Callable[[int], int], a_c: int, w_in: int,
-) -> tuple[tuple[int, int], ...] | None:
+) -> AffinePlan | None:
     """L as ``(delta, mask)`` shift terms from the basis images, or None.
 
     ``L(e_i) = f(e_i) XOR a`` by affineness.  A single-bit image at position o
@@ -4539,17 +4573,32 @@ def _decompose_linear_map(
     is fan-out and declines.
     """
     groups: dict[int, int] = {}
+    sext: tuple[int, int] | None = None
     for i in range(w_in):
         img = f(1 << i) ^ a_c
         if img == 0:
             continue                           # bit i feeds nothing
         if img & (img - 1):
-            return None                        # fan-out: more than one output bit
+            # Fan-out.  The one shape worth emitting is a SIGN EXTENSION: a
+            # single input bit reaching a CONTIGUOUS run that starts at its own
+            # position.  That is six operations (see `_emit_routing_terms`);
+            # anything else would need a group per output bit and would cost
+            # more than the cell it replaces.
+            if sext is not None:
+                return None                    # two fan-outs is not a sign extension
+            lo = (img & -img).bit_length() - 1
+            hi = img.bit_length() - 1
+            if lo != i or img != (((1 << (hi - lo + 1)) - 1) << lo):
+                return None                    # not a contiguous run from bit i
+            sext = (i, img)
+            continue
         delta = img.bit_length() - 1 - i
         groups[delta] = groups.get(delta, 0) | (1 << i)
-    if not groups or len(groups) > _MAX_ROUTE_GROUPS:
+    if not groups and sext is None:
+        return None
+    if len(groups) > _MAX_ROUTE_GROUPS:
         return None                            # no cheaper than the cell
-    return tuple(sorted(groups.items()))
+    return tuple(sorted(groups.items())), sext
 
 
 @functools.lru_cache(maxsize=None)

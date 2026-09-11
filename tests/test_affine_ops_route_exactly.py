@@ -72,10 +72,13 @@ AFFINE_FORMS: list[tuple[Architecture, str, str, bool]] = [
     (Architecture.AMD64, 'mov rax, rbx',        '4889d8',   True),
     (Architecture.AMD64, 'mov eax, ebx',        '89d8',     True),
     (Architecture.AMD64, 'movzx eax, bl',       '0fb6c3',   True),
-    # movsx: the sign bit feeds 33 output bits, and the Expr language has no
-    # sign-extend node, so the permutation decomposition declines rather than
-    # emit 33 shift terms.  Needs a SEXT expression, not a better recogniser.
-    (Architecture.AMD64, 'movsx rax, ebx',      '4863c3',   False),
+    # movsx: the sign bit feeds 33 output bits.  Routes since 2026-09-11, as a
+    # two's-complement splat masked to the run -- the construction
+    # flag_closed_form._arith_right already used for the sign fill of an
+    # arithmetic shift, and exact on a taint mask for the same reason.  Six
+    # operations, against the ~99 that one shift term per output bit would
+    # have cost.
+    (Architecture.AMD64, 'movsx rax, ebx',      '4863c3',   True),
     # not / mvn: affine, L is the identity and the negation is all in a(c).
     # Routes since 2026-09-11: `is_mapped_permutation` gated on the mapper's
     # ROUTING set while `engine.py` had a WIDER set for the same idea, so a
@@ -110,10 +113,13 @@ AFFINE_FORMS: list[tuple[Architecture, str, str, bool]] = [
 #: and the synthesis disagreed about what "affine" means, and sharing one set
 #: settled it.
 #:
-#: ONE entry remains, and it names its own cause in the table: `movsx` needs a
-#: sign-extend Expr node.  Keep causes separate rather than reviving one shared
-#: excuse; a single reason string covering several is how the first one stayed
-#: invisible for months.
+#: `movsx` followed too, once the decomposition learned to emit a contiguous
+#: fan-out as a sign extension rather than declining it.
+#:
+#: NOTHING in this table re-executes a cell any more, so `_STILL_RE_EXECUTES` is
+#: unused -- kept, with the marks machinery, because the next affine form added
+#: here may well not route on the first try, and a strict xfail is what made
+#: each of these visible the moment it started working.
 _STILL_RE_EXECUTES = (
     'this form still re-executes a SLEIGH cell; see its comment in AFFINE_FORMS '
     'for which of the two remaining causes applies'
