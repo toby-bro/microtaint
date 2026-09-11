@@ -10,12 +10,26 @@ touches a PyObject.
 The slot layout comes from `blockpath_c.layout()` rather than being restated
 here, so the two cannot drift: a program compiled against the wrong layout would
 address the wrong words and the failure would be silent.
+
+Compiling is also the expensive part, and until `_PLAN_CACHE` existed it ran
+again on every run.  Measured on bench_dense, three consecutive runs of the same
+binary in one process:
+
+    block mode        run 1  451.8 ms   run 2  428.6 ms   run 3  426.8 ms
+      of which here          360.2 ms          354.7 ms          353.3 ms
+    per instruction   run 1  659.5 ms   run 2  170.7 ms   run 3  170.1 ms
+
+The per-instruction path has a process-wide rule cache, so its second run is
+3.9x faster than its first.  Block mode had none: all 38 blocks were lifted,
+lowered and emitted again for every run, which is why it LOST to the slower path
+from run 2 onward -- and run 2 onward is the only regime a fuzzer is ever in.
 """
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from types import ModuleType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:                    # stub-only: opaque PyCapsule handles
     from microtaint.emulator.blockpath_c import _Capsule as BlockPlan
@@ -24,7 +38,7 @@ if TYPE_CHECKING:                    # stub-only: opaque PyCapsule handles
     )
 
 from microtaint.taint_ir.blocks import Region
-from microtaint.taint_ir.frompcode import Builder
+from microtaint.taint_ir.frompcode import BUILDER_LOCK, Builder
 from microtaint.taint_ir.ir import IRKey, IRProg
 from microtaint.taint_ir.ir import SlotOf as _SlotOf
 from microtaint.types import ArchLike
@@ -33,7 +47,7 @@ from microtaint.types import ArchLike
 #: block reads no register value at all.
 Descriptor = Callable[[frozenset[int]], 'tuple[int, int, int, int, list[int], bool, object] | None']
 
-__all__ = ['block_slot_resolver', 'compile_block']
+__all__ = ['block_slot_resolver', 'cache_clear', 'cache_stats', 'compile_block']
 
 #: An IR key is either a name or a tuple like ('reg', offset) / ('mem', k).
 #: Re-exported from the IR, which defines what a key is.
@@ -91,13 +105,155 @@ def block_slot_resolver(arch: ArchLike, name_to_slot: dict[str, int]) -> SlotOf:
 #: declined to emit a function; a region with neither is one that did not lower
 #: at all.  The last address is what a finding names: the runtime learns the
 #: program counter is secret-dependent only once the whole region has run.
-RegionSpec = tuple[int, int, list[tuple[int, int, int]], int, int, int, int]
+RegionSpec = tuple[int, int, tuple[tuple[int, int, int], ...], int, int, int, int]
+
+
+# ---------------------------------------------------------------------------
+# The compiled-block cache
+# ---------------------------------------------------------------------------
+#: How many distinct blocks to keep compiled.  The C runtime's own plan table
+#: (BLK_CACHE_CAP in blockpath_c.c) holds 4096 and REFUSES rather than evicting
+#: when it fills, so keeping more here than it can hold buys nothing; the two
+#: are deliberately the same number.  `MICROTAINT_BLOCK_PLAN_CACHE=0` disables
+#: the cache outright -- neither read nor written, so a run under it compiles
+#: every block afresh.  That is how a test proves the cache is what is doing the
+#: work rather than some other memoisation further down, and it is the switch to
+#: reach for when a compiled block is suspected of being wrong.
+_CACHE_CAP = 4096
+
+
+def _cache_cap() -> int:
+    raw = os.environ.get('MICROTAINT_BLOCK_PLAN_CACHE', '')
+    if not raw:
+        return _CACHE_CAP
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return _CACHE_CAP
+
+
+class _Compiled(NamedTuple):
+    """One block, lifted, lowered and emitted, ready to be handed to any
+    wrapper in this process.
+
+    Everything here is independent of WHO runs the block.  What is not -- the
+    Unicorn register-read buffers -- is deliberately absent: those are the
+    caller's, built fresh per plan, so two live wrappers never share the scratch
+    the C runtime reads registers into.  Sharing them would be silent: the
+    second emulator would read its register file into the first one's buffer.
+    """
+
+    size: int                        #: the block's byte length
+    specs: tuple[RegionSpec, ...]
+    #: The compiled-code capsules the specs' function pointers point into.  A
+    #: TUPLE on purpose: `_read_descriptor` appends the caller's keepalive to
+    #: the list it is given, and appending to what the cache holds would grow
+    #: it without bound and hand wrapper B a reference to wrapper A's buffers.
+    #: A tuple makes that mistake an AttributeError instead of a slow leak.
+    keep: tuple[object, ...]
+    reads: frozenset[int]
+    regions: tuple[Region, ...]
+
+
+#: Keyed by everything a compiled block depends on, and nothing else.  In
+#: insertion order, so eviction is FIFO: `dict` guarantees that ordering, and a
+#: plain dict needs no lock beyond the GIL, which matters because the compiler
+#: is called from the C hook.
+_PLAN_CACHE: dict[object, _Compiled | None] = {}
+_STATS = {'hits': 0, 'misses': 0, 'refusals': 0, 'evictions': 0}
+
+
+def _cache_key(arch: ArchLike, code: bytes, base: int,
+               name_to_slot: dict[str, int], publish_all_values: bool) -> object:
+    """What two compilations must agree on to be the same compilation.
+
+    Each part earns its place by a way the cache would otherwise be WRONG,
+    which is the only kind of cache bug that matters here:
+
+      * `base`, because blocks are compiled with `abs_ram=True`: a PC-relative
+        operand's `ram` address is baked into the program, so the same bytes at
+        a different address are a different program.  Sharing across addresses
+        would resolve a load at the address the block first ran at and read the
+        shadow somewhere else entirely -- a clean answer for a tainted word.
+      * the CODE, not its address, because that is what makes self-modifying
+        code safe: rewritten bytes are a different key and miss, where an
+        address-keyed cache would happily run the plan for the bytes that used
+        to be there.
+      * the slot map, because the emitted code addresses engine slots by index.
+        The set of pairs rather than its hash: a hash collision between two slot
+        maps would send a program's writes to the wrong register.
+      * the architecture, because the same bytes decode differently on each.
+
+    The layout (`blockpath_c.layout()`) is a compile-time constant of the C
+    extension, so it cannot differ between two calls in one process.
+    """
+    arch_key = arch.value if hasattr(arch, 'value') else str(arch)
+    return (arch_key, base, code, publish_all_values,
+            frozenset(name_to_slot.items()))
+
+
+#: A sentinel distinct from a cached `None`, which is itself a real answer.
+_MISSING = object()
+
+
+def _cache_get(key: object) -> tuple[bool, _Compiled | None]:
+    """-> (was it there, what it was).  `None` is a real cached answer: a block
+    that does not lower costs a full lift to find out, and re-learning that
+    every run is exactly the cost this cache exists to remove."""
+    got = _PLAN_CACHE.get(key, _MISSING)
+    if got is _MISSING:
+        _STATS['misses'] += 1
+        return False, None
+    _STATS['hits'] += 1
+    return True, got  # type: ignore[return-value]
+
+
+
+def _cache_put(key: object, value: _Compiled | None) -> None:
+    cap = _cache_cap()
+    if cap <= 0:
+        return
+    if value is None:
+        _STATS['refusals'] += 1
+    while len(_PLAN_CACHE) >= cap:
+        # FIFO.  Evicting drops this process's reference to the emitted code,
+        # but never frees code a LIVE plan still points into: `plan_new` holds
+        # its own reference to the capsules through the plan's keepalive.  The
+        # worst an eviction costs is a recompile.
+        try:
+            _PLAN_CACHE.pop(next(iter(_PLAN_CACHE)))
+        except (StopIteration, KeyError, RuntimeError):  # changed under us
+            break
+        _STATS['evictions'] += 1
+    _PLAN_CACHE[key] = value
+
+
+def cache_stats() -> dict[str, int]:
+    """What the cache has actually done.  -> hits, misses, refusals, evictions,
+    entries, capacity.
+
+    Exported because "the cache is working" is a claim that has to be counted,
+    not assumed: a cache whose key is too specific never hits, costs a
+    dictionary lookup per block and looks exactly like a cache that works.
+    """
+    return {**_STATS, 'entries': len(_PLAN_CACHE), 'capacity': _cache_cap()}
+
+
+def cache_clear() -> None:
+    """Forget every compiled block, and the counters with them.
+
+    Live plans keep working: each holds its own reference to the code it runs.
+    """
+    _PLAN_CACHE.clear()
+    for k in _STATS:
+        _STATS[k] = 0
 
 
 def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str, int],
                   *, builder: Builder | None = None,
                   descriptor: Descriptor | None = None,
                   publish_all_values: bool = False,
+                  cache: bool = True,
                   ) -> tuple[BlockPlan, list[Region], set[int]] | None:
     """-> (plan capsule, [Region], register offsets read), or None.
 
@@ -110,31 +266,98 @@ def compile_block(arch: ArchLike, code: bytes, base: int, name_to_slot: dict[str
     instead was 90% of block mode's cost when it was first wired -- 0.392 s of
     0.434 s on bench_untainted -- so the caller turns this into a minimal read
     descriptor and hands it back through `descriptor`.
-    """
-    from microtaint.emulator import blockpath_c  # noqa: PLC0415
-    from microtaint.taint_ir.blocks import plan_block  # noqa: PLC0415
 
+    The lift, the lowering and the emitted code are cached for the process, so
+    the second run of a binary compiles nothing; see `_cache_key` for what makes
+    two compilations the same one.  The PLAN is still built per call, because
+    it points at the caller's own register-read buffers.  `cache=False` forces a
+    fresh compilation, which is what a test wants when it is checking the
+    compiler rather than the cache.
+
+    On a cache hit the returned `Region`s are the SAME objects an earlier caller
+    got, and their `prog` is mutable.  Nothing in the engine touches them; a
+    test that wants to take one apart should pass `cache=False`.
+    """
     lay = _layout()
     if len(name_to_slot) > lay['val_base']:
         return None                      # registers would collide with values
+
+    # A caller-supplied builder carries its own state, so a block compiled with
+    # one is not the same compilation as the same block compiled without it.
+    # Rather than try to put a Builder in a cache key, do not cache it.
+    key = (None if builder is not None or not cache or _cache_cap() <= 0
+           else _cache_key(arch, code, base, name_to_slot, publish_all_values))
+
+    # The lookup happens INSIDE the lock, not before it.  Lowering runs through
+    # a shared, stateful Builder and has to be serialised anyway (see
+    # `BUILDER_LOCK`), and holding the lock across the lookup is what turns two
+    # threads asking for the same block into one compilation and one hit rather
+    # than two compilations.  Taking it costs ~50 ns against the ~5 us of
+    # building a plan, and this runs once per distinct block, not per execution.
+    with BUILDER_LOCK:
+        if key is not None:
+            seen, hit = _cache_get(key)
+            if seen:
+                built = hit
+            else:
+                built = _compile_one(arch, code, base, name_to_slot, lay,
+                                     builder, publish_all_values)
+                _cache_put(key, built)
+        else:
+            built = _compile_one(arch, code, base, name_to_slot, lay, builder,
+                                 publish_all_values)
+    # Outside the lock: this calls back into the caller to build ITS register
+    # read buffers, and nothing about that needs the compiler serialised.
+    return None if built is None else _plan_from(built, descriptor)
+
+
+def _compile_one(arch: ArchLike, code: bytes, base: int,
+                 name_to_slot: dict[str, int], lay: dict[str, int],
+                 builder: Builder | None,
+                 publish_all_values: bool) -> _Compiled | None:
+    """Lift, lower and emit one block.  The expensive part, and the only part.
+
+    Measured on a ten-instruction AMD64 block: 6.08 ms, of which 5.13 ms is the
+    lift and lowering and 0.64 ms the emit.  Turning the result into a plan
+    afterwards costs 1.1 us, which is why that is left to the caller and done
+    per wrapper instead of being cached with the rest.
+    """
+    from microtaint.taint_ir.blocks import plan_block  # noqa: PLC0415
+
     slot_of = block_slot_resolver(arch, name_to_slot)
     try:
         # `abs_ram=True`: a block is compiled for the address it runs at, so a
-        # PC-relative operand's resolved `ram` address is the live one.
+        # PC-relative operand's resolved `ram` address is the live one.  It is
+        # also why the cache key carries `base`.
         regions = plan_block(arch, code, base, builder=builder, abs_ram=True,
                              max_acc=lay['max_acc'])
     except Exception:                    # an unliftable block is refused
         return None
     if not regions or any(r.prog is None for r in regions):
         return None
-
     got = _compile_regions(regions, slot_of, lay, publish_all_values)
     if got is None:
         return None
     specs, keep, reads = got
-    desc = _read_descriptor(descriptor, reads, keep)
-    plan = blockpath_c.plan_new(len(code), specs, keep, *desc)
-    return plan, regions, reads
+    return _Compiled(len(code), tuple(specs), tuple(keep), frozenset(reads),
+                     tuple(regions))
+
+
+def _plan_from(built: _Compiled, descriptor: Descriptor | None,
+               ) -> tuple[BlockPlan, list[Region], set[int]]:
+    """Turn a compiled block into a plan for ONE caller.
+
+    The register-read buffers are the caller's, and are built here rather than
+    cached with the code, so two live wrappers never read their register files
+    into the same scratch.  `keep` is copied for the same reason: the plan holds
+    its own list, and the caller's keepalive goes in that copy.
+    """
+    from microtaint.emulator import blockpath_c  # noqa: PLC0415
+
+    keep = list(built.keep)
+    desc = _read_descriptor(descriptor, set(built.reads), keep)
+    plan = blockpath_c.plan_new(built.size, list(built.specs), keep, *desc)
+    return plan, list(built.regions), set(built.reads)
 
 
 def _compile_regions(regions: list[Region], slot_of: SlotOf,
@@ -216,10 +439,12 @@ def _compile_regions(regions: list[Region], slot_of: SlotOf,
             if got is not None:
                 addr_cap, addr_fn, addr_prog = got
                 keep.append(addr_cap)
+        # A TUPLE of accesses, not a list: a spec outlives one caller now that
+        # compiled blocks are cached, so nothing it holds should be mutable.
         specs.append((addr, region.addr,
-                      [(0 if a['kind'] == 'load' else 1, a['size'],
-                        1 if k in live_mem else 0)
-                       for k, a in enumerate(accesses)],
+                      tuple((0 if a['kind'] == 'load' else 1, a['size'],
+                             1 if k in live_mem else 0)
+                            for k, a in enumerate(accesses)),
                       addr_fn, prog_addr, addr_prog,
                       region.last or region.addr))
 

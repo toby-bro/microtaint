@@ -4,7 +4,7 @@ The runtime itself is `blockpath.h` and has no Python in it at all.  Everything
 declared here is either the COMPILER handing over a finished plan (once per
 distinct block) or a test entry point; none of it runs per block execution.
 """
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 class _Capsule: ...
 
@@ -19,7 +19,8 @@ def mem_mask(mem: _Capsule, addr: int, size: int) -> int: ...
 
 def plan_new(
     size: int,
-    regions: list[tuple[int, int, list[tuple[int, int, int]], int, int, int, int]],
+    regions: Sequence[tuple[int, int, Sequence[tuple[int, int, int]],
+                            int, int, int, int]],
     keepalive: object,
     ids_addr: int = ...,
     ptrs_addr: int = ...,
