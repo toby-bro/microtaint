@@ -105,17 +105,23 @@ def test_a_single_instruction_is_unaffected(builder: frompcode.Builder) -> None:
 
 def test_a_self_loop_still_declines_in_block_mode(builder: frompcode.Builder) -> None:
     """A `rep` prefix lifts to a branch back into the SAME instruction.  That is
-    a real p-code loop with a runtime trip count, and block mode must not
-    smuggle it through as an exit.
+    a real p-code loop with a RUNTIME trip count, and block mode must not
+    smuggle it through as an exit -- doing so would drop the loop entirely and
+    lower an instruction that copies a runtime number of bytes as though it
+    copied none.
 
-    `repne scasb` rather than `rep stosb`: the latter declines earlier, on its
-    predicated store, so it would pass this test whatever the branch rule did.
+    Declining is the property; the REASON is not pinned, and has moved.  A
+    p-code loop is now unrolled to a bounded depth, so `repne scasb` gets as
+    far as its addresses depending on what it loaded, and the `rep` forms that
+    write memory are refused for that instead -- flooring the residual case
+    would have to name every address the remaining iterations might touch.
+    Either way it does not lower, which is what this is here to say.
     """
     repne_scasb = bytes.fromhex('f2ae')
     ops, end = _ops([repne_scasb])
-    with pytest.raises(Unsupported, match='backward CBRANCH'):
+    with pytest.raises(Unsupported):
         builder.build(ops, end, emit=Emit.BOTH)
-    with pytest.raises(Unsupported, match='backward CBRANCH'):
+    with pytest.raises(Unsupported):
         builder.build(*_ops([repne_scasb]), emit=Emit.BOTH, block=True)
 
 

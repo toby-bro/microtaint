@@ -311,6 +311,12 @@ class Emit(StrEnum):
 #: opt-in.
 DEFAULT_POINTER_POLICY: PointerPolicy = PointerPolicy.AVALANCHE
 
+#: How many times a p-code loop is unrolled before the residual case is
+#: floored.  A bit scan -- which is what SLEIGH models `bsf` and `bsr` as, a
+#: loop over bit positions rather than an opcode -- runs at most as many times
+#: as its operand is wide, so 64 covers every width there is.
+_UNROLL_LIMIT = 64
+
 
 class Builder:
     """Lower one instruction to IR.  `prog.outputs` ends up holding the taint of
@@ -447,7 +453,14 @@ class Builder:
             self.instr_ord[i] = max(ordinal, 0)
         self.cur_instr = 0
         self.n_ops = n
-        for pc in range(n):
+        #: How many times each backward branch has been taken, so a p-code loop
+        #: is unrolled a bounded number of times rather than declined.
+        unrolled: dict[int, int] = {}
+        pc = -1
+        while True:
+            pc += 1
+            if pc >= n:
+                break
             while pred_stack and pred_stack[-1][0] == pc:
                 _u, self.pred_v, self.pred_t = pred_stack.pop()
             op = ops[pc]
@@ -469,7 +482,16 @@ class Builder:
                                         p.splat(p.op(NEZ, cond_t))))
                     continue
                 if target <= pc:
-                    raise Unsupported('backward CBRANCH (p-code loop)')
+                    if self.instr_pc[target] != self.instr_pc[pc]:
+                        raise Unsupported('backward CBRANCH (p-code loop)')
+                    cv, ct = self._read_in(op.inputs[1])
+                    # Taking the branch means going round again, so the
+                    # iteration that follows runs under `taken`.
+                    self.pred_v = p.op(AND, self.pred_v, p.op(NEZ, cv))
+                    self.pred_t = p.op(OR, self.pred_t, p.op(NEZ, ct))
+                    if self._unroll(ops, target, pc, unrolled):
+                        pc = target - 1
+                    continue
                 cv, ct = self._read_in(op.inputs[1])
                 # The branch SKIPS [pc+1, target); the region therefore runs
                 # under `not taken`.
@@ -484,7 +506,16 @@ class Builder:
                     self._write_pc(p.const(0))   # a fixed target taints nothing
                     continue
                 if target <= pc:
-                    raise Unsupported('backward BRANCH (p-code loop)')
+                    if self.instr_pc[target] != self.instr_pc[pc]:
+                        # A loop across INSTRUCTIONS is the program's own loop,
+                        # which the emulator runs a block at a time; unrolling
+                        # it here would model iterations the hook is about to
+                        # be called for again.  Only a loop inside ONE
+                        # instruction's p-code is this pass's to unroll.
+                        raise Unsupported('backward BRANCH (p-code loop)')
+                    if self._unroll(ops, target, pc, unrolled):
+                        pc = target - 1      # round again; the top re-adds one
+                    continue
                 # An unconditional forward branch inside the instruction: the
                 # skipped region simply never runs under this predicate.
                 pred_stack.append((target, self.pred_v, self.pred_t))
@@ -1127,6 +1158,62 @@ class Builder:
                                    p.op(AND, can_true, can_false))
             return True
 
+        return False
+
+    def _unroll(self, ops: list[PcodeOp], target: int, pc: int,
+                unrolled: dict[int, int]) -> bool:
+        """Go round a p-code loop once more, or close it off soundly.
+
+        SLEIGH models some instructions as LOOPS rather than opcodes -- a bit
+        scan is a walk over bit positions, and `bsf` inside glibc's memchr and
+        strlen is what this exists for -- and the taint IR is straight-line by
+        construction.  Declining instead refused the whole BLOCK, which the
+        hook then skipped, so nothing computed its taint at all.
+
+        Unrolling is EXACT while it lasts: the predication machinery already
+        turns each exit test into a select, so iteration k's writes land under
+        "still looping after k", which is precisely the loop's meaning.
+
+        Returns True to go round again.  When the unrollings run out, the
+        residual predicate says whether the loop could still be running.  If it
+        folds to a constant zero the unrolling was complete and there is
+        nothing left to do.  Otherwise everything the body writes is marked
+        fully tainted under that predicate: the VALUE may be wrong there, but
+        it is then a tainted value, so a load through it avalanches and a store
+        through it is reported -- the engine's existing policies carry it, and
+        the answer stays sound rather than silently wrong.
+        """
+        p = self.p
+        unrolled[target] = unrolled.get(target, 0) + 1
+        if unrolled[target] <= _UNROLL_LIMIT:
+            return True
+        if p.is_const(self.pred_v) and p.const_val(self.pred_v) == 0:
+            return False                 # provably finished: exact
+        # A body that WRITES MEMORY cannot be floored this way.  Flooring says
+        # "everything this wrote is unknown", and for a register that is a mask
+        # we can widen; for memory it would be every address the remaining
+        # iterations might have touched, which is unbounded.  A `rep movsb`
+        # with a count above the limit would otherwise have its later stores
+        # simply not modelled, and that is an under-taint -- the one direction
+        # that is never acceptable.  Declining is worse than handling it and
+        # better than being wrong.
+        for o in ops[target:pc + 1]:
+            if o.opcode.name in ('STORE', 'STOREIND'):
+                raise Unsupported('p-code loop that writes memory')
+            out = o.output
+            if out is not None and out.space.name == 'ram':
+                raise Unsupported('p-code loop that writes memory')
+        guard = p.op(NEZ, self.pred_v)
+        for o in ops[target:pc + 1]:
+            out = o.output
+            if out is None or out.space.name not in ('register', 'unique'):
+                continue
+            if out.size > 8:
+                continue                 # a wide write is lane-addressed
+            old_t = self.t.read(out.space.name, out.offset, out.size)
+            self.t.write(out.space.name, out.offset, out.size,
+                         p.op(OR, old_t,
+                              p.mask(p.splat(guard), out.size * 8)))
         return False
 
     def _emit_wide_shift(self, name: str, op: PcodeOp) -> bool:

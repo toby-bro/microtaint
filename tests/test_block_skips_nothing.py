@@ -118,23 +118,14 @@ def test_the_guest_exercises_real_library_code(stats: dict[str, int]) -> None:
         f'only {stats["planned"]} distinct blocks planned')
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'A p-code LOOP is the last shape the block lowering refuses, and on this '
-    'guest every instance is `bsf` inside glibc"s memchr and strlen: SLEIGH '
-    'models a bit scan as a loop over bit positions, not as an opcode.  The '
-    'taint IR is straight-line by construction, so a backward BRANCH cannot '
-    'be expressed as one program.  The fix is to UNROLL such a loop to the '
-    'operand width -- the predication machinery already turns each exit test '
-    'into a select, so the unrolled form is exact -- with a runtime-guarded '
-    'floor for the case the unrolling does not provably finish.  Three '
-    'distinct blocks; every other cause has been removed.  Strict, so that '
-    'finishing it fails here and says to delete this marker.'))
 def test_block_mode_skips_nothing(stats: dict[str, int]) -> None:
     """The property.  Not "few blocks are skipped": none are.
 
     A skipped block is unanalysed code, and taint that flows through one is
     simply lost, so any number above zero is an under-taint waiting for the
-    right input.
+    right input.  This was a strict xfail while the p-code LOOPS -- `bsf`
+    inside memchr and strlen -- were still refused; unrolling them was the last
+    cause to go.
     """
     assert stats['unhandled'] == 0, (
         f'{stats["unhandled"]} of {stats["blocks"]} block executions were '
