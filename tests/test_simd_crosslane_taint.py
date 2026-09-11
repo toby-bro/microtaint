@@ -124,15 +124,36 @@ def test_pshufb_high_lane_input_avalanches() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Known gap: pslldq (mirror of psrldq) lifts to a branchy per-half p-code
-# sequence whose sub-slice [INT_MULT, INT_LEFT, COPY] determine_category cannot
-# classify.  Tracked here so a fix has a target; psrldq (above) works.
+# pslldq: the mirror of psrldq, and much harder to lift.  Where psrldq is one
+# 16-byte INT_RIGHT, pslldq arrives as a BRANCHY per-half funnel --
+# `hi = (hi << 8) | (lo >> 56)` -- guarded by CBRANCHes on constants.
+#
+# It used to RAISE: no category claimed the low half's slice, because the
+# INT_MULT computing the shift amount from two constants made the permutation
+# recogniser refuse.  Once it categorised, every byte came out one wider than
+# the truth -- taint at b AND b+1 -- because the decided branches were read as
+# conditional writes, so the destination was assumed to maybe keep its old
+# value.  Both are fixed, and both fixes say the same thing: an operation over
+# constants carries no data.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(raises=ValueError, strict=True,
-                   reason='pslldq branchy p-code sub-slice not categorised yet (psrldq works)')
 def test_pslldq_moves_byte_across_lane_exact() -> None:
     """pslldq xmm0,1 = shift whole reg left 1 byte: out[j] = in[j-1].  Byte 7
     should move to byte 8 (crossing the lane boundary)."""
     assert _tainted_out_bytes('pslldq xmm0, 1', _byte('XMM0', 7)) == {8}
+
+
+def test_pslldq_is_exact_on_every_byte() -> None:
+    """Not just the one crossing byte: all sixteen.
+
+    The failure this replaces was uniform -- every byte landed at its
+    destination AND at its source -- so a test of a single byte would have been
+    satisfied by a rule that was wrong everywhere.  Byte 15 shifts out of the
+    register entirely and must leave nothing behind.
+    """
+    for b in range(16):
+        want = {b + 1} if b < 15 else set()
+        got = _tainted_out_bytes('pslldq xmm0, 1', _byte('XMM0', b))
+        assert got == want, (
+            f'input byte {b} produced {sorted(got)}, expected {sorted(want)}')

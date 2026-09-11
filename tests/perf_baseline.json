@@ -168,7 +168,7 @@
     "SAR r64,imm8": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 229
+      "nodes": 118
     },
     "SHL r32,imm8": {
       "assigns": 7,
@@ -1847,8 +1847,8 @@
     },
     "rcl ax, 0x7f": {
       "assigns": 2,
-      "cells": 0,
-      "nodes": 8
+      "cells": 1,
+      "nodes": 29
     },
     "rcl eax": {
       "assigns": 4,
@@ -1902,8 +1902,8 @@
     },
     "rcr ax, 0x7f": {
       "assigns": 2,
-      "cells": 0,
-      "nodes": 8
+      "cells": 1,
+      "nodes": 29
     },
     "rcr eax": {
       "assigns": 4,
@@ -2103,7 +2103,7 @@
     "sar ax, 0x7f": {
       "assigns": 6,
       "cells": 2,
-      "nodes": 850
+      "nodes": 739
     },
     "sar eax": {
       "assigns": 7,
@@ -2113,17 +2113,17 @@
     "sar eax, 5": {
       "assigns": 7,
       "cells": 1,
-      "nodes": 254
+      "nodes": 143
     },
     "sar eax, 7": {
       "assigns": 7,
       "cells": 1,
-      "nodes": 254
+      "nodes": 143
     },
     "sar rax, 0x7f": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 229
+      "nodes": 118
     },
     "sar rax, 1": {
       "assigns": 6,
@@ -2133,27 +2133,27 @@
     "sar rax, 15": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 229
+      "nodes": 118
     },
     "sar rax, 3": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 229
+      "nodes": 118
     },
     "sar rax, 31": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 229
+      "nodes": 118
     },
     "sar rax, 63": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 229
+      "nodes": 118
     },
     "sar rax, 7": {
       "assigns": 6,
       "cells": 1,
-      "nodes": 229
+      "nodes": 118
     },
     "sar rax, cl": {
       "assigns": 6,
@@ -3292,7 +3292,7 @@
     "bfc x0, #4, #8": {
       "assigns": 1,
       "cells": 1,
-      "nodes": 16
+      "nodes": 14
     },
     "bfi x0, x1, #0, #16": {
       "assigns": 1,
@@ -7860,7 +7860,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-11T02:32:34.136268+00:00",
+    "generated": "2026-09-11T02:54:27.252302+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

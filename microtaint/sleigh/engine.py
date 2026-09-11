@@ -848,6 +848,9 @@ def _cached_generate_static_rule(  # noqa: C901
         # apply (it would leak the destination's previous taint).  cmpxchg, by
         # contrast, is straight-line and has no backward branch.
         _BASE_ADDR = 0x1000
+        # Everything this instruction's p-code proves constant, for the
+        # decided-branch test below.
+        _folded_ops = fold_constants(list(translation.ops))
         _has_backward_branch = any(
             op.opcode.name in ('BRANCH', 'CBRANCH')
             and op.inputs
@@ -868,6 +871,16 @@ def _cached_generate_static_rule(  # noqa: C901
                 a software loop, where the const CBRANCHes are loop machinery.
             """
             if op.opcode.name != 'CBRANCH' or not op.inputs:
+                return False
+            # A condition that folds to a CONSTANT is decided at lift time, so
+            # the write it guards is not conditional at all and the destination
+            # cannot keep its old taint.  SLEIGH writes the immediate-count SIMD
+            # byte shifts this way: `pslldq xmm0,1` lifts to a branchy per-half
+            # funnel whose guards are `INT_LESS const, const`.  Treating those as
+            # live turned every one of its sixteen byte moves into "the new byte
+            # OR the old one" -- byte b arriving at b and b+1 -- which is sound
+            # and exactly one byte too wide on every lane.
+            if len(op.inputs) > 1 and const_value(op.inputs[1], _folded_ops) is not None:  # noqa: B023
                 return False
             tgt = op.inputs[0]
             if tgt.space.name == 'const':

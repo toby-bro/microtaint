@@ -225,6 +225,30 @@ def is_mapped_permutation(  # noqa: C901
     dynamic_sources: set[tuple[str, int, int]] = set()  # (space, offset, size)
     has_shift = False
 
+    # Which ops compute only a constant, decided FLOW-SENSITIVELY.
+    #
+    # `fold_constants` answers per varnode over the whole slice, which is the
+    # wrong question here: a slice can hold two arms of a decided branch, and
+    # `pslldq` does -- `XMM0_lo << 8` on one and `XMM0_lo = 0` on the other.
+    # The zeroing arm makes the register look constant, and reading that answer
+    # for the SHIFT would skip the one op carrying the data, leaving no dynamic
+    # source at all.  So walk forward, and let a write of real data take a
+    # varnode back out of the constant set.
+    _const_op: list[bool] = []
+    _const_vn: set[tuple[str, int, int]] = set()
+    for op in slice_ops:
+        all_const = bool(op.inputs) and all(
+            v.space.name == 'const' or (v.space.name, v.offset, v.size) in _const_vn
+            for v in op.inputs
+        )
+        _const_op.append(all_const)
+        if op.output is not None:
+            k = (op.output.space.name, op.output.offset, op.output.size)
+            if all_const:
+                _const_vn.add(k)
+            else:
+                _const_vn.discard(k)
+
     # Track registers written within this slice (intra-instruction intermediates)
     _slice_written: dict[int, int] = {}  # register offset → first write index in slice
     for _i, op in enumerate(slice_ops):
@@ -297,6 +321,21 @@ def is_mapped_permutation(  # noqa: C901
                     first_write = _slice_written.get(vn.offset, len(slice_ops))
                     if first_write >= _i:
                         dynamic_sources.add((vn.space.name, vn.offset, vn.size))
+            continue
+
+        # An op that only computes a CONSTANT carries no data, so it cannot
+        # break a bit permutation -- and SLEIGH emits plenty of them, because a
+        # shift amount written as `8 * count` in the specification arrives as an
+        # INT_MULT of two constants.  That is how `pslldq xmm0,1` failed: its
+        # low half is `XMM0_lo << 8`, a pure constant-amount shift, but the
+        # INT_MULT computing the 8 made the recogniser refuse, no other category
+        # claimed the slice, and determine_category RAISED -- so the instruction
+        # had no rule at all rather than a loose one.
+        #
+        # The categoriser already makes this argument for PowerPC `addis`, where
+        # a shift on a constant changed the classification and cost 79
+        # under-taints.  Same argument, applied at the recogniser.
+        if _const_op[_i]:
             continue
 
         if op.opcode.name not in AFFINE_ROUTING_OPCODES:
