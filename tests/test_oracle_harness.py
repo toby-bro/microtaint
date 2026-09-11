@@ -169,3 +169,73 @@ def test_models_disagree_is_empty_when_the_instruction_writes_no_flag() -> None:
         UC_DESCS['AMD64'](), Architecture.AMD64, _PUSH_RAX, _states())
     assert undefined == set(), undefined
     assert unmodelled == set(), unmodelled
+
+
+# ---------------------------------------------------------------------------
+# The oracle's own strength.
+#
+# `ground_truth` is the REFERENCE for `under = truth & ~got`, so truth that is
+# too small does not make a test fail -- it makes every no-under-taint gate
+# quietly lenient.  That is the one direction nobody notices, so it needs a
+# test of its own.
+# ---------------------------------------------------------------------------
+
+#: `cmp $0xffffffff,%eax`.  Chosen because it is what glibc's EOF test compiles
+#: to, and because its flags depend on the tainted bits only when SEVERAL of
+#: them agree: EAX can equal -1 only if every bit is set.
+_CMP_MINUS_ONE = bytes.fromhex('83f8ff')
+
+
+def _zf_truth(rax: int, *, bases: int | None = None) -> int:
+    """ZF's truth mask.  `bases=None` uses the harness DEFAULT on purpose: a
+    test that pins the strength explicitly would still pass if the default were
+    weakened, which is the change that actually matters."""
+    from tests.oracle_harness import ground_truth
+
+    desc = UC_DESCS['AMD64']()
+    values = dict.fromkeys(desc.gp, 0)
+    values['RAX'] = rax
+    taint = dict.fromkeys(desc.gp, 0)
+    taint['RAX'] = 0xFF
+    kw = {} if bases is None else {'bases': bases}
+    return ground_truth(desc, _CMP_MINUS_ONE, taint, values, **kw).get('ZF', 0)
+
+
+def test_the_oracle_sees_a_dependence_that_needs_several_tainted_bits() -> None:
+    """With RAX = -1 and its low byte secret, ZF really does move.
+
+    Flipping any one of those eight bits takes EAX away from -1 and clears ZF,
+    so ZF depends on them -- but only from a base where the other seven are
+    already set.  Probing one bit at a time up from an all-zero base can never
+    reach that point, which is how this stayed invisible.
+    """
+    pytest.importorskip('unicorn')
+    assert _zf_truth(0xFFFFFFFF) != 0, (
+        'the oracle reports ZF clean for `cmp $-1,%eax` with RAX = -1 and its '
+        'low byte tainted, but flipping any of those bits clears ZF; a truth '
+        'this small makes every under-taint gate lenient')
+
+
+def test_the_single_base_oracle_really_did_miss_it() -> None:
+    """The counter-example is a counter-example.
+
+    If one base found this too, the extra bases would be cost without benefit
+    and this pair of tests would be measuring nothing.
+    """
+    pytest.importorskip('unicorn')
+    assert _zf_truth(0xFFFFFFFF, bases=1) == 0, (
+        'one base already finds this, so the multi-base probe is not what is '
+        'catching it and these tests no longer pin the reason')
+
+
+def test_the_oracle_still_calls_a_provably_constant_flag_clean() -> None:
+    """Strength must not become noise.
+
+    When EAX holds a byte (which is what `__uflow` returns) the upper bits are
+    known zero, so EAX can never equal -1 and ZF is constant however the low
+    byte moves.  An oracle that marked it tainted would report the engine's
+    correct silence as an under-taint.
+    """
+    pytest.importorskip('unicorn')
+    assert _zf_truth(0x68) == 0, (
+        'ZF marked tainted for a comparison it provably cannot change')

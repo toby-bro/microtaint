@@ -27,6 +27,7 @@ bounded gate, and it can be driven standalone for full-bank sweeps:
 # optional at collection time and expensive to import eagerly)
 from __future__ import annotations
 
+import hashlib
 import random
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -488,27 +489,81 @@ def _flags_the_lifter_writes(arch: Architecture, code: bytes,
     return out
 
 
+def _gt_mix(code: bytes, name: str, base: int) -> int:
+    """A reproducible 64-bit pattern for one (instruction, register, base).
+
+    `hash()` is salted per process, so it cannot be used: a failure would not
+    reproduce on the next run.  This is a plain digest instead.
+    """
+    h = hashlib.blake2b(code + name.encode() + bytes([base & 0xFF]),
+                        digest_size=8).digest()
+    return int.from_bytes(h, 'little')
+
+
+#: Assignments of the tainted bits to probe around.  One base was not enough:
+#: from an all-zero base, SETTING one bit at a time can never reach a point
+#: where several tainted bits matter together, so a dependence that needs them
+#: all was invisible.  `cmp $-1,%eax` is the clean example and it is not
+#: hypothetical -- it is what glibc's EOF test compiles to.  With RAX = -1 and
+#: its low byte secret, ZF really does move, and the single-base oracle called
+#: it clean.  That direction is the dangerous one: the oracle is the reference
+#: for `under = truth & ~got`, so truth that is too SMALL makes every
+#: no-under-taint gate lenient.
+#:
+#: Still a lower bound -- the exact answer is exponential in the tainted bits
+#: -- but a strictly tighter one, and it costs runs linear in this count.
+_GT_BASES = 4
+
+
 def ground_truth(desc: UcDesc, code: bytes, in_taint: dict[str, int],
-                 in_values: dict[str, int]) -> dict[str, int]:
-    """Oracle 2: per-bit sensitivity via Unicorn.  For every tainted input bit,
-    flip it (from the clean base) and OR the output XOR into the result mask.
-    Returns a per-output taint mask (GP regs + flags)."""
-    base_vals = {n: (in_values.get(n, 0) & ~in_taint.get(n, 0) & desc.mask) for n in desc.gp}
-    base_out = _uc_run(desc, code, base_vals)
-    result: dict[str, int] = dict.fromkeys(base_out, 0)
-    for src in desc.gp:
-        tm = in_taint.get(src, 0) & desc.mask
-        bit = 0
-        while tm:
-            if tm & 1:
-                flipped = dict(base_vals)
-                flipped[src] = (base_vals[src] | (1 << bit)) & desc.mask
-                out = _uc_run(desc, code, flipped)
-                for k in base_out:
-                    result[k] |= base_out[k] ^ out[k]
-            tm >>= 1
-            bit += 1
-    return result
+                 in_values: dict[str, int], *,
+                 bases: int = _GT_BASES) -> dict[str, int]:
+    """Oracle 2: per-bit sensitivity via Unicorn.
+
+    For each of several assignments of the tainted bits, flip each tainted bit
+    in turn and OR the output XOR into the result mask.  Returns a per-output
+    taint mask (GP regs + flags): the bits that genuinely depend on a tainted
+    input, which is the operational definition the soundness tests use.
+
+    The bases are all-zero (which is what this used to probe, and alone), the
+    caller's own values, all-ones, and then deterministic pseudo-random ones.
+    The flip is an XOR rather than an OR because with a non-zero base, setting
+    a bit that is already set probes nothing at all -- and an oracle that
+    silently compares nothing agrees with anything.
+    """
+    result: dict[str, int] | None = None
+    for b in range(max(1, bases)):
+        base_vals: dict[str, int] = {}
+        for n in desc.gp:
+            tm = in_taint.get(n, 0) & desc.mask
+            clean = in_values.get(n, 0) & ~tm & desc.mask
+            if b == 0:
+                fill = 0
+            elif b == 1:
+                fill = in_values.get(n, 0) & tm
+            elif b == 2:
+                fill = tm
+            else:
+                # Deterministic in the instruction, the register and the base,
+                # so a failure found here reproduces at the same inputs.
+                fill = _gt_mix(code, n, b) & tm
+            base_vals[n] = (clean | fill) & desc.mask
+        base_out = _uc_run(desc, code, base_vals)
+        if result is None:
+            result = dict.fromkeys(base_out, 0)
+        for src in desc.gp:
+            tm = in_taint.get(src, 0) & desc.mask
+            bit = 0
+            while tm:
+                if tm & 1:
+                    flipped = dict(base_vals)
+                    flipped[src] = (base_vals[src] ^ (1 << bit)) & desc.mask
+                    out = _uc_run(desc, code, flipped)
+                    for k in base_out:
+                        result[k] |= base_out[k] ^ out[k]
+                tm >>= 1
+                bit += 1
+    return result if result is not None else {}
 
 
 # ---------------------------------------------------------------------------
