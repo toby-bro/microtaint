@@ -24,12 +24,16 @@ from __future__ import annotations
 import random
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import TYPE_CHECKING, Callable
 
 from microtaint.instrumentation.ast import LogicCircuit
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC
 from microtaint.types import Architecture, Register
+
+# `as Ref` is the explicit re-export form: without it a strict type checker
+# refuses `perop_c_bank.Ref` to the callers that have always spelled it that
+# way.  The linter reads the alias as redundant, which it is not here.
+from tests.oracle_harness import Ref as Ref  # noqa: PLC0414
 
 if TYPE_CHECKING:                    # imported inside the run for import cost
     from tests.oracle_harness import UcDesc, Verdict
@@ -37,18 +41,15 @@ if TYPE_CHECKING:                    # imported inside the run for import cost
 #: A per-output mask keyed by register or flag name.
 TaintState = dict[str, int]
 
-class Ref(StrEnum):
-    """Which reference a sweep judges the engine against.
-
-    A StrEnum, like the rest: a caller may still pass the spelling and a
-    report may still print it, while the sweep compares members.
-    """
-
-    #: The whole-instruction differential.  A bit-exact gate.
-    DIFFERENTIAL = 'differential'
-    #: Unicorn per-bit sensitivity.  Soundness and precision, and the
-    #: only correct gate where the two paths may legitimately differ.
-    GROUND_TRUTH = 'ground_truth'
+#: Re-exported, NOT redefined.  This module used to carry its own copy of an
+#: identical enum, and every sweep here selected the oracle with `ref is
+#: Ref.GROUND_TRUTH`.  A caller importing `Ref` from `oracle_harness` -- the
+#: obvious place, and where the other sweep in this suite takes it from -- then
+#: failed that identity check in silence and was scored against the
+#: WHOLE-INSTRUCTION DIFFERENTIAL instead.  That reads as a flood of
+#: under-taints, because the taint IR is deliberately tighter than the
+#: differential in places, so the mistake looks exactly like the bug a soundness
+#: sweep exists to find.  One enum, and the comparisons below use `==`.
 
 #: What one pass over an instruction costs, by category.  Keys are fixed by
 #: `OpStats.add`: ops, pcode_ops, n_route, n_diff, n_floor, n_cube, reads,
@@ -362,7 +363,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
         arch_key = spec.arch.value if hasattr(spec.arch, 'value') else str(spec.arch)
         reg_names = [r.name for r in spec.regs]
         desc: UcDesc | None = None
-        if ref is Ref.GROUND_TRUTH:
+        if ref == Ref.GROUND_TRUTH:
             maker = _UC_DESC.get(arch_key)
             if maker is None:
                 continue                     # no per-bit truth for this ISA yet
@@ -382,7 +383,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                 continue
             rep.n_instrs += 1
 
-            if ref is Ref.GROUND_TRUTH:
+            if ref == Ref.GROUND_TRUTH:
                 # Set above, or the ISA was skipped before the loop started.
                 assert desc is not None
                 try:
@@ -397,7 +398,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                 keys = base_keys
 
             rng = random.Random(f'{seed}:{ins.label}')
-            if ref is Ref.GROUND_TRUTH:
+            if ref == Ref.GROUND_TRUTH:
                 assert desc is not None
                 vectors = list(gt_vectors(desc, reg_names, rng, n_sparse))
             else:
@@ -410,7 +411,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
             # what, so those outputs leave the verdict.  Detected from the very
             # vectors about to be judged, not from a table: a table cannot cover
             # an ISA nobody has written one for.
-            if ref is Ref.GROUND_TRUTH:
+            if ref == Ref.GROUND_TRUTH:
                 assert desc is not None
                 undefined, unmodelled = oh.models_disagree(
                     desc, spec.arch, ins.bytes, [v for _t, v in vectors])
@@ -434,7 +435,7 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
                     rep.stats.add(ins.label, cost)
                 rep.n_cases += 1
                 try:
-                    if ref is Ref.GROUND_TRUTH:
+                    if ref == Ref.GROUND_TRUTH:
                         assert desc is not None
                         refd = oh.ground_truth(desc, ins.bytes, in_taint, in_values)
                     else:

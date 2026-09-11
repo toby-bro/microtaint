@@ -239,3 +239,50 @@ def test_the_oracle_still_calls_a_provably_constant_flag_clean() -> None:
     pytest.importorskip('unicorn')
     assert _zf_truth(0x68) == 0, (
         'ZF marked tainted for a comparison it provably cannot change')
+
+
+# ---------------------------------------------------------------------------
+# One Ref, and a comparison that honours it.
+# ---------------------------------------------------------------------------
+
+def test_the_two_sweeps_share_one_reference_enum() -> None:
+    """`perop_c_bank.Ref` must BE `oracle_harness.Ref`, not a copy of it.
+
+    It was a copy, character for character, and `run_bank_perop_c` selected its
+    oracle with `ref is Ref.GROUND_TRUTH`.  A caller importing `Ref` from
+    `oracle_harness` -- the obvious place, and where `run_bank` takes it from --
+    failed that identity check in silence and was scored against the
+    WHOLE-INSTRUCTION DIFFERENTIAL instead of against hardware.
+
+    That is the worst possible way for it to fail.  The taint IR is deliberately
+    TIGHTER than the differential in places, so the wrong comparison reports
+    those precision gains as under-taints: a sweep asking "is the engine sound"
+    answers with a flood of exactly the finding it exists to detect.  Measured,
+    1479 of 2645 cases, every one of them spurious.
+    """
+    from tests import oracle_harness as oh
+    from tests import perop_c_bank
+
+    assert perop_c_bank.Ref is oh.Ref, (
+        'the two sweeps have separate Ref enums again, so an `is` comparison '
+        'in either one silently selects the wrong oracle')
+
+
+def test_the_reference_may_be_given_as_its_spelling() -> None:
+    """The enum's own docstring promises this, and `is` broke the promise.
+
+    `Ref` is a StrEnum so that "a caller may still pass the spelling"; an
+    identity comparison rejects the spelling just as silently as it rejected the
+    other module's member, and selects the differential.
+    """
+    from tests import perop_c_bank
+
+    # Typed as `object` so the type checker does not reject the comparison as
+    # non-overlapping; a StrEnum member and its spelling really are equal, and
+    # that equality is the whole affordance being pinned.
+    for spelling, member in (('ground_truth', perop_c_bank.Ref.GROUND_TRUTH),
+                             ('differential', perop_c_bank.Ref.DIFFERENTIAL)):
+        as_object: object = spelling
+        assert as_object == member, (
+            f'{spelling!r} no longer equals {member!r}, so a caller passing '
+            f'the spelling the docstring invites gets the wrong oracle')
