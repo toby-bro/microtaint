@@ -1642,27 +1642,27 @@
     },
     "not al": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "not eax": {
       "assigns": 2,
-      "cells": 1,
+      "cells": 0,
       "nodes": 28
     },
     "not ebx": {
       "assigns": 2,
-      "cells": 2,
+      "cells": 0,
       "nodes": 28
     },
     "not rax": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "not rbx": {
       "assigns": 1,
-      "cells": 2,
+      "cells": 0,
       "nodes": 14
     },
     "or al, bl": {
@@ -2247,12 +2247,12 @@
     },
     "setae al": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "setae r8b": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "setb al": {
@@ -2327,42 +2327,42 @@
     },
     "setne al": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "setne r8b": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "setno al": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "setno r8b": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "setnp al": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "setnp r8b": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "setns al": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "setns r8b": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "seto al": {
@@ -4166,23 +4166,23 @@
     },
     "mvn w0, w1": {
       "assigns": 1,
-      "cells": 2,
+      "cells": 0,
       "nodes": 14
     },
     "mvn x0, x1": {
       "assigns": 1,
-      "cells": 2,
+      "cells": 0,
       "nodes": 14
     },
     "mvn x1, x2": {
       "assigns": 1,
-      "cells": 2,
+      "cells": 0,
       "nodes": 14
     },
     "mvn x1, x2, lsl #3": {
       "assigns": 1,
-      "cells": 2,
-      "nodes": 14
+      "cells": 0,
+      "nodes": 16
     },
     "neg w0, w1": {
       "assigns": 1,
@@ -5571,41 +5571,41 @@
     "nor $2, $4, -1": {
       "assigns": 1,
       "cells": 1,
-      "nodes": 14
+      "nodes": 15
     },
     "nor $2, $4, 0": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "nor $2, $4, 0x7fff": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "nor $2, $4, 1": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "nor $2, $4, 100": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "nor $2, $4, 15": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "nor $2, $4, 31": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "nor $2, $4, 7": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "or $2, $4": {
@@ -6882,7 +6882,7 @@
     },
     "nor 3, 4, 4": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     },
     "nor 3, 4, 5": {
@@ -7854,13 +7854,13 @@
     },
     "xori": {
       "assigns": 1,
-      "cells": 1,
+      "cells": 0,
       "nodes": 14
     }
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-10T23:56:56.511063+00:00",
+    "generated": "2026-09-11T02:32:34.136268+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

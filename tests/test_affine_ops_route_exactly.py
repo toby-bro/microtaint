@@ -76,18 +76,20 @@ AFFINE_FORMS: list[tuple[Architecture, str, str, bool]] = [
     # sign-extend node, so the permutation decomposition declines rather than
     # emit 33 shift terms.  Needs a SEXT expression, not a better recogniser.
     (Architecture.AMD64, 'movsx rax, ebx',      '4863c3',   False),
-    # not / mvn: affine (L is the identity, the negation is all in a(c)), but
-    # determine_category calls INT_NEGATE Monotonic, so the slice never reaches
-    # the MAPPED branch at all.  A categoriser change, with a far wider blast
-    # radius than the routing above; deliberately not bundled with it.
-    (Architecture.AMD64, 'not rax',             '48f7d0',   False),
+    # not / mvn: affine, L is the identity and the negation is all in a(c).
+    # Routes since 2026-09-11: `is_mapped_permutation` gated on the mapper's
+    # ROUTING set while `engine.py` had a WIDER set for the same idea, so a
+    # negate was affine enough to synthesise without a cell and not affine
+    # enough to be categorised that way.  Both now share
+    # `AFFINE_ROUTING_OPCODES`.
+    (Architecture.AMD64, 'not rax',             '48f7d0',   True),
     # --- AMD64: bitwise and constant shift (routes) ---
     (Architecture.AMD64, 'xor rax, rbx',        '4831d8',   True),
     (Architecture.AMD64, 'shl rax, 3',          '48c1e003', True),
     (Architecture.AMD64, 'shr rax, 3',          '48c1e803', True),
     # --- ARM64 ---
     (Architecture.ARM64, 'mov x0, x1',          'e00301aa', True),
-    (Architecture.ARM64, 'mvn x0, x1',          'e00321aa', False),   # see `not rax`
+    (Architecture.ARM64, 'mvn x0, x1',          'e00321aa', True),    # see `not rax`
     (Architecture.ARM64, 'eor x0, x0, x1',      '000001ca', True),
     (Architecture.ARM64, 'lsl x0, x0, #3',      '00f47cd3', True),
     # --- RISCV64 ---
@@ -104,11 +106,14 @@ AFFINE_FORMS: list[tuple[Architecture, str, str, bool]] = [
 #: it is a permutation or selection, so the movement forms above route with no
 #: cell.  `bswap`, `and imm` and `or imm` came along for free.
 #:
-#: The two remaining entries are NOT that cause, and each names its own in the
-#: table: `movsx` needs a sign-extend Expr node, `not`/`mvn` need INT_NEGATE to
-#: stop being categorised Monotonic.  Keep them separate rather than reviving one
-#: shared excuse; a single reason string for two different causes is how the
-#: first one stayed invisible.
+#: `not`/`mvn` followed on the same day, from a different cause: the recogniser
+#: and the synthesis disagreed about what "affine" means, and sharing one set
+#: settled it.
+#:
+#: ONE entry remains, and it names its own cause in the table: `movsx` needs a
+#: sign-extend Expr node.  Keep causes separate rather than reviving one shared
+#: excuse; a single reason string covering several is how the first one stayed
+#: invisible for months.
 _STILL_RE_EXECUTES = (
     'this form still re-executes a SLEIGH cell; see its comment in AFFINE_FORMS '
     'for which of the two remaining causes applies'

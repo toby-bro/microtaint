@@ -92,6 +92,21 @@ ROUTING_OPCODES: set[str] = {
     'BOOL_OR',
 }
 
+#: Ops whose slice stays AFFINE over GF(2) given a single dynamic source, so
+#: its taint is an exact linear map of the input taint and needs no differential.
+#:
+#: The routing (bit-permuting) set plus the two bitwise negations.  A negate is
+#: `f(x) = ~x`, which is `L(x) XOR a` with L the IDENTITY: the value flips, the
+#: taint does not move at all.  `engine.py` has known that since routing was
+#: written, and used it for the single-call synthesis while this recogniser kept
+#: the narrower set -- so `not rax` and AArch64 `mvn` were categorised Monotonic,
+#: never reached the mapped branch, and re-executed a SLEIGH cell to compute a
+#: taint that is its own input.
+AFFINE_ROUTING_OPCODES: frozenset[str] = frozenset(ROUTING_OPCODES) | {
+    'INT_NEGATE',
+    'BOOL_NEGATE',
+}
+
 ORABLE_OPCODES: set[str] = {
     'INT_XOR',
     'BOOL_XOR',
@@ -284,7 +299,7 @@ def is_mapped_permutation(  # noqa: C901
                         dynamic_sources.add((vn.space.name, vn.offset, vn.size))
             continue
 
-        if op.opcode.name not in ROUTING_OPCODES:
+        if op.opcode.name not in AFFINE_ROUTING_OPCODES:
             return False
 
         if op.opcode.name in {'INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT'}:

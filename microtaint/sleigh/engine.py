@@ -33,9 +33,9 @@ from microtaint.sleigh.constfold import const_value, fold_constants, is_constant
 from microtaint.sleigh.flag_closed_form import closed_form_taint
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import (
+    AFFINE_ROUTING_OPCODES,
     CONTROL_FLOW_OPCODES,
     EXTENSION_OPCODES,
-    ROUTING_OPCODES,
     TRANSLATABLE_OPCODES,
     determine_category,
 )
@@ -4430,13 +4430,12 @@ def build_polarized_reg(name: str, slices: list[tuple[int, int, int]], replica_i
 
 
 
-# Ops whose slice keeps `f(x, c) = L(x) XOR a(c)` affine over GF(2): the mapper's
-# routing (bit-permuting) set plus the two bitwise negations, which are affine
-# with L = identity.  Used ONLY by make_mapped_single_call; determine_category
-# keeps the narrower mapper set.
-_AFFINE_SINGLE_CALL_OPCODES: frozenset[str] = frozenset(ROUTING_OPCODES) | {
-    'INT_NEGATE', 'BOOL_NEGATE',
-}
+# Ops whose slice keeps `f(x, c) = L(x) XOR a(c)` affine over GF(2).  Defined in
+# the mapper so that `is_mapped_permutation` and this synthesis cannot disagree
+# about what "affine" means: while they did, a negate was affine enough to
+# synthesise without a cell and not affine enough to be CATEGORISED that way, so
+# it never reached here.
+_AFFINE_SINGLE_CALL_OPCODES: frozenset[str] = AFFINE_ROUTING_OPCODES
 
 
 
