@@ -3,11 +3,11 @@
 `push %rbp` computes RSP_out = RSP_in - 8 and stores RBP at the new address.
 So RSP_out depends on RSP_in and not at all on RBP.  Both halves of that are
 checked against Unicorn here rather than argued from the encoding, because the
-whole-instruction differential gets both backwards: it drops RSP's own taint
-(an under-taint, the one failure mode that is never acceptable) and invents RSP
-taint from the pushed register.
+whole-instruction differential used to get both backwards: it dropped RSP's own
+taint (an under-taint, the one failure mode that is never acceptable) and
+invented RSP taint from the pushed register.
 
-Both evaluators get it right now.  The differential used to get both backwards
+Both evaluators get both halves right now.  The differential used to get both backwards
 because it extracted dependencies per INSTRUCTION rather than per TARGET, so
 `push`'s two outputs -- whose dependencies are disjoint -- shared one set; see
 test_rsp_output_depends_on_rsp_not_on_the_pushed_register for the root cause.
@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
-
-import pytest
 
 if TYPE_CHECKING:
     from pypcode import PcodeOp, Varnode
@@ -89,16 +87,18 @@ def test_differential_keeps_rsp_taint() -> None:
     assert diff['RSP'], "push must not clear the stack pointer's own taint"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "The over-taint half is still open.  The differential extracts VALUE "
-    "dependencies per INSTRUCTION, so the pushed register reaches the RSP "
-    "target too.  Scoping that collection to the target's backward slice does "
-    "fix it -- and MEASURED, it then UNDER-taints bsf/bsr/tzcnt (whose p-code "
-    "loops put the dependency outside the slice) and the memory forms of "
-    "sub-borrow and signed compare: 9 tests, on both MICROTAINT_TAINT_IR "
-    "settings.  Over-tainting is the acceptable direction, so the narrow fix "
-    "waits until the flag and memory cases are handled."))
 def test_differential_does_not_invent_rsp_taint() -> None:
+    """The over-taint half, closed on 2026-09-11.
+
+    Dependencies were collected per INSTRUCTION, so RBP -- read by the COPY
+    feeding the store, nowhere near RSP's slice -- was a VALUE dependency of the
+    stack pointer.  They are now scoped to the target's backward slice, but ONLY
+    where that slice is complete: not for a software loop, and not for a target
+    fed through a LOAD.  Scoping unconditionally under-taints `bsf`/`bsr`/
+    `tzcnt`, the memory forms of sub-borrow and signed compare, and taint
+    crossing `push`/`pop`, all for the same reason -- a backward slice does not
+    follow every path a value takes.
+    """
     diff, _lowered = _answers({'RBP': 0xFF})
     assert diff['RSP'] == 0
 

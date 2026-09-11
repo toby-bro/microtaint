@@ -4956,6 +4956,48 @@ def extract_dependencies(  # noqa: C901
     # unique temporaries; only which accesses COUNT is scoped.
     _slice_ids = {id(o) for o in _slice_ops}
 
+    # May a register read be scoped to this target's slice?
+    #
+    # Dependencies were collected over the whole INSTRUCTION, so every output
+    # saw every input.  `push %rbp` is where that shows: it lifts as
+    # `COPY u = RBP; RSP = RSP - 8; STORE ram, RSP, u`, and RSP_out's slice is
+    # that one INT_SUB -- yet RBP was collected anyway, and the stack pointer
+    # came out tainted by the register being pushed.
+    #
+    # Three conditions, each paid for by a measured failure of the wider rule.
+    #
+    #  * The instruction must STORE.  An output whose value is consumed by a
+    #    store that is not this target's is the shape of the defect, and the
+    #    only shape it has.  Without this the rule also reaches `shl`, `sar`,
+    #    `rol`, `shld` and `cmov`, where a thinner dependency set makes the
+    #    closed-form recognisers decline and costs an extra cell re-execution
+    #    on 81 forms -- measured on `cmov` with a tainted flag against Unicorn
+    #    per-bit truth, buying nothing: under 0 and over 16, identical either
+    #    way.
+    #  * There must BE a slice.  An empty one means slice_backward found no
+    #    defining op (a leaf STORE value), and scoping to nothing drops every
+    #    dependency.
+    #  * The slice must not READ MEMORY, and the instruction must not be a
+    #    software loop.  A backward slice does not follow every path a value
+    #    takes: `bsf`/`bsr`/`tzcnt` lift as loops whose read of the source sits
+    #    outside the slice of the result, and a target fed through a LOAD
+    #    reaches its operand through memory, which the slicer does not trace --
+    #    so the memory forms of sub-borrow and signed compare lose theirs, and
+    #    taint crossing `push`/`pop` is lost entirely.  All three come back as
+    #    UNDER-taints.
+    _scope_regs_to_slice = (
+        bool(_slice_ops)
+        and any(o.opcode.name == 'STORE' for o in all_ops)
+        and not any(o.opcode.name == 'LOAD' for o in _slice_ops)
+        and not any(
+            o.opcode.name in ('BRANCH', 'CBRANCH')
+            and o.inputs
+            and o.inputs[0].space.name == 'const'
+            and (o.inputs[0].offset & 0x80000000)
+            for o in all_ops
+        )
+    )
+
     def _is_this_targets_store(op: PcodeOp) -> bool:
         v = op.inputs[2] if len(op.inputs) > 2 else None
         return (v is not None and v.space.name == _out_vn.space.name
@@ -5034,6 +5076,11 @@ def extract_dependencies(  # noqa: C901
                 value_deps[mem_map] = (
                     polarities.get(get_varnode_id(op.output), 1) if op.output is not None else 1
                 )
+
+        # A register read counts only where it feeds THIS target -- when the
+        # slice is complete enough to say so.  See `_scope_regs_to_slice`.
+        if _scope_regs_to_slice and id(op) not in _slice_ids:
+            continue
 
         for vn in op.inputs:
             if vn.space.name == 'register':
