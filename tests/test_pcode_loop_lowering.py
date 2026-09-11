@@ -258,3 +258,49 @@ def test_the_closed_form_never_says_less_than_the_unrolling(
                 f'(unrolled {b.get(k, 0):#x}, closed form {a.get(k, 0):#x})')
     assert compared > 100, (
         f'{label}: only {compared} outputs compared between the two lowerings')
+
+
+# ---------------------------------------------------------------------------
+# A loop's EPILOGUE has to survive the loop.
+# ---------------------------------------------------------------------------
+
+#: `pext eax,ebx,ecx` and `pdep eax,ebx,ecx`.  Both lift as loops whose
+#: back-edge is a CBRANCH, and both copy their accumulator into the destination
+#: AFTER the loop -- which is the shape that went wrong.
+_BIT_MOVES = {
+    'pext eax,ebx,ecx': 'c4e262f5c1',
+    'pdep eax,ebx,ecx': 'c4e263f5c1',
+}
+
+
+@pytest.mark.parametrize(('label', 'hexs'), _BIT_MOVES.items(), ids=list(_BIT_MOVES))
+def test_a_loops_result_reaches_its_destination(label: str, hexs: str) -> None:
+    """The destination must depend on the source.  It did not.
+
+    A backward CBRANCH means "go round again", and the lowering ANDed that into
+    the predicate without ever taking it back out.  The unrolling stops exactly
+    when "go round again" folds to FALSE, so everything after the loop -- the
+    copy of the accumulator into the destination -- was lowered under a false
+    predicate and discarded.  `pext` came out carrying nothing but the previous
+    taint of its own destination register.
+
+    `bsf` never showed it: its back-edge is an unconditional BRANCH, which does
+    not touch the predicate.
+
+    Asserted as DEPENDENCE rather than against Unicorn on purpose.  Unicorn
+    mis-executes these VEX forms -- it does not zero the destination's upper
+    half for a 32-bit `pdep` -- so it is not a usable oracle here, while "a
+    tainted source must reach the destination" needs no oracle at all and is
+    exactly the property that was broken.
+    """
+    code = bytes.fromhex(hexs)
+    clean = _taint_of(code, {'RBX': 0x5BC8FBBC, 'RCX': 0xB0C11FDE}, {})
+    assert not clean.get('RAX', 0), (
+        f'{label}: RAX is tainted with no tainted input, so this test cannot '
+        f'tell a working destination from a broken one')
+    for src in ('RBX', 'RCX'):
+        got = _taint_of(code, {'RBX': 0x5BC8FBBC, 'RCX': 0xB0C11FDE},
+                        {src: 0xFF})
+        assert got.get('RAX', 0), (
+            f'{label}: {src} is tainted and RAX is not, so the loop result '
+            f'never reached the destination register')

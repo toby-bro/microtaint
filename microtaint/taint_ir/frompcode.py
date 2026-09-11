@@ -516,6 +516,10 @@ class Builder:
         #: How many times each backward branch has been taken, so a p-code loop
         #: is unrolled a bounded number of times rather than declined.
         unrolled: dict[int, int] = {}
+        #: The predicate in force when each p-code loop was first entered, so
+        #: the ops after the loop can be lowered under it rather than under
+        #: "the loop goes round again", which is false by the time it ends.
+        loop_entry_pred: dict[int, int] = {}
         #: Loops whose meaning was RECOGNISED, keyed by the op they start at.
         #: Each is emitted as a closed form and its body skipped entirely.
         loop_forms = self._recognise_loops(ops)
@@ -553,6 +557,24 @@ class Builder:
                 if target <= pc:
                     if self.instr_pc[target] != self.instr_pc[pc]:
                         raise Unsupported('backward CBRANCH (p-code loop)')
+                    # The predicate as it stood BEFORE the loop, kept because
+                    # control reaches the ops AFTER the loop whatever the loop
+                    # did, and the predicate below says only whether the loop
+                    # goes round AGAIN.  Without this the two are conflated:
+                    # the unrolling stops precisely when "go round again" folds
+                    # to false, and the rest of the instruction was then lowered
+                    # under a FALSE predicate and discarded.
+                    #
+                    # `pext eax,ebx,ecx` is the case.  Its loop-back is a
+                    # CBRANCH, its accumulator is copied into EAX after the
+                    # loop, and that copy was thrown away -- so EAX came out
+                    # carrying nothing but its own previous taint.  Checked
+                    # against Unicorn by hand: eight tainted bits of EBX move
+                    # eight bits of the result, and the engine reported zero.
+                    # `bsf` never showed it because its loop-back is an
+                    # unconditional BRANCH, which does not touch the predicate.
+                    if target not in loop_entry_pred:
+                        loop_entry_pred[target] = self.pred_v
                     cv, ct = self._read_in(op.inputs[1])
                     # Taking the branch means going round again, so the
                     # iteration that follows runs under `taken`.
@@ -560,6 +582,12 @@ class Builder:
                     self.pred_t = p.op(OR, self.pred_t, p.op(NEZ, ct))
                     if self._unroll(ops, target, pc, unrolled):
                         pc = target - 1
+                        continue
+                    # The loop is over and the instruction continues.  Only the
+                    # VALUE predicate is restored: `pred_t` has accumulated the
+                    # implicit flow of every exit test, and that is a fact about
+                    # the loop the rest of the instruction inherits.
+                    self.pred_v = loop_entry_pred.pop(target)
                     continue
                 cv, ct = self._read_in(op.inputs[1])
                 # The branch SKIPS [pc+1, target); the region therefore runs
