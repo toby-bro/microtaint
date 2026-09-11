@@ -22,6 +22,7 @@ instruction in one basic block: see `_predicated_write`.
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
+import threading
 from enum import StrEnum
 from typing import ClassVar
 
@@ -1943,6 +1944,20 @@ class Builder:
 
 _BUILDERS: dict[tuple[str, str], Builder] = {}
 
+#: Held for the whole of a lowering.  A Builder is SHARED and stateful -- the
+#: predicate stack, the unroll bookkeeping and the loop cache all live on it --
+#: so two threads lowering at once walk over each other's state.  Measured: six
+#: threads lowering nine short AMD64 blocks raised `IndexError` out of
+#: `prog.live[n]` on roughly one run in three, because one thread's
+#: `_address_slice` had re-rooted the program and emptied `live` while the other
+#: was still reading it.  Nothing crashed and nothing was wrong in a
+#: single-threaded run, which is why this went unnoticed: the engine drives one
+#: emulator per process today.  Lowering is once per distinct block per process
+#: now that compiled blocks are cached, so serialising it costs nothing and
+#: removes a whole class of failure from anything that runs several guests at
+#: once -- which is what a fuzzer does.
+BUILDER_LOCK = threading.Lock()
+
 
 def builder_for(arch: ArchLike,
                 pointer_policy: PointerPolicy = DEFAULT_POINTER_POLICY) -> Builder:
@@ -1952,6 +1967,9 @@ def builder_for(arch: ArchLike,
     used to reach into `_BUILDERS` with the policy spelled out, which meant that
     changing the default policy raised KeyError in four separate places rather
     than doing the one thing it was supposed to do.  Ask here instead.
+
+    Shared means shared: a caller that LOWERS through the returned Builder must
+    hold `BUILDER_LOCK` while it does.
     """
     key = arch.value if hasattr(arch, 'value') else str(arch)
     b = _BUILDERS.get((key, pointer_policy))
