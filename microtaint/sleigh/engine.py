@@ -4212,11 +4212,27 @@ def generate_taint_assignments(  # noqa: C901
          if o.opcode.name not in ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT')),
         None,
     )
-    _arith = next(
-        (o for o in slice_ops
-         if o.opcode.name in ('INT_ADD', 'INT_SUB', 'INT_2COMP', 'INT_AND', 'INT_OR', 'INT_XOR')),
-        None,
+    # Root the sign test at the op that PRODUCES the value it inspects, not the
+    # first arith/logical op in the slice.  A multi-op slice such as bics
+    # (`(x2<<k) ^ -1` then `& x1`, then `s< 0`) has an INTERMEDIATE XOR whose
+    # operands miss the AND's other input (x1); grabbing the first op there fires
+    # on x2 only and under-taints NG.  For single-op slices (ands/adds/cmp) the
+    # producing op IS the first op, so this is behaviour-identical there.
+    _sign_val = (
+        next((i for i in _sign_term.inputs if i.space.name != 'const'), None)
+        if _sign_term is not None else None
     )
+    _arith = None
+    if _sign_val is not None:
+        _arith = next(
+            (o for o in slice_ops
+             if o.output is not None
+             and o.opcode.name in ('INT_ADD', 'INT_SUB', 'INT_2COMP', 'INT_AND', 'INT_OR', 'INT_XOR')
+             and o.output.space.name == _sign_val.space.name
+             and o.output.offset == _sign_val.offset
+             and o.output.size == _sign_val.size),
+            None,
+        )
     _has_shift = any(o.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT') for o in slice_ops)
     if (
         not is_store_target
