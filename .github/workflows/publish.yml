@@ -9,6 +9,15 @@ jobs:
   build_sdist:
     name: Build Source Distribution
     runs-on: ubuntu-latest
+    # This workflow publishes to PyPI. The trigger above already excludes pull
+    # requests, but belt and braces: every job also refuses to start unless the
+    # run really is a tag push on this repository, so a pull request -- a
+    # dependabot bump, a fork -- can never reach the publishing steps even if the
+    # trigger is ever widened by accident.
+    if: >-
+      github.event_name == 'push'
+      && startsWith(github.ref, 'refs/tags/v')
+      && github.repository == 'toby-bro/microtaint'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -30,6 +39,11 @@ jobs:
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # Tag pushes on this repository only. See build_sdist.
+    if: >-
+      github.event_name == 'push'
+      && startsWith(github.ref, 'refs/tags/v')
+      && github.repository == 'toby-bro/microtaint'
     strategy:
       fail-fast: false
       matrix:
@@ -51,7 +65,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.2.0
+        uses: pypa/cibuildwheel@v4.2.1
         env:
           # Tell the build environment to trigger hatch-mypyc and set the optimization level
           CIBW_ENVIRONMENT: 'HATCH_BUILD_HOOKS_ENABLE="1" MYPYC_OPT_LEVEL="3"'
@@ -72,6 +86,11 @@ jobs:
     name: Publish to PyPI & GitHub Releases
     needs: [build_sdist, build_wheels]
     runs-on: ubuntu-latest
+    # Tag pushes on this repository only. See build_sdist.
+    if: >-
+      github.event_name == 'push'
+      && startsWith(github.ref, 'refs/tags/v')
+      && github.repository == 'toby-bro/microtaint'
     environment:
       name: pypi
       url: https://pypi.org/p/microtaint
