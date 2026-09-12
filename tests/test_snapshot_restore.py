@@ -479,3 +479,52 @@ def test_restoring_abandons_a_block_the_previous_run_still_held(
         f'`out` publishes a register from before the input was read and came '
         f'back tainted: the block held by the previous iteration committed '
         f'into this one. masks={[hex(o) for o, _s in seen]}')
+
+
+def test_each_iteration_reports_its_own_counts(
+        built: dict[str, tuple[str, int, tuple[int, ...]]],
+        block_mode: bool) -> None:
+    """`resume` says what THIS input did, not what every input has done.
+
+    The hook's counters run for the life of the emulator, so in a checkpoint
+    loop they answer a question nobody asked: a fuzzer wants to know whether
+    the input it just ran left blocks unanalysed, and a number that only ever
+    grows cannot say.
+    """
+    if not block_mode:
+        pytest.skip('block counts come from block mode')
+    from qiling import Qiling
+    from qiling.const import QL_VERBOSE
+
+    from microtaint.emulator.reporter import Reporter
+    from microtaint.emulator.wrapper import MicrotaintWrapper
+
+    binary, body, _probes = built['warm']
+    saved, dn = os.dup(1), os.open(os.devnull, os.O_WRONLY)
+    seen = []
+    try:
+        rep = Reporter(json_mode=True, stream=io.StringIO())
+        ql = Qiling([binary], '/', verbose=QL_VERBOSE.OFF)
+        ql.os.stdin = io.BytesIO(b'')
+        w = MicrotaintWrapper(ql, reporter=rep)
+        os.dup2(dn, 1)
+        w.run_to(body)
+        cp = w.checkpoint()
+        for i in range(4):
+            w.restore(cp)
+            ql.os.stdin = io.BytesIO(bytes([i + 1] * 8))
+            rep.findings.clear()
+            seen.append(w.resume(cp))
+        os.dup2(saved, 1)
+    finally:
+        os.dup2(saved, 1)
+        os.close(dn)
+        os.close(saved)
+    assert all(r.blocks > 0 for r in seen), (
+        f'an iteration reported no blocks at all: {seen}')
+    assert len({r.blocks for r in seen}) == 1, (
+        f'the counts differ between iterations of the same guest, so they are '
+        f'accumulating rather than being per-iteration: '
+        f'{[r.blocks for r in seen]}')
+    assert all(r.handled == r.blocks and r.unhandled == 0 for r in seen), (
+        f'blocks went unanalysed in a restored run: {seen}')

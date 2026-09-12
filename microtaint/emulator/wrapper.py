@@ -1046,7 +1046,13 @@ class MicrotaintWrapper:
         and every later iteration start from a different state than the first.
         """
         self._arm_deferred_hooks()
-        state = self.ql.save(reg=True, mem=True, fd=True, cpu_context=True,
+        # `reg=False` on purpose.  Qiling's register restore writes every
+        # register one at a time through Python, and measured on a
+        # static-glibc guest that alone was 5.767 M instructions -- 80% of the
+        # whole restore -- against 0.003 M for `cpu_context`, which is
+        # Unicorn's own `uc_context_restore` and puts back the entire CPU
+        # state in one C call.  Saving both means paying for the slow one.
+        state = self.ql.save(reg=False, mem=True, fd=True, cpu_context=True,
                              os=True, loader=True)
         pc = self.ql.arch.regs.arch_pc if address is None else address
         return Checkpoint(address=pc, state=state, shape=map_shape(self.ql),
@@ -1105,6 +1111,7 @@ class MicrotaintWrapper:
         self.ql.exit_point = None
         self._guest_exited = False
         faulted = False
+        before = self.block_mode_stats() or {}
         try:
             self.ql.run(begin=cp.address, timeout=timeout_us)
         except Exception:
@@ -1119,9 +1126,13 @@ class MicrotaintWrapper:
         # it.
         self.block_mode_finish(completed=not faulted)
         completed = self._guest_exited
-        return RunOutcome(completed=completed, faulted=faulted,
-                          timed_out=bool(timeout_us) and not completed
-                          and not faulted)
+        after = self.block_mode_stats() or {}
+        return RunOutcome(
+            completed=completed, faulted=faulted,
+            timed_out=bool(timeout_us) and not completed and not faulted,
+            blocks=after.get('blocks', 0) - before.get('blocks', 0),
+            handled=after.get('handled', 0) - before.get('handled', 0),
+            unhandled=after.get('unhandled', 0) - before.get('unhandled', 0))
 
     def _smc_count(self) -> int:
         """How often a guest write has landed on code the engine had cached.

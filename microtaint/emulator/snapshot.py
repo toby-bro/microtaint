@@ -80,6 +80,13 @@ class RunOutcome(NamedTuple):
     completed: bool
     faulted: bool
     timed_out: bool
+    #: What THIS iteration did.  The hook's own counters run for the life of
+    #: the emulator, so in a checkpoint loop they answer a question nobody
+    #: asked: a fuzzer wants to know what the input it just ran did, not what
+    #: every input since the checkpoint did between them.
+    blocks: int = 0
+    handled: int = 0
+    unhandled: int = 0
 
     def __bool__(self) -> bool:
         """True when the guest ran to its own exit and nothing else happened."""
