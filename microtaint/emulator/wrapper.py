@@ -431,6 +431,9 @@ class MicrotaintWrapper:
         self.shadow_mem = BitPreciseShadowMemory()
 
         self._register_taint: dict[str, int] = {}
+        #: address -> (mnemonic, text), and the SMC count it was valid at.
+        self._disasm_cache: dict[int, tuple[str, str]] = {}
+        self._disasm_mark: int = 0
         #: Set by the exit-syscall hook; read by `resume` to tell a run that
         #: ended from one that merely stopped.
         self._guest_exited: bool = False
@@ -812,14 +815,7 @@ class MicrotaintWrapper:
         and one that says nothing at all degrades to the side-channel report
         rather than to silence.
         """
-        mnemonic = ''
-        asm_str = ''
-        try:
-            code = bytes(self.ql.mem.read(address, 16))
-        except Exception:
-            code = b''
-        if code:
-            mnemonic, asm_str = self._disasm(code, address)
+        mnemonic, asm_str = self._disasm_at(address)
         is_hijack = mnemonic.startswith('ret') or mnemonic in ('jmp', 'call')
         if is_hijack and self.check_bof:
             self.reporter.bof(address, instruction=asm_str)
@@ -1576,6 +1572,43 @@ class MicrotaintWrapper:
         if self._main_single:
             return self._main_base <= address < self._main_end
         return any(s <= address < e for s, e in self._main_bounds)
+
+    #: How many instructions to remember the disassembly of.  Bounded because
+    #: a long campaign meets a lot of code and this is a convenience, not a
+    #: correctness structure.
+    _DISASM_CACHE_CAP = 65536
+
+    def _disasm_at(self, address: int) -> tuple[str, str]:
+        """The instruction at `address`, as (mnemonic, text).
+
+        Remembered, because a fuzz iteration reports the same
+        secret-dependent branches every time: 110 findings at about 54
+        distinct sites on a static-glibc guest, and the SAME sites for the
+        next input.  Each one read 16 bytes of guest memory through ctypes and
+        ran capstone, and measured on a restored iteration that was 6.06 M
+        instructions of 18.08 -- a THIRD of the iteration -- to answer a
+        question whose answer had not changed.
+
+        Dropped whenever a write lands on code, which is the only thing that
+        can change the answer: a restore puts back the bytes the checkpoint
+        had, and if the guest rewrote code in between, `smc_invalidations`
+        says so.
+        """
+        mark = self._smc_count()
+        if mark != self._disasm_mark:
+            self._disasm_cache.clear()
+            self._disasm_mark = mark
+        hit = self._disasm_cache.get(address)
+        if hit is None:
+            try:
+                code = bytes(self.ql.mem.read(address, 16))
+            except Exception:
+                code = b''
+            hit = self._disasm(code, address) if code else ('', '')
+            if len(self._disasm_cache) >= self._DISASM_CACHE_CAP:
+                self._disasm_cache.clear()
+            self._disasm_cache[address] = hit
+        return hit
 
     def _disasm(self, instruction_bytes: bytes, address: int) -> tuple[str, str]:
         try:
