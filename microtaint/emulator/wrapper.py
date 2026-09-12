@@ -28,6 +28,12 @@ from microtaint.emulator.hook_core import (
 )
 from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.shadow import BitPreciseShadowMemory
+from microtaint.emulator.snapshot import (
+    Checkpoint,
+    CheckpointError,
+    RunOutcome,
+    map_shape,
+)
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.instrumentation.cell import _get_decoded
 from microtaint.simulator import CellSimulator
@@ -1012,6 +1018,121 @@ class MicrotaintWrapper:
         except Exception as exc:
             logger.warning(f'could not flush the translation cache ({exc}); '
                            f'code translated before arming will run unanalysed')
+
+    # ------------------------------------------------------------------
+    # Checkpoints: run to a point once, return to it per input
+    # ------------------------------------------------------------------
+
+    def run_to(self, address: int) -> None:
+        """Emulate from the start and stop when `address` is reached.
+
+        A HOOK, not `ql.run(end=address)`.  That sets `ql.exit_point` for the
+        rest of the emulator's life AND patches an exit trap into the guest's
+        own bytes at that address -- so a checkpoint taken afterwards contains
+        a trap at its own resume point, and every restored run stops the
+        instant it starts.
+        """
+        handle = self.ql.hook_address(lambda ql: ql.emu_stop(), address)
+        try:
+            self.ql.run()
+        finally:
+            self.ql.hook_del(handle)
+
+    def checkpoint(self, address: int | None = None) -> Checkpoint:
+        """Capture the emulator and the engine, to return to later.
+
+        Arms the engine first.  Hooks arm lazily, on the first taint, so a
+        checkpoint taken before that would have the first iteration arm them
+        and every later iteration start from a different state than the first.
+        """
+        self._arm_deferred_hooks()
+        state = self.ql.save(reg=True, mem=True, fd=True, cpu_context=True,
+                             os=True, loader=True)
+        pc = self.ql.arch.regs.arch_pc if address is None else address
+        return Checkpoint(address=pc, state=state, shape=map_shape(self.ql),
+                          smc_seen=self._smc_count())
+
+    def restore(self, cp: Checkpoint) -> None:
+        """Put the guest AND the engine back to `cp`.
+
+        Everything here earned its place by being a measured difference
+        between a restored run and a fresh one; `snapshot.py` says which.
+        """
+        wrote_code = self._smc_count() != cp.smc_seen
+        # Anything whose (range, permissions) do not match has to go, so
+        # Qiling's restore sees it as missing and re-maps it as it was.
+        for lo, hi, perms, *_ in list(self.ql.mem.map_info):
+            if (lo, hi, perms) not in cp.shape:
+                self.ql.mem.unmap(lo, hi - lo)
+        self.ql.restore(cp.state)
+        shape = map_shape(self.ql)
+        if shape != cp.shape:
+            raise CheckpointError(
+                f'the memory map did not come back: '
+                f'{len(shape - cp.shape)} extra, {len(cp.shape - shape)} missing')
+        if wrote_code:
+            # Only when the guest rewrote code since the checkpoint.  A restore
+            # rewrites the guest's bytes with no guest write, so a translation
+            # or a plan of the rewritten form would survive it -- but nothing
+            # can be stale unless something was rewritten, and unconditionally
+            # this costs a full re-translation an iteration.
+            self._flush_translations()
+            hook = self._instr_hook_obj
+            if isinstance(hook, InstructionHook):
+                hook.invalidate_smc()
+        # The block being held by the deferred commit belongs to the run that
+        # is being undone.
+        self.block_mode_finish(completed=False)
+        self.shadow_mem.clear_all()
+        hook = self._instr_hook_obj
+        if isinstance(hook, InstructionHook):
+            hook.reset_taint()
+        self._last_tainted_writes = set()
+
+    def resume(self, cp: Checkpoint, timeout_us: int = 0) -> RunOutcome:
+        """Run from the checkpoint to wherever the guest ends.
+
+        `timeout_us` is a wall-clock budget in microseconds, 0 for none.  A
+        fuzzer needs one: an input that makes the target loop forever must cost
+        one iteration, not the run.
+
+        The outcome distinguishes three endings, because `uc.emu_start` returns
+        WITHOUT raising when its budget expires -- it stops wherever it got to
+        and leaves every register holding whatever it held.  A run is reported
+        as completed only when the guest reached its own exit, which the exit
+        syscall proves; never merely because nothing was raised.
+        """
+        self.ql.exit_point = None
+        self._guest_exited = False
+        faulted = False
+        try:
+            self.ql.run(begin=cp.address, timeout=timeout_us)
+        except Exception:
+            faulted = True
+        # Two different questions, and conflating them lost taint.  Block
+        # mode's deferred commit asks whether the LAST BLOCK finished, which it
+        # did unless the emulator faulted part way through one; `completed`
+        # below asks whether the GUEST reached its own exit, which a run can
+        # fail to do for reasons that have nothing to do with the last block.
+        # Handing the second answer to the first question abandoned the final
+        # block of every guest that stopped any other way, and its taint with
+        # it.
+        self.block_mode_finish(completed=not faulted)
+        completed = self._guest_exited
+        return RunOutcome(completed=completed, faulted=faulted,
+                          timed_out=bool(timeout_us) and not completed
+                          and not faulted)
+
+    def _smc_count(self) -> int:
+        """How often a guest write has landed on code the engine had cached.
+
+        The hook's own counter, which both paths keep: block mode's stats do
+        not exist on the per-instruction path, and reading them there returned
+        zero for every iteration -- so a guest that rewrote its own code kept
+        a stale plan and the restored run came back clean.
+        """
+        hook = self._instr_hook_obj
+        return hook.smc_invalidations if isinstance(hook, InstructionHook) else 0
 
     def _syscall_number(self, name: str) -> int | None:
         """The number `name` has on THIS guest architecture, or None.

@@ -1,0 +1,92 @@
+"""Return an emulator to a point it has already reached.
+
+A fuzzer builds a new emulator for every input, and on a static-glibc guest
+about 87% of what that costs does not depend on the input: Qiling's own setup,
+the engine's, and emulating the C library's startup again.  Running to a
+checkpoint once and returning to it per input removes all three, and keeps the
+translation cache and the process-wide plan table warm as a side effect.
+
+Restoring the guest's MEMORY is the easy part, and Qiling does it.  What this
+module exists for is everything else, each item of which was a real divergence
+between a restored run and a fresh one before it was handled:
+
+  * regions the guest mapped after the checkpoint are never unmapped by
+    Qiling's restore, so a guest that leaks a mapping grows one per iteration;
+  * a region that is still mapped but whose PERMISSIONS changed keeps them,
+    because Qiling re-maps only what is missing -- a guest that mprotects its
+    own data read-only then faults on the next iteration's first store;
+  * Unicorn keeps translations of code the guest rewrote, and goes on running
+    them after the bytes they came from have been put back;
+  * the engine's own plan and decode caches are keyed by address and are
+    dropped by a guest WRITE onto code -- and a restore rewrites those bytes
+    with no guest write at all;
+  * the taint of the previous input has to go, or a restored run reports more
+    than a fresh one.
+
+The checkpoint must be taken with the engine already armed.  Hooks arm lazily,
+on the first taint, so a checkpoint taken before that would have the first
+iteration arm them and every later one start from somewhere else.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+
+class CheckpointError(RuntimeError):
+    """The emulator could not be put back the way it was.
+
+    Raised rather than returned: a restore that half worked produces a run
+    whose answer differs from a fresh one for a reason nobody will find.
+    """
+
+
+@dataclass(frozen=True)
+class Checkpoint:
+    """A point in a guest's execution, and everything needed to return to it."""
+
+    #: Where the guest was.  `resume` starts here.
+    address: int
+    #: Qiling's own state: registers, memory, file descriptors, OS and loader.
+    state: Mapping[str, Any]
+    #: (low, high, permissions) for every region that was mapped.  Permissions
+    #: are part of the identity: a region still mapped with different ones has
+    #: to be unmapped so Qiling's restore re-maps it with the right ones.
+    shape: frozenset[tuple[int, int, int]] = field(repr=False)
+    #: The engine's self-modifying-code counter as it stood here.  A restore
+    #: only has to throw away translations and plans if the guest has rewritten
+    #: code since; on everything else that would cost a full re-translation an
+    #: iteration for nothing.
+    smc_seen: int = 0
+
+
+class RunOutcome(NamedTuple):
+    """How an iteration ended.  Three outcomes, and they are not the same.
+
+    A fuzzer's inputs crash the target, so `faulted` is a result and not an
+    error.  `timed_out` is the one that must never be mistaken for anything
+    else: `uc.emu_start` does NOT raise when its wall-clock budget expires -- it
+    returns normally, having stopped wherever it got to, with every register
+    still holding whatever it held.  A harness that read that back as a
+    finished run once produced 41 fabricated under-taints against a sound
+    engine, none of them real.  So a run is `completed` only when the guest
+    reached its own exit, proved by the exit syscall, and never by the absence
+    of an exception.
+    """
+
+    completed: bool
+    faulted: bool
+    timed_out: bool
+
+    def __bool__(self) -> bool:
+        """True when the guest ran to its own exit and nothing else happened."""
+        return self.completed and not self.faulted and not self.timed_out
+
+
+def map_shape(ql: object) -> frozenset[tuple[int, int, int]]:
+    """(low, high, permissions) for every mapped region."""
+    return frozenset(
+        (lo, hi, perms) for lo, hi, perms, *_ in ql.mem.map_info)  # type: ignore[attr-defined]
