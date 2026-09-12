@@ -425,6 +425,15 @@ class MicrotaintWrapper:
         self.shadow_mem = BitPreciseShadowMemory()
 
         self._register_taint: dict[str, int] = {}
+        #: Set by the exit-syscall hook; read by `resume` to tell a run that
+        #: ended from one that merely stopped.
+        self._guest_exited: bool = False
+        #: Has the GUEST's own entry point been reached?  Reads before it are
+        #: the dynamic loader pulling shared libraries off disk, not the
+        #: program reading its input.  Starts True so that a guest whose entry
+        #: cannot be determined taints everything, as it always did: the
+        #: failure to identify an entry point must not silently drop taint.
+        self._program_started: bool = True
         self._main_bounds: list[tuple[int, int]] = []
         self._main_single: bool = False
         self._main_base: int = 0
@@ -884,14 +893,32 @@ class MicrotaintWrapper:
                     cb_ptr = ctypes.cast(self._instr_cfunc, ctypes.c_void_p)
                     cb_ud = None
                 hook_handle = ctypes.c_size_t()
+                # EVERY address, not just the main image.  This used to be
+                # registered over [_main_base, _main_end] to spare Unicorn the
+                # dispatch for libc and the loader, and what it actually spared
+                # was the TAINT: Unicorn does not call a filtered hook for an
+                # address outside its range, so those instructions ran
+                # unanalysed and anything flowing through them came out clean.
+                #
+                # An ordinary dynamically linked binary hits this -- `strlen`
+                # and `memcpy` are in libc.so, outside the image -- and so does
+                # anything that JITs.  Measured on a plain `gcc -O1` guest: the
+                # hash of a tainted line came back 0x0 here and fully tainted
+                # in block mode, same binary, same address.  It stayed hidden
+                # because every guest in the test suite is -static, and then
+                # libc IS the image.
+                #
+                # `begin > end` is Unicorn's "all addresses", which is what the
+                # block hook has always used.  The cost is real and is the
+                # price of the answer being right.
                 rc = _uc_hook_add(
                     self._uc_handle,
                     ctypes.byref(hook_handle),
                     UC_HOOK_CODE,
                     cb_ptr,
                     cb_ud,  # user_data (the hook instance on the C path)
-                    ctypes.c_uint64(self._main_base),
-                    ctypes.c_uint64(self._main_end),
+                    ctypes.c_uint64(1),
+                    ctypes.c_uint64(0),
                 )
                 if rc != 0:
                     # Fall back to the slow path on registration failure.
@@ -899,8 +926,8 @@ class MicrotaintWrapper:
                     self.ql.uc.hook_add(
                         UC_HOOK_CODE,
                         instr_hook,
-                        begin=self._main_base,
-                        end=self._main_end,
+                        begin=1,
+                        end=0,
                     )
                 else:
                     # Stash the Unicorn-internal callback list to keep it
@@ -1146,6 +1173,26 @@ class MicrotaintWrapper:
         )
 
         self._set_syscall_hook('read', self._sys_read_hook, QL_INTERCEPT.CALL)
+        # Reads made before the guest's own entry point are the dynamic
+        # loader reading libc.so, and taking them as program input is not a
+        # small over-approximation: ld.so then branches on data the engine
+        # calls tainted, the engine reports a side channel inside the loader
+        # and stops, and the program under analysis never runs.  Measured on a
+        # dynamically linked guest: 29 instructions analysed and the buffer
+        # overflow in `main` never reached.
+        #
+        # A static binary has no such reads, so nothing changes for one.
+        entry = getattr(self.ql.loader, 'elf_entry', None)
+        if entry:
+            self._program_started = False
+            self.ql.hook_address(self._note_program_start, entry)
+        # A run counts as COMPLETED only when the guest reached its own exit.
+        # `uc.emu_start` returns without raising when its wall-clock budget
+        # expires, so "nothing was raised" proves nothing; see `resume`.
+        # Hooked by NAME so the number is looked up per architecture.
+        for _exit_name in ('exit', 'exit_group'):
+            self._set_syscall_hook(_exit_name, self._note_guest_exit,
+                                   QL_INTERCEPT.ENTER)
         # 334 is rseq on x86-64 only; the stub exists for that specific syscall,
         # and the number means something else elsewhere, so it is registered
         # only where it is the one meant.
@@ -1205,6 +1252,25 @@ class MicrotaintWrapper:
         # Deferred registration: ~0 cost before taint, normal cost after.
         self._instr_hook_registered = False
 
+    @property
+    def guest_exited(self) -> bool:
+        """Did the guest reach its own exit in the last run?
+
+        The only trustworthy definition of "this run finished".  An emulator
+        that stopped because its wall-clock budget expired raises nothing and
+        looks identical to one that ran to the end, and a harness that treated
+        the two the same once produced 41 fabricated under-taints.
+        """
+        return self._guest_exited
+
+    def _note_program_start(self, ql: Qiling) -> None:  # noqa: ARG002
+        """The guest's own entry point: from here on, a read is input."""
+        self._program_started = True
+
+    def _note_guest_exit(self, ql: Qiling, *args: object) -> None:  # noqa: ARG002
+        """The guest asked to exit, so this run reached its own end."""
+        self._guest_exited = True
+
     def _sys_read_hook(self, ql: Qiling, fd: int, buf: int, count: int) -> int:
         if fd != 0 or count <= 0:
             try:
@@ -1215,8 +1281,13 @@ class MicrotaintWrapper:
             if data:
                 ql.mem.write(buf, data)
                 n = len(data)
-                self._taint_bytes(buf, n)
-                self.reporter.taint_source(buf, n, fd=fd)
+                # Before the guest's own entry point this is the dynamic
+                # loader reading a shared library, not the program reading
+                # input.  The read still happens -- the loader needs its
+                # bytes -- it simply is not a taint source.
+                if self._program_started:
+                    self._taint_bytes(buf, n)
+                    self.reporter.taint_source(buf, n, fd=fd)
             return len(data) if data else -9
 
         try:
@@ -1230,6 +1301,10 @@ class MicrotaintWrapper:
 
         n = len(data)
         ql.mem.write(buf, data)
+        if not self._program_started:
+            # stdin before the program started is not the program's input
+            # either, and a loader that reads it is not a case anyone has.
+            return n
         self._taint_bytes(buf, n)
         self.reporter.taint_source(buf, n, fd=0)
         logger.debug(f'Tainted {n} bytes at 0x{buf:x} from stdin')
