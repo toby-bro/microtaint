@@ -936,6 +936,55 @@ class MicrotaintWrapper:
         # InstructionHook (`block_invalidate`, set in `_install_block_hook`),
         # and hands it the write's own address so a rewrite of the block being
         # held can be told from a rewrite of anything else.
+        self._flush_translations()
+
+    def _flush_translations(self) -> None:
+        """Discard every translated block, so the hooks just armed apply to all.
+
+        A Unicorn hook is compiled INTO a translated block, and arming happens
+        part way through emulation by design: hooks go on at the first taint,
+        which for a real guest is the `read` that brings the input in.  By then
+        Unicorn has translated everything that ran before it, and those blocks
+        keep running WITHOUT the hook -- so any code the program warmed up
+        before reading its input is never analysed again, however tainted the
+        values flowing through it become.
+
+        Measured on a guest that calls a function, reads its input, then calls
+        the SAME function on it: the result came back completely clean.  On a
+        static-glibc binary, 150 of the 785 block executions after the taint
+        arrived were never seen and 17 of 54 leak sites were never reported.
+        Nothing raised, the run completed, and it simply found less.
+
+        Only CODE and BLOCK hooks need this, and the difference is worth
+        knowing before someone adds a flush everywhere or removes this one.  A
+        code hook is compiled INTO the translated block as a call, so a block
+        translated before the hook existed has no call site and never fires it.
+        A memory hook is consulted from the memory slow path instead, which
+        Unicorn is already taking because the mem-write hook has been
+        registered since setup -- which is why the UAF read hook, armed on the
+        first poison, does reach code that was already translated, and is
+        gated proving exactly that by tests/test_uaf_read_hook_lazy.py.
+
+        The flush costs one re-translation of whatever runs next, once per run:
+        measured at +5.8% on a static-glibc guest, against the 31% of findings
+        that were being lost.
+        """
+        uc = getattr(self.ql, 'uc', None)
+        flush = getattr(uc, 'ctl_flush_tb', None)
+        if flush is None:
+            # Loud, because the failure it guards is silent: the engine would
+            # keep running and quietly analyse only the code translated after
+            # this point.
+            logger.warning(
+                'unicorn has no ctl_flush_tb: code translated before the taint '
+                'hooks were armed will run without them, and its taint will be '
+                'lost')
+            return
+        try:
+            flush()
+        except Exception as exc:
+            logger.warning(f'could not flush the translation cache ({exc}); '
+                           f'code translated before arming will run unanalysed')
 
     def _syscall_number(self, name: str) -> int | None:
         """The number `name` has on THIS guest architecture, or None.
