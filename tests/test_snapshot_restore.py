@@ -635,3 +635,42 @@ def test_read_only_memory_the_guest_made_writable_is_put_back(
                for _after_run, after_restore in seen), (
         f'rodata the guest made writable and scribbled on did not come back: '
         f'{[(hex(a), hex(b)) for a, b in seen]}, expected 0x{original:02x}')
+
+
+def test_a_checkpoint_after_taint_exists_is_refused(
+        built: dict[str, tuple[str, int, tuple[int, ...]]],
+        block_mode: bool) -> None:
+    """Restoring CLEARS the taint rather than putting it back.
+
+    That is right for what this is for -- checkpoint before the input, drive
+    inputs from there -- and it would silently throw away taint a caller had
+    seeded before the checkpoint.  Refusing beats losing it quietly.  Putting
+    it back instead needs the shadow to be snapshottable, which it is not.
+    """
+    from qiling import Qiling
+    from qiling.const import QL_VERBOSE
+
+    from microtaint.emulator.reporter import Reporter
+    from microtaint.emulator.snapshot import CheckpointError
+    from microtaint.emulator.wrapper import MicrotaintWrapper
+
+    binary, body, _probes = built['warm']
+    saved, dn = os.dup(1), os.open(os.devnull, os.O_WRONLY)
+    try:
+        rep = Reporter(json_mode=True, stream=io.StringIO())
+        ql = Qiling([binary], '/', verbose=QL_VERBOSE.OFF)
+        ql.os.stdin = io.BytesIO(b'')
+        w = MicrotaintWrapper(ql, reporter=rep, qiling_stats=False)
+        os.dup2(dn, 1)
+        w.run_to(body)
+        # A checkpoint here is fine: nothing is tainted yet.
+        w.checkpoint()
+        # Seed taint the way a caller would, then ask again.
+        w.taint_region(ql.arch.regs.arch_sp - 64, b'\xff' * 8)
+        os.dup2(saved, 1)
+    finally:
+        os.dup2(saved, 1)
+        os.close(dn)
+        os.close(saved)
+    with pytest.raises(CheckpointError, match='taint already exists'):
+        w.checkpoint()

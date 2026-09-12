@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import unicorn.unicorn_py3.unicorn as _uu
 from qiling import Qiling
 from qiling.const import QL_ARCH, QL_INTERCEPT
+from qiling.os.stats import QlOsNullStats
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE_UNMAPPED
 
 from microtaint.emulator import archregs
@@ -410,8 +411,29 @@ class MicrotaintWrapper:
         check_sc: bool = True,
         check_aiw: bool = True,
         reporter: Reporter | None = None,
+        qiling_stats: bool = True,
     ) -> None:
+        """`qiling_stats` keeps Qiling's own syscall statistics collection on.
+
+        Leave it on for a single run.  Turn it OFF for anything that runs a
+        guest repeatedly, because it makes that QUADRATIC: `ql.os.run()` ends
+        by calling `stats.summary()`, which json-dumps every syscall it has
+        ever recorded, and a checkpoint loop calls `ql.run()` once per input --
+        so iteration N re-dumps everything from 1 to N.  Measured, marginal
+        instructions per iteration on a static-glibc guest:
+
+            iterations        2-12    40-50   90-100
+            statistics on     9.30    15.24    23.25
+            statistics off    7.83     7.30     7.23
+
+        Qiling ships `QlOsNullStats` for this, so the switch is its own and not
+        a patch over its internals.  The default leaves it ON because it is the
+        caller's emulator and someone may be reading `ql.os.stats`;
+        `checkpoint` says so out loud when it finds them still on.
+        """
         self.ql = ql
+        if not qiling_stats:
+            ql.os.stats = QlOsNullStats()
         self.check_bof = check_bof
         self.check_uaf = check_uaf
         self.check_sc = check_sc
@@ -1040,7 +1062,31 @@ class MicrotaintWrapper:
         Arms the engine first.  Hooks arm lazily, on the first taint, so a
         checkpoint taken before that would have the first iteration arm them
         and every later iteration start from a different state than the first.
+
+        Refuses a checkpoint taken once taint already exists.  `restore` CLEARS
+        the shadow and the register taint rather than putting them back, which
+        is right for what this is for -- checkpoint before the input, drive
+        inputs from there -- and would silently throw away taint seeded before
+        the checkpoint.  Refusing beats losing it quietly; putting it back
+        instead needs the shadow to be snapshottable, which it is not yet.
         """
+        if self._any_taint:
+            raise CheckpointError(
+                'taint already exists, and restoring clears it rather than '
+                'putting it back: this checkpoint would silently lose it. '
+                'Take the checkpoint before the first taint arrives.')
+        if not isinstance(self.ql.os.stats, QlOsNullStats):
+            # Not an error: the caller may want the statistics.  But a
+            # checkpoint is a statement of intent to run this guest again and
+            # again, and Qiling re-dumps every syscall it has recorded at the
+            # end of EVERY run, so that loop is quadratic.  Measured: 9.30 M
+            # instructions an iteration over the first ten, 23.25 M over the
+            # ninetieth to hundredth, against a flat 7.3 M with them off.
+            logger.warning(
+                'checkpointing with Qiling statistics enabled: every run '
+                'writes a summary of every syscall recorded so far, so a '
+                'restore loop gets slower with each input. Construct the '
+                'wrapper with qiling_stats=False to keep it flat.')
         self._arm_deferred_hooks()
         # `reg=False` on purpose.  Qiling's register restore writes every
         # register one at a time through Python, and measured on a
