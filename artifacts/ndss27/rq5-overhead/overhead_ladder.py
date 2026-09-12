@@ -225,8 +225,6 @@ LAYERS = [
     ('c-blockhook',          'per-BLOCK control, pure C, empty body',         'emulator',   True),
     ('c-codehook',           'per-instruction control, pure C, empty body',   'emulator',   True),
     ('c-codehook-regs',      'the same, reading 4 guest registers',           'emulator',   True),
-    ('c-codehook-mem',       'the same, plus an 8-byte guest memory read',    'emulator',   True),
-    ('c-memhook',            'the same, plus a UC\\_HOOK\\_MEM callback',        'emulator',   True),
     ('codehook',             'the same in PYTHON, empty body',                'hosting',    True),
     ('codehook-regs',        'the same in PYTHON, reading 4 registers',       'hosting',    True),
     ('microtaint-plumbing',  'the real engine, armed, but nothing tainted',   'plumbing',   True),
@@ -333,6 +331,13 @@ def main() -> int:
     p.add_argument('--gen-input', type=int, default=64,
                    help='Bytes of tainted stdin (default 64: a clean exit, no BOF)')
     p.add_argument('--runs', type=int, default=3)
+    p.add_argument(
+        '--runs-for', action='append', default=[], metavar='LAYER=N',
+        help='override --runs for one layer, e.g. codehook-regs=15.  The two '
+             'Python-hosted rungs cost 8.7 s and 80 s per run, so running 100 of '
+             'each would take longer than the whole rest of the ladder; they are '
+             'the only rungs whose count the paper reduces.',
+    )
     p.add_argument('--timeout', type=float, default=1800.0)
     p.add_argument('--json', default=None)
     p.add_argument(
@@ -355,6 +360,12 @@ def main() -> int:
     n_instrs = count_instructions(binary, args.rootfs, stdin_data, args.timeout)
     print(f'# workload: {binary}, {n_instrs:,} guest instructions, '
           f'{len(stdin_data)} tainted stdin bytes, {args.runs} runs/rung')
+    runs_for = {}
+    for spec in args.runs_for:
+        k, _, v = spec.partition('=')
+        runs_for[k] = int(v)
+    if runs_for:
+        print(f'  per-rung overrides: {runs_for}')
     print('# taint_ir and block mode pinned OFF (per-instruction LogicCircuit path)')
     print()
 
@@ -367,8 +378,9 @@ def main() -> int:
         samples = []
         gb = None
         extra = {}
-        for i in range(args.runs):
-            sys.stderr.write(f'[{layer} {i+1}/{args.runs}] running…\n')
+        n_runs = runs_for.get(layer, args.runs)
+        for i in range(n_runs):
+            sys.stderr.write(f'[{layer} {i+1}/{n_runs}] running…\n')
             try:
                 run_s, gb, extra = measure(layer, binary, args.rootfs, stdin_data, args.timeout)
                 samples.append(run_s)
