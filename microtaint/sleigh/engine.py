@@ -4231,8 +4231,16 @@ def generate_taint_assignments(  # noqa: C901
         _ovf_floor = _build_signed_overflow_taint(slice_ops, mapper, all_ops)
         if _ovf_floor is not None:
             expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, _ovf_floor, Constant(1, 8)))
-        elif _slice_reads_store_forwarded(slice_ops, all_ops):
-            # The exact term declined because WE refused a store-forwarded slot, so
+        elif _slice_reads_store_forwarded(slice_ops, all_ops) or any(
+            o.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT') for o in slice_ops
+        ):
+            # Two declines need the floor.  (1) We refused a store-forwarded slot.
+            # (2) A barrel shift feeds the ALU, as in ARM64 `adds x0,x1,x2,asr #n`:
+            # the exact term declines on the shifted operand and the sign floor is
+            # wide-output-only, so OV falls to the differential alone.  The register
+            # forms excluded below have no shift, so (2) does not reach them.
+            #
+            # In case (1) the exact term declined because WE refused the slot, so
             # what is left is the 2-corner differential alone -- and signed overflow
             # is non-monotone, so an interior flip of a tainted bit toggles the flag
             # while both corners agree.  An unsigned carry is monotone and needs no
