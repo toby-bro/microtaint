@@ -184,3 +184,56 @@ def test_block_and_instruction_paths_agree(
                     for k, (a, b) in sorted(lost_mem.items())[:4]))
     assert instr['regs'] == block['regs'], 'register taint differs'
     assert instr['mem'] == block['mem'], 'memory taint differs'
+
+
+def test_a_plan_that_reads_more_registers_than_the_scratch_holds_declines(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """The plan says how many registers to read; the buffer they land in is the
+    hook's, sized to the whole register file.
+
+    Those two facts used to come from the same place.  They no longer do: a
+    plan is kept for the life of the process and run by whichever emulator
+    meets the block next, so "this plan's read fits my buffer" is an assumption
+    about somebody else rather than a local fact.  If it were ever wrong,
+    `uc_reg_read_batch` would write past the end of that buffer -- a heap
+    overflow, not a wrong answer, and the kind that surfaces somewhere else
+    entirely.
+
+    Declining is the sound response: the block is counted as unhandled, which
+    is unanalysed code and visible in the stats, rather than read into memory
+    the hook does not own.  Forced here by handing the hook a scratch sized for
+    a single read call while its blocks ask for more; nothing else changes.
+
+    The taint of a declined block is simply not computed, which is why this
+    asserts the COUNTERS and not the answer.  An engine that declined silently
+    would look exactly like one that worked.
+    """
+    from microtaint.emulator import blockpath_c
+
+    real_hook_new = blockpath_c.hook_new
+
+    def one_call_scratch(fastctx: int, compiler: object, ids: int, ptrs: int,
+                         vals: int, n_calls: int, slots: list[int],
+                         *rest: object) -> object:
+        return real_hook_new(fastctx, compiler, ids, ptrs, vals, 1, slots, *rest)
+
+    monkeypatch.setattr(blockpath_c, 'hook_new', one_call_scratch)
+    guest = _build()
+    try:
+        got = _run(guest, block=True)
+    finally:
+        os.unlink(guest)
+
+    stats = got['stats']
+    assert stats is not None, 'block mode did not install'
+    assert stats['blocks'] > 100, (
+        f'the hook barely fired ({stats["blocks"]} blocks), so the plans that '
+        f'overrun the scratch may never have been reached: {stats}')
+    assert stats['no_regs'] > 0, (
+        f'no block declined on its register read, so a plan asking for more '
+        f'words than the scratch holds was read into it anyway: {stats}')
+    assert stats['unhandled'] >= stats['no_regs'], (
+        f'{stats["no_regs"]} blocks declined on their register read but only '
+        f'{stats["unhandled"]} were counted unhandled: a skipped block that is '
+        f'not counted is unanalysed code nobody knows about')
+    assert stats['handled'] + stats['unhandled'] <= stats['blocks'], stats
