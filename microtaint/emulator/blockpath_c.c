@@ -44,6 +44,133 @@ typedef struct {
 
 #define BLK_MAX_REP 256
 
+/* ---------------------------------------------------------------------- */
+/* The process-wide plan table.                                           */
+/*                                                                        */
+/* A wrapper's own cache dies with the wrapper, which is once per fuzzed   */
+/* input, so every block is a first sight again and the compiler runs with */
+/* the GIL once per distinct block.  Measured on a static-glibc guest      */
+/* driven the way a fuzzer drives one -- 637 block executions, 402         */
+/* distinct -- that callback is 34.8 M instructions a run, 22.5% of the    */
+/* whole run.  Almost none of it is compilation: the Python plan cache     */
+/* already hits on every one of them.  It is the cost of ASKING.           */
+/*                                                                        */
+/* So the C side keeps its own table and a later run finds its plans       */
+/* without entering Python at all.  Two things make sharing safe:          */
+/*                                                                        */
+/*   - a WORLD, interned by the caller from (architecture, slot map).  The */
+/*     emitted code addresses engine slots by index, so two engines that   */
+/*     disagree about slots must never share a plan.  Interned, not        */
+/*     hashed: a collision would send a program's writes to the wrong      */
+/*     register.                                                          */
+/*   - the block's BYTES, kept with the entry and compared on every hit.   */
+/*     An address is not an identity.  A campaign runs many binaries in    */
+/*     one process, and self-modifying code rewrites one in place; either  */
+/*     way the plan for what USED to be at an address is wrong.  Comparing */
+/*     the bytes makes a plan content-addressed, so a rewrite misses, gets */
+/*     its own entry, and the entry it did not match stays valid for       */
+/*     whoever still holds it.                                             */
+/*                                                                        */
+/* Entries are only ever prepended, never unlinked or rewritten, so a      */
+/* reader walking a chain without the GIL cannot see a half-built one.     */
+/* Inserting happens on the miss path, which holds the GIL, so writers are */
+/* serialised against each other; publishing the head is a release store   */
+/* and reading it an acquire load.                                         */
+/* ---------------------------------------------------------------------- */
+#define BLK_GLOBAL_BUCKETS 2048
+#define BLK_GLOBAL_MAX 32768
+#define BLK_MAX_CODE 4096
+
+/* How many plans the process may keep.  This table never evicts -- a live
+ * hook borrows plans from it -- so the cap IS the memory bound: each entry
+ * holds the block's bytes, its plan, and a reference to the emitted code the
+ * plan runs, which the Python cache would otherwise have dropped at its own
+ * 4096-entry limit.  Read per insertion rather than once, which costs a
+ * getenv on the compiler path and lets a test turn the table off and watch
+ * the engine fall back to asking Python. */
+static long blk_table_cap(void) {
+    const char *v = getenv("MICROTAINT_BLOCK_PLAN_TABLE");
+    if (!v || !*v) return BLK_GLOBAL_MAX;
+    const long cap = atol(v);
+    return cap > 0 ? cap : 0;
+}
+
+typedef struct BlkGlobal {
+    struct BlkGlobal *next;
+    int        world;
+    uint64_t   addr;
+    int        size;
+    unsigned char *code;     /* `size` bytes: the identity, not the address */
+    MtBlkPlan *plan;         /* NULL: planned, and found unhandleable */
+    PyObject  *capsule;      /* owned for the life of the process */
+} BlkGlobal;
+
+static BlkGlobal *g_plan_tab[BLK_GLOBAL_BUCKETS];
+static BlkGlobal *g_plan_retired;    /* cleared, but possibly still borrowed */
+static unsigned long g_plan_n;
+
+static size_t blk_gbucket(int world, uint64_t addr, int size) {
+    uint64_t h = addr * 0x9E3779B97F4A7C15ULL;
+    h ^= (uint64_t)size * 0xC2B2AE3D27D4EB4FULL;
+    h ^= (uint64_t)(unsigned)world * 0xD6E8FEB86659FD93ULL;
+    h ^= h >> 29;
+    return (size_t)(h & (BLK_GLOBAL_BUCKETS - 1));
+}
+
+/* -> the entry for exactly these bytes at this address, or NULL.  No GIL. */
+static BlkGlobal *blk_global_find(int world, uint64_t addr, int size,
+                                  const unsigned char *code) {
+    BlkGlobal *e = __atomic_load_n(&g_plan_tab[blk_gbucket(world, addr, size)],
+                                   __ATOMIC_ACQUIRE);
+    for (; e; e = e->next) {
+        if (e->world == world && e->addr == addr && e->size == size
+            && memcmp(e->code, code, (size_t)size) == 0) {
+            return e;
+        }
+    }
+    return NULL;
+}
+
+/* Keep a planned block.  -> did the table take it (and so own the capsule)?
+ * Called on the miss path only, with the GIL held. */
+static int blk_global_add(int world, uint64_t addr, int size,
+                          const unsigned char *code, MtBlkPlan *plan,
+                          PyObject *capsule) {
+    if ((long)g_plan_n >= blk_table_cap()) return 0;  /* full: keep asking Python */
+    BlkGlobal *e = (BlkGlobal *)calloc(1, sizeof(BlkGlobal));
+    if (!e) return 0;
+    e->code = (unsigned char *)malloc((size_t)(size > 0 ? size : 1));
+    if (!e->code) { free(e); return 0; }
+    memcpy(e->code, code, (size_t)size);
+    e->world = world;
+    e->addr = addr;
+    e->size = size;
+    e->plan = plan;
+    e->capsule = capsule;
+    Py_XINCREF(capsule);
+    const size_t b = blk_gbucket(world, addr, size);
+    e->next = g_plan_tab[b];          /* the GIL makes us the only writer */
+    __atomic_store_n(&g_plan_tab[b], e, __ATOMIC_RELEASE);
+    g_plan_n++;
+    return 1;
+}
+
+/* Forget every plan.  RETIRES rather than frees: a live hook's own cache
+ * borrows these plans, and it has no way to be told.  Clearing is a test and
+ * measurement operation, so paying a leak for it is the right trade. */
+static void blk_global_clear(void) {
+    for (size_t i = 0; i < BLK_GLOBAL_BUCKETS; i++) {
+        BlkGlobal *e = g_plan_tab[i];
+        if (!e) continue;
+        BlkGlobal *last = e;
+        while (last->next) last = last->next;
+        last->next = g_plan_retired;
+        g_plan_retired = e;
+        __atomic_store_n(&g_plan_tab[i], (BlkGlobal *)NULL, __ATOMIC_RELEASE);
+    }
+    g_plan_n = 0;
+}
+
 typedef struct {
     MtFastCtx   *fc;             /* borrowed: the instruction path's context */
     MtBlkEnv     env;
@@ -73,7 +200,17 @@ typedef struct {
     int          rd_max;         /* calls the scratch holds */
     int         *reg_slots;      /* engine slot per read position */
     int          n_regs;
+    /* Which (architecture, slot map) universe this hook's plans belong to.
+     * Negative means the caller named none, and then nothing is shared: an
+     * older caller keeps exactly the behaviour it had. */
+    int          world;
     unsigned long blocks, handled, unhandled, planned;
+    /* Blocks whose plan came out of the process-wide table instead of the
+     * compiler.  Counted because "the table is working" is a claim: a table
+     * whose key is too specific never hits, and looks exactly like one that
+     * works.  `no_code` is the other half -- blocks whose bytes could not be
+     * read, which cannot be shared and are not counted as a miss anywhere. */
+    unsigned long reused, no_code;
     /* Why a block was not handled, by reason.  A skipped block is unanalysed
      * code, so "how often and why" has to be a measurement. */
     unsigned long miss[MT_BLK_N_MISS];
@@ -210,6 +347,27 @@ static int blk_read_regs(MtBlkCtx *b, const MtBlkPlan *plan) {
         if (slot >= 0 && slot < n_slots) g_val[slot] = vals[i];
     }
     if (plan->need_flags && *c->eflags_slot >= 0) mt_explode_eflags(c);
+    return 0;
+}
+
+/* A block's own bytes, for the process-wide table's identity check.  Eight at
+ * a time through the same reader the runtime resolves loads with, little-endian
+ * out of the word exactly as that reader packs it.  -> 0 on success.
+ *
+ * This runs once per distinct block per RUN, never per block execution, and it
+ * replaces a `ql.mem.read` that cost 23,100 instructions a call. */
+static int blk_read_code(MtBlkCtx *b, uint64_t addr, int n, unsigned char *out) {
+    if (!b->env.mem_read) return -1;
+    for (int i = 0; i < n; i += 8) {
+        const int chunk = (n - i) >= 8 ? 8 : (n - i);
+        uint64_t w = 0;
+        if (b->env.mem_read(b->env.mem_ctx, addr + (uint64_t)i, chunk, &w) != 0) {
+            return -1;
+        }
+        for (int k = 0; k < chunk; k++) {
+            out[i + k] = (unsigned char)((w >> (8 * k)) & 0xFFu);
+        }
+    }
     return 0;
 }
 
@@ -769,31 +927,61 @@ static void mt_blk_hook(void *uc, uint64_t address, uint32_t size, void *user_da
     if (!ent) { b->unhandled++; b->no_slot++; return; }
 
     if (ent->key == 0) {
-        /* First sight of this block: the compiler runs, once, with the GIL.
-         * Everything after this point in the block's life is C. */
-        PyGILState_STATE gil = PyGILState_Ensure();
+        /* First sight of this block IN THIS HOOK.  The process may have
+         * planned it already, for an emulator that has since gone away, and
+         * finding it there costs one guest read and a memcmp against the very
+         * bytes the plan was compiled from: no GIL, no Python. */
         ent->key = key;
         ent->plan = NULL;
         ent->capsule = NULL;
-        b->planned++;
-        PyObject *res = PyObject_CallFunction(b->compiler, "KI",
-                                              (unsigned long long)address,
-                                              (unsigned int)size);
-        if (!res) {
-            PyErr_Clear();
-        } else if (res != Py_None) {
-            PlanBox *box = (PlanBox *)PyCapsule_GetPointer(
-                res, "microtaint.blockpath.plan");
-            if (box) {
-                ent->plan = box->plan;
-                Py_INCREF(res);
-                ent->capsule = res;
-            } else {
-                PyErr_Clear();
-            }
+        unsigned char code[BLK_MAX_CODE];
+        int sharable = 0;
+        if (b->world >= 0) {          /* a caller that named no world shares nothing */
+            sharable = (size > 0 && (int)size <= BLK_MAX_CODE
+                        && blk_read_code(b, address, (int)size, code) == 0);
+            if (!sharable) b->no_code++;
         }
-        Py_XDECREF(res);
-        PyGILState_Release(gil);
+        BlkGlobal *shared = sharable
+            ? blk_global_find(b->world, address, (int)size, code) : NULL;
+        if (shared) {
+            /* The table owns the capsule for the life of the process, so this
+             * entry BORROWS the plan and must not decref anything. */
+            ent->plan = shared->plan;
+            b->reused++;
+        } else {
+            /* Not seen in this process: the compiler runs, once, with the
+             * GIL.  Everything after this point in the block's life is C. */
+            PyGILState_STATE gil = PyGILState_Ensure();
+            b->planned++;
+            PyObject *plan_cap = NULL;   /* borrowed: the capsule, when valid */
+            PyObject *res = PyObject_CallFunction(b->compiler, "KI",
+                                                  (unsigned long long)address,
+                                                  (unsigned int)size);
+            if (!res) {
+                PyErr_Clear();
+            } else if (res != Py_None) {
+                PlanBox *box = (PlanBox *)PyCapsule_GetPointer(
+                    res, "microtaint.blockpath.plan");
+                if (box) {
+                    ent->plan = box->plan;
+                    plan_cap = res;
+                } else {
+                    PyErr_Clear();
+                }
+            }
+            /* A refusal is worth keeping too: re-lifting a block on every run
+             * to learn again that it does not lower is exactly the cost this
+             * table exists to remove. */
+            if (sharable && blk_global_add(b->world, address, (int)size, code,
+                                           ent->plan, plan_cap)) {
+                ent->capsule = NULL;     /* the table holds the reference */
+            } else if (plan_cap) {
+                Py_INCREF(plan_cap);
+                ent->capsule = plan_cap; /* nobody else will: this entry owns it */
+            }
+            Py_XDECREF(res);
+            PyGILState_Release(gil);
+        }
         /* This block's bytes are now behind a cached plan, so a write into
          * them has to invalidate it.  Widened whether or not the plan
          * compiled: a REFUSED block is cached as a refusal, and rewritten
@@ -858,16 +1046,17 @@ static void blkctx_destroy(PyObject *cap) {
     free(b);
 }
 
-/* hook_new(fastctx_addr, compiler, ids, ptrs, vals, n_calls, reg_slots) */
+/* hook_new(fastctx_addr, compiler, ids, ptrs, vals, n_calls, reg_slots,
+ *          code_lo, code_hi, world) */
 static PyObject *py_hook_new(PyObject *self, PyObject *args) {
     (void)self;
     unsigned long long fc_addr, ids, ptrs, vals;
     unsigned long long code_lo_addr = 0, code_hi_addr = 0;
     PyObject *compiler, *slots;
-    int n_calls;
-    if (!PyArg_ParseTuple(args, "KOKKKiO|KK", &fc_addr, &compiler, &ids, &ptrs,
+    int n_calls, world = -1;
+    if (!PyArg_ParseTuple(args, "KOKKKiO|KKi", &fc_addr, &compiler, &ids, &ptrs,
                           &vals, &n_calls, &slots,
-                          &code_lo_addr, &code_hi_addr)) return NULL;
+                          &code_lo_addr, &code_hi_addr, &world)) return NULL;
     if (!PyCallable_Check(compiler)) {
         PyErr_SetString(PyExc_TypeError, "compiler must be callable");
         return NULL;
@@ -909,6 +1098,7 @@ static PyObject *py_hook_new(PyObject *self, PyObject *args) {
     }
     Py_DECREF(fast);
     b->n_regs = (int)n;
+    b->world = world;
     b->fc = c;
     b->code_lo = (unsigned long long *)(uintptr_t)code_lo_addr;
     b->code_hi = (unsigned long long *)(uintptr_t)code_hi_addr;
@@ -1056,7 +1246,9 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     /* One `s:` pair per key, and the count is NOT checked: a format string
      * one pair short silently drops the LAST key, which is how adding
      * `abandoned` here made `reports_pending` disappear. */
-    return Py_BuildValue("{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i}",
+    /* Seventeen pairs, and the two added last are `reused` and `no_code`. */
+    return Py_BuildValue(
+        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:k}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
@@ -1065,7 +1257,24 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
                          "abandoned", b->abandoned,
                          "last_bad_addr", (unsigned long long)b->env.last_bad_addr,
                          "last_bad_size", (long)b->env.last_bad_size,
-                         "reports", b->rep_total, "reports_pending", b->n_rep);
+                         "reports", b->rep_total, "reports_pending", b->n_rep,
+                         "reused", b->reused, "no_code", b->no_code);
+}
+
+/* plans_clear() -- forget every plan the process has kept. */
+static PyObject *py_plans_clear(PyObject *self, PyObject *args) {
+    (void)self; (void)args;
+    blk_global_clear();
+    Py_RETURN_NONE;
+}
+
+/* plans_stats() -> what the process-wide table holds. */
+static PyObject *py_plans_stats(PyObject *self, PyObject *args) {
+    (void)self; (void)args;
+    unsigned long retired = 0;
+    for (BlkGlobal *e = g_plan_retired; e; e = e->next) retired++;
+    return Py_BuildValue("{s:k,s:k,s:l}", "entries", g_plan_n,
+                         "retired", retired, "capacity", blk_table_cap());
 }
 
 static PyObject *py_layout(PyObject *self, PyObject *args) {
@@ -1111,6 +1320,10 @@ static PyMethodDef Methods[] = {
     {"hook_reports", py_hook_reports, METH_VARARGS,
      "hook_reports(hook) -> [(address, mask)], draining them"},
     {"hook_stats", py_hook_stats, METH_VARARGS, "hook_stats(hook) -> dict"},
+    {"plans_clear", py_plans_clear, METH_NOARGS,
+     "plans_clear() -- forget every plan the process has kept"},
+    {"plans_stats", py_plans_stats, METH_NOARGS,
+     "plans_stats() -> what the process-wide plan table holds"},
     {"hook_invalidate", py_hook_invalidate, METH_VARARGS,
      "hook_invalidate(hook) -- drop every cached plan (self-modifying code)"},
     {"hook_code_range", py_hook_code_range, METH_VARARGS,

@@ -50,7 +50,11 @@ Descriptor = Callable[[frozenset[int]],
                       'tuple[list[int], list[int], bool] | None']
 
 __all__ = ['SlotMap', 'block_slot_resolver', 'cache_clear', 'cache_stats',
-           'compile_block', 'freeze_for_reuse']
+           'compile_block', 'freeze_for_reuse', 'world_token']
+
+#: Every (architecture, slot map) pair this process has compiled for, and the
+#: small integer that stands for it.  See `world_token`.
+_WORLDS: dict[tuple[object, object], int] = {}
 
 #: Every distinct slot map this process has seen, and the small integer that
 #: stands for it.  Keyed by the map's CONTENT, so two maps that agree get the
@@ -353,14 +357,53 @@ def freeze_for_reuse() -> None:
     gc.freeze()
 
 
+def world_token(arch: ArchLike, name_to_slot: Mapping[str, int]) -> int:
+    """The universe a compiled block belongs to, as a small integer.
+
+    Two engines may share a compiled block only if they agree about everything
+    the emitted code bakes in that the block itself does not carry: the
+    architecture it was lifted for, and the slot map its stores address by
+    INDEX.  The C plan table keys on this, so a block planned by one emulator
+    can be run by the next one without asking Python whether that is allowed.
+
+    Interned, never hashed.  A hash collision between two slot maps would send
+    a program's writes to the wrong register, quietly, for the rest of the
+    process; interning makes "the same world" mean the same pairs.
+
+    Blocks compiled with `publish_all_values` are not part of any world: that
+    is a test harness driving regions by hand, never the hook.
+    """
+    arch_key = arch.value if hasattr(arch, 'value') else str(arch)
+    slots: object = (name_to_slot.token if isinstance(name_to_slot, SlotMap)
+                     else frozenset(name_to_slot.items()))
+    key = (arch_key, slots)
+    with BUILDER_LOCK:
+        got = _WORLDS.get(key)
+        if got is None:
+            got = len(_WORLDS)
+            _WORLDS[key] = got
+    return got
+
+
 def cache_clear() -> None:
     """Forget every compiled block, and the counters with them.
 
-    Live plans keep working: each holds its own reference to the code it runs.
+    Live plans keep working: each holds its own reference to the code it runs,
+    and the C table RETIRES rather than frees what it was holding, because a
+    live hook borrows plans from it and has no way to be told.
     """
     _PLAN_CACHE.clear()
     for k in _STATS:
         _STATS[k] = 0
+    # The C table is the one a fresh wrapper actually consults; leaving it
+    # full would make "this run compiled nothing" true for a reason the test
+    # asking it did not mean.
+    try:
+        from microtaint.emulator import blockpath_c  # noqa: PLC0415
+
+        blockpath_c.plans_clear()
+    except (AttributeError, ImportError):   # no table to clear
+        pass
 
 
 def compile_block(arch: ArchLike, code: bytes, base: int,

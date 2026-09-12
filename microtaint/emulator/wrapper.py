@@ -683,6 +683,7 @@ class MicrotaintWrapper:
         from microtaint.taint_ir.blockcompile import (  # noqa: PLC0415
             SlotMap,
             compile_block,
+            world_token,
         )
 
         regfile = self._regfile
@@ -721,12 +722,17 @@ class MicrotaintWrapper:
         # widens that range itself; otherwise the mem-write hook's
         # self-modifying-code guard never fires and a rewritten block keeps
         # running the plan compiled for the bytes that used to be there.
+        # The world this emulator's blocks belong to: the C plan table keeps a
+        # plan for the life of the PROCESS, and a later emulator may run it
+        # without asking Python.  It may do that only if it agrees about the
+        # architecture and the slot map the emitted code addresses by index,
+        # which is exactly what the world names.
         lo_addr, hi_addr = hook.code_range_addrs()
         block_ctx = blockpath_c.hook_new(
             c_instruction_hook_ud(hook), compiler,
             ctypes.addressof(regfile._ids), ctypes.addressof(regfile._ptrs),
             ctypes.addressof(regfile._vals), regfile._n_calls, reg_slots,
-            lo_addr, hi_addr)
+            lo_addr, hi_addr, world_token(self.arch, slot_map))
         self._block_ctx = block_ctx
         hook.block_invalidate = (
             lambda addr=0, size=0: blockpath_c.hook_invalidate(

@@ -85,7 +85,7 @@ def runner_reports(runner: _Capsule) -> list[tuple[int, int]]: ...
 def hook_new(fastctx: int, compiler: Callable[[int, int], object | None],
              ids: int, ptrs: int, vals: int, n_calls: int,
              reg_slots: list[int], code_lo_addr: int = ...,
-             code_hi_addr: int = ...) -> _Capsule:
+             code_hi_addr: int = ..., world: int = ...) -> _Capsule:
     """The block hook's C context.
 
     `fastctx` is the InstructionHook's C context (from
@@ -99,6 +99,13 @@ def hook_new(fastctx: int, compiler: Callable[[int, int], object | None],
     decodes, so it widens the same range: it is what the mem-write hook's
     self-modifying-code guard tests, and without it a rewritten block would
     keep running the plan compiled for the bytes that used to be there.
+
+    `world` names the (architecture, slot map) universe this hook's plans
+    belong to, from `blockcompile.world_token`.  Plans are kept for the life of
+    the PROCESS and a later emulator runs them without entering Python, which
+    it may do only within one world: the emitted code addresses engine slots by
+    index.  Omit it and this hook shares nothing, which is what every caller
+    got before the table existed.
     """
 
 def hook_ptr() -> int:
@@ -124,9 +131,33 @@ def hook_reports(hook: _Capsule) -> list[tuple[int, int]]:
     partway through never happened.
     """
 
+def plans_clear() -> None:
+    """Forget every plan the process has kept.
+
+    RETIRES rather than frees them: a live hook's own cache borrows plans from
+    this table and cannot be told.  Called by `blockcompile.cache_clear`.
+    """
+
+def plans_stats() -> dict[str, int]:
+    """What the process-wide plan table holds: entries, retired, capacity.
+
+    `capacity` is `MICROTAINT_BLOCK_PLAN_TABLE`, default 32768.  The table
+    never evicts, because a live hook borrows plans from it, so that number is
+    the memory bound: each entry holds a block's bytes, its plan, and the
+    emitted code the plan runs.  Set it to 0 and nothing is kept, which is the
+    behaviour block mode had before the table existed.
+    """
+
 def hook_stats(hook: _Capsule) -> dict[str, int]:
     """Blocks seen, handled, and NOT handled.  `unhandled` is unanalysed code,
     so it is counted rather than ignored.
+
+    `planned` is how many blocks this hook asked the Python compiler about and
+    `reused` how many it found already planned by the process, without the GIL.
+    On a fuzzer, the second run of a binary should be all `reused` and no
+    `planned`.  `no_code` counts blocks whose bytes could not be read, which
+    can be neither shared nor kept: they are the reason `reused` might be zero
+    while everything else looks right.
 
     `reports` is every finding the runtime made, counted even when the ring
     overflowed, so a drain that returns fewer can be told from a run that found

@@ -114,8 +114,13 @@ def test_the_guest_exercises_real_library_code(stats: dict[str, int]) -> None:
     assert stats['blocks'] > 400, (
         f'only {stats["blocks"]} block executions; this is meant to be a real '
         f'binary, and a short trace cannot show what it is here to show')
-    assert stats['planned'] > 100, (
-        f'only {stats["planned"]} distinct blocks planned')
+    # Planned HERE or found in the process-wide plan table: another test in
+    # this worker may have planned the same library blocks already, and a
+    # block that was reused is just as much a distinct block met.
+    distinct = stats['planned'] + stats.get('reused', 0)
+    assert distinct > 100, (
+        f'only {distinct} distinct blocks met ({stats["planned"]} planned, '
+        f'{stats.get("reused", 0)} reused)')
 
 
 def test_block_mode_skips_nothing(stats: dict[str, int]) -> None:

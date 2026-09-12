@@ -159,14 +159,74 @@ def test_the_second_run_compiles_nothing(
         f'the second run compiled {second["misses"]} blocks again, of the '
         f'{first["misses"]} the first run compiled: two wrappers disagree '
         f'about the cache key, so block mode pays the compiler on every run')
-    assert second['hits'] > 0, 'the second run did not consult the cache at all'
+
+
+def test_the_second_run_never_enters_python(two_runs: list[_Run]) -> None:
+    """And it does not ASK either, which is the stronger property.
+
+    Compiling nothing still cost the callback: the C hook had to take the GIL
+    and call Python once per distinct block, and Python answered out of a cache
+    every single time.  Measured on this guest driven the way a fuzzer drives
+    one -- 637 block executions, 402 distinct -- that was 34.8 M instructions a
+    run, 22.5% of the whole run, none of it compilation.  The plan table in the
+    C runtime answers instead, with no GIL.
+
+    `no_code` is asserted because it is how this can be true for the wrong
+    reason: a block whose bytes cannot be read is neither checked nor kept, and
+    a run where that happened to all of them would ask Python every time while
+    everything else still looked right.
+    """
+    a, b = two_runs[0][1], two_runs[1][1]
+    assert b['planned'] == 0, (
+        f'the second run asked the compiler about {b["planned"]} blocks; the '
+        f'process-wide plan table should have answered every one of them')
+    assert b['reused'] == a['planned'] + a['reused'], (
+        f'the second run reused {b["reused"]} plans against the '
+        f'{a["planned"] + a["reused"]} distinct blocks the first run met')
+    assert b['no_code'] == 0, (
+        f"{b['no_code']} blocks' bytes could not be read on the second run, so "
+        f'they could be neither checked against a kept plan nor kept')
+    assert two_runs[0][0]['hits'] + two_runs[0][0]['misses'] > 0, (
+        'the first run did not consult the Python cache at all, so this '
+        'compares a run that entered Python against another that did not')
+
+
+def test_the_table_can_be_turned_off(guest: str) -> None:
+    """And then block mode goes back to asking Python, and still answers.
+
+    The table never evicts, so its capacity is a memory bound as much as a
+    speed one, and a target with more distinct blocks than it holds has to keep
+    working: it asks the compiler for the overflow exactly as it always did.
+    Setting the capacity to zero is that path for every block.
+    """
+    prev = os.environ.get('MICROTAINT_BLOCK_PLAN_TABLE')
+    os.environ['MICROTAINT_BLOCK_PLAN_TABLE'] = '0'
+    try:
+        bc.cache_clear()
+        first = _run(guest)
+        second = _run(guest)
+    finally:
+        if prev is None:
+            os.environ.pop('MICROTAINT_BLOCK_PLAN_TABLE', None)
+        else:
+            os.environ['MICROTAINT_BLOCK_PLAN_TABLE'] = prev
+        bc.cache_clear()
+    assert second[1]['reused'] == 0, (
+        f'{second[1]["reused"]} plans were reused with the table turned off')
+    assert second[1]['planned'] == first[1]['planned'], (
+        f'the second run planned {second[1]["planned"]} blocks against '
+        f'{first[1]["planned"]}: with no table it must ask about every one')
+    assert second[0]['misses'] == 0, (
+        'the Python cache did not answer, so the second run recompiled')
+    assert second[2] == first[2], (
+        'with the table off, the second run reported different leaks')
 
 
 def test_the_second_run_plans_the_same_blocks(
         two_runs: list[_Run]) -> None:
     """And it is the same work, not a shorter run that simply met less code."""
     a, b = two_runs[0][1], two_runs[1][1]
-    assert b['planned'] == a['planned'], (a, b)
+    assert b['planned'] + b['reused'] == a['planned'] + a['reused'], (a, b)
     assert b['blocks'] == a['blocks'], (a, b)
     assert b['unhandled'] == 0, (
         f'{b["unhandled"]} block executions were skipped on the second run, '
