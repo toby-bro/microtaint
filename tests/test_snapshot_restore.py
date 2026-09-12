@@ -189,6 +189,32 @@ void _start(void) {
 """
 
 
+#: Makes its own READ-ONLY data writable and scribbles on it.  The restore
+#: skips read-only regions -- two thirds of a checkpoint's memory is the
+#: target's text and rodata, which the guest cannot write -- and this is the
+#: case that makes "cannot" false.  `seen` publishes the byte BEFORE the
+#: scribble, so it must read the original on every iteration.
+_RODATA = _SYS + r"""
+__attribute__((section(".rodata"))) const unsigned char marker[16] = {
+  0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+  0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00
+};
+volatile unsigned long seen;
+__attribute__((noinline)) void body(void) {
+  seen = marker[0];                       /* 0x11 unless a scribble survived */
+  unsigned char buf[16];
+  if (sys6(0, 0, (long)buf, 16, 0, 0, 0) <= 0) sys_exit(1);
+  unsigned long a = 0;
+  for (int i = 0; i < 16; i++) a = a * 31u + buf[i];
+  out = a;
+  unsigned long page = ((unsigned long)marker) & ~0xFFFUL;
+  if (sys6(10, (long)page, 4096, 3, 0, 0, 0) != 0) sys_exit(3);  /* mprotect RW */
+  *(volatile unsigned char *)marker = 0xAA;                      /* scribble */
+}
+void _start(void) { body(); sys_exit(0); }
+"""
+
+
 class Guest(NamedTuple):
     name: str
     source: str
@@ -202,6 +228,10 @@ class Guest(NamedTuple):
     #: `out` must come back CLEAN here: it publishes a register the guest had
     #: not tainted yet, and the premise is carried by another global instead.
     out_is_clean: bool = False
+    #: Link with a writable text segment.  The default, because the `smc`
+    #: guest rewrites its own code -- but it also makes every segment
+    #: writable, so a guest that is about READ-ONLY memory must not have it.
+    omagic: bool = True
 
 
 _GUESTS = [
@@ -214,15 +244,33 @@ _GUESTS = [
     Guest('warm', _WARM, [bytes([i] * 8) for i in range(1, 7)]),
     Guest('regs', _REGS, [bytes([i] * 16) for i in range(1, 7)],
           probes=('out', 'sink'), out_is_clean=True),
+    Guest('rodata', _RODATA, [bytes([i] * 16) for i in range(1, 7)],
+          probes=('out', 'seen'), omagic=False),
 ]
 
 
-def _build(source: str) -> str:
+#: The first byte of the `rodata` guest's marker array.
+_ORIGINAL_MARKER = 0x11
+
+
+def _marker_addr(binary: str) -> int:
+    nm = subprocess.run(['nm', binary], capture_output=True, text=True,
+                        check=False).stdout
+    addr = next((int(line.split()[0], 16) for line in nm.splitlines()
+                 if line.split()[-1:] == ['marker']), None)
+    if addr is None:
+        pytest.skip('cannot locate the rodata marker')
+    return addr
+
+
+def _build(source: str, omagic: bool = True) -> str:
     fd, path = tempfile.mkstemp(suffix='.elf')
     os.close(fd)
+    flags = ['-static', '-nostdlib', '-O1', '-fno-stack-protector']
+    if omagic:
+        flags.append('-Wl,-N')
     built = subprocess.run(
-        ['gcc', '-static', '-nostdlib', '-O1', '-fno-stack-protector',
-         '-Wl,-N', '-o', path, '-x', 'c', '-'],
+        ['gcc', *flags, '-o', path, '-x', 'c', '-'],
         input=source.encode(), capture_output=True, check=False)
     if built.returncode != 0:
         os.unlink(path)
@@ -235,7 +283,7 @@ def built() -> Iterator[dict[str, tuple[str, int, tuple[int, ...]]]]:
     """name -> (binary, address of `body`, addresses of the probed globals)."""
     made: dict[str, tuple[str, int, tuple[int, ...]]] = {}
     for guest in _GUESTS:
-        path = _build(guest.source)
+        path = _build(guest.source, guest.omagic)
         nm = subprocess.run(['nm', path], capture_output=True, text=True,
                             check=False).stdout
         syms = {line.split()[-1]: int(line.split()[0], 16)
@@ -528,3 +576,62 @@ def test_each_iteration_reports_its_own_counts(
         f'{[r.blocks for r in seen]}')
     assert all(r.handled == r.blocks and r.unhandled == 0 for r in seen), (
         f'blocks went unanalysed in a restored run: {seen}')
+
+
+def test_read_only_memory_the_guest_made_writable_is_put_back(
+        built: dict[str, tuple[str, int, tuple[int, ...]]],
+        block_mode: bool) -> None:
+    """Restoring skips regions the guest cannot have written.
+
+    Two thirds of a checkpoint's memory is the target's own text and rodata --
+    740 KB of 1,116 on a static-glibc guest -- and rewriting it every iteration
+    is work to put back bytes that are already there.  A read-only region
+    cannot be written by the guest, so it is skipped.
+
+    This is the case that makes "cannot" false: the guest mprotects its own
+    rodata writable and scribbles on it.  Its PERMISSIONS then differ from the
+    checkpoint's, so the region is unmapped and written in full.
+
+    Asserted by reading the guest's memory directly rather than by comparing
+    two runs.  The comparison does not catch it -- measured, with the restore
+    deliberately broken the page came back ZEROED and every fresh-vs-restored
+    assertion still passed -- so the thing being claimed is checked head on.
+    """
+    from qiling import Qiling
+    from qiling.const import QL_VERBOSE
+
+    from microtaint.emulator.reporter import Reporter
+    from microtaint.emulator.wrapper import MicrotaintWrapper
+
+    binary, body, _probes = built['rodata']
+    marker = _marker_addr(binary)
+    original = _ORIGINAL_MARKER
+    saved, dn = os.dup(1), os.open(os.devnull, os.O_WRONLY)
+    seen = []
+    try:
+        rep = Reporter(json_mode=True, stream=io.StringIO())
+        ql = Qiling([binary], '/', verbose=QL_VERBOSE.OFF)
+        ql.os.stdin = io.BytesIO(b'')
+        w = MicrotaintWrapper(ql, reporter=rep)
+        os.dup2(dn, 1)
+        w.run_to(body)
+        cp = w.checkpoint()
+        for i in range(3):
+            ql.os.stdin = io.BytesIO(bytes([i + 1] * 16))
+            rep.findings.clear()
+            w.resume(cp)
+            scribbled = bytes(ql.mem.read(marker, 1))[0]
+            w.restore(cp)
+            seen.append((scribbled, bytes(ql.mem.read(marker, 1))[0]))
+        os.dup2(saved, 1)
+    finally:
+        os.dup2(saved, 1)
+        os.close(dn)
+        os.close(saved)
+    assert all(after_run == 0xAA for after_run, _after_restore in seen), (
+        f'the guest never scribbled on its rodata, so this proves nothing: '
+        f'{seen}')
+    assert all(after_restore == original
+               for _after_run, after_restore in seen), (
+        f'rodata the guest made writable and scribbled on did not come back: '
+        f'{[(hex(a), hex(b)) for a, b in seen]}, expected 0x{original:02x}')

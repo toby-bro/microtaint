@@ -1066,7 +1066,8 @@ class MicrotaintWrapper:
         for lo, hi, perms, *_ in list(self.ql.mem.map_info):
             if (lo, hi, perms) not in cp.shape:
                 self.ql.mem.unmap(lo, hi - lo)
-        self.ql.restore(cp.state)
+        self._restore_memory(cp)
+        self.ql.restore({k: v for k, v in cp.state.items() if k != 'mem'})
         shape = map_shape(self.ql)
         if shape != cp.shape:
             raise CheckpointError(
@@ -1090,6 +1091,39 @@ class MicrotaintWrapper:
         if isinstance(hook, InstructionHook):
             hook.reset_taint()
         self._last_tainted_writes = set()
+
+    def _restore_memory(self, cp: Checkpoint) -> None:
+        """Put the guest's memory back, skipping what it cannot have changed.
+
+        Two thirds of a checkpoint's memory is READ-ONLY -- the target's own
+        text and rodata, 740 KB of 1,116 on a static-glibc guest -- and a
+        read-only region cannot be written by the guest.  Rewriting it every
+        iteration is 0.9 M instructions to put back bytes that are already
+        there.
+
+        What could make that wrong is the guest making such a region
+        writable, and that is not silent: its PERMISSIONS then differ from the
+        checkpoint's, the caller has already unmapped it, and it arrives here
+        missing and is written in full.  Self-modifying code needs no separate
+        case -- code the guest can rewrite is writable code, which is written
+        every time anyway.
+
+        Falls back to Qiling's own restore for a guest with MMIO, which this
+        does not model.
+        """
+        mem = cp.state.get('mem')
+        if not mem or mem.get('mmio'):
+            self.ql.mem.restore(mem)
+            return
+        mapped = {(lo, hi, perms) for lo, hi, perms, *_ in self.ql.mem.map_info}
+        for lbound, ubound, perms, label, data in mem['ram']:
+            present = (lbound, ubound, perms) in mapped
+            if not present:
+                self.ql.mem.map(lbound, ubound - lbound, perms, label)
+            # UC_PROT_WRITE.  A region without it is one the guest cannot have
+            # touched, so its bytes are still the ones the checkpoint saw.
+            if not present or (perms & 2):
+                self.ql.mem.write(lbound, data)
 
     def resume(self, cp: Checkpoint, timeout_us: int = 0) -> RunOutcome:
         """Run from the checkpoint to wherever the guest ends.
