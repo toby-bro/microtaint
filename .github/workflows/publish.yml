@@ -1,22 +1,22 @@
 name: Publish PyPI
 
+# Releasing is a deliberate act, never a side effect of pushing a tag. Tags are
+# pushed often and most of them are not releases, so nothing here starts on its
+# own: run this workflow from the Actions tab and pick the v* tag to publish.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 jobs:
   build_sdist:
     name: Build Source Distribution
     runs-on: ubuntu-latest
-    # This workflow publishes to PyPI. The trigger above already excludes pull
-    # requests, but belt and braces: every job also refuses to start unless the
-    # run really is a tag push on this repository, so a pull request -- a
-    # dependabot bump, a fork -- can never reach the publishing steps even if the
-    # trigger is ever widened by accident.
+    # This workflow publishes to PyPI, so belt and braces: every job refuses to
+    # start unless the chosen ref really is a v* tag of this repository. A run
+    # dispatched against a branch, or against a fork, reaches nothing. The final
+    # publish also waits on the "pypi" environment, which requires a human to
+    # approve it.
     if: >-
-      github.event_name == 'push'
-      && startsWith(github.ref, 'refs/tags/v')
+      startsWith(github.ref, 'refs/tags/v')
       && github.repository == 'toby-bro/microtaint'
     steps:
       - name: Checkout repository
@@ -39,10 +39,9 @@ jobs:
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # Tag pushes on this repository only. See build_sdist.
+    # A v* tag of this repository only. See build_sdist.
     if: >-
-      github.event_name == 'push'
-      && startsWith(github.ref, 'refs/tags/v')
+      startsWith(github.ref, 'refs/tags/v')
       && github.repository == 'toby-bro/microtaint'
     strategy:
       fail-fast: false
@@ -86,10 +85,9 @@ jobs:
     name: Publish to PyPI & GitHub Releases
     needs: [build_sdist, build_wheels]
     runs-on: ubuntu-latest
-    # Tag pushes on this repository only. See build_sdist.
+    # A v* tag of this repository only. See build_sdist.
     if: >-
-      github.event_name == 'push'
-      && startsWith(github.ref, 'refs/tags/v')
+      startsWith(github.ref, 'refs/tags/v')
       && github.repository == 'toby-bro/microtaint'
     environment:
       name: pypi
