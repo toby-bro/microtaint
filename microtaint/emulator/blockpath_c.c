@@ -234,6 +234,13 @@ typedef struct {
      * without widening this the mem-write hook's self-modifying-code guard
      * never fires and a rewritten block keeps running its old plan. */
     unsigned long long *code_lo, *code_hi;
+    /* Memory writes the runtime has committed to the shadow.  Counted because
+     * a checkpoint loop wants to know how much a single input actually moved:
+     * measured at 747 per iteration on a static-glibc guest.  It is NOT a cost
+     * attribution -- suppressing these writes suppresses every taint that
+     * would have followed from them, so the difference prices the propagation
+     * and not the writes. */
+    unsigned long committed_writes;
     unsigned long invalidations;
     /* Of those, how many also threw away the held block.  Counted
      * separately because the two used to be the same number, and the
@@ -1003,6 +1010,7 @@ static void mt_blk_hook(void *uc, uint64_t address, uint32_t size, void *user_da
     /* Reaching a new block proves the held one completed. */
     if (b->pend.valid) {
         blkctx_take_reports(b);
+        b->committed_writes += (unsigned long)b->pend.n_writes;
         mt_blk_commit(&b->pend, &b->env, *c->g_taint, *c->n_slots);
     }
 
@@ -1246,9 +1254,12 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     /* One `s:` pair per key, and the count is NOT checked: a format string
      * one pair short silently drops the LAST key, which is how adding
      * `abandoned` here made `reports_pending` disappear. */
-    /* Seventeen pairs, and the two added last are `reused` and `no_code`. */
+    /* Eighteen pairs; the last three added are `reused`, `no_code` and
+     * `committed_writes`.  The count is NOT checked by Py_BuildValue: one
+     * pair short silently drops the LAST key, which is how adding
+     * `abandoned` once made `reports_pending` disappear. */
     return Py_BuildValue(
-        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:k}",
+        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:k,s:k}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
@@ -1258,7 +1269,8 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
                          "last_bad_addr", (unsigned long long)b->env.last_bad_addr,
                          "last_bad_size", (long)b->env.last_bad_size,
                          "reports", b->rep_total, "reports_pending", b->n_rep,
-                         "reused", b->reused, "no_code", b->no_code);
+                         "reused", b->reused, "no_code", b->no_code,
+                         "committed_writes", b->committed_writes);
 }
 
 /* plans_clear() -- forget every plan the process has kept. */

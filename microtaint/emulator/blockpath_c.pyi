@@ -163,6 +163,12 @@ def hook_stats(hook: _Capsule) -> dict[str, int]:
     overflowed, so a drain that returns fewer can be told from a run that found
     fewer.
 
+    `committed_writes` is how many memory writes the runtime has applied to
+    the shadow: what one input actually moved, which a checkpoint loop wants
+    per iteration.  Measured at 747 an iteration on a static-glibc guest.  It
+    is not a cost attribution: suppressing those writes suppresses every taint
+    that would have followed from them.
+
     `invalidations` is how often a write onto code dropped the cached plans;
     `abandoned` is how many of those ALSO threw away the block being held.  The
     two used to be the same number, and the difference between them is exactly
