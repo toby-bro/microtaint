@@ -193,6 +193,12 @@ class InstructionHook:
     #: rewrite of the block it is holding from a rewrite of anything else.
     block_invalidate: Callable[[int, int], None] | None
 
+    #: How many times a guest write landed on code this hook had cached.  A
+    #: checkpoint harness reads it to decide whether restoring the guest's
+    #: bytes has left a stale translation or plan behind; it is the one signal
+    #: that says so on both the per-instruction and the block path.
+    smc_invalidations: int
+
     def code_range_addrs(self) -> tuple[int, int]:
         """Addresses of `code_lo` and `code_hi`, for the block runtime."""
 

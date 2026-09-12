@@ -559,6 +559,12 @@ cdef class InstructionHook:
     #: (address, size), so a rewritten block would otherwise run the plan
     #: compiled for what used to be there.
     cdef public object block_invalidate
+    #: How many times a guest write landed on code this hook had cached.  A
+    #: checkpoint harness needs it: restoring rewrites the guest's bytes with
+    #: no guest write, so anything holding a translation or a plan of the
+    #: rewritten form keeps using it -- but only if the guest rewrote code at
+    #: all, and this is the one signal that says so on BOTH paths.
+    cdef public unsigned long smc_invalidations
     cdef public unsigned long arr_fallbacks   # instructions that had to use the dict path
     cdef MemReadCtx mem_ctx           # C guest-read context handed to circuit_c
     cdef bint mem_ctx_ready
@@ -660,6 +666,7 @@ cdef class InstructionHook:
         self.arr_loaded = False
         self.block_mode = False
         self.block_invalidate = None
+        self.smc_invalidations = 0
         self.arr_fallbacks = 0
         self.mem_ctx_ready = False
         self.rip_slot = -1
@@ -2041,6 +2048,7 @@ cdef class InstructionHook:
         execution.  Rare (only self-modifying / JIT'd code writes into the
         code range), so a full clear + lazy rebuild is fine.
         """
+        self.smc_invalidations += 1
         if self.py_decode_cache:
             self.py_decode_cache.clear()
         if self.instr_cache_v:
