@@ -643,3 +643,66 @@ slots each region publishes, so the two whole-register-file copies could become
 a short list. It is worth 6-7%, and it is subtle enough to want its own careful
 pass: getting the array and slot convention wrong there produces wrong VALUES,
 which become wrong addresses, which become under-taints.
+
+
+## What a fuzzer-shaped workload actually spends its time on
+
+Everything above is measured on `bench_dense.elf`, which runs 38 distinct
+blocks twenty thousand times. That is the right workload for the taint
+computation and the wrong one for everything else: a fuzzer runs a fresh
+emulator per input, so it meets each block once or twice and pays setup
+repeatedly.
+
+Profiled on a static-glibc guest driven that way (402 distinct blocks, 626
+block executions, a fresh emulator per run), the shape is different enough to
+change the priorities:
+
+| | share of cycles |
+|---|---|
+| Python interpreter | 14.0% |
+| the garbage collector | ~13.9% |
+| Unicorn translating blocks (TCG) | ~8.4% |
+| computing taint | does not reach the top 22 |
+
+`mt_blk_compute` is the top item on `bench_dense` and invisible here. Neither
+number is wrong; they are different questions, and a tool aimed at fuzzing has
+to answer the second one.
+
+### Identifying the slot map cost more than using it
+
+The compiled-block cache is keyed partly on the slot map. Measured in the
+engine rather than in a microbenchmark, per distinct block per run:
+
+| | before | after |
+|---|---|---|
+| building the key (a frozenset of 210 pairs) | 12.5 us | 2.3 us |
+| the dictionary hashing and comparing it | 31.2 us | 2.6 us |
+| turning the compiled block into a plan | 24.6 us | ~25 us |
+
+Over half the cost of a cache HIT was working out which slot map it was. A
+`SlotMap` now answers with a token computed once at construction, from a
+registry keyed on the map's content, so it is exact rather than a hash. On the
+glibc guest that is 118 ms to 86 ms, with identical findings.
+
+A microbenchmark had put the whole warm path at 24.5 us and it was 76-86.
+Real blocks and a real 210-name slot map are nothing like a toy one, which is
+the general lesson: measure the warm path where it runs.
+
+### The collector is worth about as much as the interpreter
+
+Most of the collector's work is traversing structures that exist for the life
+of the process and can never become garbage: the compiled blocks, the emitted
+code they hold alive, the slot map. `blockcompile.freeze_for_reuse()` takes
+them out of its reach. Median run time over the same workload:
+
+| | median |
+|---|---|
+| collector on | ~103 ms |
+| after `freeze_for_reuse()` | ~90 ms |
+| collector disabled | ~85 ms |
+
+It is opt-in and the engine never calls it, because `gc.freeze()` is
+process-wide rather than ours alone, and because it has to be called once
+rather than per run: calling it per run builds a permanent generation that only
+grows. Disabling the collector outright is faster still and is the caller's
+decision, not the engine's.

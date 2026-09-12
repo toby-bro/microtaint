@@ -771,6 +771,32 @@ def test_two_threads_compiling_the_same_block_both_get_a_working_plan(
 # What makes the cache hit ACROSS runs
 # ---------------------------------------------------------------------------
 
+def test_freezing_for_reuse_keeps_the_cache_working() -> None:
+    """`freeze_for_reuse` is `gc.freeze()` with a reason, so the only thing to
+    check is that it changes nothing about the answers.
+
+    It exists because a profile of a fuzzer-shaped workload put ~14% of cycles
+    in the collector, most of it traversing structures that live for the
+    process and can never become garbage.
+    """
+    import gc
+
+    before = gc.get_freeze_count()
+    compile_block(_ARCH, _ADD_RAX_RCX, _BASE, layouts_for_freeze())
+    bc.freeze_for_reuse()
+    assert gc.get_freeze_count() > before, 'nothing was frozen'
+    # the cache still hits, and still answers
+    hits = cache_stats()['hits']
+    got = compile_block(_ARCH, _ADD_RAX_RCX, _BASE, layouts_for_freeze())
+    assert got is not None
+    assert cache_stats()['hits'] == hits + 1, 'the cache stopped hitting'
+
+
+def layouts_for_freeze() -> dict[str, int]:
+    names = sorted(set(frompcode.builder_for(_ARCH).name_by_off.values()))
+    return {n: i for i, n in enumerate(names)}
+
+
 def test_the_register_order_a_slot_map_is_built_from_is_stable() -> None:
     """Slots are interned in the order `archregs` lists them, from an empty map.
 
