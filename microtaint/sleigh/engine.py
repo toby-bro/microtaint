@@ -4264,6 +4264,47 @@ def generate_taint_assignments(  # noqa: C901
                 )
 
     # -----------------------------------------------------------------------
+    # MULTIPLY-OVERFLOW FLAG FLOOR (imul / mul CF and OF).
+    #
+    # CF lifts as INT_NOTEQUAL(sext(truncated result), full product): "the
+    # product's upper half is significant".  NON-monotone -- the signed product
+    # overflows at BOTH sign extremes -- so the 2-corner differential cancels
+    # while an interior value differs (measured: `imul rax, 3` CF, 1 in 2.4 M).
+    #
+    # Gated on a product WIDER than 64 bits.  The <=32-bit forms multiply into a
+    # product the differential handles (0 under-taints at 46-85% exact in the
+    # campaign) and must keep that precision; only the 64-bit forms build a
+    # 128-bit product that neither the differential nor the uint64 compiled stack
+    # can represent, and those already avalanche their RESULT (0.0% exact), so
+    # flooring the 1-bit flag costs about one bit per case.
+    if (
+        not is_store_target
+        and not isinstance(mapping, MemMapping)
+        and out_bit_end == out_bit_start
+        and any(
+            o.opcode.name == 'INT_MULT' and o.output is not None and o.output.size > 8
+            for o in slice_ops
+        )
+        # ...and only ONE register value-dep.  With two, the symmetric-comparison
+        # floor's pairwise-avalanche regime already fires and this adds nothing:
+        # `imul rax, rbx` measured 0 under-taints and byte-identical taint output
+        # with and without this floor, while costing 9 -> 23 nodes.  The single-dep
+        # regime is exactly the one where the differential is ASSUMED exact for a
+        # partially-tainted operand, which product overflow violates.
+        and len([d for d in dep_set.value_deps if isinstance(d, RegMapping)]) < 2
+    ):
+        _mf: Expr | None = None
+        for _dm in dep_set.value_deps:
+            if isinstance(_dm, RegMapping):
+                _dt = _get_taint_operand(_dm.name, _dm.bit_start, _dm.bit_end, True)
+                _mf = _dt if _mf is None else BinaryExpr(Op.OR, _mf, _dt)
+        if _mf is not None:
+            expr = BinaryExpr(
+                Op.OR, expr,
+                BinaryExpr(Op.AND, AvalancheExpr(_mf, 1), Constant(1, 8)),
+            )
+
+    # -----------------------------------------------------------------------
     # SIGN FLAG FLOOR for SHIFTED-operand arithmetic (NG/SF).
     #
     # NG = (a - (b<<k)) s< 0 is the sign bit of the result.  When the shift brings
