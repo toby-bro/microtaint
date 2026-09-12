@@ -323,18 +323,25 @@ def freeze_for_reuse() -> None:
 
     It is here because a profile of a real target says so.  On a static-glibc
     guest driven the way a fuzzer drives one -- a fresh emulator per input --
-    roughly 14% of cycles go to the collector, and most of that is traversing
-    structures that exist for the life of the process and can never become
-    garbage: the compiled blocks in `_PLAN_CACHE`, the emitted code they hold
-    alive, the slot map.  Measured over the same workload, median run time:
+    roughly 14% of cycles go to the collector, much of it traversing structures
+    that exist for the life of the process and can never become garbage: the
+    compiled blocks in `_PLAN_CACHE`, the emitted code they hold alive, the
+    slot map.  Measured over the same workload as INSTRUCTIONS RETIRED, three
+    sets, marginal per run:
 
-        garbage collector on      ~103 ms
-        after freeze_for_reuse()   ~90 ms
-        collector disabled         ~85 ms
+        garbage collector on      195.3 M
+        after freeze_for_reuse()  187.7 M   -3.9%
+        collector disabled        182.2 M   -6.7%
 
-    Disabling it outright is faster still and is the caller's decision to make,
-    not the engine's; freezing keeps collection working for everything
-    allocated afterwards, which is the part a long fuzzing run needs.
+    Wall clock first said 13% for the middle row.  That was measured while the
+    machine was running something else, and instructions retired is the metric
+    that does not move when it is: the honest figure is about 4%.  Run-to-run
+    spread is around 3%, so this is a small effect measured carefully rather
+    than a large one.
+
+    Disabling the collector outright is worth more and is the caller's decision
+    to make, not the engine's; freezing keeps collection working for everything
+    allocated afterwards, which is what a long fuzzing run needs.
     """
     import gc  # noqa: PLC0415 - only this function needs it
 

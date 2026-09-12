@@ -682,7 +682,8 @@ engine rather than in a microbenchmark, per distinct block per run:
 Over half the cost of a cache HIT was working out which slot map it was. A
 `SlotMap` now answers with a token computed once at construction, from a
 registry keyed on the map's content, so it is exact rather than a hash. On the
-glibc guest that is 118 ms to 86 ms, with identical findings.
+glibc guest that is 213.4 M instructions per run down to 183-194, about 12%,
+with identical findings.
 
 A microbenchmark had put the whole warm path at 24.5 us and it was 76-86.
 Real blocks and a real 210-name slot map are nothing like a toy one, which is
@@ -695,14 +696,35 @@ of the process and can never become garbage: the compiled blocks, the emitted
 code they hold alive, the slot map. `blockcompile.freeze_for_reuse()` takes
 them out of its reach. Median run time over the same workload:
 
-| | median |
-|---|---|
-| collector on | ~103 ms |
-| after `freeze_for_reuse()` | ~90 ms |
-| collector disabled | ~85 ms |
+Measured as instructions retired, marginal per run, over three sets:
+
+| | M instructions | vs on |
+|---|---|---|
+| collector on | 195.3 | |
+| after `freeze_for_reuse()` | 187.7 | -3.9% |
+| collector disabled | 182.2 | -6.7% |
 
 It is opt-in and the engine never calls it, because `gc.freeze()` is
 process-wide rather than ours alone, and because it has to be called once
 rather than per run: calling it per run builds a permanent generation that only
 grows. Disabling the collector outright is faster still and is the caller's
 decision, not the engine's.
+
+
+### Measure instructions, not seconds, on a machine you do not own
+
+Two of the figures above were first taken as wall clock and were wrong by a
+factor of three, because the machine was running something else at the time:
+load average 12.7 on 16 cores, another agent's test suite, and a game. Wall
+clock said `freeze_for_reuse()` was worth 13% and the slot-map token 27%;
+instructions retired, which contention cannot move, say 4% and 12%.
+
+The measurement that survives a busy machine is the MARGINAL instruction count:
+run the workload N times and 5N times under `perf stat -e instructions`, and
+take the difference divided by 4N. Startup cancels, and the result is
+repeatable to about 3% even under load. Every performance figure in this
+document from the block-cost ladder onward was taken that way or re-checked
+that way.
+
+Across the session's block work on the glibc guest, marginal instructions per
+run: **240.9 M at the start, 183-194 M now, about 22%.**
