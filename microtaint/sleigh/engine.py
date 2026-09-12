@@ -1348,6 +1348,7 @@ def generate_static_rule(
 def _build_signed_overflow_taint(  # noqa: C901
     slice_ops: list[PcodeOp],
     mapper: StateMapper,
+    all_ops: list[PcodeOp] | None = None,
 ) -> Expr | None:
     """EXACT taint for a signed-overflow flag (INT_SBORROW / INT_SCARRY), or None.
 
@@ -1499,6 +1500,8 @@ def _build_signed_overflow_taint(  # noqa: C901
                 bits,
             )
         if d.opcode.name == 'LOAD' and len(d.inputs) == 2:
+            if _store_precedes_load(d, all_ops):
+                return None
             # A MEMORY operand.  Read-modify-write arithmetic feeds the overflow
             # flag from a LOAD rather than a register -- SLEIGH lifts
             # `add byte ptr [rsp], bl` as one load per flag, so OF is
@@ -1703,9 +1706,45 @@ def _dep_floor_taint(dep_map: RegMapping | MemMapping, split_sign: bool = False)
     return [(mem_taint, w)]
 
 
+def _store_precedes_load(load_op: PcodeOp, all_ops: list[PcodeOp] | None) -> bool:
+    """True when this circuit stores to memory BEFORE `load_op` runs.
+
+    The STORE's taint assignment is emitted after the flag assignments, so a flag
+    term that resolves the stored slot reads it empty (taint 0 AND value 0) and
+    silently under-taints.  Program order is the discriminator: a single
+    instruction's read-modify-write loads before it stores and is unaffected.
+    """
+    if not all_ops:
+        return False
+    for op in all_ops:
+        if op is load_op:
+            return False
+        if op.opcode.name == 'STORE':
+            return True
+    return False
+
+
+def _slice_reads_store_forwarded(
+    slice_ops: list[PcodeOp], all_ops: list[PcodeOp] | None,
+) -> bool:
+    """True when this slice LOADs a slot an earlier STORE in the circuit filled.
+
+    This is the only decline the exact flag terms make for an unsound reason, so
+    it is the only one that needs a floor.  The terms also decline on shapes that
+    were already sound (sub-register `adc al,bl` / `sbb al,bl`: 0 under-taints in
+    2,970 campaign cases at 86.4% exact); flooring those would cost precision and
+    +9 nodes each for nothing.
+    """
+    return any(
+        op.opcode.name == 'LOAD' and _store_precedes_load(op, all_ops)
+        for op in slice_ops
+    )
+
+
 def _build_carry_flag_taint(  # noqa: C901
     slice_ops: list[PcodeOp],
     mapper: StateMapper,
+    all_ops: list[PcodeOp] | None = None,
 ) -> Expr | None:
     """EXACT closed-form taint for an unsigned CARRY / BORROW flag, or None.
 
@@ -1769,6 +1808,8 @@ def _build_carry_flag_taint(  # noqa: C901
             if d.opcode.name == 'COPY' and len(d.inputs) == 1 and d.inputs[0].size == vn.size:
                 return _operand(d.inputs[0])
             if d.opcode.name == 'LOAD' and len(d.inputs) == 2:
+                if _store_precedes_load(d, all_ops):
+                    return None
                 mem = _stack_mem_operand(d.inputs[1], vn.size, slice_ops, mapper)
                 if mem is not None:
                     return (mem[0], mem[1], None)
@@ -3534,7 +3575,7 @@ def generate_taint_assignments(  # noqa: C901
         # false here.  Route it to the EXACT sign decomposition instead of a floor
         # (proved, and does not over-taint).  Returns None for anything that is not
         # a plain two-operand overflow flag, in which case we fall through.
-        _signed_ovf_expr = _build_signed_overflow_taint(slice_ops, mapper)
+        _signed_ovf_expr = _build_signed_overflow_taint(slice_ops, mapper, all_ops)
         if _signed_ovf_expr is not None and not _slice_has_constant_dominator(slice_ops):
             assignments.append(
                 TaintAssignment(
@@ -3550,7 +3591,7 @@ def generate_taint_assignments(  # noqa: C901
         # the plain two-operand shape to the Z3-proved ComparisonTaintExpr (zero
         # cells).  None for anything else (adc/sbb chains, dependent operands), so the
         # differential+floor below stands.
-        _carry_expr = _build_carry_flag_taint(slice_ops, mapper)
+        _carry_expr = _build_carry_flag_taint(slice_ops, mapper, all_ops)
         if _carry_expr is not None and not _slice_has_constant_dominator(slice_ops):
             assignments.append(
                 TaintAssignment(
@@ -4187,9 +4228,32 @@ def generate_taint_assignments(  # noqa: C901
         and out_bit_end == out_bit_start
         and any(o.opcode.name in ('INT_SBORROW', 'INT_SCARRY') for o in slice_ops)
     ):
-        _ovf_floor = _build_signed_overflow_taint(slice_ops, mapper)
+        _ovf_floor = _build_signed_overflow_taint(slice_ops, mapper, all_ops)
         if _ovf_floor is not None:
             expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, _ovf_floor, Constant(1, 8)))
+        elif _slice_reads_store_forwarded(slice_ops, all_ops):
+            # The exact term declined because WE refused a store-forwarded slot, so
+            # what is left is the 2-corner differential alone -- and signed overflow
+            # is non-monotone, so an interior flip of a tainted bit toggles the flag
+            # while both corners agree.  An unsigned carry is monotone and needs no
+            # such floor; overflow does.  Floor it with the avalanche over the
+            # register value-deps: the store-forwarded source is already a
+            # RegMapping value-dep, so it is picked up.
+            #
+            # Declines for any OTHER reason are left alone.  They were already
+            # sound, and flooring them regressed 4 register forms in the perf
+            # ratchet (adc/sbb al,bl and the r14b/r15b variants: 0 under-taints in
+            # 2,970 campaign cases at 86.4% exact) for no benefit.
+            _hf: Expr | None = None
+            for _dm in dep_set.value_deps:
+                if isinstance(_dm, RegMapping):
+                    _dt = _get_taint_operand(_dm.name, _dm.bit_start, _dm.bit_end, True)
+                    _hf = _dt if _hf is None else BinaryExpr(Op.OR, _hf, _dt)
+            if _hf is not None:
+                expr = BinaryExpr(
+                    Op.OR, expr,
+                    BinaryExpr(Op.AND, AvalancheExpr(_hf, 1), Constant(1, 8)),
+                )
 
     # -----------------------------------------------------------------------
     # SIGN FLAG FLOOR for SHIFTED-operand arithmetic (NG/SF).
