@@ -24,7 +24,6 @@ plan that is merely a different object proves nothing.
 from __future__ import annotations
 
 import gc
-import weakref
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
@@ -455,59 +454,53 @@ def test_a_caller_supplied_builder_is_never_cached(layout: dict[str, int]) -> No
 # What the cache must NOT keep: one caller's buffers
 # ---------------------------------------------------------------------------
 
-class _Hold:
-    """Stands in for a wrapper's ctypes register-read arrays: the object the
-    plan has to keep alive, and the cache must not."""
-
-
-def _descriptor(record: list[object]) -> object:
-    def describe(offsets: frozenset[int]) -> tuple[int, int, int, int, list[int], bool, object]:
-        hold = _Hold()
-        record.append(hold)
-        return (0, 0, 0, 0, [], False, hold)
+def _descriptor(record: list[frozenset[int]]) -> object:
+    """A stand-in for a wrapper's read descriptor.  DATA, not buffers: the
+    Unicorn ids of the registers a block reads and the engine slots their
+    words land in."""
+    def describe(offsets: frozenset[int]) -> tuple[list[int], list[int], bool]:
+        record.append(offsets)
+        return ([7], [3, -1], False)
     return describe
 
 
-def test_every_plan_gets_its_own_register_read_buffers(
+def test_a_plan_describes_its_read_the_same_way_for_every_caller(
         layout: dict[str, int]) -> None:
-    """The descriptor must be consulted per PLAN, not per compilation.
+    """A compiled block is shared, so what it says about its register read has
+    to mean the same thing to whoever runs it.
 
-    Its buffers are where the C runtime reads a block's registers into.  Caching
-    them with the code would have two live emulators read their register files
-    into the same scratch, and the second answer would be computed from the
-    first one's registers.  Nothing would raise.
+    The descriptor used to answer with the ADDRESSES of one wrapper's ctypes
+    arrays, and that is what made a plan the property of exactly one emulator:
+    sharing it would have had two live emulators read their register files into
+    the same scratch, and the second answer would have been computed from the
+    first one's registers.  Nothing would have raised.  The destination now
+    belongs to the hook doing the reading, so what is cached is which registers
+    and which slots -- the same answer for everyone.
     """
-    record: list[object] = []
+    record: list[frozenset[int]] = []
     desc = _descriptor(record)
-    compile_block(_ARCH, _LOAD_RBX, _BASE, layout, descriptor=desc)
-    compile_block(_ARCH, _LOAD_RBX, _BASE, layout, descriptor=desc)
+    first = compile_block(_ARCH, _LOAD_RBX, _BASE, layout, descriptor=desc)
+    second = compile_block(_ARCH, _LOAD_RBX, _BASE, layout, descriptor=desc)
+    assert first is not None
+    assert second is not None
     assert cache_stats()['hits'] == 1, 'the second compilation did not hit'
     assert len(record) == 2, (
         f'the descriptor was consulted {len(record)} times for two plans; a '
-        f"cache hit reused the first plan's register-read buffers")
-    assert record[0] is not record[1]
+        f'plan that never asked would read no registers at all')
+    assert record[0] == record[1], (
+        f'two plans for one block described different reads: {record}')
 
 
-def test_the_cache_does_not_hold_a_caller_s_buffers_alive(
+def test_a_plan_built_with_a_read_descriptor_still_runs(
         layout: dict[str, int]) -> None:
-    """When a wrapper goes away, its buffers must go with it.
-
-    `_read_descriptor` appends the caller's keepalive to the list it is given.
-    If that list were the one the cache holds, every run of every wrapper would
-    add another set of buffers to an entry that lives for the process: a leak
-    that grows with the number of runs, which is the one shape a fuzzer cannot
-    afford.
-    """
-    record: list[object] = []
-    got = compile_block(_ARCH, _LOAD_RBX, _BASE, layout,
-                        descriptor=_descriptor(record))
+    """The descriptor is parsed by `plan_new`, in C, and a plan that refused it
+    would decline every block it was given -- silently, because a declined
+    block is skipped rather than reported."""
+    got = compile_block(_ARCH, _MOV_RAX_RBX, _BASE, layout,
+                        descriptor=_descriptor([]))
     assert got is not None
-    dead = weakref.ref(record[0])
-    del got, record
-    gc.collect()
-    assert dead() is None, (
-        'the cache is still holding the register-read buffers of a caller '
-        'that has gone away')
+    out, _ = _run(got[0], layout, _BASE, values={'RBX': 1}, taint={'RBX': 0xFF})
+    assert out['RAX'] == 0xFF
 
 
 def test_the_keepalive_the_cache_holds_cannot_be_appended_to(

@@ -203,7 +203,9 @@ RegReadDescriptor = tuple[
 #: the call count, the slot each value lands in, whether the packed flags
 #: register is among them, and the arrays themselves so the cache keeps
 #: them alive.
-BlockReadDescriptor = tuple[int, int, int, int, list[int], bool, object]
+#: (Unicorn register ids, engine slot per filled word, packed flags wanted).
+#: Data rather than buffer addresses: see `blockcompile._read_descriptor`.
+BlockReadDescriptor = tuple[list[int], list[int], bool]
 
 
 class _RegisterFile:
@@ -622,20 +624,17 @@ class MicrotaintWrapper:
                            slot_map: Mapping[str, int],
                            cache: dict[frozenset[int], BlockReadDescriptor],
                            ) -> BlockReadDescriptor:
-        """A minimal uc_reg_read_batch descriptor for one block's reads.
+        """Which registers one block reads, and where their words belong.
 
         The whole-file read was 90% of block mode's cost when it was first
         wired, so a block asks only for what its regions read.
 
-        Every call gets TWO 8-byte slots even when it fills one.  Unicorn
-        writes a register's natural width, and some are wider than eight
-        bytes; the whole-file layout hides that by putting every wide
-        register last, but a FILTERED layout interleaves them, and a wide
-        read then overwrites the next register's slot.  Measured: with one
-        slot per call, asking for more registers made the answer WORSE (one
-        diverging word became thirty-six), which is the signature of a
-        neighbour being clobbered rather than of a register being missed.
-        The padding costs 8 bytes per register and removes the hazard.
+        There are two engine slots per call because Unicorn writes a
+        register's natural width and some are wider than eight bytes; the
+        buffer that has to be padded for it belongs to the hook, and
+        `blockpath_c`'s `rd_ptrs` carries what that cost when it was got
+        wrong.  Nothing here is a buffer: the same answer serves every
+        wrapper, which is what lets a compiled block be shared.
         """
         hit = cache.get(offsets)
         if hit is not None:
@@ -666,19 +665,7 @@ class MicrotaintWrapper:
             seen.add(uc_id)
             uc_ids.append(uc_id)
             slots.extend((slot_map.get(name, -1), -1))
-        n_calls = len(uc_ids)
-        got: BlockReadDescriptor
-        if n_calls == 0:
-            got = (0, 0, 0, 0, [], False, None)
-            cache[offsets] = got
-            return got
-        ids_arr = (ctypes.c_int * n_calls)(*uc_ids)
-        vals_arr = (ctypes.c_uint64 * (2 * n_calls))()
-        base = ctypes.addressof(vals_arr)
-        ptrs_arr = (ctypes.c_void_p * n_calls)(
-            *[base + 16 * i for i in range(n_calls)])
-        got = (ctypes.addressof(ids_arr), ctypes.addressof(ptrs_arr), base,
-               n_calls, slots, needs_flags, (ids_arr, vals_arr, ptrs_arr))
+        got: BlockReadDescriptor = (uc_ids, slots, needs_flags)
         cache[offsets] = got
         return got
 

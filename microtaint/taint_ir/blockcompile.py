@@ -46,7 +46,8 @@ from microtaint.types import ArchLike
 
 #: Builds one block's minimal register-read descriptor, or None when the
 #: block reads no register value at all.
-Descriptor = Callable[[frozenset[int]], 'tuple[int, int, int, int, list[int], bool, object] | None']
+Descriptor = Callable[[frozenset[int]],
+                      'tuple[list[int], list[int], bool] | None']
 
 __all__ = ['SlotMap', 'block_slot_resolver', 'cache_clear', 'cache_stats',
            'compile_block', 'freeze_for_reuse']
@@ -204,20 +205,24 @@ class _Compiled(NamedTuple):
     """One block, lifted, lowered and emitted, ready to be handed to any
     wrapper in this process.
 
-    Everything here is independent of WHO runs the block.  What is not -- the
-    Unicorn register-read buffers -- is deliberately absent: those are the
-    caller's, built fresh per plan, so two live wrappers never share the scratch
-    the C runtime reads registers into.  Sharing them would be silent: the
-    second emulator would read its register file into the first one's buffer.
+    Everything here is independent of WHO runs the block, which is what lets
+    the same compiled block serve every emulator the process ever makes.  The
+    register-read buffers used to be the exception and are now absent
+    entirely: a plan says WHICH registers a block reads, and the hook that
+    does the reading supplies the destination, so two live wrappers cannot
+    share the scratch the C runtime reads registers into.  Sharing it would
+    have been silent -- the second emulator reading its register file into the
+    first one's buffer.
     """
 
     size: int                        #: the block's byte length
     specs: tuple[RegionSpec, ...]
     #: The compiled-code capsules the specs' function pointers point into.  A
-    #: TUPLE on purpose: `_read_descriptor` appends the caller's keepalive to
-    #: the list it is given, and appending to what the cache holds would grow
-    #: it without bound and hand wrapper B a reference to wrapper A's buffers.
-    #: A tuple makes that mistake an AttributeError instead of a slow leak.
+    #: TUPLE on purpose: a plan copies this list and anything appended to the
+    #: copy is that plan's alone.  Appending to what the CACHE holds would grow
+    #: it without bound, once per run for the life of the process, which is the
+    #: one leak shape a fuzzer cannot afford; a tuple makes that mistake an
+    #: AttributeError rather than something nobody notices for a month.
     keep: tuple[object, ...]
     reads: frozenset[int]
     regions: tuple[Region, ...]
@@ -455,12 +460,15 @@ def _compile_one(arch: ArchLike, code: bytes, base: int,
 
 def _plan_from(built: _Compiled, descriptor: Descriptor | None,
                ) -> tuple[BlockPlan, list[Region], set[int]]:
-    """Turn a compiled block into a plan for ONE caller.
+    """Turn a compiled block into a plan.
 
-    The register-read buffers are the caller's, and are built here rather than
-    cached with the code, so two live wrappers never read their register files
-    into the same scratch.  `keep` is copied for the same reason: the plan holds
-    its own list, and the caller's keepalive goes in that copy.
+    The plan carries WHICH registers the block reads, not where they land: the
+    destination is the reading hook's, so the same plan can be run by two live
+    wrappers without either reading its register file into the other's scratch.
+
+    `keep` is still copied: the plan holds its own list, and the cache's
+    keepalive is a tuple precisely so that appending to it is an error rather
+    than a leak that grows with every run.
     """
     from microtaint.emulator import blockpath_c  # noqa: PLC0415
 
@@ -468,7 +476,7 @@ def _plan_from(built: _Compiled, descriptor: Descriptor | None,
     # `built.reads` is already a frozenset, and it is what the descriptor is
     # keyed on.  Converting it to a set and back again was two passes over it
     # per block per run for nothing.
-    desc = _read_descriptor(descriptor, built.reads, keep)
+    desc = _read_descriptor(descriptor, built.reads)
     plan = blockpath_c.plan_new(built.size, list(built.specs), keep, *desc)
     return plan, list(built.regions), set(built.reads)
 
@@ -642,21 +650,25 @@ def _address_slice(prog: IRProg, slot_of: SlotOf,
 
 
 def _read_descriptor(descriptor: Descriptor | None, reads: AbstractSet[int],
-                     keep: list[object],
-                     ) -> tuple[int, int, int, int, list[int] | None, bool]:
-    """The block's own uc_reg_read_batch descriptor, or an empty one.
+                     ) -> tuple[list[int] | None, list[int] | None, bool]:
+    """Which registers this block reads, and the engine slots they land in.
 
+    -> (Unicorn register ids, engine slot per filled word, packed flags wanted).
     Empty means the C runtime reads nothing, which is correct for a block whose
     programs read no register value at all.
+
+    Data, not buffers.  The descriptor used to hand back the ADDRESSES of one
+    caller's ctypes arrays, which is what made a compiled block impossible to
+    share between two wrappers; the destination now belongs to the hook that
+    does the reading, so this is the same answer for every caller.
 
     `reads` is taken as it comes and only converted when it is not already a
     frozenset: the caller holds one, and it is what the descriptor is keyed on.
     """
     if descriptor is None:
-        return (0, 0, 0, 0, None, False)
+        return (None, None, False)
     got = descriptor(reads if isinstance(reads, frozenset) else frozenset(reads))
     if got is None:
-        return (0, 0, 0, 0, None, False)
-    ids, ptrs, vals, n_calls, val_slots, need_flags, hold = got
-    keep.append(hold)
-    return (ids, ptrs, vals, n_calls, val_slots, need_flags)
+        return (None, None, False)
+    uc_ids, val_slots, need_flags = got
+    return (uc_ids, val_slots, need_flags)

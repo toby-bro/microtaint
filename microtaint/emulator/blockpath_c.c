@@ -51,9 +51,26 @@ typedef struct {
     uint64_t    *sv, *st, *so, *cur_val;
     BlkCacheEnt  cache[BLK_CACHE_CAP];
     PyObject    *compiler;       /* owned; called only on a cache miss */
-    /* The whole register file, read once per block. */
+    /* The whole register file, for the MICROTAINT_BLOCK_FULLREGS escape
+     * hatch only.  The per-block read uses the scratch below. */
     unsigned long long ids_addr, ptrs_addr, vals_addr;
     int          n_calls;
+    /* Where a block's own register read lands.  The PLAN says which registers
+     * to read and the destination is ours, because a plan is shared across
+     * every wrapper in the process.
+     *
+     * Every call gets TWO 8-byte slots even when it fills one: Unicorn writes
+     * a register's natural width and some are wider than eight bytes, so with
+     * one slot per call a wide read overwrites the next register's.  Measured
+     * when that was the layout: asking for MORE registers made the answer
+     * WORSE (one diverging word became thirty-six), which is a neighbour being
+     * clobbered rather than a register being missed.
+     *
+     * `rd_ptrs[i]` is `rd_vals + 2i` once, at construction, so a block's read
+     * needs no per-execution setup at all. */
+    void       **rd_ptrs;
+    uint64_t    *rd_vals;
+    int          rd_max;         /* calls the scratch holds */
     int         *reg_slots;      /* engine slot per read position */
     int          n_regs;
     unsigned long blocks, handled, unhandled, planned;
@@ -177,10 +194,15 @@ static int blk_read_regs(MtBlkCtx *b, const MtBlkPlan *plan) {
     }
     /* The BLOCK's own register set, not the whole file.  See MtBlkPlan. */
     if (plan->n_calls <= 0) return 0;         /* reads nothing: nothing to do */
+    /* A plan built against a bigger register file than this hook's scratch
+     * holds.  Refusing is the sound answer: reading it would run off the end
+     * of the scratch, and the block is counted as unhandled rather than
+     * computed from whatever followed it in memory. */
+    if (plan->n_calls > b->rd_max || !plan->uc_ids) return -1;
     c->uc_reg_read_batch((void *)(uintptr_t)*c->uc_handle_addr,
-                         (void *)(uintptr_t)plan->ids_addr,
-                         (void *)(uintptr_t)plan->ptrs_addr, plan->n_calls);
-    const uint64_t *vals = (const uint64_t *)(uintptr_t)plan->vals_addr;
+                         (void *)plan->uc_ids, (void *)b->rd_ptrs,
+                         plan->n_calls);
+    const uint64_t *vals = b->rd_vals;
     uint64_t *g_val = *c->g_val;
     const int n_slots = *c->n_slots;
     for (int i = 0; i < plan->n_vals; i++) {
@@ -353,15 +375,38 @@ static void plan_destroy(PyObject *cap) {
     free(b);
 }
 
+/* A sequence of ints into a fresh C array.  -> NULL on None or empty, which
+ * both mean "nothing to read"; on failure sets an exception and *n stays 0. */
+static int *blk_int_array(PyObject *obj, int *n_out, int *failed) {
+    *n_out = 0; *failed = 0;
+    if (!obj || obj == Py_None) return NULL;
+    PyObject *seq = PySequence_Fast(obj, "expected a sequence of ints");
+    if (!seq) { *failed = 1; return NULL; }
+    const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    if (n <= 0) { Py_DECREF(seq); return NULL; }
+    int *out = (int *)calloc((size_t)n, sizeof(int));
+    if (!out) { Py_DECREF(seq); PyErr_NoMemory(); *failed = 1; return NULL; }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        long v = PyLong_AsLong(PySequence_Fast_GET_ITEM(seq, i));
+        if (v == -1 && PyErr_Occurred()) {
+            Py_DECREF(seq); free(out); *failed = 1; return NULL;
+        }
+        out[i] = (int)v;
+    }
+    Py_DECREF(seq);
+    *n_out = (int)n;
+    return out;
+}
+
 /* plan_new(size, [(fn_addr, region_addr, [(kind, size, needval), ...]), ...],
- *          keepalive, ids, ptrs, vals, n_calls, val_slots, need_flags) */
+ *          keepalive, uc_ids, val_slots, need_flags) */
 static PyObject *py_plan_new(PyObject *self, PyObject *args) {
     (void)self;
-    int size; PyObject *regions, *keepalive, *val_slots = NULL;
-    unsigned long long ids = 0, ptrs = 0, vals = 0;
-    int n_calls = 0, need_flags = 0;
-    if (!PyArg_ParseTuple(args, "iOO|KKKiOp", &size, &regions, &keepalive,
-                          &ids, &ptrs, &vals, &n_calls, &val_slots, &need_flags))
+    int size; PyObject *regions, *keepalive;
+    PyObject *val_slots = NULL, *uc_ids = NULL;
+    int need_flags = 0;
+    if (!PyArg_ParseTuple(args, "iOO|OOp", &size, &regions, &keepalive,
+                          &uc_ids, &val_slots, &need_flags))
         return NULL;
     PyObject *seq = PySequence_Fast(regions, "regions must be a sequence");
     if (!seq) return NULL;
@@ -437,25 +482,12 @@ static PyObject *py_plan_new(PyObject *self, PyObject *args) {
     }
     Py_DECREF(seq);
 
-    plan->ids_addr = ids;
-    plan->ptrs_addr = ptrs;
-    plan->vals_addr = vals;
-    plan->n_calls = n_calls;
     plan->need_flags = need_flags;
-    if (val_slots && val_slots != Py_None) {
-        PyObject *vs = PySequence_Fast(val_slots, "val_slots must be a sequence");
-        if (!vs) { mt_blk_plan_free(plan); return NULL; }
-        const Py_ssize_t nv = PySequence_Fast_GET_SIZE(vs);
-        plan->val_slots = (int *)calloc((size_t)(nv > 0 ? nv : 1), sizeof(int));
-        if (!plan->val_slots) { Py_DECREF(vs); mt_blk_plan_free(plan); return PyErr_NoMemory(); }
-        for (Py_ssize_t i = 0; i < nv; i++) {
-            long v = PyLong_AsLong(PySequence_Fast_GET_ITEM(vs, i));
-            if (v == -1 && PyErr_Occurred()) { Py_DECREF(vs); mt_blk_plan_free(plan); return NULL; }
-            plan->val_slots[i] = (int)v;
-        }
-        plan->n_vals = (int)nv;
-        Py_DECREF(vs);
-    }
+    int bad = 0;
+    plan->uc_ids = blk_int_array(uc_ids, &plan->n_calls, &bad);
+    if (bad) { mt_blk_plan_free(plan); return NULL; }
+    plan->val_slots = blk_int_array(val_slots, &plan->n_vals, &bad);
+    if (bad) { mt_blk_plan_free(plan); return NULL; }
 
     PlanBox *box = (PlanBox *)calloc(1, sizeof(PlanBox));
     if (!box) { mt_blk_plan_free(plan); return PyErr_NoMemory(); }
@@ -820,6 +852,7 @@ static void blkctx_destroy(PyObject *cap) {
     if (!b) { PyErr_Clear(); return; }
     for (int i = 0; i < BLK_CACHE_CAP; i++) Py_XDECREF(b->cache[i].capsule);
     Py_XDECREF(b->compiler);
+    free(b->rd_ptrs); free(b->rd_vals);
     free(b->reg_slots); free(b->sv); free(b->st); free(b->so); free(b->cur_val);
     free(b->pend.taint);
     free(b);
@@ -855,12 +888,20 @@ static PyObject *py_hook_new(PyObject *self, PyObject *args) {
     b->cur_val = (uint64_t *)calloc(MT_BLK_VAL_BASE, sizeof(uint64_t));
     b->pend.taint = (uint64_t *)calloc(MT_BLK_VAL_BASE, sizeof(uint64_t));
     b->pend.cap_taint = MT_BLK_VAL_BASE;
-    if (!b->reg_slots || !b->sv || !b->st || !b->so || !b->cur_val || !b->pend.taint) {
+    /* The per-block register read's destination, sized to the whole register
+     * file: a block reads a SUBSET of it, so no plan can ask for more calls. */
+    b->rd_max = n_calls > 0 ? n_calls : 1;
+    b->rd_vals = (uint64_t *)calloc((size_t)b->rd_max * 2, sizeof(uint64_t));
+    b->rd_ptrs = (void **)calloc((size_t)b->rd_max, sizeof(void *));
+    if (!b->reg_slots || !b->sv || !b->st || !b->so || !b->cur_val ||
+        !b->pend.taint || !b->rd_vals || !b->rd_ptrs) {
         Py_DECREF(fast);
         free(b->reg_slots); free(b->sv); free(b->st); free(b->so);
-        free(b->cur_val); free(b->pend.taint); free(b);
+        free(b->cur_val); free(b->pend.taint);
+        free(b->rd_vals); free(b->rd_ptrs); free(b);
         return PyErr_NoMemory();
     }
+    for (int i = 0; i < b->rd_max; i++) b->rd_ptrs[i] = &b->rd_vals[2 * i];
     for (Py_ssize_t i = 0; i < n; i++) {
         long v = PyLong_AsLong(PySequence_Fast_GET_ITEM(fast, i));
         if (v == -1 && PyErr_Occurred()) { Py_DECREF(fast); free(b); return NULL; }

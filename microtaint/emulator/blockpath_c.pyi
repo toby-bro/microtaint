@@ -22,10 +22,7 @@ def plan_new(
     regions: Sequence[tuple[int, int, Sequence[tuple[int, int, int]],
                             int, int, int, int, Sequence[int]]],
     keepalive: object,
-    ids_addr: int = ...,
-    ptrs_addr: int = ...,
-    vals_addr: int = ...,
-    n_calls: int = ...,
+    uc_ids: list[int] | None = ...,
     val_slots: list[int] | None = ...,
     need_flags: bool = ...,
 ) -> _Capsule:
@@ -40,8 +37,14 @@ def plan_new(
     what it always did.
 
     The trailing arguments are the block's OWN uc_reg_read_batch descriptor:
-    which registers it reads and where they land.  Reading the whole register
-    file instead was 90% of block mode's cost when it was first wired.
+    the Unicorn register ids it reads and the engine slots their words land in.
+    Reading the whole register file instead was 90% of block mode's cost when
+    it was first wired.
+
+    WHICH registers, not WHERE: the destination buffer belongs to the hook that
+    does the reading, so one plan can be run by two live wrappers.  Holding the
+    buffer addresses here is what used to make a plan the property of exactly
+    one caller.
     """
 
 def runner_new(n_slots: int, pc_slot: int, mem: _Capsule,

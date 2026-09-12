@@ -148,9 +148,15 @@ typedef struct {
    * computation the whole thing exists for cost 0.009 s.  A block reads only
    * the registers its regions actually read, which is the same trick
    * `ir_slots` plays per instruction.  The arrays belong to the caller. */
-  unsigned long long ids_addr, ptrs_addr, vals_addr;
+  /* WHICH registers, not WHERE they land.  A plan is shared by every wrapper
+   * in the process, and a buffer address belongs to exactly one of them, so
+   * the caller supplies the destination and two wrappers reading the same
+   * block read into their own scratch by construction.  Holding the buffers
+   * here instead is what used to make a plan unshareable, and rebuilding them
+   * per wrapper was 13.7 M instructions a run on a fuzzer-shaped workload. */
+  int *uc_ids;   /* the Unicorn register id per call, malloc'd */
   int n_calls;   /* uc_reg_read_batch calls; a vector is one call, two slots */
-  int n_vals;    /* slots the read fills */
+  int n_vals;    /* slots the read fills: TWO per call, see mt_blk_read_dest */
   int *val_slots; /* engine slot for each of those, malloc'd */
   int need_flags; /* the packed flags register is among them */
 } MtBlkPlan;
@@ -501,6 +507,7 @@ static void mt_blk_plan_free(MtBlkPlan *p) {
     for (int i = 0; i < p->n_regions; i++) free(p->regions[i].pub_slots);
   }
   free(p->regions);
+  free(p->uc_ids);
   free(p->val_slots);
   free(p);
 }
