@@ -51,6 +51,7 @@ cdef class BitPreciseShadowMemory:
     cpdef uint64_t read_mask(self, uint64_t address, int size)
     cpdef bint is_tainted(self, uint64_t address, int size)
     cpdef void clear(self, uint64_t address, int size)
+    cpdef clear_all(self)
     cpdef void poison(self, uint64_t address, int size)
     cdef void _poison(self, uint64_t address, int size)
     cpdef void unpoison(self, uint64_t address, int size)

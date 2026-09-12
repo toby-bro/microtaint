@@ -174,6 +174,14 @@ class InstructionHook:
     """instruction bytes -> compiled taint program.  Holding it here is what
     keeps its emitted code alive."""
 
+    def reset_taint(self) -> None:
+        """Forget every register's taint: the slot array AND `register_taint`.
+
+        For a harness that restores a checkpoint and drives another input.  In
+        block mode the array is authoritative, so clearing the dict alone would
+        leave the previous run's taint in place with nothing to say so.
+        """
+
     def sync_taint_to_dict(self) -> None:
         """Flush the slot array into `register_taint` and hand authority back
         to the dict, so an external re-seed is picked up by the next

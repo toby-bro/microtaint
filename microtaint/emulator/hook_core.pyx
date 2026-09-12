@@ -912,6 +912,20 @@ cdef class InstructionHook:
             self.g_taint[slot] = <uint64_t>(<object>(int(val) & 0xFFFFFFFFFFFFFFFF))
         self.arr_loaded = True
 
+    cpdef reset_taint(self):
+        """Forget every register's taint: the C array AND the dict.
+
+        For a harness that restores a checkpoint and drives another input.  The
+        guest's register VALUES come back from the snapshot; the taint that
+        described the previous input has to be dropped, and in block mode the
+        array is authoritative, so clearing the dict alone would leave the
+        previous run's taint in place with nothing to say so.
+        """
+        memset(<void*>self.g_taint, 0, self.n_slots * sizeof(uint64_t))
+        if PyDict_Size(self.register_taint):
+            PyDict_Clear(self.register_taint)
+        self.arr_loaded = True
+
     cpdef sync_taint_to_dict(self):
         """g_taint -> register_taint, and hand authority back to the dict.
 

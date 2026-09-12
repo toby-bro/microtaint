@@ -43,6 +43,16 @@ class BitPreciseShadowMemory:
 
     def clear(self, address: int, size: int) -> None:
         """Explicitly clear taint for size bytes starting at address. [cite: 26]"""
+
+    def clear_all(self) -> None:
+        """Forget every byte of taint, and every poisoned page with it.
+
+        For a harness that restores a checkpoint and drives another input: the
+        guest's memory comes back from the snapshot, and the taint describing
+        the previous input must not survive it.  Frees the page maps rather
+        than zeroing them, so a run that touched a large heap does not keep
+        those pages for the life of the process.
+        """
     # Poison (UAF) API
     def poison(self, address: int, size: int) -> None:
         """Mark size bytes as freed/poisoned (for UAF detection). [cite: 28]"""

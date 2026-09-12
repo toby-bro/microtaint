@@ -162,6 +162,29 @@ cdef class BitPreciseShadowMemory:
         pm_free(&self.taint_map)
         pm_free(&self.state_map)
 
+    cpdef clear_all(self):
+        """Forget every byte of taint, and every poisoned page with it.
+
+        For a harness that restores a checkpoint and drives another input: the
+        guest's memory comes back from the snapshot, and the taint describing
+        the PREVIOUS input must not survive it.  Clearing region by region
+        would miss anything the guest mapped during the run it is undoing.
+
+        The page maps are freed rather than zeroed: a run that touched a large
+        heap would otherwise keep those pages for the life of the process.
+        """
+        pm_free(&self.taint_map)
+        pm_free(&self.state_map)
+        self.taint_map.keys = NULL
+        self.taint_map.vals = NULL
+        self.taint_map.cap = 0
+        self.taint_map.n = 0
+        self.state_map.keys = NULL
+        self.state_map.vals = NULL
+        self.state_map.cap = 0
+        self.state_map.n = 0
+        self._poison_seen = False
+
     # ------------------------------------------------------------------
     # Internal helpers — pure C, no Python objects, callable without the GIL
     # ------------------------------------------------------------------
