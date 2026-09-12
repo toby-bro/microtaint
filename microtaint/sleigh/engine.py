@@ -2896,6 +2896,31 @@ def generate_taint_assignments(  # noqa: C901
     ]
     has_tainted_non_stack_pointer = bool(non_stack_addr_taint_exprs)
 
+    # Width of the pointer avalanche.
+    #
+    # The avalanche says "we do not know which bytes were read", so it must cover
+    # every bit the LOADED VALUE can reach -- the load's own width, not the output
+    # register's.  `movzx eax, byte ptr [r8+idx]` zero-extends 8 bits into 64:
+    # bits 8-63 are architecturally zero whatever memory holds, so tainting them
+    # is 56 bits of pure over-approximation.  Measured on base64's alphabet
+    # lookup, the instruction that accounted for that workload's ENTIRE data-path
+    # over-approximation; the non-extending `mov al, [r8+idx]` was already right.
+    #
+    # Narrow only when the loaded bits cannot have MOVED.  A sign extension copies
+    # the sign bit into every upper bit, so those bits genuinely depend on the
+    # loaded byte; a shift or a PIECE can place the value anywhere.  In any of
+    # those cases keep the full output width, which is always sound.
+    _ptr_avalanche_bits = out_bit_end - out_bit_start + 1
+    _ld_bits = max(
+        (o.output.size * 8 for o in load_ops if o.output is not None),
+        default=0,
+    )
+    if _ld_bits and not any(
+        o.opcode.name in ('INT_SEXT', 'INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT', 'PIECE')
+        for o in slice_ops
+    ):
+        _ptr_avalanche_bits = min(_ptr_avalanche_bits, _ld_bits)
+
     # Split value dependencies into mem_taint_exprs and plain data for is_load_like.
     mem_taint_exprs: list[Expr] = []
     for dep_expr, dep_name in zip(dependencies, dependency_names, strict=True):
@@ -3080,7 +3105,7 @@ def generate_taint_assignments(  # noqa: C901
             ptr_combined = non_stack_addr_taint_exprs[0]
             for t in non_stack_addr_taint_exprs[1:]:
                 ptr_combined = BinaryExpr(Op.OR, ptr_combined, t)
-            avalanche_ptr = AvalancheExpr(ptr_combined, out_bit_end - out_bit_start + 1)
+            avalanche_ptr = AvalancheExpr(ptr_combined, _ptr_avalanche_bits)
             expr = BinaryExpr(Op.OR, avalanche_ptr, mem_taint) if mem_taint is not None else avalanche_ptr
         else:
             expr = mem_taint if mem_taint is not None else _get_zero_constant(out_bit_end - out_bit_start + 1)
@@ -4050,7 +4075,7 @@ def generate_taint_assignments(  # noqa: C901
         ptr_combined = non_stack_addr_taint_exprs[0]
         for t in non_stack_addr_taint_exprs[1:]:
             ptr_combined = BinaryExpr(Op.OR, ptr_combined, t)
-        avalanche_ptr = AvalancheExpr(ptr_combined, out_bit_end - out_bit_start + 1)
+        avalanche_ptr = AvalancheExpr(ptr_combined, _ptr_avalanche_bits)
         expr = BinaryExpr(Op.OR, expr, avalanche_ptr)
 
     # MEMORY-OPERAND non-monotone flag soundness floor (catch-all).
