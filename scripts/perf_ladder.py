@@ -279,9 +279,16 @@ _MARKER = re.compile(r'LADDER loop=([0-9.]+) blocks=(\d+) findings=(\d+)')
 
 
 def _count(text: str, event: str) -> float | None:
-    """One perf CSV counter.  NOT anchored to the line start (rule 4)."""
-    m = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*,(?:msec)?,' + re.escape(event),
-                  text)
+    """One perf CSV counter.
+
+    NOT anchored to the line start (rule 4), but the event name IS anchored at
+    its END.  Without that, asking for `instructions` matches the prefix of
+    `instructions:u`, so the total silently equalled the user count and the
+    kernel column it feeds could only ever read zero -- a counter that cannot
+    be non-zero is not a measurement (rule 6).
+    """
+    m = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*,(?:msec)?,' + re.escape(event)
+                  + r'(?=,|\s|$)', text)
     return float(m.group(1)) if m else None
 
 

@@ -27,6 +27,34 @@ pytestmark = pytest.mark.skipif(
 
 _SCRIPT = Path(__file__).resolve().parent.parent / 'scripts' / 'perf_ladder.py'
 
+#: A perf CSV exactly as the harness receives it, including the two events
+#: whose names are prefixes of one another.
+_CSV = (
+    '1234,,instructions:u,999,100.00,,\n'
+    '5678,,instructions,999,100.00,,\n'
+    '2.50,msec,task-clock,999,100.00,,\n'
+    '42,,page-faults,999,100.00,,\n'
+)
+
+
+def test_counter_names_do_not_match_each_others_prefixes() -> None:
+    """`instructions` must not match the prefix of `instructions:u`.
+
+    It did.  The kernel column is computed as total minus user, so a parser
+    that returned the user count for both made it structurally zero: a column
+    that could never be non-zero, printed as though it were a measurement.
+    """
+    sys.path.insert(0, str(_SCRIPT.parent))
+    import perf_ladder
+
+    assert perf_ladder._count(_CSV, 'instructions:u') == 1234
+    assert perf_ladder._count(_CSV, 'instructions') == 5678, (
+        'asking for `instructions` returned the `instructions:u` value, so '
+        'kernel = total - user can only ever be 0')
+    assert perf_ladder._count(_CSV, 'task-clock') == 2.50
+    assert perf_ladder._count(_CSV, 'page-faults') == 42
+    assert perf_ladder._count(_CSV, 'cycles') is None
+
 
 def _run(*args: str, timeout: int = 900) -> subprocess.CompletedProcess[str]:
     return subprocess.run([sys.executable, str(_SCRIPT), *args],
