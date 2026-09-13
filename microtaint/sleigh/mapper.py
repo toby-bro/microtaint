@@ -344,6 +344,19 @@ def is_mapped_permutation(  # noqa: C901
         if op.opcode.name in {'INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT'}:
             has_shift = True
 
+        if op.opcode.name == 'LOAD':
+            # A LOAD's inputs are an ADDRESS, not data.  What it contributes is
+            # the VALUE it brings in, and that is one dynamic source however the
+            # address is written.  Counting the address instead made the whole
+            # classification depend on the addressing MODE: `and ecx,[rdi]`
+            # counted RDI and RCX, two sources, correctly not a permutation --
+            # while `and ecx,[rdi+rax*4]`, whose pointer is a `unique` and so
+            # counted as nothing, saw only RCX and read as a permutation OF RCX.
+            # Same computation, same operand, opposite answer.
+            if op.output is not None:
+                dynamic_sources.add(('load', op.output.offset, op.output.size))
+            continue
+
         for vn in op.inputs:
             if vn.space.name not in ('const', 'unique'):
                 # Exclude intra-instruction intermediates: registers written earlier
