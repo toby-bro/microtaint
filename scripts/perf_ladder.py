@@ -91,11 +91,49 @@ int main(void){ char buf[128];
   return (int)(h&3); }
 """
 
+#: The native baseline a CHECKPOINTED rung should be compared against: the AFL
+#: model, where startup happens once in the parent and each input costs a fork,
+#: the post-main work, and an exit.  That is what checkpoint+restore replaces,
+#: so it is the only native figure the checkpoint rungs are commensurable with.
+#: Comparing them against a full `exec` instead was how "6.6x native" happened.
+_FORKSERVER_SRC = r"""
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+static int work(const char *line, FILE *out) {
+    char buf[128];
+    strncpy(buf, line, sizeof buf - 1); buf[sizeof buf - 1] = 0;
+    size_t n = strlen(buf);
+    char *c = malloc(n + 1); memcpy(c, buf, n + 1);
+    unsigned long h = 5381;
+    for (size_t i = 0; i < n; i++) h = h * 33 + (unsigned char)c[i];
+    if (h & 1) fputs("odd\n", out); else fputs("even\n", out);
+    char o[64]; snprintf(o, sizeof o, "%lu %zu", h, n); fputs(o, out);
+    free(c);
+    return (int)(h & 3);
+}
+int main(int argc, char **argv) {
+    int n = atoi(argv[1]);
+    FILE *devnull = fopen("/dev/null", "w");
+    char line[128];
+    for (int i = 0; i < n; i++) {
+        snprintf(line, sizeof line, "hello world, tainted line %d\n", i);
+        pid_t p = fork();
+        if (p == 0) { _exit(work(line, devnull)); }
+        int st; waitpid(p, &st, 0);
+    }
+    return 0;
+}
+"""
+
 #: Rung -> (N for the small run, whether it does a FULL guest launch).
 #: The second flag is what makes rule 7 enforceable: only full-launch rungs are
 #: comparable with native.
 RUNGS: dict[str, tuple[int, bool]] = {
     'native': (100, True),
+    'native-forkserver': (200, False),
     'qiling-fresh': (20, True),
     'qiling-checkpoint': (100, False),
     'microtaint-fresh': (10, True),
@@ -139,7 +177,13 @@ def _worker(rung: str, guest: str, main: int, n: int) -> int:
     def quiet() -> tuple[int, int]:
         return os.dup(1), os.open(os.devnull, os.O_WRONLY)
 
-    if rung == 'native':
+    if rung == 'native-forkserver':
+        t = time.perf_counter()
+        subprocess.run([guest, str(n)], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, check=False)
+        loop = time.perf_counter() - t
+
+    elif rung == 'native':
         data = next(_inputs(1))
         t = time.perf_counter()
         for _ in range(n):
@@ -428,14 +472,14 @@ def _guest_work(guest: str, main: int) -> tuple[int, int]:
     return total[0], after[0]
 
 
-def _build_guest(dest: Path) -> str:
+def _build(dest: Path, name: str, src: str) -> str:
     """Built ONCE, here, outside every measured process; see rule 3."""
-    out = dest / 'ladder_guest.elf'
+    out = dest / name
     made = subprocess.run(
         ['gcc', '-static', '-O1', '-o', str(out), '-x', 'c', '-'],
-        input=_GUEST_SRC.encode(), capture_output=True, check=False)
+        input=src.encode(), capture_output=True, check=False)
     if made.returncode != 0:
-        raise SystemExit(f'cannot build the guest: {made.stderr.decode()[:400]}')
+        raise SystemExit(f'cannot build {name}: {made.stderr.decode()[:400]}')
     return str(out)
 
 
@@ -478,7 +522,8 @@ def main(argv: list[str] | None = None) -> int:
               'in a way instructions:u is not', file=sys.stderr)
 
     tmp = tempfile.TemporaryDirectory()
-    guest = args.guest or _build_guest(Path(tmp.name))
+    guest = args.guest or _build(Path(tmp.name), 'ladder_guest.elf', _GUEST_SRC)
+    forkserver = _build(Path(tmp.name), 'forkserver.elf', _FORKSERVER_SRC)
     main_addr = _symbol(guest, args.main_symbol)
     launch, from_main = _guest_work(guest, main_addr)
     if launch <= 0:
@@ -490,8 +535,9 @@ def main(argv: list[str] | None = None) -> int:
     for rep in range(args.repeats):
         for name in names:
             print(f'  [{rep + 1}/{args.repeats}] {name}', file=sys.stderr)
+            target = forkserver if name == 'native-forkserver' else guest
             got.setdefault(name, []).append(
-                _measure(name, guest, main_addr, use_perf))
+                _measure(name, target, main_addr, use_perf))
 
     rows: dict[str, Rung] = {}
     for name, rs in got.items():
@@ -539,6 +585,11 @@ def main(argv: list[str] | None = None) -> int:
         # Rule 7: x-native only where both sides do a full launch.
         xn = (f'{r.instrs / base_native:.0f}x'
               if base_native and r.full_launch else '--')
+        # A checkpointed rung is commensurable with a native FORK SERVER, not
+        # with an exec: both skip startup and pay once per input.
+        fs = rows.get('native-forkserver')
+        if not r.full_launch and fs and fs.seconds and name != 'native-forkserver':
+            xn = f'{r.seconds / fs.seconds:.1f}x*'
         base = {'microtaint-fresh': 'qiling-fresh',
                 'microtaint-checkpoint': 'qiling-checkpoint'}.get(name)
         xq = (f'{r.instrs / rows[base].instrs:.2f}x'
@@ -552,9 +603,10 @@ def main(argv: list[str] | None = None) -> int:
     print('kern is instructions the KERNEL ran per input (the part that moves '
           'with machine\nload, and the reason the user-side event is the one '
           'quoted); flt is page faults.')
-    print('x native is blank where the rung does not do a full launch: a '
-          'checkpointed\niteration and a native launch are not the same work '
-          '(rule 7).')
+    print('x native compares full launches only.  A starred figure is vs the '
+          'native FORK\nSERVER and is WALL clock, because a fork-server input '
+          'is almost all KERNEL work\n(214k kernel instructions against 3.4k '
+          'user), which instructions:u cannot see.')
     mc = rows.get('microtaint-checkpoint')
     if mc and from_main:
         print(f'\nper unit of guest work, checkpointed: '
