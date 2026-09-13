@@ -79,6 +79,8 @@ class Reporter:
         self._colour = not json_mode and _supports_colour(self.stream)
         self.findings: list[Finding] = []
         self._pre_finalize: list[Callable[[], object]] = []
+        #: Freed addresses already reported; see `uaf`.
+        self._uaf_seen: set[int] = set()
 
     # ------------------------------------------------------------------
     # Public API called by MicrotaintWrapper
@@ -109,6 +111,18 @@ class Reporter:
         )
 
     def uaf(self, address: int, size: int = 0) -> None:
+        """Report an access to freed memory, once per freed address.
+
+        A use-after-free is a property of the ADDRESS, and one guest access can
+        reach this more than once: in UAF mode both a write hook and an
+        unmapped-write hook are registered, and a write to a munmap'd page makes
+        Unicorn fire both, so `p[0] = 'A'` after `munmap` produced two identical
+        findings.  Re-reporting the same address also says nothing new when the
+        access sits in a loop.
+        """
+        if address in self._uaf_seen:
+            return
+        self._uaf_seen.add(address)
         self.add(
             Finding(
                 kind=FindingKind.UAF,
