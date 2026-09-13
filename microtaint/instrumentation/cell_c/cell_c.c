@@ -412,10 +412,18 @@ static int mem_key_regpart_addr(EvalC *self, Frame *f, const char *regpart,
     name[blen] = 0;
 
     int roff, rsz;
-    if (!reg_off_size(self, name, &roff, &rsz)) return 0;
-    uint64_t addr = (want_pc_base && is_pc_regname(name))
-                  ? (uint64_t)CELL_LIFT_BASE
-                  : frame_read_reg(f, roff, rsz);
+    uint64_t addr;
+    if (name[0] == '0' && name[1] == 0) {
+        /* An index with no base register: `[rcx*8]`.  The base contributes
+         * nothing, and "0" is not a register to look up. */
+        addr = 0;
+    } else if (!reg_off_size(self, name, &roff, &rsz)) {
+        return 0;
+    } else {
+        addr = (want_pc_base && is_pc_regname(name))
+             ? (uint64_t)CELL_LIFT_BASE
+             : frame_read_reg(f, roff, rsz);
+    }
 
     if (plus) {
         const char *star = strrchr(plus + 1, '*');

@@ -171,6 +171,14 @@ class MemMapping:
 _CONST_ADDR_MARKER = 'CONSTZERO'
 _CONST_ADDR_BASE = RegMapping(_CONST_ADDR_MARKER, 0, 63)
 
+# An address with an INDEX but no base: `[rcx*8]`, which x86 encodes as a SIB
+# with no base register.  MemMapping needs a base to name, so this stands in for
+# "there isn't one" and contributes nothing to the address.  Without it such an
+# address resolved to no mapping at all, and a dependency that is dropped is an
+# under-taint: the load read tainted bytes and reported none.
+_NO_BASE_MARKER = 'NOBASE'
+_NO_BASE_REG = RegMapping(_NO_BASE_MARKER, 0, 63)
+
 # Every instruction is translated at this fixed base (see sctx.translate below).
 # A compile-time-constant memory address is therefore expressed relative to it.
 _TRANSLATE_BASE = 0x1000
@@ -531,7 +539,22 @@ class StateMapper:
         return mappings
 
 
-def _mem_addr_expr(m: MemMapping, base_expr: Expr) -> Expr:
+def _mem_base_expr(m: MemMapping, bit_start: int | None = None,
+                   bit_end: int | None = None) -> Expr | None:
+    """The BASE term of a memory address, or None when there is no base.
+
+    An index-only address (`[rcx*8]`) has no base register to read, and building
+    a taint operand for the marker would put a register that does not exist into
+    the cell inputs.
+    """
+    if m.addr_reg.name == _NO_BASE_MARKER:
+        return None
+    bs = m.addr_reg.bit_start if bit_start is None else bit_start
+    be = m.addr_reg.bit_end if bit_end is None else bit_end
+    return _get_taint_operand(m.addr_reg.name, bs, be, False)
+
+
+def _mem_addr_expr(m: MemMapping, base_expr: Expr | None) -> Expr:
     """`base + index*scale + disp` as an Expr.
 
     Every memory read and write resolves its address through here, so the index
@@ -545,7 +568,9 @@ def _mem_addr_expr(m: MemMapping, base_expr: Expr) -> Expr:
             m.index_reg.name, m.index_reg.bit_start, m.index_reg.bit_end, False)
         if m.index_scale > 1:
             idx = BinaryExpr(Op.LEFT, idx, Constant(m.index_scale.bit_length() - 1, 8))
-        e = BinaryExpr(Op.ADD, e, idx)
+        e = idx if e is None else BinaryExpr(Op.ADD, e, idx)
+    if e is None:
+        e = Constant(0, 8)
     if m.addr_const_offset != 0:
         e = BinaryExpr(Op.ADD, e, Constant(m.addr_const_offset, 8))
     return e
@@ -564,19 +589,21 @@ _Resolved = tuple[RegMapping | None, int, tuple[RegMapping, int] | None]
 _AddrIdentity = tuple[str, int, str, int]
 
 
-def _addr_identity(base: RegMapping, off: int,
+def _addr_identity(base: RegMapping | None, off: int,
                    index: tuple[RegMapping, int] | None) -> _AddrIdentity:
-    """Address identity from a resolver triple."""
+    """Address identity from a resolver triple.  `base` may be absent."""
+    name = '' if base is None or base.name == _NO_BASE_MARKER else base.name
     if index is None:
-        return (base.name, off, '', 1)
-    return (base.name, off, index[0].name, index[1])
+        return (name, off, '', 1)
+    return (name, off, index[0].name, index[1])
 
 
 def _mem_addr_identity(m: MemMapping) -> _AddrIdentity:
     """The same identity for an already-built MemMapping."""
+    base = '' if m.addr_reg.name == _NO_BASE_MARKER else m.addr_reg.name
     if m.index_reg is None:
-        return (m.addr_reg.name, m.addr_const_offset, '', 1)
-    return (m.addr_reg.name, m.addr_const_offset, m.index_reg.name, m.index_scale)
+        return (base, m.addr_const_offset, '', 1)
+    return (base, m.addr_const_offset, m.index_reg.name, m.index_scale)
 
 
 def resolve_ptr_with_offset(  # noqa: C901
@@ -1847,7 +1874,9 @@ def _mem_cell_key(m: MemMapping) -> str:
     index came to be dropped at one site and honoured at another."""
     if m.addr_reg.name == _CONST_ADDR_MARKER:
         return f'MEM_{hex(m.addr_const_offset & 0xFFFFFFFFFFFFFFFF)}_{m.size_bytes}'
-    base = m.addr_reg.name
+    # A no-base address writes its base field as `0`: the readers add nothing
+    # for it, and `0+` cannot be confused with the `0x` of a Format-A key.
+    base = '0' if m.addr_reg.name == _NO_BASE_MARKER else m.addr_reg.name
     if m.index_reg is not None:
         base = f'{base}+{m.index_reg.name}*{m.index_scale}'
     return f'MEM_{base}_{m.addr_const_offset}_{m.size_bytes}'
@@ -1874,10 +1903,7 @@ def _dep_floor_taint(dep_map: RegMapping | MemMapping, split_sign: bool = False)
             _get_taint_operand(dep_map.name, dep_map.bit_start, dep_map.bit_end, True),
             dep_map.bit_end - dep_map.bit_start + 1,
         )]
-    addr_base = _get_taint_operand(
-        dep_map.addr_reg.name, dep_map.addr_reg.bit_start, dep_map.addr_reg.bit_end, False,
-    )
-    addr_e: Expr = _mem_addr_expr(dep_map, addr_base)
+    addr_e: Expr = _mem_addr_expr(dep_map, _mem_base_expr(dep_map))
     mem_taint = MemoryOperand(addr_e, dep_map.size_bytes, is_taint=True)
     w = dep_map.size_bytes * 8
     if split_sign and w >= 2:
@@ -3562,13 +3588,7 @@ def generate_taint_assignments(  # noqa: C901
                 expr = BinaryExpr(Op.AND, C_eval, T_any)
 
             elif isinstance(dep_map, MemMapping):  # pyright: ignore[reportUnnecessaryIsInstance]
-                addr_base = _get_taint_operand(
-                    dep_map.addr_reg.name,
-                    dep_map.addr_reg.bit_start,
-                    dep_map.addr_reg.bit_end,
-                    False,
-                )
-                addr_expr: Expr = _mem_addr_expr(dep_map, addr_base)
+                addr_expr: Expr = _mem_addr_expr(dep_map, _mem_base_expr(dep_map))
                 T_mem = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=True)
                 V_mem = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
                 imm_expr = Constant(imm_val, dep_map.size_bytes * 8)
@@ -3593,13 +3613,7 @@ def generate_taint_assignments(  # noqa: C901
             masked_inputs: dict[str, Expr] = {}
             for dep_map in dep_set.value_deps.keys():
                 if isinstance(dep_map, MemMapping):
-                    addr_base = _get_taint_operand(
-                        dep_map.addr_reg.name,
-                        dep_map.addr_reg.bit_start,
-                        dep_map.addr_reg.bit_end,
-                        False,
-                    )
-                    addr_expr = _mem_addr_expr(dep_map, addr_base)
+                    addr_expr = _mem_addr_expr(dep_map, _mem_base_expr(dep_map))
                     V_in: Expr = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
                     dep_name = _mem_cell_key(dep_map)
                 else:
@@ -4344,13 +4358,7 @@ def generate_taint_assignments(  # noqa: C901
                         True,
                     )
                 else:
-                    _cond_base = _get_taint_operand(
-                        dep_map.addr_reg.name,
-                        dep_map.addr_reg.bit_start,
-                        dep_map.addr_reg.bit_end,
-                        False,
-                    )
-                    _cond_addr: Expr = _mem_addr_expr(dep_map, _cond_base)
+                    _cond_addr: Expr = _mem_addr_expr(dep_map, _mem_base_expr(dep_map))
                     cond_taint = MemoryOperand(_cond_addr, dep_map.size_bytes, is_taint=True)
                 flag_taint_or = cond_taint if flag_taint_or is None else BinaryExpr(Op.OR, flag_taint_or, cond_taint)
         if flag_taint_or is not None:
@@ -4991,7 +4999,7 @@ def _add_addr_regs_to_cell_inputs(
     A register that is also a value-dep is skipped: it is already polarised.
     """
     for areg in (m.addr_reg, m.index_reg):
-        if areg is None:
+        if areg is None or areg.name == _NO_BASE_MARKER:
             continue
         if areg.name in value_reg_names or areg.name in cell_inputs_rep1:
             continue
@@ -5056,8 +5064,7 @@ def process_dependencies(
             addr_expr: Expr = Constant(const_addr, 8)
         else:
             key = _mem_cell_key(m)
-            addr_base = _get_taint_operand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, False)
-            addr_expr = _mem_addr_expr(m, addr_base)
+            addr_expr = _mem_addr_expr(m, _mem_base_expr(m))
             _add_addr_regs_to_cell_inputs(m, value_reg_names, cell_inputs_rep1, cell_inputs_rep2)
 
         T_mem = MemoryOperand(addr_expr, m.size_bytes, is_taint=True)
@@ -5109,8 +5116,7 @@ def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOpera
             addr_expr: Expr = Constant(const_addr, 8)
             out_name = _mem_cell_key(mapping)
         else:
-            addr_base: Expr = _get_taint_operand(mapping.addr_reg.name, 0, 63, False)
-            addr_expr = _mem_addr_expr(mapping, addr_base)
+            addr_expr = _mem_addr_expr(mapping, _mem_base_expr(mapping, 0, 63))
             out_name = _mem_cell_key(mapping)
         out_target = MemoryOperand(addr_expr, mapping.size_bytes, is_taint=True)
         out_bit_start, out_bit_end = 0, (mapping.size_bytes * 8) - 1
@@ -5480,8 +5486,11 @@ def extract_dependencies(  # noqa: C901
             mem_map = None
             if _skip_load:
                 mem_map = None
-            elif mapped_addr is not None:
-                mem_map = MemMapping(ptr_vn.offset, _load_size, mapped_addr,
+            elif mapped_addr is not None or addr_index is not None:
+                # An index with no base (`[rcx*8]`) is still a resolved address:
+                # dropping it because the BASE is absent is an under-taint.
+                mem_map = MemMapping(ptr_vn.offset, _load_size,
+                                 mapped_addr if mapped_addr is not None else _NO_BASE_REG,
                                  const_offset + _load_off,
                                  addr_index[0] if addr_index else None,
                                  addr_index[1] if addr_index else 1)
@@ -5793,14 +5802,18 @@ def map_outputs_to_targets(  # noqa: C901
                 if lane_asgs is not None:
                     assignments.extend(lane_asgs)
                     continue
-        if base_reg is None:
+        if base_reg is None and store_index is None:
             # Constant / absolute STORE address (e.g. `mov [rip+d], rax`): the
             # pointer folds to a compile-time constant.  Model it as a
             # constant-address memory target (PC-relative -> runtime pc; absolute
             # -> baked) instead of dropping the store.
             mem_map = _const_addr_mem(const_offset, size, pc_relative, pc_reg)
         else:
-            mem_map = MemMapping(ptr_vn.offset, size, base_reg, const_offset,
+            # `base_reg is None` with an index is `[rcx*8]`: an address with no
+            # base register, which is resolved, not unresolvable.
+            mem_map = MemMapping(ptr_vn.offset, size,
+                                 base_reg if base_reg is not None else _NO_BASE_REG,
+                                 const_offset,
                                  store_index[0] if store_index else None,
                                  store_index[1] if store_index else 1)
         targets_to_evaluate.append(EvalTarget(val_vn, mem_map))

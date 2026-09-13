@@ -1884,12 +1884,17 @@ cdef class PCodeCellEvaluator:
         plus = regpart.find('+')
         base_name = regpart if plus < 0 else regpart[:plus]
 
-        off_obj = self._offsets.get(base_name)
-        if off_obj is None:
-            return None
-        sz_obj = self._sizes.get(base_name)
-        sz     = <int>sz_obj if sz_obj is not None else 8
-        addr   = frame._read_reg(<long>off_obj, sz)
+        if base_name == '0':
+            # An index with no base register: `[rcx*8]`.  The base contributes
+            # nothing, and '0' is not a register to look up.
+            addr = 0
+        else:
+            off_obj = self._offsets.get(base_name)
+            if off_obj is None:
+                return None
+            sz_obj = self._sizes.get(base_name)
+            sz     = <int>sz_obj if sz_obj is not None else 8
+            addr   = frame._read_reg(<long>off_obj, sz)
 
         if plus >= 0:
             star = regpart.rfind('*')

@@ -275,3 +275,52 @@ def test_indexed_matches_the_equivalent_displacement(tmpl: str) -> None:
         f'the addressing mode changed the answer for the same address:\n'
         f'  {indexed:<28} {a}\n  {displaced:<28} {b}'
     )
+
+
+# ---------------------------------------------------------------------------
+# An index with NO base register: `[rcx*8]`.
+# ---------------------------------------------------------------------------
+#
+# x86 encodes this as a SIB with no base.  `resolve_ptr_with_offset` reports it
+# as (no base, offset, index), and the mapping was only ever built when the BASE
+# resolved, so the whole memory dependency was dropped and the load reported no
+# taint at all.  Before the index was recovered at all, the same address resolved
+# to the bare index register and read the wrong place; neither is sound, and the
+# second is silent.
+#
+# TAINTED is divisible by 8, so every scale below addresses it exactly.
+
+@pytest.mark.parametrize('scale', [1, 2, 4, 8])
+def test_index_with_no_base_is_not_dropped(scale: int) -> None:
+    """`[rcx*scale]` must read the byte at rcx*scale."""
+    got = _load_taint(f'movzx ecx, byte ptr [rcx*{scale}]', {'RCX': TAINTED // scale})
+    assert got == 0xFF, (
+        f'[rcx*{scale}] read nothing: an address with an index but no base '
+        f'register is resolved, not unresolvable, and dropping the dependency '
+        f'because the base is absent is an under-taint'
+    )
+
+
+def test_index_with_no_base_plus_displacement() -> None:
+    """`[rcx*4 + disp]`: no base, but still a displacement."""
+    got = _load_taint('movzx ecx, byte ptr [rcx*4 + 0x20]',
+                      {'RCX': (TAINTED - 0x20) // 4})
+    assert got == 0xFF, 'the displacement or the index was dropped'
+
+
+def test_index_with_no_base_still_avalanches_when_tainted() -> None:
+    """The guard: a tainted index with no base must still over-approximate."""
+    ks = keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_64)
+    rule = generate_static_rule(
+        Architecture.AMD64, bytes(ks.asm('movzx ecx, byte ptr [rcx*8]')[0]), FMT)
+    sh = BitPreciseShadowMemory()
+    vals = dict.fromkeys(NAMES, 0)
+    vals.update({'RCX': TAINTED // 8, 'RSP': 0x7FFF_FFF0_0000})
+    tnt = dict.fromkeys(NAMES, 0)
+    tnt['RCX'] = 0xFF                      # the INDEX is secret
+    ctx = EvalContext(input_taint=tnt, input_values=vals, simulator=SIM,
+                      implicit_policy=ImplicitTaintPolicy.IGNORE, shadow_memory=sh)
+    assert int(rule.evaluate(ctx).get('RCX', 0) or 0) != 0, (
+        'a load through a tainted index must stay tainted whether or not the '
+        'address also has a base register'
+    )

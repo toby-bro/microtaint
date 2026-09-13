@@ -590,7 +590,10 @@ class CellSimulator:
                 if '+' in base_reg:
                     base_name, _, index_part = base_reg.partition('+')
                     index_name, _, scale_s = index_part.rpartition('*')
-                    addr = self._read_reg(base_name) + self._read_reg(index_name) * int(scale_s)
+                    # '0' is an index with no base register (`[rcx*8]`), not a
+                    # register to read.
+                    base_val = 0 if base_name == '0' else self._read_reg(base_name)
+                    addr = base_val + self._read_reg(index_name) * int(scale_s)
                 else:
                     addr = self._read_reg(base_reg)
                 if len(parts) > 2:
