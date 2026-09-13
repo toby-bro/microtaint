@@ -388,6 +388,53 @@ static int is_pc_regname(const char *n) {
     return strcmp(n, "RIP") == 0 || strcmp(n, "EIP") == 0 || strcmp(n, "PC") == 0;
 }
 
+/* Address for a Format-B/C cell key's register part: `RDI`, or `RDI+RAX*4` for
+ * a base+index operand.  Writes the address through *out and returns 1, or
+ * returns 0 when a register named in it is not in this state format -- which
+ * every caller treats as "skip this key", exactly what it did before an index
+ * could appear.
+ *
+ * `want_pc_base` selects the PC treatment: an INPUT placement resolves a
+ * PC-relative operand against the lift base (see is_pc_regname), an output read
+ * does not, which is the behaviour each caller had before this was factored out.
+ *
+ * cell.pyx::_mem_key_addr must compute the same address from the same string. */
+static int mem_key_regpart_addr(EvalC *self, Frame *f, const char *regpart,
+                                int want_pc_base, uint64_t *out) {
+    char name[64];
+    const char *plus = strchr(regpart, '+');
+    Py_ssize_t blen = plus ? (plus - regpart) : (Py_ssize_t)strlen(regpart);
+    if (blen <= 0 || blen >= (Py_ssize_t)sizeof(name)) return 0;
+    for (Py_ssize_t j = 0; j < blen; j++) {
+        char c = regpart[j];
+        name[j] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+    }
+    name[blen] = 0;
+
+    int roff, rsz;
+    if (!reg_off_size(self, name, &roff, &rsz)) return 0;
+    uint64_t addr = (want_pc_base && is_pc_regname(name))
+                  ? (uint64_t)CELL_LIFT_BASE
+                  : frame_read_reg(f, roff, rsz);
+
+    if (plus) {
+        const char *star = strrchr(plus + 1, '*');
+        if (!star) return 0;
+        Py_ssize_t ilen = star - (plus + 1);
+        if (ilen <= 0 || ilen >= (Py_ssize_t)sizeof(name)) return 0;
+        for (Py_ssize_t j = 0; j < ilen; j++) {
+            char c = plus[1 + j];
+            name[j] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+        }
+        name[ilen] = 0;
+        if (!reg_off_size(self, name, &roff, &rsz)) return 0;
+        uint64_t scale = (uint64_t)strtoull(star + 1, NULL, 10);
+        addr += frame_read_reg(f, roff, rsz) * scale;
+    }
+    *out = addr;
+    return 1;
+}
+
 static int load_flat(EvalC *self, Frame *f, PyObject *inputs_dict) {
     PyObject *key, *val;
     Py_ssize_t pos = 0;
@@ -445,22 +492,15 @@ static int load_flat(EvalC *self, Frame *f, PyObject *inputs_dict) {
         } else {
             const char *inner = strrchr(head, '_');
             if (!inner) continue;
-            char regname[64];
+            char regpart[128];
             Py_ssize_t rlen = inner - head;
-            if (rlen <= 0 || rlen >= (Py_ssize_t)sizeof(regname)) continue;
-            for (int j = 0; j < rlen; j++) {
-                char c = head[j];
-                regname[j] = (c >= 'a' && c <= 'z') ? c - 32 : c;
-            }
-            regname[rlen] = 0;
+            if (rlen <= 0 || rlen >= (Py_ssize_t)sizeof(regpart)) continue;
+            memcpy(regpart, head, rlen); regpart[rlen] = 0;
             int64_t offset = (int64_t)atoll(inner + 1);
-            int roff, rsz;
-            if (!reg_off_size(self, regname, &roff, &rsz)) continue;
-            /* See is_pc_regname: PC-relative operands resolve against the lift
-             * base, not the runtime PC. */
-            uint64_t base = is_pc_regname(regname)
-                          ? (uint64_t)CELL_LIFT_BASE
-                          : frame_read_reg(f, roff, rsz);
+            uint64_t base;
+            /* want_pc_base: PC-relative operands resolve against the lift base,
+             * not the runtime PC.  See is_pc_regname. */
+            if (!mem_key_regpart_addr(self, f, regpart, 1, &base)) continue;
             addr = base + (uint64_t)offset;
         }
         mem_write(&f->mem, addr, v, size, f->is_big_endian);
@@ -493,18 +533,13 @@ static uint64_t read_output_full(EvalC *self, Frame *f,
         } else {
             const char *inner = strrchr(head, '_');
             if (!inner) return 0;
-            char regname[64];
+            char regpart[128];
             Py_ssize_t rlen = inner - head;
-            if (rlen <= 0 || rlen >= (Py_ssize_t)sizeof(regname)) return 0;
-            for (int j = 0; j < rlen; j++) {
-                char c = head[j];
-                regname[j] = (c >= 'a' && c <= 'z') ? c - 32 : c;
-            }
-            regname[rlen] = 0;
+            if (rlen <= 0 || rlen >= (Py_ssize_t)sizeof(regpart)) return 0;
+            memcpy(regpart, head, rlen); regpart[rlen] = 0;
             int64_t offset = (int64_t)atoll(inner + 1);
-            int roff, rsz;
-            if (!reg_off_size(self, regname, &roff, &rsz)) return 0;
-            uint64_t base = frame_read_reg(f, roff, rsz);
+            uint64_t base;
+            if (!mem_key_regpart_addr(self, f, regpart, 0, &base)) return 0;
             addr = base + (uint64_t)offset;
         }
         val = mem_read(&f->mem, addr, size, f->is_big_endian);
@@ -1334,6 +1369,7 @@ static PyObject *EvalC_evaluate_differential(EvalC *self, PyObject *args) {
  *   "REG_NAME" -> int        (uppercase or lowercase OK)
  *   "MEM_<hex>_<size>"       static address
  *   "MEM_<reg>_<signed_off>_<size>"  register-relative
+ *   "MEM_<reg>+<idx>*<scale>_<signed_off>_<size>"  base+index
  */
 static PyObject *EvalC_evaluate_concrete_flat(EvalC *self, PyObject *args) {
     PyObject *cell_obj, *flat_inputs;

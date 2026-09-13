@@ -54,10 +54,21 @@ _BENCH_DIR = Path(__file__).resolve().parent.parent / 'benchmark' / 'taint_densi
 # figure is 36 only because the guest genuinely never reads its tainted bytes).
 # A ratchet baselined on buggy behaviour would have locked the bug in, so these
 # numbers are only meaningful together with tests/test_pc_relative_mem_taint.py.
+#
+# bench_dense's untainted-input floor was lowered 0.60 -> 0.40 when the base+index
+# under-taint was fixed, for the same reason the whole table was rebaselined after
+# the PC-relative one: `[rdi+rax*4]` resolved to RDI alone, so taint arriving
+# through any indexed load was dropped and the untainted-input exit dismissed
+# instructions it had no right to dismiss.  Measured on bench_dense, dismissed
+# fraction: 0.453 after the fix, against 0.241 for the compiled taint path on the
+# same guest -- so this moved TOWARD the more faithful engine and is still well
+# above it, which is what says the extra taint is real rather than invented.
+# The other three counters did not move: work did not shift paths, more
+# instructions simply have tainted inputs now.
 LIMITS = {
     'bench_untainted.elf': (500, 500, 0.99, 0.85),
     'bench_sparse.elf':    (5_000, 500, 0.99, 0.85),
-    'bench_dense.elf':     (200_000, 1_000, 0.99, 0.60),
+    'bench_dense.elf':     (200_000, 1_000, 0.99, 0.40),
 }
 
 

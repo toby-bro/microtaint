@@ -150,6 +150,14 @@ class MemMapping:
     size_bytes: int
     addr_reg: RegMapping
     addr_const_offset: int = 0
+    #: A second register term, for `base + index*scale` addressing.  Without it
+    #: `resolve_ptr_with_offset` had nowhere to put the index and dropped it, so
+    #: `[rdi+rax*4]` resolved to RDI and the shadow was read at the base instead
+    #: of the element -- clean taint for every array element but the first.
+    #: `index_scale` is always a power of two (x86 SIB), so the address
+    #: expression shifts rather than multiplies; Op has no MULT.
+    index_reg: RegMapping | None = None
+    index_scale: int = 1
 
 
 # Marker base for a compile-time-constant memory address (absolute / PC-relative
@@ -209,8 +217,8 @@ def _pc_relative_addrs(
         out: list[int] = []
         for op in ops:
             if op.opcode.name in ('LOAD', 'STORE'):
-                mapped_addr, const_offset = resolve_ptr_with_offset(op.inputs[1], ops, mp)
-                if mapped_addr is None and const_offset != 0:
+                mapped_addr, const_offset, _idx = resolve_ptr_with_offset(op.inputs[1], ops, mp)
+                if mapped_addr is None and _idx is None and const_offset != 0:
                     out.append(const_offset)
             for v in (*op.inputs, *([op.output] if op.output is not None else [])):
                 if v.space.name == 'ram':
@@ -523,14 +531,69 @@ class StateMapper:
         return mappings
 
 
+def _mem_addr_expr(m: MemMapping, base_expr: Expr) -> Expr:
+    """`base + index*scale + disp` as an Expr.
+
+    Every memory read and write resolves its address through here, so the index
+    term cannot be forgotten at one site and honoured at another -- which is how
+    `[rdi+rax*4]` came to read the base.  Op has no MULT and an x86 scale is
+    always a power of two, so the scale is a shift.
+    """
+    e = base_expr
+    if m.index_reg is not None:
+        idx: Expr = _get_taint_operand(
+            m.index_reg.name, m.index_reg.bit_start, m.index_reg.bit_end, False)
+        if m.index_scale > 1:
+            idx = BinaryExpr(Op.LEFT, idx, Constant(m.index_scale.bit_length() - 1, 8))
+        e = BinaryExpr(Op.ADD, e, idx)
+    if m.addr_const_offset != 0:
+        e = BinaryExpr(Op.ADD, e, Constant(m.addr_const_offset, 8))
+    return e
+
+
+#: What an address resolves to: ``base + const + index_reg * index_scale``.
+#: Every component is optional, but a component that is present is never
+#: dropped -- an address the engine cannot represent resolves to nothing.
+_Resolved = tuple[RegMapping | None, int, tuple[RegMapping, int] | None]
+
+
+#: A hashable identity for a memory ADDRESS, used to match a LOAD against the
+#: STORE at the same place when recovering polarity.  The index is part of the
+#: address: keyed on base and displacement alone, `[rdi]` and `[rdi+rax*4]`
+#: share an identity and one location's polarity crosses to another's.
+_AddrIdentity = tuple[str, int, str, int]
+
+
+def _addr_identity(base: RegMapping, off: int,
+                   index: tuple[RegMapping, int] | None) -> _AddrIdentity:
+    """Address identity from a resolver triple."""
+    if index is None:
+        return (base.name, off, '', 1)
+    return (base.name, off, index[0].name, index[1])
+
+
+def _mem_addr_identity(m: MemMapping) -> _AddrIdentity:
+    """The same identity for an already-built MemMapping."""
+    if m.index_reg is None:
+        return (m.addr_reg.name, m.addr_const_offset, '', 1)
+    return (m.addr_reg.name, m.addr_const_offset, m.index_reg.name, m.index_scale)
+
+
 def resolve_ptr_with_offset(  # noqa: C901
     vn: Varnode,
     all_ops: list[PcodeOp],
     mapper: StateMapper,
     stop_op_index: int | None = None,
-) -> tuple[RegMapping | None, int]:
+) -> _Resolved:
     """
-    Resolves a pointer varnode to (base_register_mapping, signed_const_offset).
+    Resolves a pointer varnode to (base_reg, signed_const_offset, index).
+
+    `index` is (register, scale) for `base + index*scale` addressing, or None.
+    It used to have nowhere to go: an INT_ADD of two registers returned the left
+    one and discarded the right, so `[rdi+rax*4]` resolved to RDI alone.  An
+    address the engine cannot represent returns (None, 0, None) rather than a
+    base that is missing a term -- a dropped dependency is visible downstream,
+    a wrong address is not.
 
     Args:
         vn: The pointer Varnode to resolve.
@@ -545,7 +608,53 @@ def resolve_ptr_with_offset(  # noqa: C901
 
     initial_limit = stop_op_index if stop_op_index is not None else len(all_ops)
 
-    def _resolve(current_vn: Varnode, limit: int) -> tuple[RegMapping | None, int]:  # noqa: C901
+    def _index_term(op: PcodeOp, i: int) -> _Resolved | None:
+        """`reg * const` -> an index term, if the scale is a power of two.
+
+        Op has no MULT, so the address expression shifts; a non-power-of-two
+        scale cannot be built and resolves to nothing rather than to the bare
+        register, which would read the wrong address.
+
+        A register that already carries a constant (`(rbx+8)*4`) is refused
+        rather than folded to `rbx*4`: the offset scales too, and dropping it
+        would be the very bug this resolver exists to prevent.  Folding it as
+        `rbx*4 + 32` is correct arithmetic but nothing in the ISA reaches this
+        shape today, so it would be untested code on a soundness path.
+        """
+        for a, b in ((0, 1), (1, 0)):
+            rb, roff, ridx = _resolve(op.inputs[a], i)
+            cb, coff, cidx = _resolve(op.inputs[b], i)
+            if rb is not None and ridx is None and cb is None and cidx is None:
+                scale = coff
+                if roff == 0 and scale > 0 and (scale & (scale - 1)) == 0:
+                    return None, 0, (rb, scale)
+                return None, 0, None
+        return None
+
+    def _combine_add(lhs: _Resolved, rhs: _Resolved) -> _Resolved:
+        """Fold two resolved halves of an INT_ADD into one (base, off, index).
+
+        A register on each side is exactly `base + index*1`: keep the left as the
+        base and make the right the index, instead of discarding it.  Anything
+        needing a THIRD register term is not expressible as base+index*scale, so
+        it resolves to nothing rather than to an address missing a term.
+        """
+        lbase, loff, lidx = lhs
+        rbase, roff, ridx = rhs
+        off = loff + roff
+        if lidx is not None and ridx is not None:
+            return None, 0, None
+        idx = lidx if lidx is not None else ridx
+        if lbase is not None and rbase is not None:
+            if idx is not None:
+                return None, 0, None          # three register terms
+            return lbase, off, (rbase, 1)
+        base = lbase if lbase is not None else rbase
+        return base, off, idx
+
+    def _resolve(  # noqa: C901
+        current_vn: Varnode, limit: int,
+    ) -> _Resolved:
         # `limit` is the exclusive upper bound on op indices that may be
         # considered as definers of the current varnode. When we follow a
         # defining op at index `i`, the recursive resolves of its inputs
@@ -560,12 +669,12 @@ def resolve_ptr_with_offset(  # noqa: C901
             # Handle 64-bit negative offsets
             if val >= (1 << 63):
                 val -= 1 << 64
-            return None, val
+            return None, val, None
 
         if current_vn.space.name == 'register':
             reg_off = current_vn.offset
             if reg_off in visited_reg:
-                return mapper.map_to_state(current_vn.offset, current_vn.size), 0
+                return mapper.map_to_state(current_vn.offset, current_vn.size), 0, None
 
             visited_reg.add(reg_off)
 
@@ -595,28 +704,33 @@ def resolve_ptr_with_offset(  # noqa: C901
                     visited_reg.discard(reg_off)
                     return res
                 if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                    lreg, loff = _resolve(op.inputs[0], i)
-                    rreg, roff = _resolve(op.inputs[1], i)
+                    res = _combine_add(_resolve(op.inputs[0], i),
+                                       _resolve(op.inputs[1], i))
                     visited_reg.discard(reg_off)
-                    if lreg is not None:
-                        return lreg, loff + roff
-                    if rreg is not None:
-                        return rreg, roff + loff
+                    if res[0] is not None or res[2] is not None:
+                        return res
+                elif op.opcode.name == 'INT_MULT':
+                    idx_res = _index_term(op, i)
+                    visited_reg.discard(reg_off)
+                    if idx_res is not None:
+                        return idx_res
                 elif op.opcode.name == 'INT_SUB':
-                    lreg, loff = _resolve(op.inputs[0], i)
-                    _, roff = _resolve(op.inputs[1], i)
+                    lreg, loff, lidx = _resolve(op.inputs[0], i)
+                    rreg, roff, ridx = _resolve(op.inputs[1], i)
                     visited_reg.discard(reg_off)
+                    if rreg is not None or ridx is not None:
+                        return None, 0, None   # subtracting a register term
                     if lreg is not None:
-                        return lreg, loff - roff
+                        return lreg, loff - roff, lidx
                 # Any other defining op: value is computed, use direct mapping below.
 
             visited_reg.discard(reg_off)
-            return mapper.map_to_state(current_vn.offset, current_vn.size), 0
+            return mapper.map_to_state(current_vn.offset, current_vn.size), 0, None
 
         if current_vn.space.name == 'unique':
             key = current_vn.offset
             if key in visited_unique:
-                return None, 0
+                return None, 0, None
             visited_unique.add(key)
 
             # Use the LAST definition before `limit` (SSA last-def-before-use).
@@ -636,27 +750,31 @@ def resolve_ptr_with_offset(  # noqa: C901
                 op = all_ops[i]
                 # Inputs are read AT op[i], so recurse with limit = i.
                 if op.opcode.name in ('INT_ADD', 'PTRADD'):
-                    lreg, loff = _resolve(op.inputs[0], i)
-                    rreg, roff = _resolve(op.inputs[1], i)
-                    if lreg is not None:
-                        return lreg, loff + roff
-                    if rreg is not None:
-                        return rreg, roff + loff
+                    res = _combine_add(_resolve(op.inputs[0], i),
+                                       _resolve(op.inputs[1], i))
+                    if res[0] is not None or res[2] is not None:
+                        return res
+                elif op.opcode.name == 'INT_MULT':
+                    idx_res = _index_term(op, i)
+                    if idx_res is not None:
+                        return idx_res
                 elif op.opcode.name == 'INT_SUB':
-                    lreg, loff = _resolve(op.inputs[0], i)
-                    _, roff = _resolve(op.inputs[1], i)
+                    lreg, loff, lidx = _resolve(op.inputs[0], i)
+                    rreg, roff, ridx = _resolve(op.inputs[1], i)
+                    if rreg is not None or ridx is not None:
+                        return None, 0, None   # subtracting a register term
                     if lreg is not None:
-                        return lreg, loff - roff
+                        return lreg, loff - roff, lidx
                 elif op.opcode.name in ('COPY', 'INT_ZEXT', 'INT_SEXT'):
                     return _resolve(op.inputs[0], i)
                 else:
                     for inp in op.inputs:
-                        r, o = _resolve(inp, i)
+                        r, o, ix = _resolve(inp, i)
                         if r is not None:
-                            return r, o
+                            return r, o, ix
 
-            return None, 0
-        return None, 0
+            return None, 0, None
+        return None, 0, None
 
     return _resolve(vn, initial_limit)
 
@@ -1647,8 +1765,12 @@ def _stack_mem_operand(
     address expression evaluates to the same concrete address the ICE differential
     resolves, so the two read the same bytes.
     """
-    base, offset = resolve_ptr_with_offset(addr_vn, slice_ops, mapper)
+    base, offset, index = resolve_ptr_with_offset(addr_vn, slice_ops, mapper)
     if base is None or base.name not in _STACK_PTR_NAMES:
+        return None
+    if index is not None:
+        # `[rsp+rax*4]` is a stack address the fast path cannot express.
+        # Reading it at RSP alone is what this whole fix is about.
         return None
     addr: Expr = _get_taint_operand(base.name, base.bit_start, base.bit_end, False)
     if offset:
@@ -1662,10 +1784,27 @@ def _mem_cell_key(m: MemMapping) -> str:
     constant address, Format-B ``MEM_<reg>_<off>_<size>`` for a register-relative
     one.  The bare ``MEM_<reg>`` form some floors used does NOT round-trip the
     masked value into the cell's memory (wrong size / no offset), so the masked
-    replica read stale bytes and the flag under-tainted."""
+    replica read stale bytes and the flag under-tainted.
+
+    Format C ``MEM_<base>+<idx>*<scale>_<off>_<size>`` carries a base+index
+    operand, and is emitted ONLY when there is an index, so every key that does
+    not need one is byte-identical to before.  Without it the address round-trips
+    as ``reg + off`` and an indexed operand's masked value lands at the base
+    rather than at the element, which reads as "this input does not matter" and
+    under-taints.
+
+    This is the ONE place a cell key is spelled.  Five parsers read it back --
+    _build_machine_state and _read_output in cell.pyx, load_flat and
+    read_output_full in cell_c.c, and CellSimulator._read_reg -- and
+    tests/test_mem_key_format.py round-trips every shape through all of them,
+    because a format that four readers agree on and a fifth does not is how the
+    index came to be dropped at one site and honoured at another."""
     if m.addr_reg.name == _CONST_ADDR_MARKER:
         return f'MEM_{hex(m.addr_const_offset & 0xFFFFFFFFFFFFFFFF)}_{m.size_bytes}'
-    return f'MEM_{m.addr_reg.name}_{m.addr_const_offset}_{m.size_bytes}'
+    base = m.addr_reg.name
+    if m.index_reg is not None:
+        base = f'{base}+{m.index_reg.name}*{m.index_scale}'
+    return f'MEM_{base}_{m.addr_const_offset}_{m.size_bytes}'
 
 
 def _dep_floor_taint(dep_map: RegMapping | MemMapping, split_sign: bool = False) -> list[tuple[Expr, int]]:
@@ -1692,11 +1831,7 @@ def _dep_floor_taint(dep_map: RegMapping | MemMapping, split_sign: bool = False)
     addr_base = _get_taint_operand(
         dep_map.addr_reg.name, dep_map.addr_reg.bit_start, dep_map.addr_reg.bit_end, False,
     )
-    addr_e: Expr = (
-        BinaryExpr(Op.ADD, addr_base, Constant(dep_map.addr_const_offset, 8))
-        if dep_map.addr_const_offset != 0
-        else addr_base
-    )
+    addr_e: Expr = _mem_addr_expr(dep_map, addr_base)
     mem_taint = MemoryOperand(addr_e, dep_map.size_bytes, is_taint=True)
     w = dep_map.size_bytes * 8
     if split_sign and w >= 2:
@@ -3387,11 +3522,7 @@ def generate_taint_assignments(  # noqa: C901
                     dep_map.addr_reg.bit_end,
                     False,
                 )
-                addr_expr: Expr = (
-                    BinaryExpr(Op.ADD, addr_base, Constant(dep_map.addr_const_offset, 8))
-                    if dep_map.addr_const_offset != 0
-                    else addr_base
-                )
+                addr_expr: Expr = _mem_addr_expr(dep_map, addr_base)
                 T_mem = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=True)
                 V_mem = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
                 imm_expr = Constant(imm_val, dep_map.size_bytes * 8)
@@ -3422,11 +3553,7 @@ def generate_taint_assignments(  # noqa: C901
                         dep_map.addr_reg.bit_end,
                         False,
                     )
-                    addr_expr = (
-                        BinaryExpr(Op.ADD, addr_base, Constant(dep_map.addr_const_offset, 8))
-                        if dep_map.addr_const_offset != 0
-                        else addr_base
-                    )
+                    addr_expr = _mem_addr_expr(dep_map, addr_base)
                     V_in: Expr = MemoryOperand(addr_expr, dep_map.size_bytes, is_taint=False)
                     dep_name = _mem_cell_key(dep_map)
                 else:
@@ -4177,11 +4304,7 @@ def generate_taint_assignments(  # noqa: C901
                         dep_map.addr_reg.bit_end,
                         False,
                     )
-                    _cond_addr: Expr = (
-                        BinaryExpr(Op.ADD, _cond_base, Constant(dep_map.addr_const_offset, 8))
-                        if dep_map.addr_const_offset != 0
-                        else _cond_base
-                    )
+                    _cond_addr: Expr = _mem_addr_expr(dep_map, _cond_base)
                     cond_taint = MemoryOperand(_cond_addr, dep_map.size_bytes, is_taint=True)
                 flag_taint_or = cond_taint if flag_taint_or is None else BinaryExpr(Op.OR, flag_taint_or, cond_taint)
         if flag_taint_or is not None:
@@ -4804,6 +4927,33 @@ def _synth_simulator(arch: Architecture) -> CellSimulator:
     return CellSimulator(arch, use_unicorn=False, use_c=True)
 
 
+def _add_addr_regs_to_cell_inputs(
+    m: MemMapping,
+    value_reg_names: set[str],
+    cell_inputs_rep1: dict[str, Expr],
+    cell_inputs_rep2: dict[str, Expr],
+) -> None:
+    """Put EVERY register the address is built from into the cell inputs.
+
+    Both corners get the same value with taint excluded: a tainted pointer is an
+    AIW signal, not data taint.  The in-frame instruction then resolves
+    [base+index*scale+off] to the address the masked value was written at.
+    Supplying the base but not the INDEX leaves the replica's index register at
+    zero, so the instruction reads an address the mask never reached, both
+    corners see identical bytes, and the operand images as "does not matter".
+
+    A register that is also a value-dep is skipped: it is already polarised.
+    """
+    for areg in (m.addr_reg, m.index_reg):
+        if areg is None:
+            continue
+        if areg.name in value_reg_names or areg.name in cell_inputs_rep1:
+            continue
+        v_base = _get_taint_operand(areg.name, areg.bit_start, areg.bit_end, False)
+        cell_inputs_rep1[areg.name] = v_base
+        cell_inputs_rep2[areg.name] = v_base
+
+
 def process_dependencies(
     deps: dict[RegMapping | MemMapping, int],
     slice_ops: list[PcodeOp] | None = None,
@@ -4856,24 +5006,13 @@ def process_dependencies(
         # load_flat / read_output_full (C kernel).
         if m.addr_reg.name == _CONST_ADDR_MARKER:
             const_addr = m.addr_const_offset & 0xFFFFFFFFFFFFFFFF
-            key = f'MEM_{hex(const_addr)}_{m.size_bytes}'
+            key = _mem_cell_key(m)
             addr_expr: Expr = Constant(const_addr, 8)
         else:
-            key = f'MEM_{m.addr_reg.name}_{m.addr_const_offset}_{m.size_bytes}'
+            key = _mem_cell_key(m)
             addr_base = _get_taint_operand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, False)
-            if m.addr_const_offset != 0:
-                addr_expr = BinaryExpr(Op.ADD, addr_base, Constant(m.addr_const_offset, 8))
-            else:
-                addr_expr = addr_base
-            # The address-base register must be present in the cell inputs (same
-            # value in both corners, taint excluded — a tainted pointer is an AIW
-            # signal, not data taint) so the in-frame instruction resolves
-            # [reg+off] to the right address.  Skip if it is also a value-dep
-            # (already polarised above).
-            if m.addr_reg.name not in value_reg_names and m.addr_reg.name not in cell_inputs_rep1:
-                v_base = _get_taint_operand(m.addr_reg.name, m.addr_reg.bit_start, m.addr_reg.bit_end, False)
-                cell_inputs_rep1[m.addr_reg.name] = v_base
-                cell_inputs_rep2[m.addr_reg.name] = v_base
+            addr_expr = _mem_addr_expr(m, addr_base)
+            _add_addr_regs_to_cell_inputs(m, value_reg_names, cell_inputs_rep1, cell_inputs_rep2)
 
         T_mem = MemoryOperand(addr_expr, m.size_bytes, is_taint=True)
         V_mem = MemoryOperand(addr_expr, m.size_bytes, is_taint=False)
@@ -4922,14 +5061,11 @@ def generate_output_target(mapping: RegMapping | MemMapping) -> tuple[TaintOpera
         if mapping.addr_reg.name == _CONST_ADDR_MARKER:
             const_addr = mapping.addr_const_offset & 0xFFFFFFFFFFFFFFFF
             addr_expr: Expr = Constant(const_addr, 8)
-            out_name = f'MEM_{hex(const_addr)}_{mapping.size_bytes}'
+            out_name = _mem_cell_key(mapping)
         else:
             addr_base: Expr = _get_taint_operand(mapping.addr_reg.name, 0, 63, False)
-            if mapping.addr_const_offset != 0:
-                addr_expr = BinaryExpr(Op.ADD, addr_base, Constant(mapping.addr_const_offset, 8))
-            else:
-                addr_expr = addr_base
-            out_name = f'MEM_{mapping.addr_reg.name}_{mapping.addr_const_offset}_{mapping.size_bytes}'
+            addr_expr = _mem_addr_expr(mapping, addr_base)
+            out_name = _mem_cell_key(mapping)
         out_target = MemoryOperand(addr_expr, mapping.size_bytes, is_taint=True)
         out_bit_start, out_bit_end = 0, (mapping.size_bytes * 8) - 1
     else:
@@ -5266,7 +5402,8 @@ def extract_dependencies(  # noqa: C901
 
         if op.opcode.name == 'LOAD':
             ptr_vn = op.inputs[1]
-            mapped_addr, const_offset = resolve_ptr_with_offset(ptr_vn, all_ops, mapper, stop_op_index=load_op_index)
+            mapped_addr, const_offset, addr_index = resolve_ptr_with_offset(
+                ptr_vn, all_ops, mapper, stop_op_index=load_op_index)
             _load_size = op.output.size if op.output else 8
             _load_off = 0
             _skip_load = False
@@ -5298,7 +5435,10 @@ def extract_dependencies(  # noqa: C901
             if _skip_load:
                 mem_map = None
             elif mapped_addr is not None:
-                mem_map = MemMapping(ptr_vn.offset, _load_size, mapped_addr, const_offset + _load_off)
+                mem_map = MemMapping(ptr_vn.offset, _load_size, mapped_addr,
+                                 const_offset + _load_off,
+                                 addr_index[0] if addr_index else None,
+                                 addr_index[1] if addr_index else 1)
             elif const_offset != 0:
                 # The pointer folds to a compile-time constant (absolute / PC-
                 # relative literal, e.g. ARM64 `ldr w0,#imm`): a constant-address
@@ -5449,12 +5589,13 @@ def extract_dependencies(  # noqa: C901
     # uncorrected, MemoryDifferentialExpr builds a uniform-polarity D^{++}
     # differential instead of the sound D^{+-}, which under-taints the borrow
     # chain.  We recover the polarity by matching LOAD and STORE addresses.
-    load_pol: dict[tuple[str, int], int] = {}
+    load_pol: dict[_AddrIdentity, int] = {}
     for op in _slice_ops:
         if op.opcode.name == 'LOAD' and op.output is not None:
-            base, off = resolve_ptr_with_offset(op.inputs[1], all_ops, mapper, stop_op_index=load_op_index)
+            base, off, _ix = resolve_ptr_with_offset(
+                op.inputs[1], all_ops, mapper, stop_op_index=load_op_index)
             if base is not None:
-                key = (base.name, off)
+                key = _addr_identity(base, off, _ix)
                 load_pol[key] = min(load_pol.get(key, 1), polarities.get(get_varnode_id(op.output), 1))
     if load_pol:
 
@@ -5482,17 +5623,17 @@ def extract_dependencies(  # noqa: C901
         # (a) memory value-deps inherit the polarity of the LOAD at their address.
         for dep_map in list(value_deps.keys()):
             if isinstance(dep_map, MemMapping):
-                key = (dep_map.addr_reg.name, dep_map.addr_const_offset)
+                key = _mem_addr_identity(dep_map)
                 if key in load_pol:
                     value_deps[dep_map] = min(value_deps[dep_map], load_pol[key])
         # (b) store-forwarding source registers inherit the polarity of the
         #     memory location they feed.
         for op in all_ops:
             if op.opcode.name == 'STORE':
-                base, off = resolve_ptr_with_offset(op.inputs[1], all_ops, mapper)
+                base, off, _ix = resolve_ptr_with_offset(op.inputs[1], all_ops, mapper)
                 if base is None:
                     continue
-                key = (base.name, off)
+                key = _addr_identity(base, off, _ix)
                 if key not in load_pol:
                     continue
                 for md in _trace_store_value(op.inputs[2]):
@@ -5584,7 +5725,7 @@ def map_outputs_to_targets(  # noqa: C901
         # Resolve the address as it stood AT THE STORE — i.e. ignore any
         # register-update ops that come later in translation.ops, since those
         # writes happen after the STORE has already committed its address.
-        base_reg, const_offset = resolve_ptr_with_offset(
+        base_reg, const_offset, store_index = resolve_ptr_with_offset(
             ptr_vn,
             translation.ops,
             mapper,
@@ -5613,7 +5754,9 @@ def map_outputs_to_targets(  # noqa: C901
             # -> baked) instead of dropping the store.
             mem_map = _const_addr_mem(const_offset, size, pc_relative, pc_reg)
         else:
-            mem_map = MemMapping(ptr_vn.offset, size, base_reg, const_offset)
+            mem_map = MemMapping(ptr_vn.offset, size, base_reg, const_offset,
+                                 store_index[0] if store_index else None,
+                                 store_index[1] if store_index else 1)
         targets_to_evaluate.append(EvalTarget(val_vn, mem_map))
 
     # Direct ram-space OUTPUT varnodes (absolute / PC-relative writes lifted as

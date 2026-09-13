@@ -140,12 +140,15 @@ class TestResolvePtrTemporalOrdering:
 
         # Resolve, mirroring exactly what map_outputs_to_targets does after
         # the fix: pass stop_op_index=store_idx.
-        base_reg, const_offset = resolve_ptr_with_offset(
+        base_reg, const_offset, index_term = resolve_ptr_with_offset(
             ptr_vn,
             list(translation.ops),
             mapper,
             stop_op_index=store_idx,
         )
+
+        # The string-op address is a bare base register: no base+index term.
+        assert index_term is None, f'expected no index term, got {index_term}'
 
         assert base_reg is not None, 'resolver returned None — should resolve to RDI'
         assert base_reg.name == 'RDI', f'expected base register RDI, got {base_reg.name}'
@@ -175,12 +178,15 @@ class TestResolvePtrTemporalOrdering:
         assert store_idx is not None
         assert ptr_vn is not None
 
-        base_reg, const_offset = resolve_ptr_with_offset(
+        base_reg, const_offset, index_term = resolve_ptr_with_offset(
             ptr_vn,
             list(translation.ops),
             mapper,
             stop_op_index=store_idx,
         )
+
+        # The string-op address is a bare base register: no base+index term.
+        assert index_term is None, f'expected no index term, got {index_term}'
 
         assert base_reg is not None
         assert base_reg.name == 'RDI'
@@ -203,12 +209,15 @@ class TestResolvePtrTemporalOrdering:
         assert store_idx is not None
         assert ptr_vn is not None
 
-        base_reg, const_offset = resolve_ptr_with_offset(
+        base_reg, const_offset, index_term = resolve_ptr_with_offset(
             ptr_vn,
             list(translation.ops),
             mapper,
             stop_op_index=store_idx,
         )
+
+        # The string-op address is a bare base register: no base+index term.
+        assert index_term is None, f'expected no index term, got {index_term}'
 
         assert base_reg is not None
         assert base_reg.name == 'RDI'

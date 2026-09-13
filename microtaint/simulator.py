@@ -582,9 +582,17 @@ class CellSimulator:
                 addr = int(parts[1], 16)
                 size = int(parts[2]) if len(parts) > 2 else 8
             except ValueError:
-                # Dynamic register: MEM_RBP_8  or  MEM_RBP_-8_8
+                # Dynamic register: MEM_RBP_8, MEM_RBP_-8_8, or the base+index
+                # form MEM_RDI+RAX*4_0_4.  The index is read and scaled here for
+                # the same reason it is in cell.pyx and cell_c.c: resolving the
+                # address to the base alone reads the wrong element.
                 base_reg = parts[1]
-                addr = self._read_reg(base_reg)
+                if '+' in base_reg:
+                    base_name, _, index_part = base_reg.partition('+')
+                    index_name, _, scale_s = index_part.rpartition('*')
+                    addr = self._read_reg(base_name) + self._read_reg(index_name) * int(scale_s)
+                else:
+                    addr = self._read_reg(base_reg)
                 if len(parts) > 2:
                     try:
                         # parts[2] is a signed offset, parts[3] (optional) is size

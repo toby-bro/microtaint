@@ -1866,9 +1866,53 @@ cdef class PCodeCellEvaluator:
             return off_obj
         return None
 
+    cdef object _mem_key_addr(self, _PCodeFrame frame, str regpart, int64_t signed_off):
+        """Address for a Format-B/C cell key: base [+ index*scale] + offset.
+
+        `regpart` is `RDI`, or `RDI+RAX*4` for a base+index operand.  Returns
+        None when a register named in it is not in this state format, which the
+        callers treat as "skip this key" -- exactly what they did before an index
+        could appear.  Parsing it in one place keeps this in step with
+        read_output_full/load_flat in cell_c.c, which must compute the same
+        address from the same string.
+        """
+        cdef object off_obj, sz_obj
+        cdef str base_name, idx_name
+        cdef int plus, star, sz, scale
+        cdef uint64_t addr, idx_val
+
+        plus = regpart.find('+')
+        base_name = regpart if plus < 0 else regpart[:plus]
+
+        off_obj = self._offsets.get(base_name)
+        if off_obj is None:
+            return None
+        sz_obj = self._sizes.get(base_name)
+        sz     = <int>sz_obj if sz_obj is not None else 8
+        addr   = frame._read_reg(<long>off_obj, sz)
+
+        if plus >= 0:
+            star = regpart.rfind('*')
+            if star < plus:
+                return None
+            idx_name = regpart[plus + 1:star]
+            try:
+                scale = int(regpart[star + 1:])
+            except ValueError:
+                return None
+            off_obj = self._offsets.get(idx_name)
+            if off_obj is None:
+                return None
+            sz_obj  = self._sizes.get(idx_name)
+            sz      = <int>sz_obj if sz_obj is not None else 8
+            idx_val = frame._read_reg(<long>off_obj, sz)
+            addr    = (addr + idx_val * <uint64_t>scale) & 0xFFFFFFFFFFFFFFFF
+
+        return <object>((addr + <uint64_t>signed_off) & 0xFFFFFFFFFFFFFFFF)
+
     cdef void _load(self, _PCodeFrame frame, dict inputs):
         frame._arch = str(self.arch)  # for CBRANCH PC lookup
-        cdef object   name, val, off_obj, sz_obj
+        cdef object   name, val, off_obj, sz_obj, addr_obj
         cdef str      key, body, head
         cdef long     off
         cdef uint64_t addr_u64
@@ -1942,13 +1986,10 @@ cdef class PCodeCellEvaluator:
             except (ValueError, OverflowError):
                 continue
 
-            off_obj = self._offsets.get(key)
-            if off_obj is None:
+            addr_obj = self._mem_key_addr(frame, key, signed_off)
+            if addr_obj is None:
                 continue
-            sz_obj = self._sizes.get(key)
-            sz     = <int>sz_obj if sz_obj is not None else 8
-            addr_u64 = frame._read_reg(<long>off_obj, sz)
-            addr_u64 = (addr_u64 + <uint64_t>signed_off) & 0xFFFFFFFFFFFFFFFF
+            addr_u64 = <uint64_t>addr_obj
             frame._write_mem(addr_u64, v, size)
 
     cdef void _load_state(self, _PCodeFrame frame, dict regs, dict mem):
@@ -1993,7 +2034,7 @@ cdef class PCodeCellEvaluator:
 
     cdef uint64_t _read_output(self, _PCodeFrame frame, str out_reg,
                                int bit_start, int bit_end):
-        cdef object   off_obj, sz_obj
+        cdef object   off_obj, sz_obj, addr_obj
         cdef str      key, body, head
         cdef long     off
         cdef uint64_t addr_u64
@@ -2035,13 +2076,10 @@ cdef class PCodeCellEvaluator:
             except (ValueError, OverflowError):
                 return 0
 
-            off_obj = self._offsets.get(key)
-            if off_obj is None:
+            addr_obj = self._mem_key_addr(frame, key, signed_off)
+            if addr_obj is None:
                 return 0
-            sz_obj = self._sizes.get(key)
-            sz     = <int>sz_obj if sz_obj is not None else 8
-            addr_u64 = frame._read_reg(<long>off_obj, sz)
-            addr_u64 = (addr_u64 + <uint64_t>signed_off) & 0xFFFFFFFFFFFFFFFF
+            addr_u64 = <uint64_t>addr_obj
             val = frame._read_mem(addr_u64, size)
             if width >= 64:
                 return val >> bit_start

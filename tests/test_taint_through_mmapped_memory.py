@@ -18,13 +18,19 @@ What that has been narrowed to, by elimination:
   * not the mem-write clear hook -- the taint is absent with that hook
     disabled, so it is never written rather than written and wiped.
 
-So it is specific to memory the guest mapped itself, on that path only.  Found
-while building the snapshot tests, whose `leak` guest does exactly this.
+Every one of those was correct, and together they pointed away from the real
+variable, which is not the memory at all: it is the ADDRESSING MODE.  gcc
+compiled this loop with a biased pointer --
 
-Marked xfail(strict) rather than deleted: the repo carries no xfails, and this
-one is a request for a decision, not a shrug.  It is a real under-taint on the
-per-instruction LogicCircuit path, it is NOT present on the default taint-IR
-path, and fixing it means going into that path's memory-operand resolution.
+    sub   rdi, rax                     rdi = buf - base
+    movzx ecx, BYTE PTR [rdi+rax*1]    rdi + rax == buf + i
+
+-- and `resolve_ptr_with_offset` had nowhere to put a second register, so an
+INT_ADD of two registers returned the left one and dropped the right.  The load
+read RDI alone, which is buf-base, an address holding nothing.  A stack buffer
+uses `[rsp+disp]` and a static buffer a constant address; both are single-register
+forms, which is why they kept their taint.  Fixed by giving MemMapping an index
+term; see tests/test_base_index_addressing.py for the minimal case.
 """
 from __future__ import annotations
 
@@ -145,10 +151,6 @@ def test_the_taint_ir_path_tracks_it(guest: tuple[str, int]) -> None:
     assert _taint_of_out(path, addr, taint_ir=True, block=True) != 0
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'under-taint on the LogicCircuit path: a store into a page the guest '
-    'mapped itself never reaches the shadow.  Not present on the taint-IR '
-    'path, which is the default.'))
 def test_the_logic_circuit_path_tracks_it(guest: tuple[str, int]) -> None:
     """The property, on the other path."""
     path, addr = guest
