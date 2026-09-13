@@ -165,6 +165,17 @@ def hook_reports_forget(hook: _Capsule) -> None:
     first input and never again.
     """
 
+def hook_epoch_sinks(hook: _Capsule) -> list[tuple[int, int, int, int, int]]:
+    """Every memory sink THIS iteration reached, as (site, address, address
+    taint, size, is_store).
+
+    Distinct from `hook_sinks`, which drains what is NEW.  A sink is described
+    to the reporter once for the life of the hook, so a known one is silent on
+    every later input; this says what was TOUCHED.  The difference is what a
+    bit-labelling probe needs: re-run with a subset of the input tainted and
+    ask whether the sink is still reached.
+    """
+
 def hook_sinks(hook: _Capsule) -> list[tuple[int, int, int, int, int]]:
     """(site, address, address taint, size, is_store) per memory SINK, draining.
 

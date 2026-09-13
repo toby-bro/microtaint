@@ -51,6 +51,11 @@ typedef struct {
  * cost speed and never a report. */
 #define BLK_SEEN_CAP 4096
 
+/* Distinct memory sinks remembered.  Smaller than the finding table because a
+ * binary has far fewer input-dependent memory operations than branches, and
+ * the per-iteration bitmap is sized from it. */
+#define BLK_SINK_CAP 1024
+
 /* ---------------------------------------------------------------------- */
 /* The process-wide plan table.                                           */
 /*                                                                        */
@@ -265,9 +270,22 @@ typedef struct {
      * un-deduped count exactly. */
     /* Memory sinks harvested from committed blocks, one entry per SITE.
      * Deduped for the same reason the reports are: a copy loop reaches one
-     * store site thousands of times to establish a single fact. */
-    MtBlkSink sinks[BLK_MAX_REP];
-    int n_sink;
+     * store site thousands of times to establish a single fact.
+     *
+     * `sink_tab` is stable and append-only, so a sink's id keeps meaning for
+     * the life of the hook; `sink_new` is the ones not yet described to
+     * Python, which is what a drain returns; `sink_epoch` is which of them
+     * THIS iteration reached.  The three are separate because they answer
+     * different questions: "what does this binary do", "what is new", and
+     * "what did this input touch".  The last is the one a bit-labelling probe
+     * needs -- it re-runs with a subset of the input tainted and asks whether
+     * the sink is still reached -- and deduping alone cannot answer it,
+     * because a known sink is silent on every later input. */
+    MtBlkSink sink_tab[BLK_SINK_CAP];
+    int n_sink_tab;
+    int sink_new[BLK_SINK_CAP];
+    int n_sink_new;
+    uint8_t sink_epoch[BLK_SINK_CAP / 8];
     unsigned long sink_total;
     uint64_t seen_addr[BLK_SEEN_CAP];
     uint64_t seen_mask[BLK_SEEN_CAP];
@@ -999,22 +1017,33 @@ static int blkctx_seen(MtBlkCtx *b, uint64_t addr, uint64_t mask) {
  * different address every iteration but is one sink.  Linear over the ring,
  * which is fine because it is bounded and only runs on a commit that had
  * one. */
-static int blkctx_sink_seen(MtBlkCtx *b, const MtBlkSink *sk) {
-    for (int i = 0; i < b->n_sink; i++) {
-        if (b->sinks[i].site == sk->site
-            && b->sinks[i].addr_taint == sk->addr_taint
-            && b->sinks[i].is_store == sk->is_store) return 1;
+/* Record one sink, and say whether it had already been described.
+ *
+ * The identity is (site, address taint, kind) and deliberately NOT the
+ * concrete address: a loop walking a buffer produces a different address every
+ * iteration and is one sink.  Marks the iteration bitmap either way, because
+ * "this input reached it" is true whether or not Python has heard of it. */
+static void blkctx_note_sink(MtBlkCtx *b, const MtBlkSink *sk) {
+    for (int i = 0; i < b->n_sink_tab; i++) {
+        if (b->sink_tab[i].site == sk->site
+            && b->sink_tab[i].addr_taint == sk->addr_taint
+            && b->sink_tab[i].is_store == sk->is_store) {
+            b->sink_epoch[i >> 3] |= (uint8_t)(1u << (i & 7));
+            return;
+        }
     }
-    return 0;
+    if (b->n_sink_tab >= BLK_SINK_CAP) return;   /* full: stop remembering */
+    const int id = b->n_sink_tab++;
+    b->sink_tab[id] = *sk;
+    b->sink_epoch[id >> 3] |= (uint8_t)(1u << (id & 7));
+    if (b->n_sink_new < BLK_SINK_CAP) b->sink_new[b->n_sink_new++] = id;
 }
 
 static void blkctx_take_sinks(MtBlkCtx *b) {
     if (!b->pend.valid) return;
     for (int i = 0; i < b->pend.n_sinks; i++) {
         b->sink_total++;
-        if (blkctx_sink_seen(b, &b->pend.sinks[i])) continue;
-        if (b->n_sink >= BLK_MAX_REP) continue;
-        b->sinks[b->n_sink++] = b->pend.sinks[i];
+        blkctx_note_sink(b, &b->pend.sinks[i]);
     }
     b->pend.n_sinks = 0;
 }
@@ -1386,6 +1415,7 @@ static PyObject *py_hook_epoch_begin(PyObject *self, PyObject *args) {
     MtBlkCtx *b = blkctx_of(cap);
     if (!b) return NULL;
     memset(b->epoch_bits, 0, sizeof b->epoch_bits);
+    memset(b->sink_epoch, 0, sizeof b->sink_epoch);
     b->epoch_lost = 0;
     Py_RETURN_NONE;
 }
@@ -1439,18 +1469,47 @@ static PyObject *py_hook_sinks(PyObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
     MtBlkCtx *b = blkctx_of(cap);
     if (!b) return NULL;
-    PyObject *out = PyList_New(b->n_sink);
+    PyObject *out = PyList_New(b->n_sink_new);
     if (!out) return NULL;
-    for (int i = 0; i < b->n_sink; i++) {
+    for (int i = 0; i < b->n_sink_new; i++) {
+        const MtBlkSink *sk = &b->sink_tab[b->sink_new[i]];
         PyObject *it = Py_BuildValue(
-            "(KKKii)", (unsigned long long)b->sinks[i].site,
-            (unsigned long long)b->sinks[i].addr,
-            (unsigned long long)b->sinks[i].addr_taint,
-            b->sinks[i].size, b->sinks[i].is_store);
+            "(KKKii)", (unsigned long long)sk->site,
+            (unsigned long long)sk->addr,
+            (unsigned long long)sk->addr_taint, sk->size, sk->is_store);
         if (!it) { Py_DECREF(out); return NULL; }
         PyList_SET_ITEM(out, i, it);
     }
-    b->n_sink = 0;
+    b->n_sink_new = 0;
+    return out;
+}
+
+/* hook_epoch_sinks(hook) -> every sink THIS iteration reached.
+ *
+ * Not the same list as `hook_sinks`, and the difference is the point: a drain
+ * returns what is NEW, so a known sink is silent on every later input, while
+ * this returns what was TOUCHED.  A probe that re-runs with a subset of the
+ * input tainted, to learn which bits control an address, needs the second. */
+static PyObject *py_hook_epoch_sinks(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    MtBlkCtx *b = blkctx_of(cap);
+    if (!b) return NULL;
+    PyObject *out = PyList_New(0);
+    if (!out) return NULL;
+    for (int i = 0; i < b->n_sink_tab; i++) {
+        if (!(b->sink_epoch[i >> 3] & (1u << (i & 7)))) continue;
+        const MtBlkSink *sk = &b->sink_tab[i];
+        PyObject *it = Py_BuildValue(
+            "(KKKii)", (unsigned long long)sk->site,
+            (unsigned long long)sk->addr,
+            (unsigned long long)sk->addr_taint, sk->size, sk->is_store);
+        if (!it || PyList_Append(out, it) != 0) {
+            Py_XDECREF(it); Py_DECREF(out); return NULL;
+        }
+        Py_DECREF(it);
+    }
     return out;
 }
 
@@ -1464,7 +1523,7 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     if (!miss) return NULL;
     for (int i = 0; i < MT_BLK_N_MISS; i++)
         PyList_SET_ITEM(miss, i, PyLong_FromUnsignedLong(b->miss[i]));
-    /* TWENTY-THREE pairs, and the format code has to match each value's C type:
+    /* TWENTY-FOUR pairs, and the format code has to match each value's C type:
      * `k` unsigned long, `i` int, `K` unsigned long long, `l` long, `N` a
      * reference this steals.  Py_BuildValue does NOT check that the format and
      * the argument list are the same length -- one pair short silently drops
@@ -1474,7 +1533,7 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
      * which then read as "the guest committed no writes".  Counted and gated
      * by tests/test_block_stats_keys.py; add a key there in the same edit. */
     return Py_BuildValue(
-        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:i,s:k,s:k,s:i,s:k,s:k,s:k}",
+        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:i,s:k,s:k,s:i,s:i,s:k,s:k,s:k}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
@@ -1488,7 +1547,8 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
                          "reports_sites", b->n_seen,
                          "sites_lost", b->epoch_lost,
                          "sinks", b->sink_total,
-                         "sinks_pending", b->n_sink,
+                         "sinks_pending", b->n_sink_new,
+                         "sinks_distinct", b->n_sink_tab,
                          "reused", b->reused, "no_code", b->no_code,
                          "committed_writes", b->committed_writes);
 }
@@ -1549,6 +1609,8 @@ static PyMethodDef Methods[] = {
     {"hook_ptr", py_hook_ptr, METH_NOARGS, "hook_ptr() -> the C trampoline's address"},
     {"hook_ud", py_hook_ud, METH_VARARGS, "hook_ud(hook) -> its user_data address"},
     {"hook_finish", py_hook_finish, METH_VARARGS, "hook_finish(hook, completed)"},
+    {"hook_epoch_sinks", py_hook_epoch_sinks, METH_VARARGS,
+     "hook_epoch_sinks(hook) -> sinks THIS iteration reached"},
     {"hook_sinks", py_hook_sinks, METH_VARARGS,
      "hook_sinks(hook) -> [(site, addr, addr_taint, size, is_store)]"},
     {"hook_reports", py_hook_reports, METH_VARARGS,

@@ -200,3 +200,83 @@ def test_the_counters_agree_with_the_findings(guest: str) -> None:
         f"{stats['sinks']} occurrences counted but {len(got)} described")
     assert stats['sinks_pending'] == 0, (
         f"{stats['sinks_pending']} sinks were never handed to the reporter")
+
+
+#: The same accesses, but reachable from a checkpoint: `body` is entered with
+#: no taint yet, so a checkpoint can be taken there and each iteration reads
+#: its own input.
+_CKPT_GUEST = _SYSCALLS + r"""
+static char table[4096];
+static char sink;
+__attribute__((noinline)) void body(void){
+    unsigned long idx = 0;
+    sys_read(0, &idx, 8);
+    table[idx & 0xfff] = (char)idx;
+    sink = table[idx & 0xfff];
+}
+void _start(void){ body(); sys_exit((int)sink); }
+"""
+
+
+def test_a_known_sink_is_silent_in_the_drain_but_present_per_input() -> None:
+    """The distinction the labelling probe depends on.
+
+    Sinks are described to the reporter ONCE for the life of the hook, so the
+    second input that reaches the same store says nothing.  A probe that
+    re-runs with a subset of the input tainted, to learn which bits control the
+    address, would then be unable to tell "the subset does not reach it" from
+    "it was already reported".  `RunOutcome.sinks` answers the first question.
+    """
+    import subprocess
+
+    from qiling import Qiling
+    from qiling.const import QL_VERBOSE
+
+    from microtaint.emulator.reporter import Reporter
+    from microtaint.emulator.wrapper import MicrotaintWrapper
+
+    binary = _compile_freestanding(_CKPT_GUEST)
+    nm = subprocess.run(['nm', binary], capture_output=True, text=True,
+                        check=False).stdout
+    syms = {ln.split()[-1]: int(ln.split()[0], 16)
+            for ln in nm.splitlines() if len(ln.split()) >= 3}
+    prev = os.environ.get('MICROTAINT_BLOCK')
+    os.environ['MICROTAINT_BLOCK'] = '1'
+    saved, dn = os.dup(1), os.open(os.devnull, os.O_WRONLY)
+    try:
+        rep = Reporter(json_mode=True, stream=io.StringIO())
+        ql = Qiling([binary], '/', verbose=QL_VERBOSE.OFF)
+        ql.os.stdin = io.BytesIO(b'')
+        w = MicrotaintWrapper(ql, reporter=rep)
+        os.dup2(dn, 1)
+        # `_compile_freestanding` builds PIE, so `nm` gives a link-time offset
+        # and Qiling loads the image somewhere else entirely.  Running to the
+        # unrelocated address simply never fires, and the loop then measures a
+        # guest that did nothing -- which looks exactly like "no sinks".
+        w.run_to(ql.loader.load_address + syms['body'])
+        cp = w.checkpoint()
+        seen = []
+        for i in range(3):
+            w.restore(cp)
+            ql.os.stdin = io.BytesIO(bytes([i + 1]) * 8)
+            rep.findings.clear()
+            out = w.resume(cp)
+            seen.append((len(rep.findings), out.sinks))
+        os.dup2(saved, 1)
+    finally:
+        os.dup2(saved, 1)
+        os.close(dn)
+        os.close(saved)
+        if prev is None:
+            os.environ.pop('MICROTAINT_BLOCK', None)
+        else:
+            os.environ['MICROTAINT_BLOCK'] = prev
+        os.unlink(binary)
+
+    assert all(s for _n, s in seen), (
+        f'an iteration reported no sink at all, so per-input attribution '
+        f'cannot distinguish "not reached" from "already described": {seen}')
+    assert {tuple(sorted(s)) for _n, s in seen}.__len__() == 1, (
+        f'the same input shape reached different sinks across iterations, so '
+        f'the per-iteration bitmap is accumulating rather than being reset: '
+        f'{seen}')

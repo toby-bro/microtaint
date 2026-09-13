@@ -34,7 +34,7 @@ _KEYS = frozenset({
     'cache_full', 'regs_clean', 'miss', 'invalidations', 'abandoned',
     'last_bad_addr', 'last_bad_size', 'reports', 'reports_pending',
     'reports_duplicate', 'reports_sites', 'sites_lost', 'sinks',
-    'sinks_pending', 'reused', 'no_code',
+    'sinks_pending', 'sinks_distinct', 'reused', 'no_code',
     'committed_writes',
 })
 
