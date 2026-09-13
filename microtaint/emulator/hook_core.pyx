@@ -343,6 +343,7 @@ _load_shadow_capi()
 
 import ctypes
 from microtaint.types import ImplicitTaintError as _ImplicitTaintError
+from microtaint.sleigh.engine import store_address_registers as _store_addr_regs
 
 cdef object ImplicitTaintError = _ImplicitTaintError
 cdef object EMPTY_FROZENSET = frozenset()
@@ -2127,25 +2128,40 @@ cdef class InstructionHook:
 
     cdef _aiw_check(self, list mem_writes, dict pre_regs, dict pre_taint,
                     bytes instruction_bytes, unsigned long long address):
-        # Pure Python fallback for the rare AIW path.
-        cdef long mem_addr
-        for entry in mem_writes:
-            mem_addr = entry[0]
-            for reg_name, reg_taint in pre_taint.items():
-                if reg_taint == 0:
-                    continue
-                reg_val = pre_regs.get(reg_name, 0)
-                if reg_val == 0:
-                    continue
-                if abs(int(mem_addr) - int(reg_val)) <= 4096:
-                    mnemonic, asm_str = self.disasm(instruction_bytes, address)
-                    self.reporter.aiw(
-                        address,
-                        pointer_taint=reg_taint,
-                        instruction=asm_str,
-                    )
-                    self.ql.emu_stop()
-                    return
+        """Report a store whose DESTINATION ADDRESS depends on tainted data.
+
+        Ask the rule which registers decide where the store lands.  The check
+        used to compare the written address against every tainted register's
+        value and report when the two were within 4096 bytes, which answers the
+        right question only when the tainted register IS the pointer.
+        `mov [rdx+rax], cl` with a tainted RDX and RAX holding the table base is
+        the counter-example, and it is exactly the shape the detector is named
+        after: the attacker owns the index, and the tainted register's value is
+        nowhere near the address it produces.  That case was reported only while
+        the engine mis-resolved the address to its base register, which happened
+        to equal the tainted index; once the address resolved correctly the
+        proximity test stopped matching and the detector went silent.
+        """
+        cdef object reg_taint
+        if not mem_writes:
+            return
+        try:
+            addr_regs = _store_addr_regs(
+                self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key))
+        except BaseException:
+            return
+        for reg_name in addr_regs:
+            reg_taint = pre_taint.get(reg_name)
+            if not reg_taint:
+                continue
+            mnemonic, asm_str = self.disasm(instruction_bytes, address)
+            self.reporter.aiw(
+                address,
+                pointer_taint=reg_taint,
+                instruction=asm_str,
+            )
+            self.ql.emu_stop()
+            return
 
     cdef _handle_implicit_taint(self, bytes instruction_bytes,
                                  unsigned long long address, exc):

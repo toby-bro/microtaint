@@ -1750,6 +1750,52 @@ def _build_signed_overflow_taint(  # noqa: C901
 _STACK_PTR_NAMES: frozenset[str] = frozenset({'RSP', 'ESP', 'SP'})
 
 
+def _addr_expr_registers(e: Expr, out: set[str]) -> None:
+    """Collect the register names an ADDRESS expression reads.
+
+    An address is built from `_get_taint_operand(..., is_taint=False)` leaves, so
+    a VALUE operand is a register the address depends on; a taint operand is not.
+    """
+    if isinstance(e, TaintOperand):
+        if not e.is_taint:
+            out.add(e.name)
+        return
+    if isinstance(e, BinaryExpr):
+        _addr_expr_registers(e.lhs, out)
+        _addr_expr_registers(e.rhs, out)
+        return
+    if isinstance(e, UnaryExpr):
+        _addr_expr_registers(e.expr, out)
+        return
+    if isinstance(e, MemoryOperand):
+        _addr_expr_registers(e.address_expr, out)
+
+
+def store_address_registers(circuit: object) -> frozenset[str]:
+    """Non-stack registers whose VALUE decides where this rule's stores land.
+
+    A store whose destination address depends on tainted data is an arbitrary
+    indexed write, and that is a question about the ADDRESS EXPRESSION, not about
+    how the written address compares numerically to some register.  The detector
+    used to ask the latter -- "is a tainted register within 4096 of the address"
+    -- which answers the right question only when the tainted register IS the
+    pointer.  `mov [rdx+rax], cl` with a tainted RDX and RAX holding the table
+    base is the counter-example, and it is exactly the shape the detector is
+    named after: the address is base+index, the attacker owns the index, and the
+    tainted register's value is nowhere near the address.
+
+    The stack pointer is excluded for the same reason the pointer avalanche
+    excludes it: `leave` propagates T_RBP -> T_RSP, so every later push and call
+    would report.
+    """
+    regs: set[str] = set()
+    for a in getattr(circuit, 'assignments', ()):
+        t = getattr(a, 'target', None)
+        if isinstance(t, MemoryOperand) and t.is_taint:
+            _addr_expr_registers(t.address_expr, regs)
+    return frozenset(regs - _STACK_PTR_NAMES)
+
+
 def _stack_mem_operand(
     addr_vn: Varnode,
     size: int,
