@@ -62,6 +62,24 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
+def _engine_provenance() -> dict:
+    """Which engine produced this result: commit, version, dirty flag.
+
+    Stamped into every result file so a number can always be traced back to the
+    engine that measured it.  The published RQ2/3/4 macros could not be matched
+    to any report in the tree because nothing recorded this.
+
+    Never raises.  An installed wheel has no git repository and a tarball has no
+    `.git`; neither is a reason for an experiment to stop, so an unanswerable
+    question writes an empty dict rather than ending the run.
+    """
+    try:
+        from microtaint.provenance import engine_provenance
+        return engine_provenance()
+    except Exception:
+        return {}
+
+
 def _rusage_self() -> tuple[float, float, int]:
     """Return (user_cpu_s, sys_cpu_s, max_rss_bytes) for the current process.
     On Linux, ru_maxrss is in kilobytes.  We normalise to bytes."""
@@ -1181,7 +1199,7 @@ def _main_single(args, p) -> int:
             },
         }
         with open(args.json, 'w') as f:
-            json.dump(out_dict, f, indent=2)
+            json.dump({'engine': _engine_provenance(), **out_dict}, f, indent=2)
         print(f'\nFull results written to {args.json}')
 
     return 0

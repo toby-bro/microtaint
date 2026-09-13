@@ -234,6 +234,24 @@ LAYERS = [
 ]
 
 
+def _engine_provenance() -> dict:
+    """Which engine produced this result: commit, version, dirty flag.
+
+    Stamped into every result file so a number can always be traced back to the
+    engine that measured it.  The published RQ2/3/4 macros could not be matched
+    to any report in the tree because nothing recorded this.
+
+    Never raises.  An installed wheel has no git repository and a tarball has no
+    `.git`; neither is a reason for an experiment to stop, so an unanswerable
+    question writes an empty dict rather than ending the run.
+    """
+    try:
+        from microtaint.provenance import engine_provenance
+        return engine_provenance()
+    except Exception:
+        return {}
+
+
 def _run(argv, stdin_data, timeout, env=None):
     """Run a child to completion.  Returns (wall_s, stdout, stderr, metrics).
 
@@ -564,7 +582,8 @@ def main() -> int:
     if args.json:
         with open(args.json, 'w') as f:
             json.dump({'guest_instructions': n_instrs, 'stdin_bytes': len(stdin_data),
-                       'engine_env': ARTIFACT_ENGINE_ENV, 'layers': results}, f, indent=2)
+                       'engine_env': ARTIFACT_ENGINE_ENV,
+                       'engine': _engine_provenance(), 'layers': results}, f, indent=2)
         print(f'\nwritten to {args.json}')
     return 0
 

@@ -1339,6 +1339,24 @@ ORACLE_IMUL_TESTS: list[dict] = [
 ]
 
 
+def _engine_provenance() -> dict:
+    """Which engine produced this result: commit, version, dirty flag.
+
+    Stamped into every result file so a number can always be traced back to the
+    engine that measured it.  The published RQ2/3/4 macros could not be matched
+    to any report in the tree because nothing recorded this.
+
+    Never raises.  An installed wheel has no git repository and a tarball has no
+    `.git`; neither is a reason for an experiment to stop, so an unanswerable
+    question writes an empty dict rather than ending the run.
+    """
+    try:
+        from microtaint.provenance import engine_provenance
+        return engine_provenance()
+    except Exception:
+        return {}
+
+
 def _oracle_test_to_tc(arch: str, ot: dict) -> dict:
     """Convert a hand-crafted IMUL test entry to a standard test-case dict.
 
@@ -4806,6 +4824,7 @@ def main():
     report: dict[str, Any] = {
         'metadata': {
             'timestamp': str(datetime.now()),
+            'engine': _engine_provenance(),
             'arch': args.arch,
             'workers': list(selected),
             'granularity': {t: GRANULARITY.get(t, '?') for t in selected},

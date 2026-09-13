@@ -30,6 +30,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import random
@@ -51,6 +52,19 @@ from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 # --------------------------------------------------------------------------- #
 # Unified corpus entry: everything the campaign needs, ISA-agnostic.
 # --------------------------------------------------------------------------- #
+def _engine_provenance() -> dict:
+    """Which engine produced this result: commit, version, dirty flag.
+
+    Never raises: an installed wheel has no git repository, and that is not a
+    reason for a campaign to stop.
+    """
+    try:
+        from microtaint.provenance import engine_provenance
+        return engine_provenance()
+    except Exception:
+        return {}
+
+
 class Bench:
     def __init__(self, label, arch, bits, uc_arch, uc_mode, uc_regs, regs, flag_regs, canon):
         self.label = label
@@ -321,6 +335,15 @@ def main():
 
     if args.cmd == 'pass1':
         arches = ALL_ARCHES if args.arch == 'all' else [args.arch]
+        # The findings file is empty when the campaign is CLEAN, which is the
+        # result RQ6 claims, so the engine that produced it would go unrecorded
+        # in exactly the case that matters.  The manifest is written up front and
+        # does not depend on finding anything.
+        with open(f'{args.out}_run.json', 'w') as mf:
+            json.dump({'engine': _engine_provenance(), 'n': args.n,
+                       'seed': args.seed, 'arches': arches,
+                       'started': str(datetime.datetime.now())}, mf, indent=2)
+        print(f'[provenance] {args.out}_run.json', flush=True)
         for i, k in enumerate(arches):
             b = build(k)
             print(f'=== PASS1 {b.label}: {args.n} cases (seed {args.seed + i}, '
