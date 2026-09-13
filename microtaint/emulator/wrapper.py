@@ -411,7 +411,7 @@ class MicrotaintWrapper:
         check_sc: bool = True,
         check_aiw: bool = True,
         reporter: Reporter | None = None,
-        qiling_stats: bool = True,
+        qiling_stats: bool = False,
     ) -> None:
         """`qiling_stats` keeps Qiling's own syscall statistics collection on.
 
@@ -426,10 +426,14 @@ class MicrotaintWrapper:
             statistics on     9.30    15.24    23.25
             statistics off    7.83     7.30     7.23
 
-        Qiling ships `QlOsNullStats` for this, so the switch is its own and not
-        a patch over its internals.  The default leaves it ON because it is the
-        caller's emulator and someone may be reading `ql.os.stats`;
-        `checkpoint` says so out loud when it finds them still on.
+        Qiling ships `QlOsNullStats` for this, so the switch is its own and
+        not a patch over its internals.
+
+        The default is OFF.  microtaint never reads those statistics, the
+        summary they feed is only ever logged at debug level, and leaving them
+        on makes the engine's main use case degrade without bound -- a cost
+        nobody would choose knowingly.  Pass True to get them back, and
+        `checkpoint` will say out loud what that costs.
         """
         self.ql = ql
         if not qiling_stats:
