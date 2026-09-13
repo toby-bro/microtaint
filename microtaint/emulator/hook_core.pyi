@@ -187,6 +187,15 @@ class InstructionHook:
         to the dict, so an external re-seed is picked up by the next
         instruction."""
 
+    def drain_aiw(self) -> int:
+        """Render every recorded arbitrary indexed write, and return how many.
+
+        The GIL-free lane records one entry per store SITE rather than
+        reporting each execution of it, so this is where those become findings.
+        The wrapper registers it with `Reporter.before_finalize`, which runs it
+        once, before the summary counts anything.
+        """
+
     #: Called by `invalidate_smc` when block mode is on, to drop its plan
     #: cache too; set by the wrapper when it installs the block hook.  Takes
     #: the guest write's (address, size), which is what lets block mode tell a

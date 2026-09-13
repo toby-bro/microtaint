@@ -880,6 +880,17 @@ class MicrotaintWrapper:
 
         return dict(blockpath_c.hook_stats(self._block_ctx))
 
+    def _wire_aiw_drain(self, instr_hook: object) -> None:
+        """Render arbitrary indexed writes once, when the report closes.
+
+        They are recorded in C, one entry per store SITE, because the
+        alternative is a GIL acquisition for every tainted store: the RQ5
+        guest executes one such store 25,600 times to establish a single fact.
+        """
+        drain = getattr(instr_hook, 'drain_aiw', None)
+        if drain is not None and self.reporter is not None:
+            self.reporter.before_finalize(drain)
+
     def _arm_deferred_hooks(self) -> None:
         """
         Arm the instruction hook and mem-write hook if not already registered.
@@ -906,6 +917,8 @@ class MicrotaintWrapper:
                 else self._instruction_evaluator_raw
             )
             self._instr_hook_obj = instr_hook  # keep alive
+
+            self._wire_aiw_drain(instr_hook)
 
             if self._main_single:
                 # FAST PATH: bypass Unicorn's Python binding wrappers

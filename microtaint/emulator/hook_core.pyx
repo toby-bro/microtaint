@@ -150,8 +150,18 @@ cdef extern from "fastpath.h":
         compiled_flags_ft compiled_flags
         compiled_prefilter_ft compiled_prefilter
 
+    ctypedef struct MtAiwSite:
+        unsigned long long addr
+        unsigned long long taint
+
+    int MT_AIW_MAX_ADDR_REGS
+    int MT_AIW_MAX_SITES
+
     ctypedef struct AddrEntry "MtAddrEntry":
         int size
+        signed char aiw_n
+        signed char aiw_reported
+        int aiw_slots[4]
         PyObject *instr_bytes
         PyObject *circuit
         PyObject *uc_arrs
@@ -233,6 +243,8 @@ cdef extern from "fastpath.h":
         unsigned long *instr_total
         int *arr_loaded
         int *check_aiw
+        MtAiwSite *aiw_sites
+        int *aiw_n_sites
         PyObject **ltw_set
         PyObject *owner
         long long regs_read
@@ -463,6 +475,15 @@ cdef class InstructionHook:
     # The set stays authoritative for the dict/fallback paths, which still fill
     # it; MemWriteHook consults both, so the two representations never disagree.
     cdef MtMemWrite ltw[MT_MAX_MEM_WRITES]
+    #: Arbitrary indexed writes the GIL-free lane recorded, drained once.
+    cdef MtAiwSite aiw_sites_buf[256]
+    cdef int       aiw_n_sites
+    cdef set       aiw_sites_py
+    #: Tainted memory writes this instruction made.  ltw_n only counts
+    #: the two appenders that fill ltw; the output-state one does not,
+    #: and gating the AIW check on ltw_n alone silently skipped every
+    #: instruction evaluated through it.
+    cdef int       mw_tainted
     cdef int ltw_n
     cdef public dict   instr_cache        # address -> (frozenset, dict)  legacy entries
     cdef public dict   instr_cache_v      # address -> (taint_version, dict, taint_snapshot)
@@ -677,6 +698,9 @@ cdef class InstructionHook:
         self.ef_bits = NULL
         self.ef_n = 0
         self.ltw_n = 0
+        self.aiw_n_sites = 0
+        self.aiw_sites_py = set()
+        self.mw_tainted = 0
         self.fast_done = 0
         self.instr_total = 0
         self.prefilter_hits = 0
@@ -760,6 +784,8 @@ cdef class InstructionHook:
         self.fctx.instr_total = &self.instr_total
         self.fctx.arr_loaded = <int*>&self.arr_loaded
         self.fctx.check_aiw = <int*>&self.check_aiw
+        self.fctx.aiw_sites = self.aiw_sites_buf
+        self.fctx.aiw_n_sites = &self.aiw_n_sites
         # Borrowed, and only when it really is a set: the lane reads its size
         # through PySet_GET_SIZE, which does not check.  The wrapper clears this
         # set in place and never rebinds it, so one pointer stays correct.
@@ -1220,7 +1246,7 @@ cdef class InstructionHook:
         if PyDict_Size(register_taint):
             PyDict_Clear(register_taint)
 
-        cdef list mem_writes = []
+        cdef int n_mem_writes = 0
         cdef str skey, sbody
         cdef long mem_addr_l
         cdef int mem_size_i, ii
@@ -1252,13 +1278,16 @@ cdef class InstructionHook:
                         if (val_ll >> (ii * 8)) & 0xFF:
                             last_writes.add(mem_addr_l + ii)
                     if check_aiw:
-                        mem_writes.append((mem_addr_l, mem_size_i, int(val)))
+                        n_mem_writes += 1
             elif val:
                 PyDict_SetItem(register_taint, key, val)
 
-        # AIW check (rare on most paths).
-        if check_aiw and PyDict_Size(register_taint) and len(mem_writes) > 0:
-            self._aiw_check(mem_writes, pre_regs, pre_taint, instruction_bytes, address)
+        # AIW check (rare on most paths).  Decided from the address entry's
+        # slots, so it costs a few slot reads rather than the dict walk and
+        # pre-register read the old check needed for every tainted store.
+        if check_aiw and n_mem_writes > 0:
+            self._aiw_from_entry(mt_am_get(&self.addr_map, address), address,
+                                 instruction_bytes)
 
     @property
     def regs_read(self):
@@ -1573,6 +1602,7 @@ cdef class InstructionHook:
                     Py_XDECREF(aent.circuit)
                     aent.circuit = <PyObject*>circuit
                     aent.size = size
+                    self._fill_aiw_slots(aent, circuit)
                     # different bytes at this address: slots + snapshots are stale
                     aent.have_slots = 0
                     aent.have_regs = 0
@@ -1815,7 +1845,10 @@ cdef class InstructionHook:
         # Only the AIW check reads this, so build the list only when it is on;
         # otherwise every instruction allocated (and GC-tracked) an empty list
         # that nothing ever looked at.  All three appenders are check_aiw-guarded.
-        cdef list mem_writes = [] if self.check_aiw else None
+        # The AIW decision reads slots, not this instruction's writes, so the
+        # list the appenders used to fill is no longer built at all.
+        cdef list mem_writes = None
+        self.mw_tainted = 0
         if used_arr:
             if has_mem:
                 if used_capi:
@@ -1829,8 +1862,8 @@ cdef class InstructionHook:
             memcpy(<void*>aent.out_snap, <void*>self.g_taint, nbytes)
             aent.have_snap = 1
 
-        if self.check_aiw and len(mem_writes) > 0:
-            self._aiw_check_arr(mem_writes, instruction_bytes, address)
+        if self.check_aiw and self.mw_tainted > 0:
+            self._aiw_from_entry(aent, address, instruction_bytes)
 
     cdef object _eval_fallback_dict(self, object circuit, object compiled_circuit,
                                     bint compiled_ok, bytes instruction_bytes,
@@ -1901,7 +1934,7 @@ cdef class InstructionHook:
                         if (val_ll >> (ii * 8)) & 0xFF:
                             last_writes.add(mem_addr_l + ii)
                     if self.check_aiw:
-                        mem_writes.append((mem_addr_l, mem_size_i, int(val)))
+                        self.mw_tainted += 1
             elif val:
                 self.g_taint[self._slot_for(key)] = \
                     <uint64_t>(int(val) & 0xFFFFFFFFFFFFFFFFULL)
@@ -1919,6 +1952,67 @@ cdef class InstructionHook:
             return
         self._aiw_check_from_ltw(<bytes>(<object>e.instr_bytes), address)
 
+    cdef void _fill_aiw_slots(self, AddrEntry *ent, object circuit) noexcept:
+        """Record which taint slots decide where this instruction's stores land.
+
+        Static, so it is resolved once when the address entry is built and the
+        GIL-free lane only reads it.  Asking Python per execution is what made
+        the check cost a GIL acquisition for every tainted store, and the RQ5
+        guest executes one such store 25,600 times.
+
+        `aiw_n` stays -1 on any refusal, which sends the lane back to the
+        Python path rather than silently reporting nothing.
+        """
+        cdef int n = 0
+        if not self.check_aiw:
+            ent.aiw_n = 0            # nothing to look for
+            return
+        try:
+            names = _store_addr_regs(circuit)
+        except BaseException:
+            return
+        for nm in names:
+            if n >= 4:
+                return               # more address registers than we can hold
+            # INTERN the slot rather than reading slot_map: slots are created
+            # lazily, so at entry-build time an address register usually has
+            # none yet.  Reading gave None, `aiw_n` stayed -1, and every single
+            # execution of the store went back to Python for the answer -- the
+            # exact cost this record exists to remove (measured: +383 ns/instr).
+            try:
+                ent.aiw_slots[n] = self._slot_for(nm)
+            except BaseException:
+                return
+            n += 1
+        ent.aiw_n = <signed char>n
+        ent.aiw_reported = 0
+
+    def drain_aiw(self):
+        """Turn every recorded site into a finding.  Called once, at the end.
+
+        The lane records `(instruction address, address-register taint)` and
+        nothing else, so the disassembly and the Finding object are built here,
+        once per SITE, rather than once per execution of it.
+        """
+        cdef int k
+        cdef unsigned long long site_addr
+        if self.aiw_n_sites <= 0:
+            return 0
+        n = self.aiw_n_sites
+        for k in range(n):
+            site_addr = self.aiw_sites_buf[k].addr
+            ent = mt_am_get(&self.addr_map, site_addr)
+            instr = <bytes>(<object>ent.instr_bytes) if (ent != NULL and ent.instr_bytes != NULL) else b''
+            mnemonic, asm_str = self.disasm(instr, site_addr)
+            self.reporter.aiw(
+                site_addr,
+                pointer_taint=int(self.aiw_sites_buf[k].taint),
+                instruction=asm_str,
+            )
+        self.aiw_n_sites = 0
+        self.aiw_sites_py = set()
+        return n
+
     cdef _aiw_check_from_ltw(self, bytes instruction_bytes,
                              unsigned long long address):
         """AIW check for an instruction the C path handled.
@@ -1926,12 +2020,9 @@ cdef class InstructionHook:
         The C path deliberately builds no Python list; the writes it recorded
         carry the same (addr, size, mask) triples the list used to, so the list
         is materialised here, only when the check is actually enabled."""
-        cdef list mem_writes = []
-        cdef int k
-        for k in range(self.ltw_n):
-            mem_writes.append((self.ltw[k].addr, self.ltw[k].size, self.ltw[k].taint))
-        if mem_writes:
-            self._aiw_check_arr(mem_writes, instruction_bytes, address)
+        if self.ltw_n > 0:
+            self._aiw_from_entry(mt_am_get(&self.addr_map, address), address,
+                                 instruction_bytes)
 
     cdef _aiw_check_arr(self, list mem_writes, bytes instruction_bytes,
                         unsigned long long address):
@@ -1976,7 +2067,7 @@ cdef class InstructionHook:
                     if (t >> (ii * 8)) & 0xFF:
                         self.last_tainted_writes.add(writes[k].addr + <uint64_t>ii)
             if self.check_aiw:
-                mem_writes.append((writes[k].addr, writes[k].size, t))
+                self.mw_tainted += 1
 
     cdef void _apply_mem_writes(self, object writes, list mem_writes):
         """Feed last_tainted_writes (+ AIW list) from evaluate_c_mem_ptr's
@@ -1998,7 +2089,7 @@ cdef class InstructionHook:
                     if (val_ll >> (ii * 8)) & 0xFF:
                         last_writes.add(mem_addr + ii)
                 if self.check_aiw:
-                    mem_writes.append((mem_addr, msize, int(<object>w[2])))
+                    self.mw_tainted += 1
 
     @property
     def decode_cache(self):
@@ -2141,9 +2232,17 @@ cdef class InstructionHook:
         the engine mis-resolved the address to its base register, which happened
         to equal the tainted index; once the address resolved correctly the
         proximity test stopped matching and the detector went silent.
+
+        This is the path for an instruction the GIL-free lane did not answer.
+        It RECORDS the site rather than reporting it, so both paths leave their
+        findings in one place and `drain_aiw` renders them once, at the end.
         """
         cdef object reg_taint
+        cdef AddrEntry *ent
         if not mem_writes:
+            return
+        ent = mt_am_get(&self.addr_map, address)
+        if ent != NULL and ent.aiw_reported:
             return
         try:
             addr_regs = _store_addr_regs(
@@ -2154,14 +2253,83 @@ cdef class InstructionHook:
             reg_taint = pre_taint.get(reg_name)
             if not reg_taint:
                 continue
-            mnemonic, asm_str = self.disasm(instruction_bytes, address)
-            self.reporter.aiw(
-                address,
-                pointer_taint=reg_taint,
-                instruction=asm_str,
-            )
-            self.ql.emu_stop()
+            if ent != NULL:
+                ent.aiw_reported = 1
+            self._record_aiw(address, <unsigned long long>int(reg_taint))
             return
+
+    cdef void _aiw_from_entry(self, AddrEntry *ent, unsigned long long address,
+                              bytes instruction_bytes) noexcept:
+        """Decide AIW from the entry's static slots alone.
+
+        The decision needs two things: that this instruction wrote tainted
+        memory (the caller knows, from ltw_n), and whether a register that
+        decides the store's address is tainted.  Both are slot reads.  The old
+        shape built a Python list of every memory write on EVERY instruction
+        while the check was armed, then a dict of the whole taint state and a
+        pre-instruction register read for each one -- measured at +388 ns per
+        guest instruction, which was the entire cost of having the four
+        detectors on.
+        """
+        cdef int k
+        cdef uint64_t t
+        if ent == NULL:
+            # No address entry to hold the slots (decode cache off, or this
+            # address has not been cached).  There is nowhere to memoise, so
+            # answer the question directly rather than silently not asking it:
+            # a check that quietly does nothing is an under-report.
+            self._aiw_no_entry(address, instruction_bytes)
+            return
+        if ent.aiw_reported:
+            return
+        if ent.aiw_n < 0:
+            if ent.circuit == NULL:
+                self._aiw_no_entry(address, instruction_bytes)
+                return
+            self._fill_aiw_slots(ent, <object>ent.circuit)
+            if ent.aiw_n < 0:
+                self._aiw_no_entry(address, instruction_bytes)
+                return
+        for k in range(<int>ent.aiw_n):
+            t = self.g_taint[ent.aiw_slots[k]]
+            if t:
+                ent.aiw_reported = 1
+                self._record_aiw(address, <unsigned long long>t)
+                return
+
+    cdef void _aiw_no_entry(self, unsigned long long address,
+                            bytes instruction_bytes) noexcept:
+        """The same decision without an address entry to memoise it in.
+
+        Deduped through a Python set instead of the entry's flag, so a site
+        still yields one finding however the instruction was evaluated.
+        """
+        cdef object slot_obj
+        cdef uint64_t t
+        if address in self.aiw_sites_py:
+            return
+        try:
+            names = _store_addr_regs(
+                self.cached_gen_rule(self.arch, instruction_bytes, self.x64_format_key))
+        except BaseException:
+            return
+        for nm in names:
+            slot_obj = self.slot_map.get(nm)
+            if slot_obj is None:
+                continue
+            t = self.g_taint[<int>(<object>slot_obj)]
+            if t:
+                self.aiw_sites_py.add(address)
+                self._record_aiw(address, <unsigned long long>t)
+                return
+
+    cdef void _record_aiw(self, unsigned long long address,
+                          unsigned long long taint) noexcept:
+        """Append one site to the same array the C lane writes."""
+        if self.aiw_n_sites < 256:
+            self.aiw_sites_buf[self.aiw_n_sites].addr = address
+            self.aiw_sites_buf[self.aiw_n_sites].taint = taint
+            self.aiw_n_sites += 1
 
     cdef _handle_implicit_taint(self, bytes instruction_bytes,
                                  unsigned long long address, exc):

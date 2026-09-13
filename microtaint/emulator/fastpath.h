@@ -52,6 +52,24 @@
  * GIL-free lane returns this, and only when there ARE tainted stores. */
 #define MT_FAST_DONE_AIW 3
 
+/* Arbitrary indexed writes, recorded WITHOUT the GIL.
+ *
+ * An AIW is a property of the store SITE, not of each execution of it: the
+ * site the RQ5 guest hits sits in a 256x100 loop, so asking Python about it
+ * per occurrence is 25,600 GIL acquisitions to learn the same fact 25,600
+ * times.  The lane records the site here and the caller drains the whole
+ * array once, at the end.
+ *
+ * Which slots decide a store's address is static, so Python fills them in when
+ * the address entry is built and the lane only reads them. */
+#define MT_AIW_MAX_ADDR_REGS 4
+#define MT_AIW_MAX_SITES     256
+
+typedef struct {
+    unsigned long long addr;      /* the instruction, not the target */
+    unsigned long long taint;     /* the address register's taint mask */
+} MtAiwSite;
+
 /* ------------------------------------------------------------------------ */
 /* Per-address cache                                                         */
 /*                                                                           */
@@ -129,6 +147,12 @@ typedef struct {
     signed char ir_acc_kind[MT_IR_MAX_ACC];
     signed char ir_acc_size[MT_IR_MAX_ACC];
     signed char ir_acc_needval[MT_IR_MAX_ACC];
+    /* Slots whose taint decides where this instruction's stores land, filled
+     * by Python when the entry is built; -1 means "not an AIW candidate, or
+     * not filled in".  `aiw_reported` keeps one site to one finding. */
+    signed char aiw_n;
+    signed char aiw_reported;
+    int         aiw_slots[MT_AIW_MAX_ADDR_REGS];
     /* ---- the GIL-free express lane (see mt_fast_step_nogil) ------------- */
     /* Which parts of this address's step provably touch no PyObject, so the
      * callback can run them without acquiring the GIL.  Zero means the express
@@ -254,6 +278,9 @@ static MtAddrEntry *mt_am_new(MtAddrMap *m, uint64_t key) {
     if (m->keys[i] == key) return m->vals[i];
     MtAddrEntry *e = (MtAddrEntry *)calloc(1, sizeof(MtAddrEntry));
     if (!e) return NULL;
+    /* calloc gives 0, which would read as "no address registers, already
+     * decided".  -1 is "Python has not filled these in yet". */
+    e->aiw_n = -1;
     m->keys[i] = key;
     m->vals[i] = e;
     m->n++;
@@ -322,6 +349,8 @@ typedef struct {
     /* results for this instruction */
     MtMemWrite *ltw;
     int        *ltw_n;
+    MtAiwSite  *aiw_sites;        /* MT_AIW_MAX_SITES entries, drained in Python */
+    int        *aiw_n_sites;
 
     /* ImplicitTaintPolicy for this run (MT_POLICY_*). */
     int implicit_policy;
@@ -1049,7 +1078,23 @@ static int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size)
      * taint is committed here and the caller takes the GIL for the check
      * alone.  On this workload that is the difference between refusing 98% of
      * the GIL path's instructions and refusing almost none of it. */
-    if (*c->ltw_n > 0 && c->check_aiw && *c->check_aiw) return MT_FAST_DONE_AIW;
+    if (*c->ltw_n > 0 && c->check_aiw && *c->check_aiw) {
+        if (ent->aiw_n < 0) return MT_FAST_DONE_AIW;   /* slots not filled yet */
+        if (!ent->aiw_reported) {
+            for (int k = 0; k < (int)ent->aiw_n; k++) {
+                uint64_t t = g_taint[ent->aiw_slots[k]];
+                if (!t) continue;
+                ent->aiw_reported = 1;
+                if (c->aiw_sites && c->aiw_n_sites
+                    && *c->aiw_n_sites < MT_AIW_MAX_SITES) {
+                    c->aiw_sites[*c->aiw_n_sites].addr  = address;
+                    c->aiw_sites[*c->aiw_n_sites].taint = t;
+                    (*c->aiw_n_sites)++;
+                }
+                break;
+            }
+        }
+    }
     return MT_FAST_DONE;
 }
 

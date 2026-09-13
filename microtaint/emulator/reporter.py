@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TextIO
@@ -77,10 +78,20 @@ class Reporter:
         self.stream: TextIO = stream or sys.stderr
         self._colour = not json_mode and _supports_colour(self.stream)
         self.findings: list[Finding] = []
+        self._pre_finalize: list[Callable[[], object]] = []
 
     # ------------------------------------------------------------------
     # Public API called by MicrotaintWrapper
     # ------------------------------------------------------------------
+
+    def before_finalize(self, fn: Callable[[], object]) -> None:
+        """Run `fn` when the report is closed, before anything is counted.
+
+        A detector that records its findings in C rather than reporting each
+        occurrence needs one place to hand them over, and it has to be before
+        the summary counts them.
+        """
+        self._pre_finalize.append(fn)
 
     def add(self, finding: Finding) -> None:
         self.findings.append(finding)
@@ -164,6 +175,10 @@ class Reporter:
           0 — no security findings (taint_source alone does not count)
           1 — at least one BOF, UAF, or side-channel finding
         """
+        for fn in self._pre_finalize:
+            fn()
+        self._pre_finalize = []
+
         bof_count = sum(1 for f in self.findings if f.kind == FindingKind.BOF)
         uaf_count = sum(1 for f in self.findings if f.kind == FindingKind.UAF)
         sc_count = sum(1 for f in self.findings if f.kind == FindingKind.SIDE_CHANNEL)
