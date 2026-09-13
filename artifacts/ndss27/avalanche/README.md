@@ -38,7 +38,7 @@ last command. Nothing there is hand-typed.
 alphabet table indexed by the secret. SipHash-2-4 is pure add-rotate-xor over 16
 tainted bytes. **nftables is a small extract** -- `nft_byteorder_eval`, verbatim
 from the unpatched kernel (CVE-2023-35001) -- and is included because it is real
-vulnerable kernel code, not because it is a large sample: it executes **28**
+vulnerable kernel code, not because it is a large sample: it executes **35**
 tainted instructions. Table 6 prints the sample size for exactly that reason.
 
 The three all propagate taint end to end *inside the hooked binary*. That is why
