@@ -80,6 +80,14 @@ class RunOutcome(NamedTuple):
     completed: bool
     faulted: bool
     timed_out: bool
+    #: (address, taint mask) for every leak site THIS iteration reached.
+    #:
+    #: Not the same as what the reporter emitted.  Deduplication describes a
+    #: site once for the life of the hook, so an input that re-reaches a known
+    #: site produces no finding; this still says it got there.  The runtime
+    #: records it as a bit per site and resolves the bitmap once per run, so it
+    #: costs no Python call per finding.
+    sites: tuple[tuple[int, int], ...] = ()
     #: What THIS iteration did.  The hook's own counters run for the life of
     #: the emulator, so in a checkpoint loop they answer a question nobody
     #: asked: a fuzzer wants to know what the input it just ran did, not what

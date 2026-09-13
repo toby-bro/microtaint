@@ -33,7 +33,7 @@ _KEYS = frozenset({
     'blocks', 'handled', 'unhandled', 'planned', 'no_plan', 'no_regs',
     'cache_full', 'regs_clean', 'miss', 'invalidations', 'abandoned',
     'last_bad_addr', 'last_bad_size', 'reports', 'reports_pending',
-    'reports_duplicate', 'reports_sites', 'reused', 'no_code',
+    'reports_duplicate', 'reports_sites', 'sites_lost', 'reused', 'no_code',
     'committed_writes',
 })
 

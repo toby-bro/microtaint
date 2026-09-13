@@ -1210,6 +1210,9 @@ class MicrotaintWrapper:
         self._guest_exited = False
         faulted = False
         before = self.block_mode_stats() or {}
+        if self._block_ctx is not None:
+            from microtaint.emulator import blockpath_c  # noqa: PLC0415
+            blockpath_c.hook_epoch_begin(self._block_ctx)
         try:
             self.ql.run(begin=cp.address, timeout=timeout_us)
         except Exception:
@@ -1225,12 +1228,17 @@ class MicrotaintWrapper:
         self.block_mode_finish(completed=not faulted)
         completed = self._guest_exited
         after = self.block_mode_stats() or {}
+        sites: tuple[tuple[int, int], ...] = ()
+        if self._block_ctx is not None:
+            from microtaint.emulator import blockpath_c  # noqa: PLC0415
+            sites = tuple(blockpath_c.hook_epoch_sites(self._block_ctx))
         return RunOutcome(
             completed=completed, faulted=faulted,
             timed_out=bool(timeout_us) and not completed and not faulted,
             blocks=after.get('blocks', 0) - before.get('blocks', 0),
             handled=after.get('handled', 0) - before.get('handled', 0),
-            unhandled=after.get('unhandled', 0) - before.get('unhandled', 0))
+            unhandled=after.get('unhandled', 0) - before.get('unhandled', 0),
+            sites=sites)
 
     def _smc_count(self) -> int:
         """How often a guest write has landed on code the engine had cached.

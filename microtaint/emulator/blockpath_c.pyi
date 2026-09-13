@@ -135,6 +135,28 @@ def hook_dedupe(hook: _Capsule, on: bool) -> None:
     fills it stops suppressing rather than start dropping.
     """
 
+def hook_epoch_begin(hook: _Capsule) -> None:
+    """Start a new iteration's site bitmap.
+
+    Clears only which sites the CURRENT run reached.  The findings already
+    described, and the dense ids assigned to them, survive: an id has to stay
+    stable or a bitmap taken from one iteration would resolve to a different
+    site once a later one has added more.
+    """
+
+def hook_epoch_sites(hook: _Capsule) -> list[tuple[int, int]]:
+    """(address, mask) for every site the CURRENT iteration reached.
+
+    Walks the bitmap rather than the reports, so a site this run hit is here
+    whether or not it was described to Python -- which is the point: with
+    deduplication on, an input that re-reaches a known site emits no finding
+    at all, and this is how a fuzzer still learns that it got there.
+
+    One call per run, not one per finding.  `hook_stats()['sites_lost']` says
+    whether the bitmap is complete: a full seen-table cannot assign an id, so
+    those occurrences are reported but not recorded here.
+    """
+
 def hook_reports_forget(hook: _Capsule) -> None:
     """Forget which findings have been described, so they are described again.
 

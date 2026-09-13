@@ -265,10 +265,28 @@ typedef struct {
      * un-deduped count exactly. */
     uint64_t seen_addr[BLK_SEEN_CAP];
     uint64_t seen_mask[BLK_SEEN_CAP];
+    /* Dense id of the finding in that slot, so the per-iteration bitmap can be
+     * a bit per site rather than a set of addresses. */
+    int seen_id[BLK_SEEN_CAP];
     uint8_t seen_used[BLK_SEEN_CAP];
     int n_seen;
     int dedupe;
     unsigned long rep_dupes;
+    /* id -> the finding it names.  Dense and append-only, so an id is stable
+     * for the life of the hook and a bitmap from one iteration still resolves
+     * correctly after later iterations have added sites. */
+    uint64_t site_addr[BLK_SEEN_CAP];
+    uint64_t site_mask[BLK_SEEN_CAP];
+    /* Which sites the CURRENT iteration reached.  Deduplication answers "where
+     * does this binary leak" and deliberately not "what did this input touch",
+     * because a site already described emits nothing.  Recording it here
+     * answers the second question without a Python call per finding: the hook
+     * sets a bit, and the caller reads the whole bitmap once per run. */
+    uint8_t epoch_bits[BLK_SEEN_CAP / 8];
+    /* Sites whose bit could not be set because the table was full.  A full
+     * table already fails open for reporting; this says the BITMAP is then
+     * incomplete, so a caller is never silently given a short answer. */
+    unsigned long epoch_lost;
 } MtBlkCtx;
 
 /* Diagnostic bisect, the same idea as MICROTAINT_NULL_HOOK on the instruction
@@ -938,8 +956,10 @@ static PyObject *py_runner_reports(PyObject *self, PyObject *args) {
  * optimisation and must degrade into the old behaviour rather than into a
  * missing finding. */
 static int blkctx_seen(MtBlkCtx *b, uint64_t addr, uint64_t mask) {
-    if (!b->dedupe) return 0;
-    if (b->n_seen >= BLK_SEEN_CAP) return 0;      /* fail open */
+    if (b->n_seen >= BLK_SEEN_CAP) {              /* fail open */
+        b->epoch_lost++;
+        return 0;
+    }
     /* splitmix64 finaliser over the pair; any decent mix will do, the point is
      * that consecutive code addresses must not collide into one run. */
     uint64_t h = addr * UINT64_C(0x9E3779B97F4A7C15) ^ (mask + UINT64_C(0x165667B19E3779F9));
@@ -948,13 +968,22 @@ static int blkctx_seen(MtBlkCtx *b, uint64_t addr, uint64_t mask) {
     for (size_t probe = 0; probe < BLK_SEEN_CAP; probe++) {
         size_t k = (i + probe) & (BLK_SEEN_CAP - 1);
         if (!b->seen_used[k]) {
+            const int id = b->n_seen;
             b->seen_used[k] = 1;
             b->seen_addr[k] = addr;
             b->seen_mask[k] = mask;
+            b->seen_id[k] = id;
+            b->site_addr[id] = addr;
+            b->site_mask[id] = mask;
             b->n_seen++;
-            return 0;
+            b->epoch_bits[id >> 3] |= (uint8_t)(1u << (id & 7));
+            return 0;                              /* never seen: describe it */
         }
-        if (b->seen_addr[k] == addr && b->seen_mask[k] == mask) return 1;
+        if (b->seen_addr[k] == addr && b->seen_mask[k] == mask) {
+            const int id = b->seen_id[k];
+            b->epoch_bits[id >> 3] |= (uint8_t)(1u << (id & 7));
+            return b->dedupe;                      /* suppress only if asked */
+        }
     }
     return 0;                                      /* unreachable: n_seen guards */
 }
@@ -1312,6 +1341,49 @@ static PyObject *py_hook_dedupe(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+/* hook_epoch_begin(hook) -- start a new iteration's site bitmap.
+ *
+ * Clears only which sites THIS run reached.  The set of findings already
+ * described, and the ids assigned to them, survive: an id has to stay stable
+ * or a bitmap taken from one iteration would resolve to a different site after
+ * a later one added more. */
+static PyObject *py_hook_epoch_begin(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    MtBlkCtx *b = blkctx_of(cap);
+    if (!b) return NULL;
+    memset(b->epoch_bits, 0, sizeof b->epoch_bits);
+    b->epoch_lost = 0;
+    Py_RETURN_NONE;
+}
+
+/* hook_epoch_sites(hook) -> [(address, mask), ...] this iteration reached.
+ *
+ * Walks the bitmap, not the reports: a site the run hit is here whether or not
+ * it was described to Python, which is the whole point.  One call per run
+ * rather than one per finding. */
+static PyObject *py_hook_epoch_sites(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    MtBlkCtx *b = blkctx_of(cap);
+    if (!b) return NULL;
+    PyObject *out = PyList_New(0);
+    if (!out) return NULL;
+    for (int id = 0; id < b->n_seen; id++) {
+        if (!(b->epoch_bits[id >> 3] & (1u << (id & 7)))) continue;
+        PyObject *it = Py_BuildValue("(KK)",
+                                     (unsigned long long)b->site_addr[id],
+                                     (unsigned long long)b->site_mask[id]);
+        if (!it || PyList_Append(out, it) != 0) {
+            Py_XDECREF(it); Py_DECREF(out); return NULL;
+        }
+        Py_DECREF(it);
+    }
+    return out;
+}
+
 /* hook_reports_forget(hook) -- clear the set of findings already described, so
  * the next run describes them again.  For a caller that wants per-run rather
  * than per-process reporting. */
@@ -1322,6 +1394,7 @@ static PyObject *py_hook_reports_forget(PyObject *self, PyObject *args) {
     MtBlkCtx *b = blkctx_of(cap);
     if (!b) return NULL;
     memset(b->seen_used, 0, sizeof b->seen_used);
+    memset(b->epoch_bits, 0, sizeof b->epoch_bits);
     b->n_seen = 0;
     Py_RETURN_NONE;
 }
@@ -1336,7 +1409,7 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     if (!miss) return NULL;
     for (int i = 0; i < MT_BLK_N_MISS; i++)
         PyList_SET_ITEM(miss, i, PyLong_FromUnsignedLong(b->miss[i]));
-    /* TWENTY pairs, and the format code has to match each value's C type:
+    /* TWENTY-ONE pairs, and the format code has to match each value's C type:
      * `k` unsigned long, `i` int, `K` unsigned long long, `l` long, `N` a
      * reference this steals.  Py_BuildValue does NOT check that the format and
      * the argument list are the same length -- one pair short silently drops
@@ -1346,7 +1419,7 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
      * which then read as "the guest committed no writes".  Counted and gated
      * by tests/test_block_stats_keys.py; add a key there in the same edit. */
     return Py_BuildValue(
-        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:i,s:k,s:k,s:k}",
+        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:i,s:k,s:k,s:k,s:k}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
@@ -1358,6 +1431,7 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
                          "reports", b->rep_total, "reports_pending", b->n_rep,
                          "reports_duplicate", b->rep_dupes,
                          "reports_sites", b->n_seen,
+                         "sites_lost", b->epoch_lost,
                          "reused", b->reused, "no_code", b->no_code,
                          "committed_writes", b->committed_writes);
 }
@@ -1424,6 +1498,10 @@ static PyMethodDef Methods[] = {
      "hook_dedupe(hook, on) -- describe each (address, mask) once"},
     {"hook_reports_forget", py_hook_reports_forget, METH_VARARGS,
      "hook_reports_forget(hook) -- describe already-seen findings again"},
+    {"hook_epoch_begin", py_hook_epoch_begin, METH_VARARGS,
+     "hook_epoch_begin(hook) -- start a new iteration's site bitmap"},
+    {"hook_epoch_sites", py_hook_epoch_sites, METH_VARARGS,
+     "hook_epoch_sites(hook) -> [(address, mask)] this iteration reached"},
     {"hook_stats", py_hook_stats, METH_VARARGS, "hook_stats(hook) -> dict"},
     {"plans_clear", py_plans_clear, METH_NOARGS,
      "plans_clear() -- forget every plan the process has kept"},
