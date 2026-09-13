@@ -251,9 +251,14 @@ def plot_overhead():
     dynamic analysis owes -- and `MicroTaint plumbing` is the real engine armed
     with nothing tainted, so no propagation runs.
 
-    Time is LOG scale, deliberately: the range is 0.002 s to 5.037 s, a factor of
-    2,756, and on a linear axis the native bar is invisible and Qiling+hooks
+    Time is LOG scale, deliberately: the range is 0.002 s to 6.968 s, a factor of
+    4,115, and on a linear axis the native bar is invisible and Qiling+hooks
     nearly so, which erases exactly the two rungs the figure exists to show.
+
+    `microtaint-none` is deliberately NOT a bar.  The detectors cost nothing
+    measurable now, so a fifth bar the same height as the fourth would tell the
+    reader that nothing was measured; the rung stays in the appendix table,
+    where the exact numbers belong.
     Memory is linear, where the range is only about 6x and the growth is the
     point.  Exact values are in the appendix table rather than on the bars, which
     keeps this the same size as the two-panel figure it replaces.

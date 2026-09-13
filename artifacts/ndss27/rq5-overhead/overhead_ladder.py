@@ -495,7 +495,12 @@ def main() -> int:
     print('=' * 100)
     print()
 
-    mt = ns_of('microtaint-none')
+    # The engine as anyone actually runs it: detectors on.  `microtaint-none`
+    # stays MEASURED because it is the only thing that separates propagation
+    # from detection, but it is no longer part of the story the ladder tells:
+    # the detectors cost nothing now, so printing both invites the reader to
+    # conclude that nothing is being measured.
+    mt = ns_of('microtaint-all') or ns_of('microtaint-none')
     ch = ns_of('codehook')
     cch = ns_of('c-codehook')
     cchr = ns_of('c-codehook-regs')
@@ -528,8 +533,15 @@ def main() -> int:
         print('    address->circuit cache, the prefilter, and for a memory operand an')
         print('    effective address and a shadow lookup. No taint is computed; this is')
         print('    what a byte-granular engine owes per instruction however it is written.')
-        print(f'  * PROPAGATION adds {mt - plumb:+.0f} ns/instr on top ({100 * (mt - plumb) / mt:.0f}% of the total).')
-        print('    That is the taint algebra, and the honest number to attack.')
+        print(f'  * the ANALYSIS adds {mt - plumb:+.0f} ns/instr on top '
+              f'({100 * (mt - plumb) / mt:.0f}% of the total):')
+        print('    evaluating the taint circuit for the instructions that carry taint,')
+        print('    and checking the detectors. Note what is NOT in here: the')
+        print('    address->circuit lookup is already paid in the plumbing rung, because')
+        print('    the prefilter needs the compiled circuit to decide anything. So this')
+        print('    buys the EVALUATION, not the acquisition -- the instructions that stop')
+        print('    taking the untainted exit and go through the algebra instead.')
+        print('    That is the honest number to attack.')
     elif mt and cchr:
         print(f'  * microtaint computes the taint in {mt - cchr:+.0f} ns/instr on top of that,')
         print(f'    {mt / cchr:.0f}x the cost of merely reading the same registers.')
@@ -539,9 +551,15 @@ def main() -> int:
         print(f"    {ch / cch:.0f}x the C one, and more than microtaint's entire engine ({mt:.0f}).")
         print('    The hosting language dominates the analysis, so a Python-hooked tool')
         print('    is not slow because of what it computes.')
-    if ns_of('microtaint-all') and mt:
-        print(f'  * the four detectors add {ns_of("microtaint-all") - mt:+.0f} ns/instr '
-              f'({100 * (ns_of("microtaint-all") / mt - 1):.0f}%).')
+    # Kept as a guard rather than a headline: if the detectors ever become
+    # expensive again, the two-step ladder would show it as a PROPAGATION
+    # regression and nobody would know which half moved.
+    _none = ns_of('microtaint-none')
+    if _none and ns_of('microtaint-all'):
+        print(f'  * of that analysis cost, the four detectors are '
+              f'{ns_of("microtaint-all") - _none:+.0f} ns/instr:')
+        print('    they are recorded in C and rendered once, so they cost nothing')
+        print('    measurable. This rung is kept as a guard, not as a headline.')
 
     if args.json:
         with open(args.json, 'w') as f:
