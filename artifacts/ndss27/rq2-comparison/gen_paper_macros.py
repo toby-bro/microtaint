@@ -184,7 +184,6 @@ def main():
         nat = ov['native']['wall_s']
         mta = ov['microtaint-all']['wall_s']
         run = ov['microtaint-all']['extra'].get('run_s') or mta
-        qil_run = ov['qiling-only']['extra'].get('run_s')
 
         # A run in which the guest never executed the workload is FAST and clean,
         # so no threshold on the timings can catch it -- only the guest's own

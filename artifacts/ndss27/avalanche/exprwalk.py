@@ -20,12 +20,13 @@ the modified tree, so there is exactly one implementation of taint semantics.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Iterator
+from typing import Callable, Iterator
 
 from microtaint.instrumentation import ast as _ast
 
 Expr = _ast.Expr
 Constant = _ast.Constant
+EvalContext = _ast.EvalContext
 
 #: Node types that OVER-APPROXIMATE, by the engine's own documentation.
 #:
@@ -103,12 +104,38 @@ def check_engine_node_types() -> None:
             'result in favour of the paper.')
 
 
-def _public_attrs(e: Any) -> list[str]:
+def _public_attrs(e: object) -> list[str]:
     return [a for a in dir(e)
             if not a.startswith('_') and not callable(getattr(e, a, None))]
 
 
-def child_slots(e: Any) -> list[tuple[Callable[[Any], None], Any]]:
+def _attr_setter(obj: object, name: str) -> Callable[[Expr], None]:
+    """Replace `obj.name`."""
+    def set_it(new: Expr) -> None:
+        setattr(obj, name, new)
+    return set_it
+
+
+def _list_setter(items: list[Expr], index: int) -> Callable[[Expr], None]:
+    """Replace `items[index]`.
+
+    A named factory rather than an immediately-invoked lambda: both bind the
+    loop variable correctly, but only one of them can be read at a glance, and
+    the lambda form trips two linters that cannot see through it.
+    """
+    def set_it(new: Expr) -> None:
+        items[index] = new
+    return set_it
+
+
+def _dict_setter(items: dict[str, Expr], key: str) -> Callable[[Expr], None]:
+    """Replace `items[key]`."""
+    def set_it(new: Expr) -> None:
+        items[key] = new
+    return set_it
+
+
+def child_slots(e: object) -> list[tuple[Callable[[Expr], None], Expr]]:
     """[(replace_fn, child)] for every Expr one level below `e`.
 
     Reflective on purpose: anything that IS an Expr, or sits in a list/dict/tuple
@@ -116,19 +143,19 @@ def child_slots(e: Any) -> list[tuple[Callable[[Any], None], Any]]:
     replace is a child we cannot neutralise, and silently skipping it is how the
     old harness lost bits.
     """
-    out: list[tuple[Callable[[Any], None], Any]] = []
+    out: list[tuple[Callable[[Expr], None], Expr]] = []
     for name in _public_attrs(e):
         val = getattr(e, name, None)
         if isinstance(val, Expr):
-            out.append(((lambda n: lambda new: setattr(e, n, new))(name), val))
+            out.append((_attr_setter(e, name), val))
         elif isinstance(val, list):
             for i, item in enumerate(val):
                 if isinstance(item, Expr):
-                    out.append(((lambda L, i: lambda new: L.__setitem__(i, new))(val, i), item))
+                    out.append((_list_setter(val, i), item))
         elif isinstance(val, dict):
             for k, item in val.items():
                 if isinstance(item, Expr):
-                    out.append(((lambda D, k: lambda new: D.__setitem__(k, new))(val, k), item))
+                    out.append((_dict_setter(val, k), item))
         elif isinstance(val, tuple) and any(isinstance(x, Expr) for x in val):
             raise EngineDrift(
                 f'{type(e).__name__}.{name} holds sub-expressions in an immutable '
@@ -137,9 +164,9 @@ def child_slots(e: Any) -> list[tuple[Callable[[Any], None], Any]]:
     return out
 
 
-def walk(e: Any) -> Iterator[Any]:
+def walk(e: object) -> Iterator[Expr]:
     """Every node in the tree, `e` first."""
-    stack = [e]
+    stack: list[Expr] = [e]  # type: ignore[list-item]  # the root may be any node
     seen: set[int] = set()
     while stack:
         node = stack.pop()
@@ -150,21 +177,21 @@ def walk(e: Any) -> Iterator[Any]:
         stack.extend(child for _, child in child_slots(node))
 
 
-def contains_approximation(e: Any, types: frozenset[str] = APPROXIMATING_TYPES) -> bool:
+def contains_approximation(e: object, types: frozenset[str] = APPROXIMATING_TYPES) -> bool:
     return any(type(n).__name__ in types for n in walk(e))
 
 
-def approximating_nodes(e: Any) -> list[str]:
+def approximating_nodes(e: object) -> list[str]:
     """Which approximating node types this tree actually uses."""
     return sorted({type(n).__name__ for n in walk(e)
                    if type(n).__name__ in APPROXIMATING_TYPES})
 
 
-def contains_avalanche(e: Any) -> bool:
+def contains_avalanche(e: object) -> bool:
     return any(type(n).__name__ in AVALANCHE_TYPES for n in walk(e))
 
 
-def count_avalanche_nodes(e: Any) -> int:
+def count_avalanche_nodes(e: object) -> int:
     return sum(1 for n in walk(e) if type(n).__name__ in AVALANCHE_TYPES)
 
 
@@ -176,12 +203,12 @@ class neutralised:
     the exception path too.
     """
 
-    def __init__(self, root: Any, types: frozenset[str] = APPROXIMATING_TYPES) -> None:
+    def __init__(self, root: Expr, types: frozenset[str] = APPROXIMATING_TYPES) -> None:
         self.root = root
         self.types = types
-        self._undo: list[tuple[Callable[[Any], None], Any]] = []
+        self._undo: list[tuple[Callable[[Expr], None], Expr]] = []
 
-    def __enter__(self) -> Any:
+    def __enter__(self) -> Expr:
         for node in list(walk(self.root)):
             for replace, child in child_slots(node):
                 if type(child).__name__ in self.types:
@@ -190,13 +217,13 @@ class neutralised:
                     self._undo.append((replace, child))
         return self.root
 
-    def __exit__(self, *exc: Any) -> None:
+    def __exit__(self, *exc: object) -> None:
         for replace, original in reversed(self._undo):
             replace(original)
         self._undo.clear()
 
 
-def evaluate_precise(e: Any, ctx: Any,
+def evaluate_precise(e: Expr, ctx: EvalContext,
                      types: frozenset[str] = APPROXIMATING_TYPES) -> int:
     """Evaluate `e` with every approximating node forced to 0.
 
@@ -210,9 +237,9 @@ def evaluate_precise(e: Any, ctx: Any,
     if type(e).__name__ in types:
         return 0
     with neutralised(e, types):
-        return e.evaluate(ctx)
+        return int(e.evaluate(ctx))
 
 
-def root_is_approximation(e: Any,
+def root_is_approximation(e: object,
                           types: frozenset[str] = APPROXIMATING_TYPES) -> bool:
     return type(e).__name__ in types

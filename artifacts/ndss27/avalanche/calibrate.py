@@ -23,12 +23,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault('MICROTAINT_TAINT_IR', '0')
 os.environ.setdefault('MICROTAINT_BLOCK', '0')
 
-import exprwalk as W  # noqa: E402
-from microtaint.instrumentation.ast import EvalContext  # noqa: E402
-from microtaint.simulator import CellSimulator  # noqa: E402
-from microtaint.sleigh.engine import generate_static_rule  # noqa: E402
-from microtaint.types import (  # noqa: E402
-    Architecture, ImplicitTaintPolicy, Register,
+import exprwalk as W  # type: ignore[import-not-found]  # sibling script, resolved at run time
+
+from microtaint.instrumentation.ast import EvalContext, MemoryOperand
+from microtaint.simulator import CellSimulator
+from microtaint.sleigh.engine import generate_static_rule
+from microtaint.types import (
+    Architecture,
+    ImplicitTaintPolicy,
+    Register,
 )
 
 NAMES = ['RAX', 'RBX', 'RCX', 'RDX', 'CF', 'PF', 'ZF', 'SF', 'OF']
@@ -55,7 +58,7 @@ CASES = [
 ]
 
 
-def _ctx(taint):
+def _ctx(taint: dict[str, int]) -> EvalContext:
     vals = dict.fromkeys(NAMES, 0)
     vals.update({'RAX': 0x0123_4567_89AB_CDEF, 'RBX': 0xFEDC_BA98_7654_3210,
                  'RCX': 5, 'RDX': 0x1111, 'RSP': 0x204000})
@@ -65,7 +68,7 @@ def _ctx(taint):
                        implicit_policy=ImplicitTaintPolicy.IGNORE)
 
 
-def data_avalanche_share(asm, taint):
+def data_avalanche_share(asm: str, taint: dict[str, int]) -> tuple[float, int]:
     """(% of tainted DATA bits owed to avalanche, n_data_bits) for one instruction."""
     import keystone
     ks = keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_64)
@@ -77,7 +80,7 @@ def data_avalanche_share(asm, taint):
         if e is None:
             continue
         tgt = a.target
-        width = (tgt.size * 8 if hasattr(tgt, 'address_expr')
+        width = (tgt.size * 8 if isinstance(tgt, MemoryOperand)
                  else tgt.bit_end - tgt.bit_start + 1)
         if width < 8:            # data registers only; flags are counted apart
             continue

@@ -41,8 +41,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import os
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from collections import defaultdict
 from typing import Any
@@ -52,6 +52,7 @@ from typing import Any
 os.environ['MICROTAINT_DISABLE_CYTHON_HOOK'] = '1'
 os.environ['MICROTAINT_DISABLE_INSTR_CACHE'] = '1'
 
+import exprwalk as W  # type: ignore[import-not-found]  # sibling script, resolved at run time
 from qiling import Qiling
 from qiling.const import QL_VERBOSE
 
@@ -59,8 +60,6 @@ from microtaint.emulator.reporter import Reporter
 from microtaint.emulator.wrapper import MicrotaintWrapper
 from microtaint.sleigh import engine as _engine
 from microtaint.sleigh.mapper import determine_category
-
-import exprwalk as W
 
 # ---------------------------------------------------------------------------
 # Global tallies
@@ -212,7 +211,7 @@ def _gta_wrapper(
     try:
         cat = determine_category(slice_ops, out_width_bits=width)
         label = str(cat)
-    except Exception as _e:  # noqa: BLE001 -- recorded, never swallowed
+    except Exception as _e:
         _ops = ' '.join(o.opcode.name for o in slice_ops) if slice_ops else '<empty slice>'
         _fail('1. determine_category raised -> category becomes Unknown', _e,
               f'bytes={bytestring.hex()} out={out_name}[{out_bit_start}:{out_bit_end}] ops={_ops[:100]}')
@@ -308,7 +307,7 @@ def _tally(circuit, ctx, _out, bytes_hex=''):
         mask = (1 << width) - 1
         try:
             full = expr.evaluate(ctx) & mask
-        except Exception as _e:  # noqa: BLE001
+        except Exception as _e:
             _fail('3. expr.evaluate raised -> assignment DROPPED from the table', _e,
                   f'target={getattr(a.target, "name", "MEM")} expr={type(expr).__name__}')
             continue
@@ -319,7 +318,7 @@ def _tally(circuit, ctx, _out, bytes_hex=''):
         # approximation invisible.
         try:
             precise = W.evaluate_precise(expr, ctx) & mask
-        except Exception as _e:  # noqa: BLE001
+        except Exception as _e:
             _fail('4. evaluate_precise raised -> 0 bits attributed to approximation', _e,
                   f'target={getattr(a.target, "name", "MEM")} expr={type(expr).__name__}')
             precise = full
@@ -343,7 +342,7 @@ def _tally(circuit, ctx, _out, bytes_hex=''):
             for mech in W.approximating_nodes(expr):
                 try:
                     one = W.evaluate_precise(expr, ctx, frozenset({mech})) & mask
-                except Exception:  # noqa: BLE001 -- attribution only, never the total
+                except Exception:
                     continue
                 mech_bits[mech] += (full & ~one & mask).bit_count()
 
@@ -388,12 +387,12 @@ def _tally(circuit, ctx, _out, bytes_hex=''):
         if w is not None:
             try:
                 w.ql.emu_stop()
-            except Exception as _e:  # noqa: BLE001
+            except Exception as _e:
                 _fail('emu_stop failed after budget', _e)
 
 
 class CircuitProxy:
-    __slots__ = ('_c', '_bytes')
+    __slots__ = ('_bytes', '_c')
 
     def __init__(self, c, bytes_hex=''):
         self._c = c
@@ -412,7 +411,7 @@ class CircuitProxy:
         out = self._c.evaluate(ctx)
         try:
             _tally(self._c, ctx, out, self._bytes)
-        except Exception as _e:  # noqa: BLE001
+        except Exception as _e:
             _fail('5. _tally raised -> the WHOLE INSTRUCTION is missing from both '
                   'halves of the table', _e, f'insn #{STATS["insns_hooked"]}')
         return out
@@ -438,12 +437,12 @@ def _check_assignment_construction_sites():
     import re as _re
     src = inspect.getsource(_engine).split('\n')
     fn = None
-    outside = set()
+    outside: set[str] = set()
     for line in src:
         m = _re.match(r'^def (\w+)', line)
         if m:
             fn = m.group(1)
-        if 'TaintAssignment(' in line and fn != 'generate_taint_assignments':
+        if fn is not None and 'TaintAssignment(' in line and fn != 'generate_taint_assignments':
             outside.add(fn)
     unexpected = outside - _KNOWN_BYPASS
     if unexpected:
@@ -639,8 +638,8 @@ def main():
         import collections as _col
         print(f'\nSample of approximating assignments in category '
               f'{os.environ.get("AVAL_DUMP_CAT")!r}:')
-        _agg = _col.Counter()
-        for bh, tn, w, ob, ab, mech in _DUMPED:
+        _agg: _col.Counter[tuple[str, str, int, tuple[str, ...]]] = _col.Counter()
+        for bh, tn, w, _ob, _ab, mech in _DUMPED:
             _agg[(bh, tn, w, mech)] += 1
         for (bh, tn, w, mech), n in _agg.most_common(12):
             print(f'   x{n:<4d} bytes={bh:<14s} target={tn:<10s} width={w:<3d} via={list(mech)}')

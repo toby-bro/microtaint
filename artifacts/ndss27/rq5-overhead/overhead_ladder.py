@@ -271,7 +271,8 @@ def _run(argv, stdin_data, timeout, env=None):
         argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env={**os.environ, **env} if env else None,
     )
-    out_chunks, err_chunks = [], []
+    out_chunks: list[str] = []
+    err_chunks: list[str] = []
     import threading
     def _drain(stream, sink):
         try:

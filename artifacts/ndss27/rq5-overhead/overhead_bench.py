@@ -1042,8 +1042,8 @@ def _main_single(args, p) -> int:
         stdin_path = gen_input(args.gen_input, args.input_seed)
     stdin_data = None
     if stdin_path:
-        with open(stdin_path, 'rb') as f:
-            stdin_data = f.read()
+        with open(stdin_path, 'rb') as stdin_f:
+            stdin_data = stdin_f.read()
         print(f'# stdin source: {stdin_path} ({len(stdin_data)} bytes)')
 
     # Build config list
@@ -1128,13 +1128,14 @@ def _main_single(args, p) -> int:
     print('-' * 116)
 
     native_wall = all_results.get('native', Measurement('native', 0, 0, 0, 0)).wall_s
-    qiling_run = (all_results.get('qiling-only').extra.get('run_s')
-                  if all_results.get('qiling-only') else None)
+    _qil = all_results.get('qiling-only')
+    qiling_run = _qil.extra.get('run_s') if _qil else None
 
     for label in labels_to_run:
-        m = all_results.get(label)
-        if not m:
+        found = all_results.get(label)
+        if not found:
             continue
+        m = found
         init_s = m.extra.get('init_s')
         run_s = m.extra.get('run_s')
         gb = m.extra.get('guest_bytes')

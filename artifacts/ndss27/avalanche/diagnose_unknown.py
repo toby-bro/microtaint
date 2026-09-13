@@ -26,16 +26,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault('MICROTAINT_TAINT_IR', '0')
 os.environ.setdefault('MICROTAINT_BLOCK', '0')
 
-import avalanche_freq as A  # noqa: E402  (installs the monkeypatches on import)
-from microtaint.sleigh.mapper import determine_category  # noqa: E402
+import avalanche_freq as A  # type: ignore[import-not-found]  # sibling script, resolved at run time
+from pypcode import PcodeOp
 
-FAILS: dict[str, Counter] = defaultdict(Counter)
-EXAMPLES: dict[str, list] = defaultdict(list)
+from microtaint.instrumentation.ast import EvalContext, LogicCircuit
+from microtaint.sleigh.mapper import determine_category
+
+FAILS: dict[str, Counter[str]] = defaultdict(Counter)
+EXAMPLES: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
 SEEN_IDS: set[int] = set()
-ID_REUSE = Counter()
+ID_REUSE: Counter[str] = Counter()
 
 
-def _record(kind, exc, ctxinfo=''):
+def _record(kind: str, exc: BaseException | None, ctxinfo: str = '') -> None:
     key = f'{type(exc).__name__}: {exc}' if exc is not None else 'no-exception'
     FAILS[kind][key] += 1
     if len(EXAMPLES[kind]) < 5:
@@ -47,12 +50,14 @@ def _record(kind, exc, ctxinfo=''):
 _wrapped = A._gta_wrapper
 
 
-def _diag_gta(arch, bytestring, assignments, slice_ops, dep_set, out_target,
-              out_name, out_bit_start, out_bit_end, mapper, mapping=None, **kw):
+def _diag_gta(arch: object, bytestring: bytes, assignments: list[object],
+              slice_ops: list[PcodeOp], dep_set: object, out_target: object,
+              out_name: str, out_bit_start: int, out_bit_end: int,
+              mapper: object, mapping: object = None, **kw: object) -> object:
     width = out_bit_end - out_bit_start + 1
     try:
         determine_category(slice_ops, out_width_bits=width)
-    except Exception as exc:  # noqa: BLE001 -- that is the point
+    except Exception as exc:
         ops = ' '.join(o.opcode.name for o in slice_ops) if slice_ops else '<empty slice>'
         _record('1. determine_category raised', exc,
                 f'bytes={bytestring.hex()} out={out_name}[{out_bit_start}:{out_bit_end}] ops={ops[:120]}')
@@ -67,14 +72,15 @@ def _diag_gta(arch, bytestring, assignments, slice_ops, dep_set, out_target,
 
 
 A._engine.generate_taint_assignments = _diag_gta
-import microtaint.sleigh.engine as _eng  # noqa: E402
-_eng.generate_taint_assignments = _diag_gta
+import microtaint.sleigh.engine as _eng
+
+_eng.generate_taint_assignments = _diag_gta  # type: ignore[assignment]  # a diagnostic stand-in for the engine's own
 
 # ---- 3 + 4: re-wrap _tally's inner evaluations -------------------------------
 _orig_tally = A._tally
 
 
-def _diag_tally(circuit, ctx, _out):
+def _diag_tally(circuit: LogicCircuit, ctx: EvalContext, _out: object) -> object:
     for a in circuit.assignments:
         if a.expression is None:
             continue
@@ -84,13 +90,13 @@ def _diag_tally(circuit, ctx, _out):
             _record('2. CAT_BY_ID miss (never seen at generation)', None, f'target={nm}')
         try:
             a.expression.evaluate(ctx)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _record('3. expr.evaluate raised (assignment DROPPED)', exc,
                     f'target={getattr(a.target, "name", "MEM")}')
             continue
         try:
             A._eval_precise(a.expression, ctx)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _record('4. _eval_precise raised (0 bits -> avalanche)', exc,
                     f'target={getattr(a.target, "name", "MEM")}')
     return _orig_tally(circuit, ctx, _out)
@@ -99,7 +105,7 @@ def _diag_tally(circuit, ctx, _out):
 A._tally = _diag_tally
 
 if __name__ == '__main__':
-    rc = A.main() if hasattr(A, 'main') else 0
+    rc: int = A.main() if hasattr(A, 'main') else 0
     print('\n' + '=' * 72)
     print('SWALLOWED-EXCEPTION REPORT')
     print('=' * 72)
@@ -110,7 +116,7 @@ if __name__ == '__main__':
         print(f'\n{kind}  ({total} occurrences)')
         for key, n in FAILS[kind].most_common(5):
             print(f'    {n:6d}  {key}')
-        for key, info, tb in EXAMPLES[kind][:2]:
+        for _key, info, tb in EXAMPLES[kind][:2]:
             print(f'    e.g. {info}')
             if tb.strip():
                 print('        ' + tb.strip().replace('\n', '\n        ')[:600])
