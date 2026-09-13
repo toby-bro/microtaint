@@ -165,6 +165,24 @@ def hook_reports_forget(hook: _Capsule) -> None:
     first input and never again.
     """
 
+def hook_sinks(hook: _Capsule) -> list[tuple[int, int, int, int, int]]:
+    """(site, address, address taint, size, is_store) per memory SINK, draining.
+
+    A sink is an access whose ADDRESS depends on the input.  It is NOT a
+    violation: the access is usually in bounds, and saying so is the point.  A
+    detector that speaks only once a write has already gone out of bounds can
+    find a bug only by executing it, so the fuzzer must produce the overflowing
+    input before anything is reported.  Recording the sink instead requires
+    only REACHING the access, and whether a bad address is possible from there
+    is a question for a solver: this index is at `address` now, the input owns
+    the bits in `address taint`, can it be driven out of the object?
+
+    One entry per SITE, deduped on (site, taint, kind) and deliberately not on
+    the concrete address, because a loop walking a buffer produces a different
+    address every iteration and is one sink.  `hook_stats()['sinks']` counts
+    every occurrence, so the collapsed ones are never hidden.
+    """
+
 def hook_reports(hook: _Capsule) -> list[tuple[int, int]]:
     """(address, taint mask) for each secret-dependent program counter found,
     draining them so a long run can be drained repeatedly.

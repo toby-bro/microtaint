@@ -263,6 +263,12 @@ typedef struct {
      * never makes the engine claim the branch fired fewer times; `rep_dupes`
      * is how many it suppressed, and the two together have to reconstruct the
      * un-deduped count exactly. */
+    /* Memory sinks harvested from committed blocks, one entry per SITE.
+     * Deduped for the same reason the reports are: a copy loop reaches one
+     * store site thousands of times to establish a single fact. */
+    MtBlkSink sinks[BLK_MAX_REP];
+    int n_sink;
+    unsigned long sink_total;
     uint64_t seen_addr[BLK_SEEN_CAP];
     uint64_t seen_mask[BLK_SEEN_CAP];
     /* Dense id of the finding in that slot, so the per-iteration bitmap can be
@@ -988,8 +994,34 @@ static int blkctx_seen(MtBlkCtx *b, uint64_t addr, uint64_t mask) {
     return 0;                                      /* unreachable: n_seen guards */
 }
 
+/* Has this sink site already been handed over?  Dedupe is on (site, taint,
+ * kind) and NOT on the concrete address: a loop walking a buffer produces a
+ * different address every iteration but is one sink.  Linear over the ring,
+ * which is fine because it is bounded and only runs on a commit that had
+ * one. */
+static int blkctx_sink_seen(MtBlkCtx *b, const MtBlkSink *sk) {
+    for (int i = 0; i < b->n_sink; i++) {
+        if (b->sinks[i].site == sk->site
+            && b->sinks[i].addr_taint == sk->addr_taint
+            && b->sinks[i].is_store == sk->is_store) return 1;
+    }
+    return 0;
+}
+
+static void blkctx_take_sinks(MtBlkCtx *b) {
+    if (!b->pend.valid) return;
+    for (int i = 0; i < b->pend.n_sinks; i++) {
+        b->sink_total++;
+        if (blkctx_sink_seen(b, &b->pend.sinks[i])) continue;
+        if (b->n_sink >= BLK_MAX_REP) continue;
+        b->sinks[b->n_sink++] = b->pend.sinks[i];
+    }
+    b->pend.n_sinks = 0;
+}
+
 static void blkctx_take_reports(MtBlkCtx *b) {
     if (!b->pend.valid) return;
+    blkctx_take_sinks(b);
     for (int i = 0; i < b->pend.n_reports; i++) {
         b->rep_total++;
         if (blkctx_seen(b, b->pend.rep_addr[i], b->pend.rep_mask[i])) {
@@ -1399,6 +1431,29 @@ static PyObject *py_hook_reports_forget(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+/* hook_sinks(hook) -> [(site, address, address_taint, size, is_store), ...],
+ * draining them.  One entry per distinct sink, not per execution. */
+static PyObject *py_hook_sinks(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    MtBlkCtx *b = blkctx_of(cap);
+    if (!b) return NULL;
+    PyObject *out = PyList_New(b->n_sink);
+    if (!out) return NULL;
+    for (int i = 0; i < b->n_sink; i++) {
+        PyObject *it = Py_BuildValue(
+            "(KKKii)", (unsigned long long)b->sinks[i].site,
+            (unsigned long long)b->sinks[i].addr,
+            (unsigned long long)b->sinks[i].addr_taint,
+            b->sinks[i].size, b->sinks[i].is_store);
+        if (!it) { Py_DECREF(out); return NULL; }
+        PyList_SET_ITEM(out, i, it);
+    }
+    b->n_sink = 0;
+    return out;
+}
+
 static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *cap;
@@ -1409,7 +1464,7 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     if (!miss) return NULL;
     for (int i = 0; i < MT_BLK_N_MISS; i++)
         PyList_SET_ITEM(miss, i, PyLong_FromUnsignedLong(b->miss[i]));
-    /* TWENTY-ONE pairs, and the format code has to match each value's C type:
+    /* TWENTY-THREE pairs, and the format code has to match each value's C type:
      * `k` unsigned long, `i` int, `K` unsigned long long, `l` long, `N` a
      * reference this steals.  Py_BuildValue does NOT check that the format and
      * the argument list are the same length -- one pair short silently drops
@@ -1419,7 +1474,7 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
      * which then read as "the guest committed no writes".  Counted and gated
      * by tests/test_block_stats_keys.py; add a key there in the same edit. */
     return Py_BuildValue(
-        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:i,s:k,s:k,s:k,s:k}",
+        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:i,s:k,s:k,s:i,s:k,s:k,s:k}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
@@ -1432,6 +1487,8 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
                          "reports_duplicate", b->rep_dupes,
                          "reports_sites", b->n_seen,
                          "sites_lost", b->epoch_lost,
+                         "sinks", b->sink_total,
+                         "sinks_pending", b->n_sink,
                          "reused", b->reused, "no_code", b->no_code,
                          "committed_writes", b->committed_writes);
 }
@@ -1492,6 +1549,8 @@ static PyMethodDef Methods[] = {
     {"hook_ptr", py_hook_ptr, METH_NOARGS, "hook_ptr() -> the C trampoline's address"},
     {"hook_ud", py_hook_ud, METH_VARARGS, "hook_ud(hook) -> its user_data address"},
     {"hook_finish", py_hook_finish, METH_VARARGS, "hook_finish(hook, completed)"},
+    {"hook_sinks", py_hook_sinks, METH_VARARGS,
+     "hook_sinks(hook) -> [(site, addr, addr_taint, size, is_store)]"},
     {"hook_reports", py_hook_reports, METH_VARARGS,
      "hook_reports(hook) -> [(address, mask)], draining them"},
     {"hook_dedupe", py_hook_dedupe, METH_VARARGS,

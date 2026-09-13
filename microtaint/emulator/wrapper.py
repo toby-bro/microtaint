@@ -846,7 +846,38 @@ class MicrotaintWrapper:
         drained = blockpath_c.hook_reports(self._block_ctx)
         for address, mask in drained:
             self._report_tainted_pc(address, mask)
+        self._drain_block_sinks()
         return len(drained)
+
+    def _drain_block_sinks(self) -> int:
+        """Memory accesses whose ADDRESS the input controls, one per site.
+
+        Not violations.  A detector that speaks only when a write already went
+        out of bounds can find a bug only by executing it, so a fuzzer has to
+        produce the overflowing input before anything is said.  Reporting the
+        SINK instead -- this store's address depends on the input, here are the
+        bits, here is where it landed this time -- only requires REACHING the
+        access, and reaching a `memcpy` is enormously easier than reaching it
+        with an overflowing length.  What is possible from there is a question
+        for a solver, not for the emulator.
+
+        The per-instruction path has reported the store half of this as
+        `FindingKind.AIW` for a long time; block mode computed the address
+        taint into `MT_BLK_A_ADDRT` on every access and dropped it.
+        """
+        if self._block_ctx is None:
+            return 0
+        from microtaint.emulator import blockpath_c  # noqa: PLC0415
+
+        sinks = blockpath_c.hook_sinks(self._block_ctx)
+        for site, addr, taint, size, is_store in sinks:
+            _mnemonic, asm = self._disasm_at(site)
+            if is_store and self.check_aiw:
+                self.reporter.aiw(site, pointer_taint=taint, instruction=asm)
+            elif not is_store and self.check_aiw:
+                self.reporter.air(site, pointer_taint=taint, instruction=asm,
+                                  access=addr, size=size)
+        return len(sinks)
 
     def _report_tainted_pc(self, address: int, mask: int) -> None:
         """One secret-dependent program counter, as the right KIND of finding.

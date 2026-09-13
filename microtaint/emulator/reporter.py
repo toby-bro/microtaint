@@ -14,6 +14,7 @@ class FindingKind(StrEnum):
     SIDE_CHANNEL = 'side_channel'
     TAINT_SOURCE = 'taint_source'
     AIW = 'arbitrary_indexed_write'  # STORE to a tainted pointer
+    AIR = 'arbitrary_indexed_read'   # LOAD from a tainted pointer
 
 
 @dataclass
@@ -163,6 +164,30 @@ class Reporter:
                 description=f'Arbitrary write: tainted pointer used as store destination at {hex(address)}',
                 instruction=instruction,
                 extra={'pointer_taint': hex(pointer_taint)},
+            ),
+        )
+
+    def air(self, address: int, pointer_taint: int, instruction: str = '',
+            access: int = 0, size: int = 0) -> None:
+        """Arbitrary Indexed Read: a LOAD whose address the input controls.
+
+        Not a violation.  The read may be entirely in bounds, and usually is.
+        It is recorded because a solver can then be asked the question the
+        engine cannot answer by executing: given that the input owns these bits
+        of this address, can it be made to leave the object?  Finding a bug
+        that way needs only to REACH the access, not to have triggered it,
+        which is a far weaker thing to ask of a fuzzer.
+        """
+        self.add(
+            Finding(
+                kind=FindingKind.AIR,
+                address=address,
+                description=(f'Input-dependent read: the address of a '
+                             f'{size}-byte load at {hex(address)} depends on '
+                             f'the input'),
+                instruction=instruction,
+                extra={'pointer_taint': hex(pointer_taint),
+                       'address': hex(access), 'size': size},
             ),
         )
 

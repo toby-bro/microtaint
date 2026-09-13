@@ -65,6 +65,11 @@
 
 #define MT_BLK_MAX_WRITES 64
 #define MT_BLK_MAX_REPORTS 16
+/* Memory SINKS held for one block: an access whose ADDRESS depends on the
+ * input.  Not a violation -- the access may be perfectly in bounds -- but the
+ * fact a solver needs, because a detector that fires only on violations can
+ * find a bug only by executing it. */
+#define MT_BLK_MAX_SINKS 16
 
 /* mt_blk_compute outcomes */
 #define MT_BLK_OK 0
@@ -166,6 +171,21 @@ typedef struct {
   int size;
 } MtBlkWrite;
 
+/* One memory access whose ADDRESS is input-dependent.
+ *
+ * `site` is the region's last instruction, the address a finding names.
+ * `addr` is where it actually landed THIS time and `addr_taint` which bits of
+ * it the input controls.  Together they turn "reached" into a solver query:
+ * this index is currently 0x12, the input owns these bits, can it leave the
+ * object? */
+typedef struct {
+  uint64_t site;
+  uint64_t addr;
+  uint64_t addr_taint;
+  int size;
+  int is_store;
+} MtBlkSink;
+
 /* A block's computed taint, not yet committed.  Nothing here is applied until
  * the block is known to have completed, which is the whole point. */
 typedef struct {
@@ -184,6 +204,10 @@ typedef struct {
   uint64_t rep_addr[MT_BLK_MAX_REPORTS];
   uint64_t rep_mask[MT_BLK_MAX_REPORTS];
   int n_reports;
+  /* Held by the same rule as the reports and the taint: a block that faulted
+   * part way through never happened, so neither did its sinks. */
+  MtBlkSink sinks[MT_BLK_MAX_SINKS];
+  int n_sinks;
 } MtBlkPending;
 
 /* Everything the runtime needs that is not the plan.  The hook fills this from
@@ -260,6 +284,7 @@ static int mt_blk_compute(
   pend->valid = 0;
   pend->n_writes = 0;
   pend->n_reports = 0;
+  pend->n_sinks = 0;
   pend->address = address;
   pend->size = plan ? plan->size : 0;
 
@@ -386,6 +411,23 @@ static int mt_blk_compute(
      * be copied back. */
     mt_blk_call(reg->fn, reg->prog, sv, st, st);
 
+    /* Memory SINKS, before the write loop, because a LOAD through an
+     * input-dependent address is a sink too and the write loop skips loads.
+     * The address taint is already sitting in MT_BLK_A_ADDRT -- the runtime
+     * computed it and, until now, threw it away. */
+    for (int k = 0; k < reg->n_acc; k++) {
+      const int abase = MT_BLK_MEM_BASE + MT_BLK_PER_ACC * k;
+      const uint64_t at = st[abase + MT_BLK_A_ADDRT];
+      if (!at) { continue; }          /* address is input-independent */
+      if (pend->n_sinks >= MT_BLK_MAX_SINKS) { break; }
+      MtBlkSink *sk = &pend->sinks[pend->n_sinks++];
+      sk->site = reg->last ? reg->last : reg->addr;
+      sk->addr = st[abase + MT_BLK_A_ADDR];
+      sk->addr_taint = at;
+      sk->size = reg->acc_size[k];
+      sk->is_store = (reg->acc_kind[k] == 1);
+    }
+
     for (int k = 0; k < reg->n_acc; k++) {
       if (reg->acc_kind[k] != 1) { continue; }
       if (pend->n_writes >= MT_BLK_MAX_WRITES) {
@@ -474,6 +516,7 @@ static inline void mt_blk_abandon(MtBlkPending *pend) {
   pend->valid = 0;
   pend->n_writes = 0;
   pend->n_reports = 0;
+  pend->n_sinks = 0;
 }
 
 /* Does a guest write onto [addr, addr+size) land on the held block's own
