@@ -3,7 +3,7 @@
 run_bit_precision_dns_experiment.py
 ====================================
 
-Bit-precision evaluation of microtaint 0.6.4 on the DNS flag-byte
+Bit-precision evaluation of microtaint on the DNS flag-byte
 unpacking pattern from RFC 1035 sec. 4.1.1.
 
 This is the experiment that the run-eval.py CLI harness cannot run,
@@ -269,7 +269,15 @@ def execute_run(sim: CellSimulator, run: Run) -> None:
 
 
 def print_header() -> None:
-    print(bold('\n=== microtaint 0.6.4 -- bit-precision DNS flag-byte experiment ==='))
+    # The version is READ, never written here: the banner used to say 0.6.4
+    # whatever engine was installed, which is a provenance claim that happened
+    # to be false.
+    try:
+        import importlib.metadata as _md
+        _ver = _md.version('microtaint')
+    except Exception:
+        _ver = 'unknown version'
+    print(bold(f'\n=== microtaint {_ver} -- bit-precision DNS flag-byte experiment ==='))
     print(f'  Sequence:    {OPCODE_EXTRACT_DISASM}')
     print(f'  Bytes:       {OPCODE_EXTRACT.hex()}')
     print('  Source:      RFC 1035 sec. 4.1.1, third byte of the DNS header')

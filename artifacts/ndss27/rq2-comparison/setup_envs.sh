@@ -31,14 +31,24 @@ echo "[*] Building Maat Env..."
 uv venv .venv_maat --python=3.11
 uv pip install --python .venv_maat pymaat
 
-# 5. Microtaint (Assuming local path, adjust if necessary)
+# 5. Microtaint -- THIS repository, not PyPI.
+#
+# This used to pin 'microtaint==0.6.15' from PyPI, so the comparison measured a
+# published release rather than the tree it ships with: an artifact evaluator
+# running these scripts would have scored an engine that is not the one under
+# review, and nothing in the output said so.
 echo "[*] Building Microtaint Env..."
+repo_root=$(cd "$og_dir/../../.." && pwd)
 uv venv .venv_microtaint
-uv pip install --python .venv_microtaint 'microtaint==0.6.15'
+uv pip install --python .venv_microtaint "$repo_root"
+.venv_microtaint/bin/python -c "
+import importlib.metadata as m
+print('[+] microtaint', m.version('microtaint'), 'from', '$repo_root')"
 
 echo '[+] Making libdft64...'
 mkdir -p external
-git clone https://github.com/AngoraFuzzer/libdft64 external/libdft64
+# Idempotent: `set -e` turns a second run into an abort otherwise.
+[ -d external/libdft64 ] && echo "[=] external/libdft64 present" || git clone https://github.com/AngoraFuzzer/libdft64 external/libdft64
 cd external/
 #PIN_VERSION='external-3.31-98869-gfa6f126a8'
 PIN_VERSION='3.20-98437-gf02b61307'
@@ -64,7 +74,8 @@ uv venv .venv_panda
 uv pip install --python .venv_panda pandare
 
 echo '[+] Setting up Taintgrind...'
-git clone https://github.com/wmkhoo/taintgrind external/taintgrind
+# Idempotent: `set -e` turns a second run into an abort otherwise.
+[ -d external/taintgrind ] && echo "[=] external/taintgrind present" || git clone https://github.com/wmkhoo/taintgrind external/taintgrind
 cd external/taintgrind/
 git checkout 4a59adff7e67ad6793bb362746bc05352bb4e795
 docker build -t taintgrind:latest .
