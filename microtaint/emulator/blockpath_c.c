@@ -44,6 +44,13 @@ typedef struct {
 
 #define BLK_MAX_REP 256
 
+/* Distinct (address, mask) findings remembered so a leak site is described to
+ * Python once instead of once per time the branch runs.  A power of two: the
+ * probe masks rather than divides.  When it fills, deduping STOPS and every
+ * finding is passed through again -- failing open, because a full table must
+ * cost speed and never a report. */
+#define BLK_SEEN_CAP 4096
+
 /* ---------------------------------------------------------------------- */
 /* The process-wide plan table.                                           */
 /*                                                                        */
@@ -246,6 +253,22 @@ typedef struct {
      * separately because the two used to be the same number, and the
      * difference is exactly the taint that used to be lost. */
     unsigned long abandoned;
+    /* Findings already handed to Python, so a branch inside a loop is
+     * described once rather than once per iteration.  Open addressed, keyed on
+     * the (address, mask) PAIR and not the address alone: two findings at one
+     * address that differ in WHAT leaked are two findings, and collapsing them
+     * would be an under-report.
+     *
+     * `rep_total` still counts every occurrence, so suppressing a duplicate
+     * never makes the engine claim the branch fired fewer times; `rep_dupes`
+     * is how many it suppressed, and the two together have to reconstruct the
+     * un-deduped count exactly. */
+    uint64_t seen_addr[BLK_SEEN_CAP];
+    uint64_t seen_mask[BLK_SEEN_CAP];
+    uint8_t seen_used[BLK_SEEN_CAP];
+    int n_seen;
+    int dedupe;
+    unsigned long rep_dupes;
 } MtBlkCtx;
 
 /* Diagnostic bisect, the same idea as MICROTAINT_NULL_HOOK on the instruction
@@ -908,10 +931,42 @@ static PyObject *py_runner_reports(PyObject *self, PyObject *args) {
  * finding and the taint it came from are the same claim: a block that faults
  * partway through never happened, so neither its taint nor its report may
  * stand.  Counting is unconditional; storing stops at the ring's end. */
+/* Has this exact finding already been handed over?  Records it if not.
+ *
+ * Returns 1 when the caller should SUPPRESS the report and 0 when it should
+ * pass it through.  A full table returns 0 for everything: deduping is an
+ * optimisation and must degrade into the old behaviour rather than into a
+ * missing finding. */
+static int blkctx_seen(MtBlkCtx *b, uint64_t addr, uint64_t mask) {
+    if (!b->dedupe) return 0;
+    if (b->n_seen >= BLK_SEEN_CAP) return 0;      /* fail open */
+    /* splitmix64 finaliser over the pair; any decent mix will do, the point is
+     * that consecutive code addresses must not collide into one run. */
+    uint64_t h = addr * UINT64_C(0x9E3779B97F4A7C15) ^ (mask + UINT64_C(0x165667B19E3779F9));
+    h ^= h >> 31; h *= UINT64_C(0xBF58476D1CE4E5B9); h ^= h >> 29;
+    size_t i = (size_t)(h & (BLK_SEEN_CAP - 1));
+    for (size_t probe = 0; probe < BLK_SEEN_CAP; probe++) {
+        size_t k = (i + probe) & (BLK_SEEN_CAP - 1);
+        if (!b->seen_used[k]) {
+            b->seen_used[k] = 1;
+            b->seen_addr[k] = addr;
+            b->seen_mask[k] = mask;
+            b->n_seen++;
+            return 0;
+        }
+        if (b->seen_addr[k] == addr && b->seen_mask[k] == mask) return 1;
+    }
+    return 0;                                      /* unreachable: n_seen guards */
+}
+
 static void blkctx_take_reports(MtBlkCtx *b) {
     if (!b->pend.valid) return;
     for (int i = 0; i < b->pend.n_reports; i++) {
         b->rep_total++;
+        if (blkctx_seen(b, b->pend.rep_addr[i], b->pend.rep_mask[i])) {
+            b->rep_dupes++;
+            continue;
+        }
         if (b->n_rep >= BLK_MAX_REP) continue;
         b->rep_addr[b->n_rep] = b->pend.rep_addr[i];
         b->rep_mask[b->n_rep] = b->pend.rep_mask[i];
@@ -1241,6 +1296,36 @@ static PyObject *py_hook_reports(PyObject *self, PyObject *args) {
     return out;
 }
 
+/* hook_dedupe(hook, on) -- describe each (address, mask) once, or every time.
+ *
+ * Off is the behaviour the hook has always had.  Switching it ON does not
+ * forget what has already been reported; switching it OFF leaves the table in
+ * place so turning it back on resumes rather than re-reports. */
+static PyObject *py_hook_dedupe(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    int on;
+    if (!PyArg_ParseTuple(args, "Op", &cap, &on)) return NULL;
+    MtBlkCtx *b = blkctx_of(cap);
+    if (!b) return NULL;
+    b->dedupe = on ? 1 : 0;
+    Py_RETURN_NONE;
+}
+
+/* hook_reports_forget(hook) -- clear the set of findings already described, so
+ * the next run describes them again.  For a caller that wants per-run rather
+ * than per-process reporting. */
+static PyObject *py_hook_reports_forget(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *cap;
+    if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
+    MtBlkCtx *b = blkctx_of(cap);
+    if (!b) return NULL;
+    memset(b->seen_used, 0, sizeof b->seen_used);
+    b->n_seen = 0;
+    Py_RETURN_NONE;
+}
+
 static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *cap;
@@ -1251,15 +1336,17 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
     if (!miss) return NULL;
     for (int i = 0; i < MT_BLK_N_MISS; i++)
         PyList_SET_ITEM(miss, i, PyLong_FromUnsignedLong(b->miss[i]));
-    /* One `s:` pair per key, and the count is NOT checked: a format string
-     * one pair short silently drops the LAST key, which is how adding
-     * `abandoned` here made `reports_pending` disappear. */
-    /* Eighteen pairs; the last three added are `reused`, `no_code` and
-     * `committed_writes`.  The count is NOT checked by Py_BuildValue: one
-     * pair short silently drops the LAST key, which is how adding
-     * `abandoned` once made `reports_pending` disappear. */
+    /* TWENTY pairs, and the format code has to match each value's C type:
+     * `k` unsigned long, `i` int, `K` unsigned long long, `l` long, `N` a
+     * reference this steals.  Py_BuildValue does NOT check that the format and
+     * the argument list are the same length -- one pair short silently drops
+     * the LAST key and still returns a valid dict.  That has bitten this
+     * function twice: `abandoned` once displaced `reports_pending`, and
+     * `reports_duplicate`/`reports_sites` once displaced `committed_writes`,
+     * which then read as "the guest committed no writes".  Counted and gated
+     * by tests/test_block_stats_keys.py; add a key there in the same edit. */
     return Py_BuildValue(
-        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:k,s:k}",
+        "{s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:k,s:N,s:k,s:k,s:K,s:l,s:k,s:i,s:k,s:i,s:k,s:k,s:k}",
                          "blocks", b->blocks, "handled", b->handled,
                          "unhandled", b->unhandled, "planned", b->planned,
                          "no_plan", b->no_plan, "no_regs", b->no_regs,
@@ -1269,6 +1356,8 @@ static PyObject *py_hook_stats(PyObject *self, PyObject *args) {
                          "last_bad_addr", (unsigned long long)b->env.last_bad_addr,
                          "last_bad_size", (long)b->env.last_bad_size,
                          "reports", b->rep_total, "reports_pending", b->n_rep,
+                         "reports_duplicate", b->rep_dupes,
+                         "reports_sites", b->n_seen,
                          "reused", b->reused, "no_code", b->no_code,
                          "committed_writes", b->committed_writes);
 }
@@ -1331,6 +1420,10 @@ static PyMethodDef Methods[] = {
     {"hook_finish", py_hook_finish, METH_VARARGS, "hook_finish(hook, completed)"},
     {"hook_reports", py_hook_reports, METH_VARARGS,
      "hook_reports(hook) -> [(address, mask)], draining them"},
+    {"hook_dedupe", py_hook_dedupe, METH_VARARGS,
+     "hook_dedupe(hook, on) -- describe each (address, mask) once"},
+    {"hook_reports_forget", py_hook_reports_forget, METH_VARARGS,
+     "hook_reports_forget(hook) -- describe already-seen findings again"},
     {"hook_stats", py_hook_stats, METH_VARARGS, "hook_stats(hook) -> dict"},
     {"plans_clear", py_plans_clear, METH_NOARGS,
      "plans_clear() -- forget every plan the process has kept"},

@@ -121,6 +121,28 @@ def hook_finish(hook: _Capsule, completed: bool) -> None:
     taint is held until the NEXT block proves it completed.
     """
 
+def hook_dedupe(hook: _Capsule, on: bool) -> None:
+    """Describe each (address, mask) finding once, or every time it occurs.
+
+    The runtime files a report every time the program counter is found tainted,
+    so a secret-dependent branch inside a loop is filed once per iteration.
+    With this on, only the first of each pair crosses into Python.
+
+    Keyed on the PAIR and not the address alone, because two findings at one
+    address that differ in what leaked are two findings.  `hook_stats` keeps
+    counting every occurrence in `reports` and counts the collapsed ones in
+    `reports_duplicate`, so nothing the run found is hidden.  When the table
+    fills it stops suppressing rather than start dropping.
+    """
+
+def hook_reports_forget(hook: _Capsule) -> None:
+    """Forget which findings have been described, so they are described again.
+
+    For a caller that wants per-run rather than per-process reporting: a
+    checkpoint loop that re-runs the same code otherwise reports a site on the
+    first input and never again.
+    """
+
 def hook_reports(hook: _Capsule) -> list[tuple[int, int]]:
     """(address, taint mask) for each secret-dependent program counter found,
     draining them so a long run can be drained repeatedly.

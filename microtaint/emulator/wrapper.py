@@ -412,6 +412,7 @@ class MicrotaintWrapper:
         check_aiw: bool = True,
         reporter: Reporter | None = None,
         qiling_stats: bool = False,
+        dedupe_reports: bool = True,
     ) -> None:
         """`qiling_stats` keeps Qiling's own syscall statistics collection on.
 
@@ -434,8 +435,24 @@ class MicrotaintWrapper:
         on makes the engine's main use case degrade without bound -- a cost
         nobody would choose knowingly.  Pass True to get them back, and
         `checkpoint` will say out loud what that costs.
+
+        `dedupe_reports` describes each distinct finding once instead of once
+        per time the branch runs.  The runtime files a report every time it
+        finds the program counter tainted, so a secret-dependent branch inside
+        a loop is filed once per iteration and each one crosses into Python to
+        be disassembled and formatted.  Measured on a static-glibc guest: 109
+        reports an input at 51 distinct addresses, the same 51 every input,
+        costing 0.89 M of a 7.65 M iteration.
+
+        Nothing is hidden by it.  The key is the (address, mask) PAIR, so two
+        findings at one address that differ in what leaked stay two findings;
+        `block_mode_stats()['reports']` still counts every occurrence, and
+        `reports_duplicate` says how many were collapsed, so the un-deduped
+        count is always recoverable.  Pass False for the older behaviour of
+        describing every occurrence.
         """
         self.ql = ql
+        self.dedupe_reports = dedupe_reports
         if not qiling_stats:
             ql.os.stats = QlOsNullStats()
         self.check_bof = check_bof
@@ -777,6 +794,7 @@ class MicrotaintWrapper:
             ctypes.addressof(regfile._ids), ctypes.addressof(regfile._ptrs),
             ctypes.addressof(regfile._vals), regfile._n_calls, reg_slots,
             lo_addr, hi_addr, world_token(self.arch, slot_map))
+        blockpath_c.hook_dedupe(block_ctx, self.dedupe_reports)
         self._block_ctx = block_ctx
         hook.block_invalidate = (
             lambda addr=0, size=0: blockpath_c.hook_invalidate(
