@@ -595,7 +595,11 @@ def main(argv: list[str] | None = None) -> int:
         xq = (f'{r.instrs / rows[base].instrs:.2f}x'
               if base and base in rows else '--')
         kern = f'{r.kernel / 1e6:.2f}' if r.kernel == r.kernel else '--'
-        flt = f'{r.faults:.0f}' if r.faults == r.faults else '--'
+        # round() first, so a marginal that lands just under zero from
+        # differencing two near-equal counts prints 0 rather than "-0", which
+        # reads as a defect.  A genuinely negative value keeps its sign: the
+        # point is not to hide a counter that is misbehaving.
+        flt = f'{round(r.faults):d}' if r.faults == r.faults else '--'
         print(f'{name:<24}{r.instrs / 1e6:>10.3f}{kern:>9}{flt:>7}'
               f'{r.seconds * 1e3:>9.2f}{r.blocks:>8}{r.findings:>7}'
               f'{xn:>10}{xq:>12}')

@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import unicorn.unicorn_py3.unicorn as _uu
 from qiling import Qiling
@@ -32,6 +32,7 @@ from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.emulator.snapshot import (
     Checkpoint,
     CheckpointError,
+    MemSnapshot,
     RunOutcome,
     map_shape,
 )
@@ -1223,7 +1224,7 @@ class MicrotaintWrapper:
         Falls back to Qiling's own restore for a guest with MMIO, which this
         does not model.
         """
-        mem = cp.state.get('mem')
+        mem = cast('MemSnapshot | None', cp.state.get('mem'))
         if not mem or mem.get('mmio'):
             self.ql.mem.restore(mem)
             return
@@ -1273,16 +1274,18 @@ class MicrotaintWrapper:
         completed = self._guest_exited
         after = self.block_mode_stats() or {}
         sites: tuple[tuple[int, int], ...] = ()
+        sinks: tuple[tuple[int, int, int, int, int], ...] = ()
         if self._block_ctx is not None:
             from microtaint.emulator import blockpath_c  # noqa: PLC0415
             sites = tuple(blockpath_c.hook_epoch_sites(self._block_ctx))
+            sinks = tuple(blockpath_c.hook_epoch_sinks(self._block_ctx))
         return RunOutcome(
             completed=completed, faulted=faulted,
             timed_out=bool(timeout_us) and not completed and not faulted,
             blocks=after.get('blocks', 0) - before.get('blocks', 0),
             handled=after.get('handled', 0) - before.get('handled', 0),
             unhandled=after.get('unhandled', 0) - before.get('unhandled', 0),
-            sites=sites)
+            sites=sites, sinks=sinks)
 
     def _smc_count(self) -> int:
         """How often a guest write has landed on code the engine had cached.

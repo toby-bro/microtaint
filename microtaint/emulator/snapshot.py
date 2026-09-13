@@ -30,7 +30,7 @@ iteration arm them and every later one start from somewhere else.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -44,6 +44,21 @@ class CheckpointError(RuntimeError):
     """
 
 
+class MemSnapshot(TypedDict, total=False):
+    """What Qiling's `mem.save()` hands back.
+
+    Declared because this module looks INSIDE it -- the read-only-region
+    optimisation walks `ram` and decides what has to be rewritten -- and a
+    blanket `Any` over the whole checkpoint meant nothing checked that walk.
+    `mmio` is Qiling's, opaque here, and its presence is the signal to fall
+    back to Qiling's own restore.
+    """
+
+    #: (low, high, permissions, label, bytes) per mapped region.
+    ram: list[tuple[int, int, int, str, bytes]]
+    mmio: object
+
+
 @dataclass(frozen=True)
 class Checkpoint:
     """A point in a guest's execution, and everything needed to return to it."""
@@ -51,7 +66,10 @@ class Checkpoint:
     #: Where the guest was.  `resume` starts here.
     address: int
     #: Qiling's own state: registers, memory, file descriptors, OS and loader.
-    state: Mapping[str, Any]
+    #: Heterogeneous by construction -- it is Qiling's dict and not ours -- so
+    #: the values are `object` and the one key this module looks inside is
+    #: narrowed to `MemSnapshot` where it is used.
+    state: Mapping[str, object]
     #: (low, high, permissions) for every region that was mapped.  Permissions
     #: are part of the identity: a region still mapped with different ones has
     #: to be unmapped so Qiling's restore re-maps it with the right ones.
@@ -88,6 +106,15 @@ class RunOutcome(NamedTuple):
     #: records it as a bit per site and resolves the bitmap once per run, so it
     #: costs no Python call per finding.
     sites: tuple[tuple[int, int], ...] = ()
+    #: (site, address, address taint, size, is_store) for every memory access
+    #: THIS iteration made through an input-dependent address.
+    #:
+    #: Not the same as what the reporter emitted: a sink is described once for
+    #: the life of the hook, so a known one is silent on every later input,
+    #: while this says what was TOUCHED.  A probe that re-runs with a subset of
+    #: the input tainted, to learn which bits control an address, needs the
+    #: second.
+    sinks: tuple[tuple[int, int, int, int, int], ...] = ()
     #: What THIS iteration did.  The hook's own counters run for the life of
     #: the emulator, so in a checkpoint loop they answer a question nobody
     #: asked: a fuzzer wants to know what the input it just ran did, not what
