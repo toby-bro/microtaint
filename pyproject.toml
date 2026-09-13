@@ -315,6 +315,15 @@ select = [
     "C901",    # a bank driver is a sweep a reader follows top to bottom, and
                # splitting it to satisfy a complexity budget hides that
 ]
+# scripts/perf_ladder.py is a measurement harness, and every rule exempted here
+# is exempted because obeying it would weaken the measurement:
+#   PLC0415  the heavy imports (qiling, microtaint) are deliberately lazy, so
+#            the DRIVER never pays ~4s of SLEIGH loading it does not measure
+#   S603/S607 running perf and gcc by name is the entire job
+#   S110     a guest that faults on an input is a RESULT, not an error
+#   C901     the worker is one sweep a reader follows top to bottom; splitting
+#            it to satisfy a complexity budget hides the sequence
+"scripts/perf_ladder.py" = ["PLC0415", "S603", "S607", "S110", "C901"]
 # scripts/sweep/pinned/ is a byte-exact SNAPSHOT of the timing harness, held
 # still so one commit's numbers can be compared with another's; MANIFEST.sha256
 # is what proves it has not moved.  Reformatting it to satisfy the linter would
