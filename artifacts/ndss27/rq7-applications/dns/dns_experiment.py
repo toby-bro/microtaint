@@ -53,6 +53,8 @@ predicted mask is asserted bit-exact equal in both directions:
 
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 
 import unicorn
@@ -198,6 +200,32 @@ class Run:
         self.mt_out: dict[str, int] = {}
         self.gt_out: dict[str, int] = {}
         self.passed = False
+        # Sub-verdicts, kept so the JSON can report WHY a run passed or failed
+        # rather than only the conjunction.
+        self.sound = False
+        self.precise = False
+        self.matches_expected = False
+        self.matches_gt = False
+
+    def to_dict(self) -> dict:
+        return {
+            'label': self.label,
+            'taint_mask': self.taint_mask,
+            'taint_mask_hex': f'{self.taint_mask:#04x}',
+            'value': self.value,
+            'expected_al_taint': self.expected_al_taint,
+            'expected_al_taint_hex': f'{self.expected_al_taint:#04x}',
+            'mt_al': self.mt_al,
+            'mt_al_hex': f'{self.mt_al:#04x}',
+            'gt_al': self.gt_al,
+            'gt_al_hex': f'{self.gt_al:#04x}',
+            'sound': bool(self.sound),
+            'precise': bool(self.precise),
+            'matches_expected': bool(self.matches_expected),
+            'matches_gt': bool(self.matches_gt),
+            'passed': bool(self.passed),
+            'narrative': self.narrative,
+        }
 
     @property
     def mt_al(self) -> int:
@@ -260,6 +288,10 @@ def execute_run(sim: CellSimulator, run: Run) -> None:
     matches_expected = run.mt_al == run.expected_al_taint
     matches_gt = run.mt_al == run.gt_al
 
+    run.sound = sound
+    run.precise = precise
+    run.matches_expected = matches_expected
+    run.matches_gt = matches_gt
     run.passed = sound and precise and matches_expected and matches_gt
 
 
@@ -422,7 +454,26 @@ def print_conclusions() -> None:
     print(dim('-' * 70))
 
 
+def _engine_provenance() -> dict:
+    """Which engine produced this result: commit, version, dirty flag.
+
+    Never raises: an installed wheel has no git repository, and that is not a
+    reason for the experiment to stop.
+    """
+    try:
+        from microtaint.provenance import engine_provenance
+        return engine_provenance()
+    except Exception:
+        return {}
+
+
 def main() -> int:
+    ap = argparse.ArgumentParser(description='RFC 1035 OPCODE-extraction bit-precision experiment')
+    ap.add_argument('--json', metavar='PATH',
+                    help='also write the per-run verdicts as JSON, so the result '
+                         'can be processed rather than only read')
+    args = ap.parse_args()
+
     print_header()
     sim = CellSimulator(Architecture.AMD64)
     for r in RUNS:
@@ -430,6 +481,21 @@ def main() -> int:
     print_run_table()
     print_run_details()
     print_conclusions()
+
+    if args.json:
+        n_passed = sum(1 for r in RUNS if r.passed)
+        with open(args.json, 'w') as fh:
+            json.dump({
+                'experiment': 'dns-bitfield-extraction',
+                'engine': _engine_provenance(),
+                'passed': n_passed == len(RUNS),
+                'n_runs': len(RUNS),
+                'n_passed': n_passed,
+                'runs': [r.to_dict() for r in RUNS],
+            }, fh, indent=2)
+            fh.write('\n')
+        print(f'[json] {args.json}')
+
     return 0 if all(r.passed for r in RUNS) else 1
 
 

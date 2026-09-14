@@ -128,7 +128,8 @@ log 'build guests'
 
 # ------------------------------------------------------------------ avalanche
 # Table 6.  Cheap, and it exercises the whole lifting path, so it fails fast.
-run avalanche-calibrate avalanche uv run python calibrate.py
+run avalanche-calibrate avalanche uv run python calibrate.py \
+    --json-out "$OUT/avalanche_calibrate.json"
 run avalanche-base64 avalanche uv run python avalanche_freq.py --title base64 \
     --stdin 'The quick brown fox jumps over the lazy dog' \
     --json-out "$OUT/avalanche_base64.json" /usr/bin/base64
@@ -145,13 +146,16 @@ fi
 
 # ------------------------------------------------------------------ RQ7
 D=rq7-applications/memory-safety
-run_detector rq7-bof "$D" uv run microtaint --check-bof --input input.bin -- ./bof.elf
-run_detector rq7-uaf "$D" uv run microtaint --check-uaf                   -- ./uaf.elf
-run_detector rq7-sc  "$D" uv run microtaint --check-sc  --input input.bin -- ./sc.elf
-run_detector rq7-aiw "$D" uv run microtaint --check-aiw --input input.bin -- ./aiw.elf
-run rq7-crypto-check    rq7-applications/crypto/square_and_multiply uv run python check_side_channel.py
-run rq7-crypto-localise rq7-applications/crypto/square_and_multiply uv run python localise_side_channel.py
-run rq7-dns             rq7-applications/dns                        uv run python dns_experiment.py
+run_detector rq7-bof "$D" uv run microtaint --json --check-bof --input input.bin -- ./bof.elf
+run_detector rq7-uaf "$D" uv run microtaint --json --check-uaf                   -- ./uaf.elf
+run_detector rq7-sc  "$D" uv run microtaint --json --check-sc  --input input.bin -- ./sc.elf
+run_detector rq7-aiw "$D" uv run microtaint --json --check-aiw --input input.bin -- ./aiw.elf
+run rq7-crypto-check    rq7-applications/crypto/square_and_multiply uv run python check_side_channel.py \
+    --json "$OUT/rq7_ct_check.json"
+run rq7-crypto-localise rq7-applications/crypto/square_and_multiply uv run python localise_side_channel.py \
+    --json "$OUT/rq7_ct_localise.json"
+run rq7-dns             rq7-applications/dns                        uv run python dns_experiment.py \
+    --json "$OUT/rq7_dns.json"
 
 # ------------------------------------------------------------------ RQ1
 if [ "$BASELINES" = 1 ]; then

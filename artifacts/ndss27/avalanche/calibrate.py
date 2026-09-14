@@ -16,8 +16,11 @@ Run:  uv run --project <engine> python calibrate.py
 """
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import sys
+from collections.abc import Mapping
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault('MICROTAINT_TAINT_IR', '0')
@@ -95,15 +98,59 @@ def data_avalanche_share(asm: str, taint: dict[str, int]) -> tuple[float, int]:
     return (100.0 * aval_bits / full_bits if full_bits else 0.0), full_bits
 
 
+def _engine_provenance() -> Mapping[str, object]:
+    """Which engine produced this result: commit, version, dirty flag.
+
+    Never raises: an installed wheel has no git repository, and that is not a
+    reason for a calibration run to stop.
+    """
+    try:
+        from microtaint.provenance import engine_provenance
+        return engine_provenance()
+    except Exception:
+        return {}
+
+
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--json-out', metavar='PATH',
+                    help='also write the per-case verdicts as JSON, so the gate '
+                         'can be processed rather than only read')
+    args = ap.parse_args()
+
     W.check_engine_node_types()
     print(f'{"instruction":16s} {"expected":>9s} {"measured":>9s} {"bits":>6s}   verdict')
     bad = 0
+    cases = []
     for asm, taint, expect, tol in CASES:
         got, nbits = data_avalanche_share(asm, taint)
         ok = abs(got - expect) <= tol
         bad += not ok
+        cases.append({
+            'asm': asm,
+            'taint': taint,
+            'expected_pct': expect,
+            'measured_pct': round(got, 4),
+            'tolerance_pct': tol,
+            'bits': nbits,
+            'ok': bool(ok),
+        })
         print(f'{asm:16s} {expect:8.1f}% {got:8.1f}% {nbits:6d}   {"OK" if ok else "MISMATCH"}')
+
+    if args.json_out:
+        with open(args.json_out, 'w') as fh:
+            json.dump({
+                'experiment': 'avalanche-calibration',
+                'engine': _engine_provenance(),
+                'passed': bad == 0,
+                'n_cases': len(cases),
+                'n_failed': bad,
+                'cases': cases,
+            }, fh, indent=2)
+            fh.write('\n')
+        print(f'[json] {args.json_out}')
+
     if bad:
         print(f'\nCALIBRATION FAILED on {bad} case(s): the attribution does not '
               'reproduce answers that are known independently, so any Table 6 it '
