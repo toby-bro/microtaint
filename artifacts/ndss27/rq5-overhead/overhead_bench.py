@@ -55,11 +55,56 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+from functools import lru_cache as _lru_cache
+from typing import Any
+
+
+def cpu_boost_state() -> tuple[bool | None, str]:
+    """Is CPU boost/turbo on?  (state, how we know) -- None when unknowable.
+
+    Boost is not "the same numbers, faster": it lets the clock run until the
+    package heats, then throttles, so two rungs of the same ladder are measured
+    at different frequencies and their DIFFERENCE -- which is the whole point of
+    a ladder -- stops meaning anything.
+    """
+    for path, on_when in (('/sys/devices/system/cpu/cpufreq/boost', '1'),
+                          ('/sys/devices/system/cpu/intel_pstate/no_turbo', '0')):
+        try:
+            with open(path) as fh:
+                raw = fh.read().strip()
+        except OSError:
+            continue
+        return raw == on_when, f'{path}={raw}'
+    return None, 'no boost/turbo control exposed'
+
+
+@_lru_cache(maxsize=1)
+def require_no_cpu_boost() -> dict:
+    """Refuse to time anything while boost is on, and say so.
+
+    Override with ALLOW_CPU_BOOST=1 when you knowingly want the numbers anyway.
+    The state is returned either way so it lands in the result file: a timing
+    figure whose machine state is unrecorded cannot be compared with another.
+    """
+    on, how = cpu_boost_state()
+    state = {'cpu_boost': on, 'detected_via': how}
+    if on and os.environ.get('ALLOW_CPU_BOOST') != '1':
+        raise SystemExit(
+            f'CPU boost is ENABLED ({how}).\n'
+            'These rungs are compared against each other, so they must all be '
+            'measured at the same clock.  Boost runs until the package heats and '
+            'then throttles, which silently changes the clock between rungs.\n'
+            '  disable: echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost\n'
+            '  or set ALLOW_CPU_BOOST=1 to measure anyway (the state is recorded '
+            'in the output either way).')
+    if on:
+        print(f'[!] CPU boost is ON ({how}) and ALLOW_CPU_BOOST=1: '
+              'these timings are not comparable across rungs.', flush=True)
+    return state
 
 
 def _engine_provenance() -> dict:
@@ -1007,6 +1052,8 @@ def main() -> int:
     p.add_argument('binary', nargs='?', help='Path to bench.elf (omit if --build-bench is given)')
     p.add_argument('binary_args', nargs=argparse.REMAINDER, help='Arguments to pass to bench.elf (separate with --)')
     args = p.parse_args()
+    # Every rung is compared against the others, so they must share a clock.
+    _cpu_state = require_no_cpu_boost()
 
     # Resolve binary path: either use --build-bench result or the positional arg
     if args.rounds_sweep and not args.build_bench:
@@ -1200,7 +1247,8 @@ def _main_single(args, p) -> int:
             },
         }
         with open(args.json, 'w') as f:
-            json.dump({'engine': _engine_provenance(), **out_dict}, f, indent=2)
+            json.dump({'engine': _engine_provenance(), 'cpu': require_no_cpu_boost(),
+                       **out_dict}, f, indent=2)
         print(f'\nFull results written to {args.json}')
 
     return 0
