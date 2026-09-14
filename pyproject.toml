@@ -391,6 +391,14 @@ pretty = true
 # NB: these are regexes, not globs.
 exclude = [
     "\\.venv",       # .venv and the per-engine .venv_angr / .venv_maat / ... trees
+    # The same exemption the linter gives it, and for the same reason:
+    # scripts/sweep/pinned/ is a byte-exact SNAPSHOT of the timing harness
+    # whose MANIFEST.sha256 proves it has not moved.  Annotating it to satisfy
+    # the type checker would change the file the manifest pins and break every
+    # comparison already made against it.  It also shadows
+    # benchmark/instruction_bank, so leaving it in makes mypy abort on a
+    # duplicate module before checking anything else.
+    "scripts/sweep/pinned/",
     ".git/",
     "__pycache__/",
     "output/",

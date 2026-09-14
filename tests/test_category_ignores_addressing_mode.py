@@ -20,10 +20,14 @@ rewrite of the recogniser is still held to it.
 from __future__ import annotations
 
 import pytest
+from pypcode import PcodeOp
 
-from microtaint.sleigh.engine import slice_backward
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import determine_category, is_mapped_permutation
+
+# From the module that DEFINES it: engine.py merely imports it, and a
+# re-export is not part of that module's interface.
+from microtaint.sleigh.slicer import slice_backward
 
 keystone = pytest.importorskip('keystone')
 
@@ -31,7 +35,7 @@ keystone = pytest.importorskip('keystone')
 _MODES = ['[rdi]', '[rdi+0x10]', '[rdi+rax*1]', '[rdi+rax*4]', '[rdi+rax*4+0x8]']
 
 
-def _subslice(asm: str) -> list:
+def _subslice(asm: str) -> list[PcodeOp]:
     """The DESTINATION register's data slice, with the load pointer not followed.
 
     engine.py classifies the slice of the target it is computing taint for, so
@@ -47,7 +51,9 @@ def _subslice(asm: str) -> list:
               and o.output.space.name == 'register'
               and o.output.size >= 4]
     assert result, f'{asm!r} writes no register result to classify'
-    return slice_backward(ops, result[-1].output, follow_load_ptr=False)
+    out = result[-1].output
+    assert out is not None, 'the comprehension above filtered for a non-None output'
+    return slice_backward(ops, out, follow_load_ptr=False)
 
 
 @pytest.mark.parametrize('op', ['and', 'or', 'xor', 'add', 'sub'])

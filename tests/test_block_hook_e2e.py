@@ -22,7 +22,7 @@ import os
 import platform
 import subprocess
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TypedDict
 
 import pytest
@@ -212,9 +212,16 @@ def test_a_plan_that_reads_more_registers_than_the_scratch_holds_declines(
 
     real_hook_new = blockpath_c.hook_new
 
-    def one_call_scratch(fastctx: int, compiler: object, ids: int, ptrs: int,
-                         vals: int, n_calls: int, slots: list[int],
-                         *rest: object) -> object:
+    def one_call_scratch(fastctx: int, compiler: Callable[[int, int], object | None],
+                         ids: int, ptrs: int, vals: int, n_calls: int,
+                         slots: list[int], *rest: int) -> object:
+        """`hook_new` with the scratch forced to a single read call.
+
+        The parameter types mirror `blockpath_c.hook_new` exactly rather than
+        being `object`: this forwards them straight through, so a stand-in that
+        does not match the real signature is the one thing that would make the
+        substitution meaningless.
+        """
         return real_hook_new(fastctx, compiler, ids, ptrs, vals, 1, slots, *rest)
 
     monkeypatch.setattr(blockpath_c, 'hook_new', one_call_scratch)

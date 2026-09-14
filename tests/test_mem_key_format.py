@@ -64,7 +64,7 @@ def test_the_written_form_of_each_shape() -> None:
 # What the readers make of it.  Both kernels, both directions.
 # ---------------------------------------------------------------------------
 
-def _kernels() -> list:
+def _kernels() -> list[PCodeCellEvaluator | PCodeCellEvaluatorC]:
     return [PCodeCellEvaluator(Architecture.AMD64), PCodeCellEvaluatorC(Architecture.AMD64)]
 
 
@@ -171,8 +171,13 @@ def test_the_unicorn_simulator_resolves_the_same_address() -> None:
 
     real_read_reg = CellSimulator._read_reg
     sim._read_mem = fake_read_mem                                   # type: ignore[method-assign]
-    sim._read_reg = lambda n: (regs[n] if n in regs                 # type: ignore[method-assign]
-                               else real_read_reg(sim, n))
+    # The lambda names its parameter `n` while the method it replaces names it
+    # `reg_name`, and mypy compares those.  A def with the real parameter name
+    # says the same thing and stays checked, instead of widening the ignore.
+    def fake_read_reg(reg_name: str) -> int:
+        return regs[reg_name] if reg_name in regs else real_read_reg(sim, reg_name)
+
+    sim._read_reg = fake_read_reg                                   # type: ignore[method-assign]
 
     real_read_reg(sim, 'MEM_RDI+RAX*4_24_4')
     assert seen == [(BASE + IDX * 4 + 24, 4)], (

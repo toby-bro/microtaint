@@ -139,8 +139,8 @@ def _taint_of_out(guest: str, addr: int, taint_ir: bool, block: bool) -> int:
     for line in done.stderr.decode().splitlines():
         if line.startswith('MASK='):
             return int(line[5:])
+    # `pytest.skip` does not return, so nothing follows it.
     pytest.skip(f'the probe did not report: {done.stderr.decode()[-300:]}')
-    return 0
 
 
 def test_the_taint_ir_path_tracks_it(guest: tuple[str, int]) -> None:

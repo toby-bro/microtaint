@@ -18,6 +18,8 @@ not silently widened into a precision regression.
 """
 from __future__ import annotations
 
+from typing import TypedDict
+
 import pytest
 
 from microtaint.instrumentation.ast import EvalContext
@@ -84,7 +86,21 @@ def test_single_instruction_rmw_keeps_its_exact_term() -> None:
 # overflow term resolved the same unwritten slot, so tainting RAX's SIGN bit left
 # OF clean.  Unlike the carry, signed overflow is NON-monotone, so declining alone
 # is not enough -- the declined overflow also has to be floored.
-_OF_WITNESS = {
+class Witness(TypedDict):
+    """One counter-example: the instruction, the register state it ran from,
+    and which input bits were tainted.
+
+    Declared rather than left as a bare dict literal because the values are
+    heterogeneous -- a string and two int maps -- so the inferred value type
+    collapses to something that cannot be passed on without a complaint at
+    every use site.
+    """
+
+    asm: str
+    state: dict[str, int]
+    taint: dict[str, int]
+
+_OF_WITNESS: Witness = {
     'asm': 'push rax; adc qword ptr [rsp], rbx; pop rcx',
     'state': {'RAX': 0xC43F97B2D6B954C4, 'RBX': 0x70A25D6F157097EF,
               'RCX': 0x26BCD2D0CFE04A17, 'RDX': 0x23358FE6FB1B9D4F,

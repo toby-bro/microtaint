@@ -45,7 +45,9 @@ def test_counter_names_do_not_match_each_others_prefixes() -> None:
     that could never be non-zero, printed as though it were a measurement.
     """
     sys.path.insert(0, str(_SCRIPT.parent))
-    import perf_ladder
+    # scripts/ is not a package and the path is added at run time, so the
+    # checker cannot resolve this the way the interpreter does.
+    import perf_ladder  # type: ignore[import-not-found]
 
     assert perf_ladder._count(_CSV, 'instructions:u') == 1234
     assert perf_ladder._count(_CSV, 'instructions') == 5678, (

@@ -44,7 +44,8 @@ CASES = [
 ]
 
 
-def _run(asm, state, taint):
+def _run(asm: str, state: dict[str, int],
+         taint: dict[str, int]) -> dict[str, int]:
     keystone = pytest.importorskip('keystone')
     ks = keystone.Ks(keystone.KS_ARCH_ARM64, keystone.KS_MODE_LITTLE_ENDIAN)
     code = bytes(ks.asm(asm)[0])
@@ -60,8 +61,9 @@ def _run(asm, state, taint):
     return {n: int(v or 0) for n, v in rule.evaluate(ctx).items()}
 
 
-@pytest.mark.parametrize('asm,state,taint', CASES)
-def test_bics_sign_flag_follows_result_sign(asm, state, taint):
+@pytest.mark.parametrize(('asm', 'state', 'taint'), CASES)
+def test_bics_sign_flag_follows_result_sign(
+        asm: str, state: dict[str, int], taint: dict[str, int]) -> None:
     res = _run(asm, state, taint)
     assert res['x0'] & (1 << 63), 'precondition: the result sign bit must be tainted'
     assert res['NG'], (
@@ -70,7 +72,7 @@ def test_bics_sign_flag_follows_result_sign(asm, state, taint):
     )
 
 
-def test_unshifted_logical_sign_flag_still_exact():
+def test_unshifted_logical_sign_flag_still_exact() -> None:
     """Single-op slices must be untouched: the producing op IS the first op."""
     res = _run('ands x0, x1, x2',
                {'x0': 0, 'x1': 0xAA98FFE4069AFBB5, 'x2': 0x98265EFC47533227,

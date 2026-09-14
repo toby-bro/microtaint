@@ -32,7 +32,12 @@ import pytest
 from microtaint.emulator import blockpath_c as B
 from microtaint.taint_ir import blockcompile as bc
 from microtaint.taint_ir import frompcode
-from microtaint.taint_ir.blockcompile import cache_clear, cache_stats, compile_block
+from microtaint.taint_ir.blockcompile import (
+    Descriptor,
+    cache_clear,
+    cache_stats,
+    compile_block,
+)
 from microtaint.types import Architecture
 
 if TYPE_CHECKING:                    # stub-only: an opaque PyCapsule handle
@@ -454,7 +459,7 @@ def test_a_caller_supplied_builder_is_never_cached(layout: dict[str, int]) -> No
 # What the cache must NOT keep: one caller's buffers
 # ---------------------------------------------------------------------------
 
-def _descriptor(record: list[frozenset[int]]) -> object:
+def _descriptor(record: list[frozenset[int]]) -> Descriptor:
     """A stand-in for a wrapper's read descriptor.  DATA, not buffers: the
     Unicorn ids of the registers a block reads and the engine slots their
     words land in."""

@@ -22,8 +22,6 @@ sign-extension unsound.
 """
 from __future__ import annotations
 
-import pytest
-
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule

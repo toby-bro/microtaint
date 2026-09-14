@@ -37,9 +37,15 @@ import platform
 import subprocess
 import tempfile
 from collections.abc import Iterator
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
+
+if TYPE_CHECKING:
+    from qiling import Qiling
+
+    from microtaint.emulator.reporter import Reporter
+    from microtaint.emulator.wrapper import MicrotaintWrapper
 
 pytestmark = pytest.mark.skipif(
     platform.system() != 'Linux', reason='emulator tests require Linux',
@@ -371,11 +377,20 @@ def _restored(binary: str, entry: int, probes: tuple[int, ...],
         os.close(saved)
 
 
-def _answer(ql: object, w: object, rep: object, ok: bool,
+def _answer(ql: Qiling, w: MicrotaintWrapper, rep: Reporter, ok: bool,
             probes: tuple[int, ...]) -> Answer:
+    """Everything a run is compared on.
+
+    Typed rather than `object`: this reads five attributes off three of them,
+    and `object` meant none of those reads were checked -- a renamed field
+    would have surfaced as a run-time AttributeError inside a helper that only
+    the comparison calls.
+    """
     return Answer(
         completed=ok,
-        findings=tuple(sorted(f.to_dict()['address'] for f in rep.findings)),
+        # `hex(f.address)` rather than `f.to_dict()['address']`: the same
+        # string by construction, but the dict erases its type.
+        findings=tuple(sorted(hex(f.address) for f in rep.findings)),
         probes=tuple((int.from_bytes(bytes(ql.mem.read(a, 8)), 'little'),
                       w.shadow_mem.read_mask(a, 8)) for a in probes),
         regions=len(ql.mem.map_info),

@@ -6,6 +6,8 @@ without hitting it.
 """
 from __future__ import annotations
 
+from typing import TypedDict
+
 import pytest
 
 from microtaint.instrumentation.ast import EvalContext
@@ -18,7 +20,8 @@ FMT = ([Register(n, 64) for n in NAMES[:4]]
        + [Register(f, 1) for f in NAMES[4:]] + [Register('sp', 64)])
 
 
-def _run(asm, state, taint):
+def _run(asm: str, state: dict[str, int],
+         taint: dict[str, int]) -> dict[str, int]:
     keystone = pytest.importorskip('keystone')
     ks = keystone.Ks(keystone.KS_ARCH_ARM64, keystone.KS_MODE_LITTLE_ENDIAN)
     code = bytes(ks.asm(asm)[0])
@@ -40,7 +43,21 @@ def _run(asm, state, taint):
 # differential alone -- which non-monotone signed overflow escapes.
 #
 # This is the half of e980e36 that restoring only its imul gate left behind.
-_ADDS_ASR_WITNESS = {
+class Witness(TypedDict):
+    """One counter-example: the instruction, the register state it ran from,
+    and which input bits were tainted.
+
+    Declared rather than left as a bare dict literal because the values are
+    heterogeneous -- a string and two int maps -- so the inferred value type
+    collapses to something that cannot be passed on without a complaint at
+    every use site.
+    """
+
+    asm: str
+    state: dict[str, int]
+    taint: dict[str, int]
+
+_ADDS_ASR_WITNESS: Witness = {
     'asm': 'adds x0, x1, x2, asr #5',
     'state': {'x0': 0x4CFCDD1CDDAE9408, 'x1': 0xFF9BDE34328EBE2A,
               'x2': 0x1D09DE0297944691, 'x3': 0xB07C5E3A9C89C150,
@@ -49,7 +66,7 @@ _ADDS_ASR_WITNESS = {
 }
 
 
-def test_fused_shift_overflow_is_tainted():
+def test_fused_shift_overflow_is_tainted() -> None:
     res = _run(_ADDS_ASR_WITNESS['asm'], _ADDS_ASR_WITNESS['state'],
                _ADDS_ASR_WITNESS['taint'])
     assert res['OV'], (
@@ -58,7 +75,7 @@ def test_fused_shift_overflow_is_tainted():
     )
 
 
-def test_unshifted_adds_overflow_keeps_its_exact_term():
+def test_unshifted_adds_overflow_keeps_its_exact_term() -> None:
     """No shift means no decline, so the floor must not fire and cost precision."""
     res = _run('adds x0, x1, x2',
                {'x0': 0, 'x1': 1, 'x2': 1, 'x3': 0,

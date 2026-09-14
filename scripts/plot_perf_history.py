@@ -71,7 +71,17 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
+#: One instruction's row from a perf-log JSON file.  The values are numbers and
+#: labels mixed, and the key is chosen at run time (`r[metric]`), so this cannot
+#: be a TypedDict; it is spelled out rather than left as `Any` so the arithmetic
+#: below has to say where it converts.
+PerfRow = dict[str, float | str]
 
 import matplotlib as mpl
 
@@ -165,10 +175,10 @@ class Run:
     python: str
     use_c: bool
     n_instr: int
-    by_isa: dict[str, list[dict[str, Any]]]
+    by_isa: dict[str, list[PerfRow]]
     # Instructions of the per-ISA common cohort only; the change detector reads
     # these so that growing the bank never looks like a work change.
-    cohort_by_isa: dict[str, list[dict[str, Any]]]
+    cohort_by_isa: dict[str, list[PerfRow]]
 
     @property
     def label(self) -> str:
@@ -179,7 +189,7 @@ class Run:
         src = self.cohort_by_isa if cohort else self.by_isa
         rows = [r for rs in src.values() for r in rs] if isa == 'ALL' else src.get(isa, [])
         if metric == 'tp_s':  # derived; 1e9/ns, same as the logged tp_s
-            return [1e9 / r['ns'] for r in rows if r.get('ns')]
+            return [1e9 / float(r['ns']) for r in rows if r.get('ns')]
         return [float(r[metric]) for r in rows if metric in r]
 
     def work(self, isa: str, metric: str) -> float | None:
@@ -217,7 +227,7 @@ def load_runs(
         if host and d.get('host') != host:
             dropped[f'other host (--host {host})'] = dropped.get(f'other host (--host {host})', 0) + 1
             continue
-        by_isa: dict[str, list[dict[str, Any]]] = {}
+        by_isa: dict[str, list[PerfRow]] = {}
         for r in rows:
             by_isa.setdefault(r['isa'], []).append(r)
         runs.append(
@@ -244,7 +254,9 @@ def common_cohort(runs: list[Run]) -> dict[str, set[str]]:
     common: dict[str, set[str]] = {}
     for run in runs:
         for isa, rows in run.by_isa.items():
-            asms = {r['asm'] for r in rows}
+            # `asm` is a label; say so, because a PerfRow's values are
+            # numbers and labels mixed and the set is keyed by name.
+            asms = {str(r['asm']) for r in rows}
             common[isa] = asms if isa not in common else (common[isa] & asms)
     return common
 
@@ -334,7 +346,7 @@ def color_of(isa: str, fallback: dict[str, str]) -> str:
     return ISA_COLORS.get(isa, fallback.get(isa, '#333333'))
 
 
-def draw_changes(ax: Any, changes: list[Change], metrics: list[str], *, show_increases: bool) -> None:
+def draw_changes(ax: Axes, changes: list[Change], metrics: list[str], *, show_increases: bool) -> None:
     """Vertical rule + rotated label per work change; labels staggered by metric."""
     for ch in changes:
         if not ch.is_decrease and not show_increases:
@@ -364,7 +376,7 @@ def draw_changes(ax: Any, changes: list[Change], metrics: list[str], *, show_inc
         )
 
 
-def set_xaxis(ax: Any, runs: list[Run], *, max_ticks: int, bottom: bool, mode: str) -> None:
+def set_xaxis(ax: Axes, runs: list[Run], *, max_ticks: int, bottom: bool, mode: str) -> None:
     """Label the (linear) run-index axis with short shas.
 
     ``even``   ticks at a fixed run stride, so spacing on screen is uniform;
@@ -393,7 +405,7 @@ def set_xaxis(ax: Any, runs: list[Run], *, max_ticks: int, bottom: bool, mode: s
     ax.tick_params(labelbottom=bottom)
 
 
-def mark_no_c(ax: Any, runs: list[Run]) -> None:
+def mark_no_c(ax: Axes, runs: list[Run]) -> None:
     """Shade runs made with the C kernel disabled (only present with --include-no-c)."""
     for i, run in enumerate(runs):
         if not run.use_c:
@@ -401,7 +413,7 @@ def mark_no_c(ax: Any, runs: list[Run]) -> None:
 
 
 def draw_isa_panel(
-    ax: Any,
+    ax: Axes,
     runs: list[Run],
     isa: str,
     y_metric: str,
@@ -462,7 +474,7 @@ def build_figure(
     min_change: float,
     x_ticks: str,
     title: str,
-) -> Any:
+) -> Figure:
     """One subplot per ISA, laid out on an ``ncols``-wide grid with a shared x axis."""
     fallback: dict[str, str] = {}
     nrows = math.ceil(len(isas) / ncols)

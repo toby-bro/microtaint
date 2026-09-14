@@ -32,7 +32,8 @@ FMT = ([Register(n, 64) for n in NAMES[:4]]
        + [Register(f, 1) for f in NAMES[4:]] + [Register('RSP', 64)])
 
 
-def _run(asm: str, state: dict, taint: dict) -> dict[str, int]:
+def _run(asm: str, state: dict[str, int],
+         taint: dict[str, int]) -> dict[str, int]:
     keystone = pytest.importorskip('keystone')
     ks = keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_64)
     code = bytes(ks.asm(asm)[0])
