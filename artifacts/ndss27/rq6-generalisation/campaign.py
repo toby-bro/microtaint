@@ -222,6 +222,14 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
     t0 = time.time()
     last = t0
     done = 0
+    # A campaign that compares NOTHING reports zero under-taints, exactly like a
+    # campaign that compares everything and finds none.  `done` counts loop
+    # iterations, so these count what was actually asked and answered:
+    #   skipped_oracle  the ground truth raised (11% of MIPS cases, measured)
+    #   skipped_mt      the engine raised
+    #   no_gt_taint     the ground truth found nothing to miss (20% on MIPS)
+    # compared - no_gt_taint is the sample the zero actually rests on.
+    skipped_oracle = skipped_mt = no_gt_taint = compared = 0
     for i in range(n):
         asm, code, out_reg, srcs = rng.choice(b.entries)
         state = {r: rng.getrandbits(b.bits) for r in b.regs}
@@ -235,6 +243,7 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
         try:
             lb = O.bitflip_lower_bound(b, code, state, taint)  # type: ignore[arg-type]  # Bench duck-types onto IsaSpec
         except Exception:
+            skipped_oracle += 1
             continue
         # microtaint
         try:
@@ -242,7 +251,11 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
                               simulator=sim, implicit_policy=ImplicitTaintPolicy.IGNORE)
             mt = _rule(b, code).evaluate(ctx)
         except Exception:
+            skipped_mt += 1
             continue
+        compared += 1
+        if not any(lb[r] for r in b.regs):
+            no_gt_taint += 1
         missed = 0
         for r in b.regs:
             missed |= lb[r] & ~(mt.get(r, 0) or 0) & b.mask
@@ -262,11 +275,28 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
         if now - last >= beat:
             last = now
             print(f'  [{b.label}] {int(now - t0)}s n={done}/{n} reports={len(reports)} '
+                  f'cmp={compared} skip={skipped_oracle + skipped_mt} '
                   f'{done / max(now - t0, 1e-9):.0f} cases/s', flush=True)
     out_f.close()
+    effective = compared - no_gt_taint
     print(f'[{b.label}] PASS1 done: {done} cases, {len(reports)} raw under-taint reports '
           f'({done / max(time.time() - t0, 1e-9):.0f} cases/s) -> {out_path}', flush=True)
-    return done, len(reports)
+    # What the zero rests on.  A case the oracle could not answer, or for which
+    # it found no taint, contributes nothing: reporting only `done` overstates
+    # the sample, and on MIPS that is ~30% of it.
+    print(f'[{b.label}]   compared {compared}/{done}  '
+          f'(skipped: oracle {skipped_oracle}, engine {skipped_mt})  '
+          f'no ground-truth taint {no_gt_taint}  '
+          f'-> effective sample {effective}', flush=True)
+    if compared == 0:
+        print(f'[{b.label}]   *** NOTHING WAS COMPARED: this zero means the '
+              f'harness never ran, not that the engine is sound ***', flush=True)
+    return done, len(reports), {
+        'attempted': done, 'compared': compared,
+        'skipped_oracle': skipped_oracle, 'skipped_mt': skipped_mt,
+        'no_gt_taint': no_gt_taint, 'effective': effective,
+        'reports': len(reports),
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -344,11 +374,20 @@ def main():
                        'seed': args.seed, 'arches': arches,
                        'started': str(datetime.datetime.now())}, mf, indent=2)
         print(f'[provenance] {args.out}_run.json', flush=True)
+        coverage: dict[str, dict[str, int]] = {}
         for i, k in enumerate(arches):
             b = build(k)
             print(f'=== PASS1 {b.label}: {args.n} cases (seed {args.seed + i}, '
                   f'{len(b.entries)} instrs) ===', flush=True)
-            pass1_arch(b, args.n, args.seed + i, f'{args.out}_{k}.jsonl')
+            _done, _nrep, _cov = pass1_arch(
+                b, args.n, args.seed + i, f'{args.out}_{k}.jsonl')
+            coverage[b.label] = _cov
+        # What each ISA's zero actually rests on, written where a reader can
+        # find it later: `attempted` is the number asked for, `effective` the
+        # number that could contribute a finding at all.
+        with open(f'{args.out}_coverage.json', 'w') as cf:
+            json.dump(coverage, cf, indent=2)
+        print(f'[coverage] {args.out}_coverage.json', flush=True)
         return
 
     # pass2
