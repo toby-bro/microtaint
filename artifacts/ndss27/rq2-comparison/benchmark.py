@@ -4479,17 +4479,42 @@ def print_summary(metrics: dict, selected_tools: list[str], reference_tool: str)
 from functools import lru_cache as _lru_cache
 
 
-def cpu_boost_state() -> tuple[bool | None, str]:
-    """Is CPU boost/turbo on?  (state, how we know) -- None when unknowable."""
-    for path, on_when in (('/sys/devices/system/cpu/cpufreq/boost', '1'),
-                          ('/sys/devices/system/cpu/intel_pstate/no_turbo', '0')):
+def cpu_boost_state(sysfs: str = '/sys/devices/system/cpu') -> tuple[bool | None, str]:
+    """Is CPU boost/turbo on?  (state, how we know) -- None when unknowable.
+
+    Boost is not "the same numbers, faster": it lets the clock run until the
+    package heats, then throttles, so two measurements of the same ladder are
+    taken at different frequencies and their DIFFERENCE -- which is the whole
+    point -- stops meaning anything.
+
+    Two controls, with opposite polarity, and the driver-specific one wins:
+
+        intel_pstate/no_turbo   0 means turbo is ON   (Intel, active mode)
+        cpufreq/boost           1 means boost is ON   (amd-pstate, acpi-cpufreq,
+                                                       and intel_pstate passive)
+
+    `sysfs` is injectable so both branches can be tested on a machine that only
+    has one of them -- this one is amd-pstate-epp, so the Intel path would
+    otherwise never execute until it mattered.
+    """
+    for rel, on_when in (('intel_pstate/no_turbo', '0'), ('cpufreq/boost', '1')):
+        path = f'{sysfs}/{rel}'
         try:
             with open(path) as fh:
                 raw = fh.read().strip()
         except OSError:
             continue
         return raw == on_when, f'{path}={raw}'
-    return None, 'no boost/turbo control exposed'
+    return None, f'no boost/turbo control under {sysfs}'
+
+
+def cpu_scaling_driver(sysfs: str = '/sys/devices/system/cpu') -> str | None:
+    """Which cpufreq driver is in charge, recorded for context."""
+    try:
+        with open(f'{sysfs}/cpu0/cpufreq/scaling_driver') as fh:
+            return fh.read().strip()
+    except OSError:
+        return None
 
 
 @_lru_cache(maxsize=1)
@@ -4507,7 +4532,8 @@ def require_no_cpu_boost() -> dict:
     way, so a latency figure can always be read with the clock it was taken on.
     """
     on, how = cpu_boost_state()
-    state = {'cpu_boost': on, 'detected_via': how}
+    state = {'cpu_boost': on, 'detected_via': how,
+             'scaling_driver': cpu_scaling_driver()}
     if on and os.environ.get('ALLOW_CPU_BOOST') != '1':
         raise SystemExit(
             f'CPU boost is ENABLED ({how}).\n'
