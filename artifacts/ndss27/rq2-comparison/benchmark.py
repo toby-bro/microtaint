@@ -1340,21 +1340,31 @@ ORACLE_IMUL_TESTS: list[dict] = [
 
 
 def _engine_provenance() -> dict:
-    """Which engine produced this result: commit, version, dirty flag.
+    """Which engine this comparison SCORED: commit, version, dirty flag.
 
-    Stamped into every result file so a number can always be traced back to the
-    engine that measured it.  The published RQ2/3/4 macros could not be matched
-    to any report in the tree because nothing recorded this.
+    Asked of the WORKER's interpreter, not this one.  The orchestrator runs
+    under .venv_master, which has keystone and unicorn and no microtaint at all,
+    so importing it here answered `{}` -- a provenance stamp that recorded
+    nothing, on the one report whose provenance could not be reconstructed.
 
-    Never raises.  An installed wheel has no git repository and a tarball has no
-    `.git`; neither is a reason for an experiment to stop, so an unanswerable
-    question writes an empty dict rather than ending the run.
+    The engine under test is whatever `.venv_microtaint` holds, so that is what
+    is asked.  Never raises: an unanswerable question writes an empty dict
+    rather than ending a three-hour run.
     """
-    try:
-        from microtaint.provenance import engine_provenance
-        return engine_provenance()
-    except Exception:
-        return {}
+    import json as _json
+    import subprocess as _sp
+    for py in ('.venv_microtaint/bin/python', sys.executable):
+        try:
+            probe = ('import json;'
+                     'from microtaint.provenance import engine_provenance;'
+                     'print(json.dumps(engine_provenance()))')
+            out = _sp.run([py, '-c', probe],
+                          capture_output=True, text=True, timeout=30, check=False)
+            if out.returncode == 0 and out.stdout.strip():
+                return dict(_json.loads(out.stdout))
+        except Exception:
+            continue
+    return {}
 
 
 def _oracle_test_to_tc(arch: str, ot: dict) -> dict:
