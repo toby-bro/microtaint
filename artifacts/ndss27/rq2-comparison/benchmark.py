@@ -2197,6 +2197,17 @@ class BatchedWorkerPool:
     # so a hung worker is identifiable.  Override via BATCH_TIMEOUT env var
     # if your run needs more.
     BATCH_TIMEOUT = int(os.environ.get('BATCH_TIMEOUT', '600'))
+    # WORKER_STALL_TIMEOUT: seconds a single worker may make NO progress while
+    # others still are.  One engine can wedge on a pathological case -- maat
+    # does, spinning at ~100% CPU with its counter frozen -- and nothing noticed
+    # until BATCH_TIMEOUT fired hours later and wrote a report in which that
+    # engine had answered a fraction of the corpus.  Measured: maat wedged twice
+    # in a 9,810-case run and each wedge would have cost the remaining budget.
+    #
+    # A stalled worker is killed, which routes it into the crash path that
+    # already exists: the offending test is marked, `_restart_worker` brings it
+    # back, and the batch continues past it.  0 disables the check.
+    WORKER_STALL_TIMEOUT = int(os.environ.get('WORKER_STALL_TIMEOUT', '300'))
 
     def __init__(self) -> None:
         # name → subprocess.Popen
@@ -2376,6 +2387,10 @@ class BatchedWorkerPool:
         fd_to_name = {self._out_fds[w]: w for w in active if w not in dead}
         _last_progress_print = time.monotonic()
         _PROGRESS_INTERVAL = 15.0  # print progress every 15 s
+        # Per-worker progress clocks for the stall check.
+        _stall_seen: dict[str, int] = {w: counts[w] for w in active}
+        _stall_since: dict[str, float] = dict.fromkeys(active, time.monotonic())
+        _stall_kills: dict[str, int] = dict.fromkeys(active, 0)
 
         while True:
             remaining_workers = [w for w in active if w not in dead and counts[w] < N]
@@ -2400,6 +2415,36 @@ class BatchedWorkerPool:
                     flush=True,
                 )
                 _last_progress_print = now
+
+            # A worker that has stopped answering while others still are.
+            if self.WORKER_STALL_TIMEOUT > 0:
+                for w in remaining_workers:
+                    if counts[w] != _stall_seen.get(w):
+                        _stall_seen[w] = counts[w]
+                        _stall_since[w] = now
+                        continue
+                    if now - _stall_since.get(w, now) < self.WORKER_STALL_TIMEOUT:
+                        continue
+                    proc = self._procs.get(w)
+                    _stall_since[w] = now          # do not re-fire every loop
+                    if proc is None or proc.poll() is not None:
+                        continue                   # already gone; EOF will handle it
+                    _stall_kills[w] += 1
+                    stuck = test_cases[counts[w]] if counts[w] < N else {}
+                    print(f"\n{'='*60}", flush=True)
+                    print(f'[{w}] STALLED', flush=True)
+                    print(f'  No progress for {self.WORKER_STALL_TIMEOUT}s at '
+                          f'{counts[w]}/{N} (stall kill #{_stall_kills[w]})', flush=True)
+                    print(f"  Stuck on test {counts[w]}: "
+                          f"{stuck.get('assembly', stuck.get('label', '?'))}", flush=True)
+                    print(f"  Bytes: {stuck.get('bytes', '?')}", flush=True)
+                    print('  Killing it so the crash path can restart past this test.',
+                          flush=True)
+                    print('=' * 60, flush=True)
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
 
             timeout = _deadline - time.monotonic()
             if timeout <= 0:
