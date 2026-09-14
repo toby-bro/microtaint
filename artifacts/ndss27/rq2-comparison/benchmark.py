@@ -4476,6 +4476,53 @@ def print_summary(metrics: dict, selected_tools: list[str], reference_tool: str)
 # ---------------------------------------------------------------------------
 
 
+from functools import lru_cache as _lru_cache
+
+
+def cpu_boost_state() -> tuple[bool | None, str]:
+    """Is CPU boost/turbo on?  (state, how we know) -- None when unknowable."""
+    for path, on_when in (('/sys/devices/system/cpu/cpufreq/boost', '1'),
+                          ('/sys/devices/system/cpu/intel_pstate/no_turbo', '0')):
+        try:
+            with open(path) as fh:
+                raw = fh.read().strip()
+        except OSError:
+            continue
+        return raw == on_when, f'{path}={raw}'
+    return None, 'no boost/turbo control exposed'
+
+
+@_lru_cache(maxsize=1)
+def require_no_cpu_boost() -> dict:
+    """Refuse to run while boost is on, because RQ4 comes out of this run too.
+
+    RQ2 and RQ3 are correctness -- unsound cases, precision -- and do not care
+    what the clock is doing.  RQ4 is per-step latency and throughput, measured
+    in the same pass, and boost runs the clock up until the package heats and
+    then throttles, so engines measured early and late are not measured on the
+    same machine.  The comparison between them is the entire point.
+
+    ALLOW_CPU_BOOST=1 runs anyway, which is the right choice when only the
+    correctness answers are wanted.  The state is recorded in the report either
+    way, so a latency figure can always be read with the clock it was taken on.
+    """
+    on, how = cpu_boost_state()
+    state = {'cpu_boost': on, 'detected_via': how}
+    if on and os.environ.get('ALLOW_CPU_BOOST') != '1':
+        raise SystemExit(
+            f'CPU boost is ENABLED ({how}).\n'
+            'RQ4 (per-step latency, throughput) is measured in this run, and '
+            'boost changes the clock between engines as the package heats.\n'
+            '  disable: echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost\n'
+            '  or ALLOW_CPU_BOOST=1 to run anyway -- correct for RQ2/RQ3, whose '
+            'answers do not depend on the clock; the state is recorded either way.')
+    if on:
+        print(f'[!] CPU boost is ON ({how}) and ALLOW_CPU_BOOST=1: the RQ4 '
+              'latency and throughput figures are not comparable across engines.',
+              flush=True)
+    return state
+
+
 def main():
     parser = argparse.ArgumentParser(description='NDSS-grade taint engine benchmark for x86-64')
     parser.add_argument(
@@ -4605,6 +4652,8 @@ def main():
         ),
     )
     args = parser.parse_args()
+    # RQ4's latencies come out of this run, so the clock must be steady.
+    require_no_cpu_boost()
 
     if args.gt_isolate:
         # Class attribute, not the env var: the class body has already run.
@@ -4902,6 +4951,7 @@ def main():
         'metadata': {
             'timestamp': str(datetime.now()),
             'engine': _engine_provenance(),
+            'cpu': require_no_cpu_boost(),
             'arch': args.arch,
             'workers': list(selected),
             'granularity': {t: GRANULARITY.get(t, '?') for t in selected},
