@@ -3,13 +3,61 @@ name: Publish PyPI
 # Releasing is a deliberate act, never a side effect of pushing a tag. Tags are
 # pushed often and most of them are not releases, so nothing here starts on its
 # own: run this workflow from the Actions tab and pick the v* tag to publish.
+#
+# And the tag has to be one master CONTAINS. Work here lives on long-lived
+# feature branches, so a v* tag proves only that somebody tagged something --
+# publishing from a branch tag would put a version on PyPI that the default
+# branch does not have. `check_tag_on_master` gates every job below.
 on:
   workflow_dispatch:
 
 jobs:
+  # Everything below waits on this.  A tag can be pushed from any branch, and
+  # most of the work in this repository happens on long-lived feature branches,
+  # so "a v* tag exists" is not evidence that the code in it was ever merged.
+  # Publishing from a branch tag would put a version on PyPI that master does
+  # not contain and that nobody can reproduce from the default branch.
+  check_tag_on_master:
+    name: Tag must be on master
+    runs-on: ubuntu-latest
+    if: >-
+      startsWith(github.ref, 'refs/tags/v')
+      && github.repository == 'toby-bro/microtaint'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          # The whole history: reachability cannot be decided from a shallow
+          # clone, and a shallow one would make the check pass or fail on how
+          # much was fetched rather than on where the tag is.
+          fetch-depth: 0
+
+      - name: Refuse a tag that master does not contain
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin \
+            +refs/heads/master:refs/remotes/origin/master
+          tag_sha="$(git rev-parse HEAD^{commit})"
+          # `--is-ancestor` is true when the tag IS master's tip as well as
+          # when it is behind it, which is the intended reading of "master
+          # contains this tag".
+          if git merge-base --is-ancestor "$tag_sha" origin/master; then
+            echo "$GITHUB_REF_NAME ($tag_sha) is contained in master."
+            exit 0
+          fi
+          echo "::error title=Tag is not on master::\
+          $GITHUB_REF_NAME ($tag_sha) is not reachable from origin/master, so \
+          publishing it would put a version on PyPI that the default branch \
+          does not contain. Merge the work into master and move the tag onto \
+          the merged commit, then dispatch this workflow again."
+          echo "branches containing it:"
+          git branch -r --contains "$tag_sha" || true
+          exit 1
+
   build_sdist:
     name: Build Source Distribution
     runs-on: ubuntu-latest
+    needs: [check_tag_on_master]
     # This workflow publishes to PyPI, so belt and braces: every job refuses to
     # start unless the chosen ref really is a v* tag of this repository. A run
     # dispatched against a branch, or against a fork, reaches nothing. The final
@@ -39,6 +87,7 @@ jobs:
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    needs: [check_tag_on_master]
     # A v* tag of this repository only. See build_sdist.
     if: >-
       startsWith(github.ref, 'refs/tags/v')
@@ -83,7 +132,7 @@ jobs:
 
   publish:
     name: Publish to PyPI & GitHub Releases
-    needs: [build_sdist, build_wheels]
+    needs: [check_tag_on_master, build_sdist, build_wheels]
     runs-on: ubuntu-latest
     # A v* tag of this repository only. See build_sdist.
     if: >-
