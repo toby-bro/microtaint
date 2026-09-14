@@ -2180,6 +2180,11 @@ def jaccard_bit(mask_a: int, mask_b: int) -> float:
 
 import select as _select
 
+#: Stand-in deadline when BATCH_TIMEOUT is 0 (no ceiling).  A concrete far
+#: future keeps the elapsed/remaining arithmetic in the monitor ordinary,
+#: rather than threading an Optional through every use of it.  ~1 year.
+_NO_BATCH_DEADLINE_S = 365 * 24 * 3600.0
+
 
 class BatchedWorkerPool:
     """
@@ -2189,14 +2194,19 @@ class BatchedWorkerPool:
     """
 
     BOOT_TIMEOUT = 600
-    # BATCH_TIMEOUT: seconds to wait for an entire batch to complete.  This
-    # is the wall-clock ceiling on the slowest Python worker for the entire
-    # test set.  Default 600 s = 10 minutes covers typical runs (maat at
-    # ~400 µs/case takes <1 s for 2000 cases; angr at ~7 ms takes ~14 s).
-    # The pool's progress monitor reports completed-vs-total when this fires,
-    # so a hung worker is identifiable.  Override via BATCH_TIMEOUT env var
-    # if your run needs more.
-    BATCH_TIMEOUT = int(os.environ.get('BATCH_TIMEOUT', '600'))
+    # BATCH_TIMEOUT: seconds to wait for an entire batch to complete, a
+    # wall-clock ceiling on the slowest worker for the whole test set.  It is a
+    # SAFETY NET against a run that will never end, and it is blunt: it cannot
+    # tell a wedged worker from a slow one, so on a large corpus it truncates
+    # engines that were working perfectly well.  At the old default of 600 s a
+    # full 9,810-case run came back with libdft64, maat, panda and taintgrind at
+    # 88-97% timeouts -- and exited 0, with a well-formed report.
+    #
+    # Default 0 = no batch deadline.  WORKER_STALL_TIMEOUT below is the targeted
+    # mechanism: it kills the one worker that has stopped answering and lets the
+    # rest of the batch finish.  Set BATCH_TIMEOUT to a positive number of
+    # seconds when you do want the blunt ceiling as well.
+    BATCH_TIMEOUT = int(os.environ.get('BATCH_TIMEOUT', '0'))
     # WORKER_STALL_TIMEOUT: seconds a single worker may make NO progress while
     # others still are.  One engine can wedge on a pathological case -- maat
     # does, spinning at ~100% CPU with its counter frozen -- and nothing noticed
@@ -2319,7 +2329,14 @@ class BatchedWorkerPool:
         configured = list(workers or list(self._procs))
         not_alive = [w for w in configured if w not in active]
         N = len(test_cases)
-        _deadline = deadline if deadline is not None else (time.monotonic() + self.BATCH_TIMEOUT)
+        if deadline is not None:
+            _deadline = deadline
+        elif self.BATCH_TIMEOUT > 0:
+            _deadline = time.monotonic() + self.BATCH_TIMEOUT
+        else:
+            # No batch ceiling: a deadline far enough out that the arithmetic
+            # below stays ordinary.  0 must mean "never", not "already expired".
+            _deadline = time.monotonic() + _NO_BATCH_DEADLINE_S
 
         # Pre-serialise all payloads once (shared across workers)
         payloads: list[bytes] = [(json.dumps(tc, default=str) + '\n').encode() for tc in test_cases]
@@ -2407,7 +2424,8 @@ class BatchedWorkerPool:
             # Periodic progress line every 15 s
             now = time.monotonic()
             if now - _last_progress_print >= _PROGRESS_INTERVAL:
-                elapsed = now - (_deadline - self.BATCH_TIMEOUT)
+                _span = self.BATCH_TIMEOUT if self.BATCH_TIMEOUT > 0 else _NO_BATCH_DEADLINE_S
+                elapsed = now - (_deadline - _span)
                 remaining_s = max(0.0, _deadline - now)
                 parts = '  '.join(f'{w}: {counts[w]}/{N}' for w in active if w not in dead)
                 print(
@@ -4869,10 +4887,14 @@ def main():
     # for the cases it did finish, and marks the rest as timed-out.
     # The aggregation step (compute_metrics) then only compares cases where
     # every tool produced a real result — partial runs are still useful.
-    _run_deadline = time.monotonic() + worker_pool.BATCH_TIMEOUT
+    # 0 means no ceiling; the per-worker stall check is the targeted mechanism.
+    _bt = worker_pool.BATCH_TIMEOUT
+    _run_deadline = time.monotonic() + (_bt if _bt > 0 else _NO_BATCH_DEADLINE_S)
     print(
-        f'    wall-clock budget    : {worker_pool.BATCH_TIMEOUT}s '
-        f'(deadline in {worker_pool.BATCH_TIMEOUT//60}m {worker_pool.BATCH_TIMEOUT%60}s)',
+        '    wall-clock budget    : '
+        + (f'{_bt}s (deadline in {_bt//60}m {_bt%60}s)' if _bt > 0
+           else f'none (per-worker stall check at '
+                f'{worker_pool.WORKER_STALL_TIMEOUT}s)'),
         flush=True,
     )
 
