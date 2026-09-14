@@ -39,3 +39,22 @@ this corpus they are confined to x86.
 
 `proto_port.py` is the throwaway prototype that first ported MIPS64 and PPC64 by
 monkeypatch alone, which is what established that no engine edit was needed.
+
+## Outputs
+
+Everything is written next to `--out`, so `--out camp` produces:
+
+| file | what it holds |
+| --- | --- |
+| `camp_run.json` | the run manifest: engine version, commit, dirty flag, `n`, seed, ISA list, start time. Written before the first case, so an interrupted run still names the engine that produced it. |
+| `camp_<arch>.jsonl` | one JSON object per raw pass-1 report, one file per ISA. **An empty file is the expected result**, meaning zero under-taints. |
+| `camp_coverage.json` | per-ISA coverage counters: `compared`, `effective`, `skipped_oracle`, `skipped_mt`, `no_gt_taint`. |
+| `camp_<arch>_REAL.jsonl` | pass 2 only: the reports that survived re-checking with a fresh Unicorn. |
+
+Read `camp_coverage.json` before quoting a zero. `--n` counts loop iterations,
+not comparisons: a case whose oracle or engine raises is skipped, and a case
+with no ground-truth taint compares nothing, so the nominal `--n` overstates
+what was actually checked. The gap is not uniform across ISAs, and MIPS64BE has
+the lowest effective fraction on this corpus. A zero means "no under-taint in
+the cases that were genuinely compared", and the second half of that sentence is
+in the coverage file.

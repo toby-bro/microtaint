@@ -44,6 +44,31 @@ Or using pre-compiled version on the PyPi.
 uv init --bare --no-workspace --python 3.13 && uv add 'microtaint==v0.6.15'
 ```
 
+## Running everything
+
+`run-all.sh` runs every experiment in order, cheapest first, so a broken
+environment surfaces in minutes rather than hours. Each one's raw output and a
+verdict land under `results/<timestamp>/`.
+
+```sh
+./run-all.sh                 # the paper's corpus; about two days, dominated by RQ6
+./run-all.sh --quick         # reduced corpus, about two hours; NOT the paper's numbers
+./run-all.sh --no-baselines  # skip RQ1 and RQ2, the only steps needing the other engines
+```
+
+Every experiment appends a `PASS`, `FAIL` or `SKIP` line to
+`results/<timestamp>/SUMMARY.md`, and the script exits non-zero if anything
+failed. A `SKIP` names the command that builds the missing guest binary. Nothing
+is overwritten: runs are timestamped so that two of them can be compared.
+
+The four memory-safety detectors are checked against their *expected* exit code
+rather than against zero, because for those a finding is the result; see
+[`rq7-applications/README.md`](./rq7-applications/README.md).
+
+The script pins `MICROTAINT_TAINT_IR=0` for every child process, and finishes by
+regenerating the paper's macro files into the results directory. It never writes
+into the paper itself, so copy them across once you have read the diff.
+
 ## Structure of the repository
 
 ### Taintinduce - rule synthesis comparison (`RQ1`)

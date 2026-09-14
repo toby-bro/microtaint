@@ -33,3 +33,28 @@ positive.
 
 These are findings, not measurements: the leaking step and the tainted field are
 either identified or they are not.
+
+## Outputs
+
+Each script takes an optional flag that writes its verdict as JSON, so these
+numbers reach the paper by processing rather than by retyping:
+
+```sh
+uv run python check_side_channel.py    --json ct_check.json     # both variants
+uv run python localise_side_channel.py --json ct_localise.json  # per-bit steps
+uv run python dns_experiment.py        --json dns.json          # per-run verdicts
+uv run microtaint --json --check-bof --input input.bin -- ./bof.elf > bof.json
+```
+
+Every document carries the engine's version, commit and dirty flag, so a result
+names what produced it. The memory-safety detectors put findings on stdout and
+progress on stderr, so redirecting stdout alone gives a parseable document
+without losing the narrative.
+
+**The detectors' exit code is a result, not a status.** The CLI returns 0 for no
+security findings, 1 for at least one, and 2 for a usage error. Each of the four
+targets contains exactly one planted bug, so 1 is the expected outcome and 0
+means the detector missed it. A harness that reads non-zero as failure files
+every successful detection as a failure, and one that reads 0 as success goes
+green precisely when the detector has stopped working. `run-all.sh` checks for
+the expected code rather than for zero.
