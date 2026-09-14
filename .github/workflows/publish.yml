@@ -12,11 +12,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Everything below waits on this.  A tag can be pushed from any branch, and
-  # most of the work in this repository happens on long-lived feature branches,
-  # so "a v* tag exists" is not evidence that the code in it was ever merged.
-  # Publishing from a branch tag would put a version on PyPI that master does
-  # not contain and that nobody can reproduce from the default branch.
+  # Everything below waits on this.  A tag can be pushed from any branch and
+  # most work here happens on long-lived ones, so a v* tag is no evidence that
+  # the code in it reached master.  This cannot be an `if:` condition: those are
+  # evaluated before any checkout and have no access to git history.
   check_tag_on_master:
     name: Tag must be on master
     runs-on: ubuntu-latest
@@ -24,35 +23,17 @@ jobs:
       startsWith(github.ref, 'refs/tags/v')
       && github.repository == 'toby-bro/microtaint'
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
-          # The whole history: reachability cannot be decided from a shallow
-          # clone, and a shallow one would make the check pass or fail on how
-          # much was fetched rather than on where the tag is.
-          fetch-depth: 0
+          fetch-depth: 0   # reachability cannot be decided from a shallow clone
 
       - name: Refuse a tag that master does not contain
         run: |
-          set -euo pipefail
-          git fetch --no-tags --prune origin \
-            +refs/heads/master:refs/remotes/origin/master
-          tag_sha="$(git rev-parse HEAD^{commit})"
-          # `--is-ancestor` is true when the tag IS master's tip as well as
-          # when it is behind it, which is the intended reading of "master
-          # contains this tag".
-          if git merge-base --is-ancestor "$tag_sha" origin/master; then
-            echo "$GITHUB_REF_NAME ($tag_sha) is contained in master."
-            exit 0
-          fi
-          echo "::error title=Tag is not on master::\
-          $GITHUB_REF_NAME ($tag_sha) is not reachable from origin/master, so \
-          publishing it would put a version on PyPI that the default branch \
-          does not contain. Merge the work into master and move the tag onto \
-          the merged commit, then dispatch this workflow again."
-          echo "branches containing it:"
-          git branch -r --contains "$tag_sha" || true
-          exit 1
+          git merge-base --is-ancestor HEAD origin/master || {
+            echo "::error::$GITHUB_REF_NAME is not on master; merge it and move
+            the tag onto the merged commit before publishing."
+            exit 1
+          }
 
   build_sdist:
     name: Build Source Distribution
