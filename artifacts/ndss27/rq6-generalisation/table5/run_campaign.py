@@ -1,7 +1,7 @@
 # ruff: noqa: W505, E501, B905, B007
-#   Style only, suppressed rather than rewritten: vendored from the
-#   campaign that produced the published numbers.
-# Vendored verbatim from the soundness-campaign harness; see README.md.
+#   Style only, suppressed rather than rewritten: vendored from the campaign
+#   that produced the published numbers.  Correctness is gated by
+#   validate_oracle.py, not by restyling proven code.
 # Experiment script, not library code: see artifacts/ndss27/README.md,
 # "Lint and type checking", for why annotations are not required here.
 # mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg, no-any-return, var-annotated, assignment, index, arg-type, union-attr, operator, attr-defined, misc, call-overload, return-value, unreachable"
@@ -138,6 +138,8 @@ def main():
     isa = _build_isas(ISA_KEY)[ISA_KEY]
     gt = HardenedGTSim(isa)
     fset = {f.name for f in isa.flags}
+    # Stable bit index per flag, recorded in the shard so a mask can be decoded.
+    flag_bit = {n: i for i, n in enumerate(sorted(fset))}
     gpr_names = [n for n, _ in isa.gprs]
 
     entries = []
@@ -184,6 +186,9 @@ def main():
             'total_under': sum(v.get('under', 0) for v in metrics.values()),
             'total_skipped': sum(v.get('skipped', 0) for v in metrics.values()),
             'oracle_skipped_cases': gt.skipped,
+            # Bit index per flag, so flag_fail_hist masks can be decoded.  A
+            # histogram whose key encoding is not recorded is unreadable.
+            'flag_order': flag_bit,
             'unsound_instrs': [a for a, v in metrics.items() if v.get('under')],
             'quarantine': quarantine,
             'metrics': metrics,
@@ -251,7 +256,20 @@ def main():
                 m = metrics.setdefault(asm, {})
                 for k in ('checked', 'under', 'over', 'exact', 'skipped',
                           'gt_bits', 'mt_bits', 'over_bits', 'witnesses_written',
-                          'ratio_n'):
+                          'ratio_n',
+                          # Split by register KIND.  A case is scored exact only
+                          # if every scored register matched, so one coarse flag
+                          # sinks the whole case: `imul rax, 1` is an identity on
+                          # the result yet scores 0% exact because CF/OF take the
+                          # multiply floor, and PF is over-tainted by any tainted
+                          # high bit because it reads only the low byte.  Without
+                          # this split, "55% bit-exact" reads as a data-path
+                          # result when it is almost entirely a flag result.
+                          'val_exact', 'val_over', 'val_under',
+                          'flag_exact', 'flag_over', 'flag_under',
+                          'val_checked', 'flag_checked',
+                          'val_gt_bits', 'val_mt_bits', 'val_over_bits',
+                          'flag_gt_bits', 'flag_mt_bits', 'flag_over_bits'):
                     m.setdefault(k, 0)
                 m.setdefault('ratio_sum', 0.0)
                 for (st, t), mt in zip(cases, mts_e):
@@ -261,12 +279,73 @@ def main():
                         continue
                     m['checked'] += 1
                     under = mtb = gtb = ovb = 0
+                    fail_mask = 0
+                    v_u = v_o = f_u = f_o = 0
+                    v_gt = v_mt = v_ov = f_gt = f_mt = f_ov = 0
+                    n_val = n_flag = 0
                     for r in chk:
                         gv, mv = g.get(r, 0), mt.get(r, 0)
                         gtb += popcount(gv)
                         mtb += popcount(mv)
                         under |= gv & ~mv
                         ovb += popcount(mv & ~gv)
+                        if r in fset:
+                            n_flag += 1
+                            f_gt += popcount(gv)
+                            f_mt += popcount(mv)
+                            f_ov += popcount(mv & ~gv)
+                            f_u |= gv & ~mv
+                            f_o |= mv & ~gv
+                            # Per-flag totals: which flag is coarse, and by how
+                            # much.  PF reads only the result's low byte, so any
+                            # tainted high bit over-taints it; CF on `neg` is a
+                            # predicate over all 64 bits.  Keeping them apart
+                            # lets a decision about including PF be made from
+                            # data instead of re-run.
+                            pf = m.setdefault('per_flag', {}).setdefault(
+                                r, {'checked': 0, 'exact': 0, 'over': 0,
+                                    'under': 0, 'gt_bits': 0, 'mt_bits': 0,
+                                    'over_bits': 0})
+                            pf['checked'] += 1
+                            pf['gt_bits'] += popcount(gv)
+                            pf['mt_bits'] += popcount(mv)
+                            pf['over_bits'] += popcount(mv & ~gv)
+                            if gv & ~mv:
+                                pf['under'] += 1
+                            elif mv & ~gv:
+                                pf['over'] += 1
+                            else:
+                                pf['exact'] += 1
+                            if (gv & ~mv) or (mv & ~gv):
+                                fail_mask |= 1 << flag_bit[r]
+                        else:
+                            n_val += 1
+                            v_gt += popcount(gv)
+                            v_mt += popcount(mv)
+                            v_ov += popcount(mv & ~gv)
+                            v_u |= gv & ~mv
+                            v_o |= mv & ~gv
+                    if n_val:
+                        m['val_checked'] += 1
+                        m['val_gt_bits'] += v_gt
+                        m['val_mt_bits'] += v_mt
+                        m['val_over_bits'] += v_ov
+                        m['val_under' if v_u else ('val_over' if v_o else 'val_exact')] += 1
+                    if n_flag:
+                        m['flag_checked'] += 1
+                        m['flag_gt_bits'] += f_gt
+                        m['flag_mt_bits'] += f_mt
+                        m['flag_over_bits'] += f_ov
+                        m['flag_under' if f_u else ('flag_over' if f_o else 'flag_exact')] += 1
+                        # Case-level failure mask.  The conjunction "exact on
+                        # every flag EXCEPT PF" cannot be recomputed from
+                        # per-flag totals, because a case may fail on PF alone
+                        # or on PF and CF together.  The mask histogram makes
+                        # ANY exclusion set exactly recoverable afterwards, for
+                        # the price of one counter per distinct mask.
+                        fh = m.setdefault('flag_fail_hist', {})
+                        k3 = str(fail_mask)
+                        fh[k3] = fh.get(k3, 0) + 1
                     m['gt_bits'] += gtb
                     m['mt_bits'] += mtb
                     m['over_bits'] += ovb

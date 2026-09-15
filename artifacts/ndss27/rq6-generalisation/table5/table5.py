@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 # ruff: noqa: W505, E501
-#   Style only, and suppressed rather than rewritten: this harness is
-#   vendored from the campaign that produced the published numbers, and
-#   e.g. adding zip(strict=True) would change behaviour where the
-#   original silently truncated.  Correctness is gated by
+#   Style only, suppressed rather than rewritten: vendored from the campaign
+#   that produced the published numbers.  Correctness is gated by
 #   validate_oracle.py, not by restyling proven code.
-# Vendored verbatim from the soundness-campaign harness; see README.md.
 # Experiment script, not library code: see artifacts/ndss27/README.md,
 # "Lint and type checking", for why annotations are not required here.
 # mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg, no-any-return, var-annotated, assignment, index, arg-type, union-attr, operator, attr-defined, misc, call-overload, return-value, unreachable"
@@ -49,6 +46,46 @@ LABEL = {'AMD64': 'x86-64', 'ARM64': 'ARM64', 'MIPS64BE': 'MIPS64',
 ORDER = ['AMD64', 'ARM64', 'MIPS64BE', 'PPC32BE', 'RISCV64']
 
 
+def _merge_named(metrics, key):
+    out = {}
+    for x in metrics.values():
+        for k, v in (x.get(key) or {}).items():
+            out[k] = out.get(k, 0) + v
+    return out
+
+
+def _merge_per_flag(metrics):
+    out = {}
+    for x in metrics.values():
+        for f, c in (x.get('per_flag') or {}).items():
+            a = out.setdefault(f, {})
+            for k, v in c.items():
+                a[k] = a.get(k, 0) + v
+    return out
+
+
+def _flag_exact_excluding(hist, order, excluded):
+    """Case-level flag exactness ignoring `excluded` flags.
+
+    Recomputed from the per-case failure mask, so it is the true conjunction
+    over the remaining flags.  Deriving it from per-flag totals would be wrong:
+    a case can fail on PF alone or on PF and CF together, and totals cannot tell
+    those apart.
+    """
+    if not hist:
+        return None
+    keep = 0
+    for name, bit in (order or {}).items():
+        if name not in excluded:
+            keep |= 1 << bit
+    tot = ok = 0
+    for mask_s, n in hist.items():
+        tot += n
+        if (int(mask_s) & keep) == 0:
+            ok += n
+    return (ok / tot) if tot else None
+
+
 def _merge_hist(metrics):
     """Sum the per-form log2 ratio histograms into one."""
     out = {}
@@ -70,7 +107,7 @@ def _median_bucket(hist):
     if not total:
         return None, None
     seen = 0
-    for k in sorted(hist, key=lambda z: int(z)):
+    for k in sorted(hist, key=int):
         seen += hist[k]
         if seen * 2 >= total:
             ki = int(k)
@@ -101,6 +138,14 @@ def load(d):
             'ratio_sum': sum(x.get('ratio_sum', 0.0) for x in m.values()),
             'ratio_n': sum(x.get('ratio_n', 0) for x in m.values()),
             'ratio_hist': _merge_hist(m),
+            'per_flag': _merge_per_flag(m),
+            'flag_fail_hist': _merge_named(m, 'flag_fail_hist'),
+            'flag_order': doc.get('flag_order', {}),
+            **{k: sum(x.get(k, 0) for x in m.values()) for k in (
+                'val_checked', 'val_exact', 'val_over', 'val_under',
+                'flag_checked', 'flag_exact', 'flag_over', 'flag_under',
+                'val_gt_bits', 'val_mt_bits', 'val_over_bits',
+                'flag_gt_bits', 'flag_mt_bits', 'flag_over_bits')},
             'elapsed_h': doc.get('elapsed_h'),
             'rounds': doc.get('rounds'),
             'provenance': doc.get('provenance', {}),
@@ -116,10 +161,17 @@ def main() -> int:
     ap.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)))
     ap.add_argument('--json', metavar='PATH')
     ap.add_argument('--tex', metavar='PATH')
+    ap.add_argument('--exclude-flags', default='',
+                    help='comma-separated flags to EXCLUDE from the flag-exact '
+                         'column, e.g. PF.  Recomputed exactly from the per-case '
+                         'failure-mask histogram, not approximated.')
+    ap.add_argument('--per-flag', action='store_true',
+                    help='also print the per-flag exact/over breakdown')
     ap.add_argument('--allow-partial', action='store_true',
                     help='emit even if an ISA is missing (still refuses vacuous)')
     args = ap.parse_args()
 
+    excluded = {f.strip() for f in args.exclude_flags.split(',') if f.strip()}
     rows = load(args.dir)
     if not rows:
         print('no campaign_*.json found', file=sys.stderr)
@@ -145,8 +197,9 @@ def main() -> int:
     if missing and not args.allow_partial:
         problems.append(f'missing ISAs: {", ".join(missing)}')
 
-    hdr = ('%-9s %7s %10s %7s %10s %11s %9s' %
-           ('ISA', 'Instrs', 'Cases', 'Under', 'Bit-exact', 'Over-taint', 'skipped'))
+    hdr = ('%-9s %7s %11s %8s %11s %12s %10s %11s' %
+           ('ISA', 'Instrs', 'Cases', 'Under', 'exact regs%', 'exact flags%',
+            'Over-taint', 'skipped'))
     print(hdr)
     print('-' * len(hdr))
     tot = dict.fromkeys(('instrs', 'checked', 'under', 'exact', 'skipped',
@@ -157,9 +210,16 @@ def main() -> int:
         r = rows[isa]
         ex = r['exact'] / r['checked'] if r['checked'] else 0.0
         ratio = r['ratio_sum'] / r['ratio_n'] if r['ratio_n'] else float('nan')
-        print('%-9s %7d %10s %7d %9.1f%% %10.2fx %9d' % (
-            LABEL.get(isa, isa), r['instrs'], f'{r["checked"]/1e6:.1f}M',
-            r['under'], 100 * ex, ratio, r['skipped']))
+        vex = r['val_exact'] / r['val_checked'] if r.get('val_checked') else float('nan')
+        fex = r['flag_exact'] / r['flag_checked'] if r.get('flag_checked') else float('nan')
+        if excluded:
+            alt = _flag_exact_excluding(r.get('flag_fail_hist'),
+                                        r.get('flag_order'), excluded)
+            if alt is not None:
+                fex = alt
+        print('%-9s %7d %11s %8d %10.1f%% %11.1f%% %11.2fx %10d' % (
+            LABEL.get(isa, isa), r['instrs'], format(r['checked'], ','),
+            r['under'], 100 * vex, 100 * fex, ratio, r['skipped']))
         for k in tot:
             if k in r:
                 tot[k] += r[k]
@@ -176,9 +236,51 @@ def main() -> int:
     ex_t = tot['exact'] / tot['checked'] if tot['checked'] else 0.0
     ratio_t = tot['ratio_sum'] / tot['ratio_n'] if tot['ratio_n'] else float('nan')
     print('-' * len(hdr))
-    print('%-9s %7d %10s %7d %9.1f%% %10.2fx %9d' % (
-        'Overall', tot['instrs'], f'{tot["checked"]/1e6:.1f}M', tot['under'],
-        100 * ex_t, ratio_t, tot['skipped']))
+    vt = sum(x.get('val_exact', 0) for x in rows.values())
+    vc = sum(x.get('val_checked', 0) for x in rows.values())
+    ft = sum(x.get('flag_exact', 0) for x in rows.values())
+    fc = sum(x.get('flag_checked', 0) for x in rows.values())
+    fex_t = (ft / fc) if fc else float('nan')
+    if excluded:
+        # Merge every ISA's mask histogram under its OWN bit assignment: the
+        # same flag has a different bit index on different ISAs, so the masks
+        # are not comparable and must be reduced per ISA before summing.
+        ok = tt = 0
+        for rr in rows.values():
+            a = _flag_exact_excluding(rr.get('flag_fail_hist'),
+                                      rr.get('flag_order'), excluded)
+            n = sum((rr.get('flag_fail_hist') or {}).values())
+            if a is not None:
+                ok += a * n
+                tt += n
+        if tt:
+            fex_t = ok / tt
+    print('%-9s %7d %11s %8d %10.1f%% %11.1f%% %11.2fx %10d' % (
+        'Overall', tot['instrs'], format(tot['checked'], ','), tot['under'],
+        100 * vt / vc if vc else float('nan'),
+        100 * fex_t, ratio_t, tot['skipped']))
+    print()
+    if excluded:
+        print()
+        print('exact flags%% EXCLUDES %s (recomputed from the per-case failure mask)'
+              % ', '.join(sorted(excluded)))
+    if args.per_flag:
+        print()
+        print('%-9s %-6s %10s %9s %9s %7s' % ('ISA', 'flag', 'checked', 'exact%', 'over%', 'under'))
+        for isa in [k for k in ORDER if k in rows]:
+            pf = rows[isa].get('per_flag') or {}
+            for f, a in sorted(pf.items(), key=lambda z: -z[1].get('checked', 0)):
+                c = a.get('checked', 0) or 1
+                print('%-9s %-6s %10s %8.1f%% %8.1f%% %7d' % (
+                    LABEL.get(isa, isa), f, format(a.get('checked', 0), ','),
+                    100 * a.get('exact', 0) / c, 100 * a.get('over', 0) / c,
+                    a.get('under', 0)))
+    print()
+    print('exact regs%  = cases where the engine matched the ground truth on every')
+    print('               scored GENERAL-PURPOSE register')
+    print('exact flags% = same, on every scored FLAG.  A case counts as bit-exact')
+    print('               overall only if BOTH hold, which is why one coarse flag')
+    print('               sinks an otherwise perfect result.')
 
     if args.tex:
         with open(args.tex, 'w') as fh:
