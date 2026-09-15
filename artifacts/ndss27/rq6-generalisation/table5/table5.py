@@ -49,6 +49,37 @@ LABEL = {'AMD64': 'x86-64', 'ARM64': 'ARM64', 'MIPS64BE': 'MIPS64',
 ORDER = ['AMD64', 'ARM64', 'MIPS64BE', 'PPC32BE', 'RISCV64']
 
 
+def _merge_hist(metrics):
+    """Sum the per-form log2 ratio histograms into one."""
+    out = {}
+    for x in metrics.values():
+        for k, v in (x.get('ratio_hist') or {}).items():
+            out[k] = out.get(k, 0) + v
+    return out
+
+
+def _median_bucket(hist):
+    """Median over-taint ratio, as the log2 bucket containing the median case.
+
+    The MEAN is dominated by avalanche cases, where one tainted bit legitimately
+    taints all 64, so it measures how many multiplies are in the corpus more
+    than it measures the engine.  The median says what a typical case looks
+    like.  Bucket k holds ratios in [2^(k-1), 2^k); bucket 0 holds ratio <= 1.
+    """
+    total = sum(hist.values())
+    if not total:
+        return None, None
+    seen = 0
+    for k in sorted(hist, key=lambda z: int(z)):
+        seen += hist[k]
+        if seen * 2 >= total:
+            ki = int(k)
+            if ki == 0:
+                return 1.0, '<=1'
+            return float(1 << (ki - 1)), '[%d,%d)' % (1 << (ki - 1), 1 << ki)
+    return None, None
+
+
 def load(d):
     rows = {}
     for f in sorted(glob.glob(os.path.join(d, 'campaign_*.json'))):
@@ -69,6 +100,7 @@ def load(d):
             'mt_bits': sum(x.get('mt_bits', 0) for x in m.values()),
             'ratio_sum': sum(x.get('ratio_sum', 0.0) for x in m.values()),
             'ratio_n': sum(x.get('ratio_n', 0) for x in m.values()),
+            'ratio_hist': _merge_hist(m),
             'elapsed_h': doc.get('elapsed_h'),
             'rounds': doc.get('rounds'),
             'provenance': doc.get('provenance', {}),
@@ -135,9 +167,12 @@ def main() -> int:
         # the paper's caption must say which one it means: the mean of per-case
         # ratios (what the caption describes) and the ratio of summed bits.
         sum_ratio = r['mt_bits'] / r['gt_bits'] if r['gt_bits'] else float('nan')
+        med, med_label = _median_bucket(r.get('ratio_hist') or {})
         out_rows.append({'isa': isa, 'label': LABEL.get(isa, isa), **r,
                          'bit_exact': ex, 'over_taint_mean': ratio,
-                         'over_taint_sum_ratio': sum_ratio})
+                         'over_taint_sum_ratio': sum_ratio,
+                         'over_taint_median_lower': med,
+                         'over_taint_median_bucket': med_label})
     ex_t = tot['exact'] / tot['checked'] if tot['checked'] else 0.0
     ratio_t = tot['ratio_sum'] / tot['ratio_n'] if tot['ratio_n'] else float('nan')
     print('-' * len(hdr))

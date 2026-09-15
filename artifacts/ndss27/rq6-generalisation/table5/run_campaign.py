@@ -1,9 +1,6 @@
 # ruff: noqa: W505, E501, B905, B007
-#   Style only, and suppressed rather than rewritten: this harness is
-#   vendored from the campaign that produced the published numbers, and
-#   e.g. adding zip(strict=True) would change behaviour where the
-#   original silently truncated.  Correctness is gated by
-#   validate_oracle.py, not by restyling proven code.
+#   Style only, suppressed rather than rewritten: vendored from the
+#   campaign that produced the published numbers.
 # Vendored verbatim from the soundness-campaign harness; see README.md.
 # Experiment script, not library code: see artifacts/ndss27/README.md,
 # "Lint and type checking", for why annotations are not required here.
@@ -42,6 +39,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.dirname(HERE))
 
 os.environ['MICROTAINT_TAINT_IR'] = '0'
 os.environ['MICROTAINT_BLOCK'] = '0'
@@ -280,6 +278,17 @@ def main():
                     if gtb:
                         m['ratio_sum'] += mtb / gtb
                         m['ratio_n'] += 1
+                        # A MEAN over-taint ratio is dominated by avalanche
+                        # cases, where one tainted bit legitimately taints 64,
+                        # so it says more about how many multiplies are in the
+                        # corpus than about the engine.  Keep a log2 histogram
+                        # as well: it costs one increment and makes the median
+                        # and the tail recoverable afterwards, which a running
+                        # mean can never be.
+                        h = m.setdefault('ratio_hist', {})
+                        b = (mtb / gtb)
+                        k2 = '0' if b <= 1 else str(min(int(b).bit_length(), 12))
+                        h[k2] = h.get(k2, 0) + 1
                     if under:
                         m['under'] += 1
                         if m['witnesses_written'] < WITNESS_CAP:
