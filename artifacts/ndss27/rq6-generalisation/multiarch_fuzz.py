@@ -170,7 +170,13 @@ def _fuzz_arch(
             print(line, flush=True)
             if len(reports) < 40:
                 reports.append(line)
-        gt = O.exact_gt(spec, code, state, taint)
+        try:
+            gt = O.exact_gt(spec, code, state, taint)
+        except O.CaseInvalid:
+            # A run did not complete, so this case yields no information about
+            # exactness.  Counting it as exact would inflate the rate; counting
+            # it as inexact would deflate it.  It is simply not checkable.
+            gt = None
         if gt is not None:
             exact_n += 1
             if all((mt.get(r, 0) or 0) & spec.mask == gt[r] for r in spec.regs):

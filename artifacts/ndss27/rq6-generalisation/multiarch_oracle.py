@@ -72,6 +72,7 @@ from unicorn import (
     UC_ARCH_PPC,
     UC_ARCH_SPARC,
     UC_ARCH_X86,
+    UC_HOOK_CODE,
     UC_MODE_64,
     UC_MODE_ARM,
     UC_MODE_BIG_ENDIAN,
@@ -347,8 +348,23 @@ ISAS: dict[str, Callable[[], IsaSpec]] = {
 }
 
 
+class CaseInvalid(Exception):
+    """A run did not complete, so the case yields NO INFORMATION.
+
+    Distinct from "the instruction produced no taint".  Collapsing the two is
+    how a soundness campaign reports a zero it never measured: if every run of a
+    case fails and the reducer returns an all-zero mask anyway, `GT & ~MT` is
+    unconditionally zero and no under-taint can ever be found.
+    """
+
+
 def _run(spec: IsaSpec, code: bytes, state: dict[str, int]) -> dict[str, int]:
-    """Execute `code` once on a FRESH Unicorn (no cross-run state leakage)."""
+    """Execute `code` once on a FRESH Unicorn (no cross-run state leakage).
+
+    The reference implementation.  Correct but slow (~700us/run), because it
+    builds and maps a new Uc every time.  `_Runner` is the fast path and is
+    gate-tested against this one; keep them answering identically.
+    """
     uc = Uc(spec.uc_arch, spec.uc_mode)
     uc.mem_map(CODE_ADDR, 0x1000)
     uc.mem_write(CODE_ADDR, code + b'\x00' * 16)
@@ -358,29 +374,101 @@ def _run(spec: IsaSpec, code: bytes, state: dict[str, int]) -> dict[str, int]:
     return {r: uc.reg_read(spec.uc_regs[r]) & spec.mask for r in spec.regs}
 
 
+class _Runner:
+    """Runs ONE fixed code sequence many times on a pinned Unicorn.
+
+    The 2^k oracle executes the same bytes up to 2^k times per case, so the cost
+    that matters is per-run.  Rebuilding a Uc costs ~700us; restoring a pristine
+    context costs ~60us for the same answer, a 9-12x saving measured across
+    amd64 and mips.  The context is captured from a freshly built Uc, so every
+    run starts from the same all-zero register file: that is what stops run i-1
+    leaking into run i, which is the defect that once invented 2,810 of 2,875
+    under-taints in a 12h campaign through `shrd rbp, rsp`.
+
+    Completion is verified by COUNTING EXECUTED INSTRUCTIONS with a code hook,
+    not by reading PC.  Unicorn does not update MIPS's PC after emu_start (it
+    reads back the start address), so a PC-based check invalidates every MIPS
+    case, and if the caller then swallows the failure it yields an all-zero
+    ground truth that is indistinguishable from "no taint".  The hook costs
+    nothing measurable and is ISA-independent.
+    """
+
+    __slots__ = ('_end', '_last', '_pristine', 'code', 'spec', 'uc')
+
+    def __init__(self, spec: IsaSpec, code: bytes) -> None:
+        self.spec = spec
+        self.code = code
+        self._end = CODE_ADDR + len(code)
+        self._last = [0]
+        uc = Uc(spec.uc_arch, spec.uc_mode)
+        uc.mem_map(CODE_ADDR, 0x1000)
+        uc.mem_write(CODE_ADDR, code + b'\x00' * 16)
+        uc.hook_add(UC_HOOK_CODE, self._trace)
+        self._pristine = uc.context_save()
+        self.uc = uc
+
+    def _trace(self, uc: object, addr: int, size: int, data: object) -> None:
+        # Where execution got to, so completion is "reached the end", which is
+        # also correct for the multi-instruction sequences in the corpus.
+        self._last[0] = addr + size
+
+    def run(self, state: dict[str, int]) -> dict[str, int]:
+        spec, uc = self.spec, self.uc
+        uc.context_restore(self._pristine)
+        # context_restore puts registers back; memory is NOT part of a context,
+        # so the code page is rewritten in case a run modified it.
+        uc.mem_write(CODE_ADDR, self.code + b'\x00' * 16)
+        for r, v in state.items():
+            uc.reg_write(spec.uc_regs[r], v & spec.mask)
+        self._last[0] = 0
+        try:
+            uc.emu_start(CODE_ADDR, self._end)
+        except Exception as exc:
+            raise CaseInvalid(f'run raised: {exc}') from exc
+        if self._last[0] != self._end:
+            raise CaseInvalid(
+                f'execution stopped at {self._last[0]:#x}, expected {self._end:#x}',
+            )
+        return {r: uc.reg_read(spec.uc_regs[r]) & spec.mask for r in spec.regs}
+
+
 def bitflip_lower_bound(spec: IsaSpec, code: bytes, state: dict[str, int], taint: dict[str, int]) -> dict[str, int]:
-    """OR of output diffs over every single tainted-bit flip -> a LOWER bound."""
-    base = _run(spec, code, state)
+    """OR of output diffs over every single tainted-bit flip -> a LOWER bound.
+
+    Raises `CaseInvalid` if ANY run fails, rather than skipping that flip.  A
+    skipped flip can only SHRINK the bound, and the soundness test is
+    `lb & ~mt`, so a smaller bound makes the test strictly more LENIENT: a
+    swallowed failure hides real under-taints instead of causing a false alarm.
+    That is the wrong direction for a soundness claim to fail in.
+    """
+    runner = _Runner(spec, code)
+    base = runner.run(state)
     lb = dict.fromkeys(spec.regs, 0)
     for r in spec.regs:
         for b in range(spec.bits):
             if (taint.get(r, 0) >> b) & 1:
                 s2 = dict(state)
                 s2[r] = (s2[r] ^ (1 << b)) & spec.mask
-                try:
-                    out = _run(spec, code, s2)
-                except Exception:
-                    continue
+                out = runner.run(s2)
                 for rr in spec.regs:
                     lb[rr] |= base[rr] ^ out[rr]
     return lb
 
 
 def exact_gt(spec: IsaSpec, code: bytes, state: dict[str, int], taint: dict[str, int]) -> dict[str, int] | None:
-    """EXACT ground truth by 2^k enumeration, or None if k exceeds the budget."""
+    """EXACT ground truth by 2^k enumeration, or None if k exceeds the budget.
+
+    Raises `CaseInvalid` if any polarity run fails.  Reducing over a SUBSET of
+    the 2^k polarities gives a mask that is neither an upper nor a lower bound,
+    and returning the all-zero accumulator when EVERY run failed is
+    indistinguishable from "this instruction propagates no taint" -- the shape
+    that made 19,085,696 MIPS cases vacuous in an earlier campaign.  `None`
+    still means only "k exceeded the budget".
+    """
     pos = [(r, b) for r in spec.regs for b in range(spec.bits) if (taint.get(r, 0) >> b) & 1]
     if len(pos) > EXHAUSTIVE_MAX_K:
         return None
+    runner = _Runner(spec, code)
     base = None
     gt = dict.fromkeys(spec.regs, 0)
     for asg in itertools.product([0, 1], repeat=len(pos)):
@@ -388,10 +476,7 @@ def exact_gt(spec: IsaSpec, code: bytes, state: dict[str, int], taint: dict[str,
         for (r, b), v in zip(pos, asg, strict=True):
             if v:
                 s[r] = (s[r] ^ (1 << b)) & spec.mask
-        try:
-            out = _run(spec, code, s)
-        except Exception:
-            continue
+        out = runner.run(s)          # CaseInvalid propagates: see below
         if base is None:
             base = out
             continue
@@ -460,7 +545,10 @@ def main() -> int:
                             f'  [{spec.label}] UNSOUND {asm!r} taint={tm:#x} '
                             f'missed={missed:#x} mt={ {r: hex(mt.get(r, 0)) for r in spec.regs} }',
                         )
-                    gt = exact_gt(spec, code, state, taint)
+                    try:
+                        gt = exact_gt(spec, code, state, taint)
+                    except CaseInvalid:
+                        gt = None      # no information, not "no taint"
                     if gt is not None:
                         exact_n += 1
                         if all((mt.get(r, 0) or 0) & spec.mask == gt[r] for r in spec.regs):
