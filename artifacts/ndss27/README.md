@@ -31,18 +31,24 @@ Classical dev dependencies such as `make` and a C compiler are naturally require
 
 ## Installing microtaint
 
-The version evaluated in the paper is `v0.6.15` of microtaint, it can be installed locally, (the whole compilation process takes a few minutes at most).
+The version evaluated in the paper is `v0.7.2` of microtaint, it can be installed locally, (the whole compilation process takes a few minutes at most).
 
 ```sh
-git checkout v0.6.15                  # the engine the paper evaluates
+git checkout v0.7.2                   # the engine the paper evaluates
 uv sync --locked --all-extras
 ```
 
-Or using pre-compiled version on the PyPi.
+Or using a pre-compiled version from PyPI.
 
 ```sh
-uv init --bare --no-workspace --python 3.13 && uv add 'microtaint==v0.6.15'
+uv init --bare --no-workspace --python 3.13 && uv add 'microtaint==0.7.2'
 ```
+
+Every number in the paper comes from that one tag, measured in a single
+re-run, so a figure and the prose around it cannot disagree about which engine
+produced them. Experiments that take an engine path explicitly (the Table 5
+campaign) accept `$MT_ENGINE_ROOT` so a frozen checkout can be measured while
+the harness stays current.
 
 ## Running everything
 
