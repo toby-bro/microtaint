@@ -40,6 +40,14 @@ this corpus they are confined to x86.
 `proto_port.py` is the throwaway prototype that first ported MIPS64 and PPC64 by
 monkeypatch alone, which is what established that no engine edit was needed.
 
+## Table 5 is a different, longer experiment
+
+The campaign above is a fast soundness smoke test over about 80 instruction
+forms: it answers "does anything under-taint", cheaply, and it is what
+`run-all.sh` runs. Table 5 needs the full per-ISA corpus (about 1,500 forms) and
+the precision columns, and it takes hours. That harness lives in
+[`table5/`](./table5/) with its own README, launcher and validator.
+
 ## Outputs
 
 Everything is written next to `--out`, so `--out camp` produces:
