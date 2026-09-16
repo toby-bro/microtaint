@@ -1,7 +1,8 @@
 # Table 5: cross-ISA soundness and precision
 
 The campaign behind Table 5. It runs the full per-ISA corpus (about 1,500
-instruction forms) against an exact `2^k` noninterference oracle and reports,
+instruction forms) against a `2^k` noninterference oracle, in practice a
+one-bit-flip differential for about 90% of cases (see below), and reports,
 per ISA, how many cases were checked, how many under-tainted, how often the
 engine's mask was bit-exact, and how much it over-tainted.
 
@@ -97,23 +98,31 @@ accurate.
 Together these are 757,874 skipped cases, leaving MIPS64 at 96.9% of attempted
 cases actually checked. Every other ISA is at 100% except x86-64 at 98.5%.
 
-**High-taint cases are also skipped.** The exact ground truth enumerates `2^k`
-assignments of the k tainted input bits, and the budget is k <= 13. A case with
-more tainted bits than that falls back to a lower bound, which is not exact, so
-it is counted as skipped rather than scored. The scored population is therefore
-sparse-taint cases by construction.
+Every skipped case in this campaign comes from a run that could not complete.
+The oracle also has a `k <= 13` budget beyond which it would fall back to a
+non-exact lower bound, but the generator caps k at 8, so that path is never
+taken here and nothing is skipped for being too heavily tainted.
 
-## Over-taint is measured against a state-sampled oracle, so some of it is ours
+## Over-taint is measured against a one-bit-flip oracle, so some of it is ours
 
 The over-taint numbers must not be read as "the engine is this imprecise". Part
 of the gap belongs to the oracle, by construction.
 
-The ground truth for a case is computed at ONE concrete state: it varies the k
-tainted input bits over all `2^k` combinations, holds every other bit at its
-concrete value, and records which output bits actually change. That is exact for
-that state, and it is a LOWER BOUND on semantic dependence in general, because
-an output bit can depend on an input bit at some other state while being
-insensitive at this one.
+**The scored population is about 90% SINGLE-BIT-FLIP cases.** The generator
+sweeps every bit of every source register one at a time (k = 1) and adds only
+`MULTI_PER_RND = 6` multi-bit cases per base state with k drawn from 2 to 8.
+Measured per form per round: 92.0% of x86-64 cases are k = 1, 94.4% on ARM64,
+92.8% MIPS64, 86.6% PPC32, 93.7% RV64GC. So while the oracle is a `2^k`
+enumeration in form, in practice k is nearly always 1 and it is a one-bit-flip
+differential.
+
+For such a case the ground truth is: flip this ONE input bit at ONE concrete
+state, and record which output bits change. That is exact for that state and
+that bit, and it is a LOWER BOUND on semantic dependence in two separate ways.
+An output can depend on an input bit only in combination with other bits, which
+a single flip never exhibits (carry interactions are the obvious family). And an
+output can depend on an input bit at some other state while being insensitive at
+this one.
 
 A sound engine has to taint an output bit if it can depend on the input at any
 reachable state. The oracle only ever witnesses one. So a bit the engine taints
