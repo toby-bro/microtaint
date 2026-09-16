@@ -66,6 +66,74 @@ nothing measurable.
 certify a table in which any ISA has zero checked cases, or checked cases with
 zero ground-truth bits.
 
+## Instructions the oracle cannot execute
+
+Some corpus entries are counted as `skipped`, never as passing. The distinction
+matters: a skipped form is one the campaign could say nothing about, and folding
+it into the answer as a pass is how a harness reports coverage it does not have.
+
+**x86-64: `adcx` and `adox` (10 forms) are never scored at all.** Unicorn does
+not implement the ADX extension, so every run raises
+`UC_ERR_INSN_INVALID` and every case is invalidated: 162,960 attempted, 0
+checked. So roughly 1.9% of the x86 corpus is **unmeasurable**, not
+measured-and-sound, and this campaign says nothing about how the engine handles
+those two mnemonics.
+
+This is also where the old oracle went wrong in the flattering direction. It
+scored `adcx`/`adox` at 28,890 cases each and 0% exact, on runs that never
+executed, so failures were folded in as real comparisons and quietly depressed
+the x86 exactness figure. Counting them as skipped is both more honest and more
+accurate.
+
+**MIPS64: two different causes, both partial.**
+
+* `add` and `sub` are the TRAPPING variants and raise on signed overflow, so
+  roughly 14-17% of random operand pairs legitimately have no ground truth.
+  Confirmed by contrast: `addu` completes on every case.
+* `clz`, `clo`, `dclz`, `dclo`, `movn` and `movz` raise `UC_ERR_EXCEPTION` in
+  this Unicorn build on about half of states. State-dependent rather than a flat
+  "unsupported"; the precise trigger is not pinned down.
+
+Together these are 757,874 skipped cases, leaving MIPS64 at 96.9% of attempted
+cases actually checked. Every other ISA is at 100% except x86-64 at 98.5%.
+
+**High-taint cases are also skipped.** The exact ground truth enumerates `2^k`
+assignments of the k tainted input bits, and the budget is k <= 13. A case with
+more tainted bits than that falls back to a lower bound, which is not exact, so
+it is counted as skipped rather than scored. The scored population is therefore
+sparse-taint cases by construction.
+
+## Over-taint is measured against a state-sampled oracle, so some of it is ours
+
+The over-taint numbers must not be read as "the engine is this imprecise". Part
+of the gap belongs to the oracle, by construction.
+
+The ground truth for a case is computed at ONE concrete state: it varies the k
+tainted input bits over all `2^k` combinations, holds every other bit at its
+concrete value, and records which output bits actually change. That is exact for
+that state, and it is a LOWER BOUND on semantic dependence in general, because
+an output bit can depend on an input bit at some other state while being
+insensitive at this one.
+
+A sound engine has to taint an output bit if it can depend on the input at any
+reachable state. The oracle only ever witnesses one. So a bit the engine taints
+that does not move at this particular state is counted as over-taint even when
+the engine is right and the oracle simply did not sample the state that would
+have shown it.
+
+Two consequences for how the column should be quoted:
+
+* the measured over-taint is an **upper bound** on the engine's true
+  imprecision, not an estimate of it;
+* the same applies in reverse to soundness, but harmlessly. A too-small ground
+  truth makes the under-taint test `gt & ~mt` more lenient, never stricter, so
+  a reported ZERO stays trustworthy while a reported over-taint may not be the
+  engine's fault.
+
+Cases with genuinely state-independent structure, like the parity flag reading
+only the result's low byte, are unaffected by this and are real over-taints.
+The caveat bites hardest on flags whose dependence is value-conditioned.
+
 ## The over-taint column
 
 Table 5's over-taint figure is the **mean of the per-case** tainted-to-minimum
@@ -74,6 +142,16 @@ large-taint cases more heavily and gives a materially different number (2.80x
 against 1.68x on AMD64), and it cannot be recovered from stored sums after the
 fact. `run_campaign.py` accumulates it per case; `table5.json` records both
 aggregations so the caption can state which one it means.
+
+A mean is a poor summary of this distribution and the run shows why. Avalanche
+cases are legitimate: one tainted bit entering a multiply taints all 64 outputs,
+and no engine can do better. Those cases sit at 64-128x and drag the mean up, so
+it reports how many multiplies the corpus contains as much as it reports the
+engine. The campaign therefore also keeps a log2 histogram of the per-case
+ratio, from which `table5.py` reports the median bucket. Measured over 68M
+cases, **every ISA has a median case of ratio <= 1**, i.e. the typical case is
+exact, while the means run 1.35x to 5.53x. Quote the mean and the median
+together, or the column says something it does not mean.
 
 ## Quarantine
 
