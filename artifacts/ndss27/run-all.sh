@@ -193,10 +193,30 @@ fi
 # A timing measurement, so it runs before the two CPU-saturating steps below.
 # Both scripts refuse to run with CPU boost enabled (ALLOW_CPU_BOOST=1 overrides
 # and the boost state is recorded in the JSON either way).
-if need rq5-overhead/bench.elf rq5-ladder 'make -C rq5-overhead bench.elf'; then
-  run rq5-ladder rq5-overhead uv run python overhead_ladder.py bench.elf --gen-input 64 \
-      --runs 100 --runs-for codehook=30 --runs-for codehook-regs=15 \
-      --json "$OUT/overhead_ladder.json"
+# BUILD the two artefacts rather than skipping.  Neither bench.elf nor
+# ladder_hooks.so is tracked (git ls-files confirms), so a fresh clone has
+# neither, and the old SKIP remedy named `make -C rq5-overhead bench.elf` when
+# there is no Makefile in that directory at all.  Worse, the single `need`
+# wrapped BOTH rq5 steps while naming only rq5-ladder, so on a fresh clone
+# SUMMARY.md contained no line whatsoever for rq5-bench: the headline overhead
+# experiment silently did not exist in the verdict list.
+if [ ! -e "$HERE/rq5-overhead/bench.elf" ]; then
+  ( cd "$HERE/rq5-overhead" && uv run python overhead_bench.py --build-bench bench.c --runs 0 ) \
+      >>"$OUT/build.log" 2>&1 && echo 'rq5 bench.elf: built' >>"$OUT/build.log"
+fi
+if [ ! -e "$HERE/rq5-overhead/ladder_hooks.so" ]; then
+  ( cd "$HERE/rq5-overhead" && gcc -O2 -fPIC -shared -o ladder_hooks.so ladder_hooks.c ) \
+      >>"$OUT/build.log" 2>&1 && echo 'rq5 ladder_hooks.so: built' >>"$OUT/build.log"
+fi
+if need rq5-overhead/bench.elf rq5-ladder 'cd rq5-overhead && uv run python overhead_bench.py --build-bench bench.c --runs 0'; then
+  if need rq5-overhead/ladder_hooks.so rq5-ladder 'cd rq5-overhead && gcc -O2 -fPIC -shared -o ladder_hooks.so ladder_hooks.c'; then
+    run rq5-ladder rq5-overhead uv run python overhead_ladder.py bench.elf --gen-input 64 \
+        --runs 100 --runs-for codehook=30 --runs-for codehook-regs=15 \
+        --json "$OUT/overhead_ladder.json"
+  fi
+fi
+# rq5-bench gets its OWN need, so it always produces a verdict line.
+if need rq5-overhead/bench.elf rq5-bench 'cd rq5-overhead && uv run python overhead_bench.py --build-bench bench.c --runs 0'; then
   run rq5-bench rq5-overhead uv run python overhead_bench.py --gen-input 64 --runs 5 \
       --instr-count --native-timeout 10 --qiling-timeout 300 --microtaint-timeout 900 \
       --json "$OUT/overhead_results.json" bench.elf
@@ -256,5 +276,18 @@ printf 'Verdicts:\n' ; grep -E '^\S+\s+(PASS|FAIL|SKIP|NOTE)' "$OUT/SUMMARY.md" 
 if grep -qE '^\S+\s+FAIL' "$OUT/SUMMARY.md"; then
   printf '\nAt least one experiment FAILED; see results/%s/SUMMARY.md\n' "$STAMP"
   exit 1
+fi
+# A run in which everything SKIPped used to exit 0 and print "Results in ...",
+# which is indistinguishable from a run in which everything passed.  SKIP is an
+# absence of evidence, so it must not read as success.
+n_pass=$(grep -cE '^\S+\s+PASS' "$OUT/SUMMARY.md" || true)
+n_skip=$(grep -cE '^\S+\s+SKIP' "$OUT/SUMMARY.md" || true)
+if [ "${n_pass:-0}" -eq 0 ]; then
+  printf '\nNOTHING PASSED (%s skipped); see results/%s/SUMMARY.md\n' "${n_skip:-0}" "$STAMP"
+  exit 1
+fi
+if [ "${n_skip:-0}" -gt 0 ]; then
+  printf '\n%s experiment(s) SKIPPED and did not run; see results/%s/SUMMARY.md\n' \
+      "${n_skip:-0}" "$STAMP"
 fi
 exit 0

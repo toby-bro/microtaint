@@ -459,6 +459,7 @@ def main() -> int:
 
     wanted = [ly for ly, _d, _b, _c in LAYERS
               if (not args.only or ly in args.only) and ly not in args.skip]
+    failed_layers: list[str] = []
     results = {}
     for layer, desc, _bucket, _chain in LAYERS:
         if layer not in wanted:
@@ -481,6 +482,11 @@ def main() -> int:
                 sys.stderr.write(f'  ! {layer} failed: {exc}\n')
                 break
         if not samples:
+            # A rung with no surviving sample disappears from the ladder and the
+            # script still returns 0.  The rung gates below check the NEGATIVE
+            # claims (guest wrote nothing, hook never fired, residual taint) but
+            # nothing checked that a rung produced a measurement at all.
+            failed_layers.append(layer)
             continue
         # A rung writing nothing means the guest never got going, and a rung that
         # measures an empty run would read as gloriously fast.
@@ -656,6 +662,15 @@ def main() -> int:
                        'engine': _engine_provenance(), 'cpu': _cpu_state,
                        'layers': results}, f, indent=2)
         print(f'\nwritten to {args.json}')
+    # A ladder missing rungs cannot support the comparison it exists to make:
+    # "propagation costs X" is a difference between two rungs, and a missing
+    # rung silently removes one side of it.
+    if failed_layers:
+        sys.stderr.write(
+            f'\nFAILED: no sample survived for {", ".join(failed_layers)}, so '
+            f'the ladder is missing rung(s) and the differences computed from it '
+            f'are between rungs that were not all measured\n')
+        return 1
     return 0
 
 

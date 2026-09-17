@@ -358,6 +358,10 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
         'reports': len(reports),
         'dead_forms': dead,
         'quarantined_forms': sorted(quarantined),
+        # Recorded so a reader of the JSON cannot mistake the scope either.
+        'scored_registers': list(b.regs),
+        'scored_flags': [],
+        'flags_declared_not_scored': [n for n, _ in b.flag_regs],
         'per_form': dict(sorted(per_form.items())),
     }
 
@@ -442,6 +446,20 @@ def main():
             b = build(k)
             print(f'=== PASS1 {b.label}: {args.n} cases (seed {args.seed + i}, '
                   f'{len(b.entries)} instrs) ===', flush=True)
+            # Say what this pass does NOT cover, every run, next to the number.
+            # The comparison below is over b.regs, the GPRs.  Flags are modelled
+            # in state_format and handed to the engine, but the oracle's _Runner
+            # returns only spec.regs, so no flag is ever compared -- and AMD64
+            # and RISCV64 declare no flag registers at all.  "0 under-taints"
+            # from this pass therefore means "0 in the destination GPR", which
+            # matters because flag carries were this project's entire x86 bug
+            # class.  Flags ARE scored, on all five ISAs and with the
+            # undefined-flag exclusions that requires, by the Table 5 campaign
+            # in table5/; this pass is the fast smoke gate, not that experiment.
+            print(f'[{b.label}]   SCOPE: comparing {len(b.regs)} GPR(s) '
+                  f'({", ".join(b.regs)}); flags are NOT compared by this pass '
+                  f'(see rq6-generalisation/table5/ for the flag-scoring '
+                  f'campaign)', flush=True)
             _done, _nrep, _cov = pass1_arch(
                 b, args.n, args.seed + i, f'{args.out}_{k}.jsonl')
             coverage[b.label] = _cov

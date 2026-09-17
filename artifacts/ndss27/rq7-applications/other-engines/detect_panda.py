@@ -105,16 +105,23 @@ def main() -> int:
 
     blocker = preflight()
     if blocker:
+        # When PANDA could not run, record that and NOTHING ELSE.  This used to
+        # pre-fill the two keys the paper quotes -- matches_microtaint: True and
+        # can_discriminate_qr_vs_opcode: False -- so a machine without PANDA
+        # produced a results file stating the paper's conclusion as though it
+        # had been measured.  `ran: False` was present but is not what a reader
+        # or a downstream script looks at.  An unrun comparison has no verdict.
         out['ct'] = {
             'vuln_branch_leaks': None, 'ct_branch_leaks': None,
-            'matches_microtaint': True, 'ran': False,
+            'matches_microtaint': None, 'ran': False,
         }
         out['dns'] = {
-            'granularity': 'byte', 'can_taint_single_bit': False,
-            'output_tainted': True, 'can_discriminate_qr_vs_opcode': False,
+            'granularity': None, 'can_taint_single_bit': None,
+            'output_tainted': None, 'can_discriminate_qr_vs_opcode': None,
             'ran': False,
         }
-        out['notes'] = f'PANDA not executed: {blocker}.'
+        out['notes'] = (f'PANDA not executed: {blocker}.  Every verdict field is '
+                        f'null because nothing was measured.')
         (RESULTS / 'panda.json').write_text(json.dumps(out, indent=2))
         print('[panda] blocker:', blocker)
         return 2
@@ -142,8 +149,10 @@ def main() -> int:
         if rc.get('error'):
             ct['worker_error_ct'] = rc['error'].splitlines()[-1][:200]
     except Exception as exc:
+        # An exception is not agreement.  Setting the paper's conclusion here
+        # meant a PANDA that crashed still recorded matches_microtaint: True.
         ct['error'] = str(exc)[:400]
-        ct['matches_microtaint'] = True
+        ct['matches_microtaint'] = None
     out['ct'] = ct
 
     # ---- DNS workload ------------------------------------------------------
@@ -167,8 +176,9 @@ def main() -> int:
         if rd.get('error'):
             dns['worker_error'] = rd['error'].splitlines()[-1][:200]
     except Exception as exc:
+        # Likewise: a crash is not a measurement of what PANDA tainted.
         dns['error'] = str(exc)[:400]
-        dns['output_tainted'] = True
+        dns['output_tainted'] = None
     out['dns'] = dns
 
     (RESULTS / 'panda.json').write_text(json.dumps(out, indent=2))

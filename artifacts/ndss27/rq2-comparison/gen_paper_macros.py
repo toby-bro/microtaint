@@ -41,6 +41,11 @@ import sys
 #: refuses an under-answered report even when run against an old benchmark.py.
 MIN_ANSWER_RATE = 0.5
 
+#: Below this, the detector overhead is indistinguishable from noise and is not
+#: emitted as a percentage.  The six detector configurations in the shipped run
+#: all fall within 0.5% of one another.
+OVH_DETECT_MIN_PCT = 0.5
+
 ENGINES = {
     'mt': 'microtaint',
     'an': 'angr',
@@ -260,8 +265,27 @@ def main():
         _wall = lad['layers']['microtaint-all'].get('wall_s') or 0
         v['ovhSetupS'] = f'{max(_wall - mt_all, 0):.2f}'
         # Detection's share of the engine, for the RQ5 summary sentence.
+        #
+        # This can come out NEGATIVE, and on the shipped ladder it does: the
+        # detectors measure 0.24% FASTER than running without them, so the macro
+        # evaluated to `-0` and the sentence "the detectors add \ovhDetectPct\%"
+        # rendered "the detectors add -0%".  A difference that small is noise
+        # between two configurations whose six variants all sit within 0.5% of
+        # each other, not a measured cost, and emitting it as a percentage
+        # claims a precision the data does not have.  Refuse instead: a
+        # measurement that cannot distinguish the two must not become a sentence
+        # asserting one is dearer.
         _none = lad['layers']['microtaint-none']['run_s']
-        v['ovhDetectPct'] = f'{100 * (mt_all - _none) / mt_all:.0f}'
+        _detect_pct = 100 * (mt_all - _none) / mt_all
+        if _detect_pct < OVH_DETECT_MIN_PCT:
+            raise SystemExit(
+                f'ovhDetectPct is {_detect_pct:.2f}%: with the detectors on, the '
+                f'run measured {_none - mt_all:.4f}s FASTER than with them off, '
+                f"so their cost is below this experiment's noise floor and "
+                f'cannot be stated as a percentage.  Re-run the ladder with more '
+                f'repetitions, or drop the claim.',
+            )
+        v['ovhDetectPct'] = f'{_detect_pct:.0f}'
         # Both of these come from the LADDER too, so every overhead macro is from
         # one measurement.  Mixing a ratio from overhead_results.json with one
         # from the ladder is how two numbers in the same paragraph end up

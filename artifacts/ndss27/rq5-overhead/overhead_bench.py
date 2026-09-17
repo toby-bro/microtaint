@@ -1143,6 +1143,7 @@ def _main_single(args, p) -> int:
     print()
 
     all_results: dict[str, Measurement] = {}
+    failed_configs: list[str] = []
 
     for label in labels_to_run:
         runs: list[Measurement] = []
@@ -1183,7 +1184,15 @@ def _main_single(args, p) -> int:
         if runs:
             all_results[label] = aggregate(runs)
         else:
+            # A config with no surviving run must not simply vanish from the
+            # table.  Every run timing out produced EXIT 0, a table containing
+            # only `native`, and a derived block of nulls -- which run-all.sh
+            # files as `rq5-bench PASS exit 0`.  The comment above says a
+            # timed-out run is "counted as one timed-out run"; it is not counted,
+            # it is discarded, and the survivors are the FASTEST runs, which
+            # biases the published median downward.
             sys.stderr.write(f'  (all runs of {label} failed)\n')
+            failed_configs.append(label)
 
     # ----- Print table ---------------------------------------------------
     print()
@@ -1271,6 +1280,14 @@ def _main_single(args, p) -> int:
                        **out_dict}, f, indent=2)
         print(f'\nFull results written to {args.json}')
 
+    # A benchmark that measured none of what it was asked to measure is not a
+    # pass.  run-all.sh records rq5-bench PASS iff this exits 0.
+    if failed_configs:
+        sys.stderr.write(
+            f'\nFAILED: no run of {", ".join(failed_configs)} survived, so the '
+            f'table above is missing the configuration(s) it exists to compare; '
+            f'a partial timeout also keeps only the FASTEST runs\n')
+        return 1
     return 0
 
 
