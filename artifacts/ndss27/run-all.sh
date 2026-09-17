@@ -131,9 +131,15 @@ run_detector() {  # run_detector <rq> <dir> <kind> <cmd...>
   local n
   n=$(python3 - "$OUT/$rq/stdout.txt" "$kind" <<'PYEOF'
 import json, sys
+# The CLI prints a status line before the JSON unless --quiet, so the document
+# does not start at byte 0 and json.load() on the whole file fails.  Scan to the
+# first '{', which is what check_side_channel.py already does for the same
+# reason.  Getting this wrong reported all four detectors as FAIL on a run where
+# every one of them correctly found its planted bug.
 try:
-    with open(sys.argv[1]) as fh:
-        doc = json.load(fh)
+    text = open(sys.argv[1]).read()
+    i = text.find('{')
+    doc = json.loads(text[i:]) if i >= 0 else None
     print(int(doc['summary'][sys.argv[2]]))
 except Exception:
     print(-1)
