@@ -134,3 +134,95 @@ def model_closure_sampled(gt, code, states, flags):
             leaked_regs.update(r.get('leaked', ()))
     return {'checked': checked, 'deterministic': det,
             'closed': not leaked_any, 'leaked': sorted(leaked_regs)}
+
+
+#: States for the preserved-flag test.  Far more than PROBE_STATES because it
+#: costs ONE run per state (not one per register) and because a sparse sample is
+#: exactly how an UNDEFINED flag gets mistaken for a preserved one.
+PRESERVED_STATES = 24
+
+def executability(gt, code, cases):
+    """How many sampled states this form can actually be executed at.
+
+    An entry Unicorn cannot run is not a passing test, it is no test.  x86
+    `adcx`/`adox` raise UC_ERR_INSN_INVALID (no ADX support) and MIPS
+    `clz`/`clo`/`dclz`/`dclo`/`movz`/`movn` raise UC_ERR_EXCEPTION, yet the
+    latter reported checked > 0 at 100% bit-exact.  Decided by running the
+    instruction, so it needs no list and cannot go stale.
+    """
+    ran = 0
+    for st, fl in cases:
+        try:
+            gt._run(gt._fresh(code), code, st, fl)
+            ran += 1
+        except Exception:  # noqa: BLE001 -- not executing IS the result here
+            pass
+    return {'ran': ran, 'of': len(cases)}
+
+
+def undeclared_sources(gt, isa, code, srcs, cases):
+    """Modelled registers that change a scored output but are not in `srcs`.
+
+    `srcs` is hand-written per corpus entry and decides what may be tainted, so
+    an omission makes an operand structurally untestable with no error: the
+    shift count of `shl rax, cl [cl=1]` and the divisor of PPC `divw 3,4,5` are
+    never tainted today.  Rather than trust the declaration, perturb every
+    OTHER modelled register and see whether a scored output moves.
+    """
+    sp = isa.sp[0] if isa.sp else None
+    found = set()
+    for st, fl in cases:
+        try:
+            base = gt._run(gt._fresh(code), code, st, fl)
+        except Exception:  # noqa: BLE001
+            continue
+        for name, _ in isa.gprs:
+            if name in srcs or name == sp or name in found:
+                continue
+            st2 = dict(st)
+            st2[name] = (st2.get(name, 0) ^ isa.mask) & isa.mask
+            try:
+                alt = gt._run(gt._fresh(code), code, st2, fl)
+            except Exception:  # noqa: BLE001
+                continue
+            # Ignore the perturbed register itself: it differs by construction.
+            if any(alt.get(r) != base.get(r) for r in base if r != name):
+                found.add(name)
+    return sorted(found)
+
+
+def preserved_flags(gt, isa, code, cases, srcs):
+    """Flags this form READS, and leaves EXACTLY as it found them.
+
+    `written_flags` asks the engine's lift which flags an instruction writes,
+    and `chk` scores only those.  That correctly drops flags the ISA leaves
+    UNDEFINED, but it also drops flags the ISA PRESERVES, and those carry an
+    obligation: `adc x0, x1, x2` reads the carry without writing it, so the
+    engine must keep the carry's taint, and nothing checked that it did.  The
+    oracle supplies the discriminator the lift cannot: a preserved flag comes
+    back bit-identical to its input at every state, an undefined one does not.
+
+    Restricted to DECLARED SOURCES, and that restriction is load-bearing.
+    Identity across a sample is not proof of preservation: x86 leaves SF, ZF, AF
+    and PF UNDEFINED after `mul`, `imul`, `bsf` and `bsr`, and Unicorn happens to
+    leave SF alone often enough that a four-state sample called it preserved.
+    Scoring it then produced 259 under-taints in 18,080 cases against an engine
+    that is right not to model an undefined flag.  A flag the form actually
+    READS is a different matter: its taint has to survive, and that is the
+    obligation this check exists to enforce.
+
+    Sampled, so it is evidence rather than proof, which is why it is used only
+    to ADD a check on identity behaviour and never to excuse one.
+    """
+    keep = {f.name for f in isa.flags} & set(srcs)
+    if not keep:
+        return keep
+    for st, fl in cases:
+        try:
+            out = gt._run(gt._fresh(code), code, st, fl)
+        except Exception:  # noqa: BLE001
+            continue
+        keep &= {n for n in keep if out.get(n) == fl.get(n)}
+        if not keep:
+            break
+    return keep

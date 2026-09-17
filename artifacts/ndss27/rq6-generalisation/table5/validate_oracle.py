@@ -59,6 +59,7 @@ os.environ.setdefault('MICROTAINT_TAINT_IR', '0')
 os.environ.setdefault('MICROTAINT_BLOCK', '0')
 
 from oracle import HardenedGTSim  # noqa: E402
+from probes import PRESERVED_STATES, preserved_flags  # noqa: E402
 
 from corpora import CORPORA  # noqa: E402
 from mt_multiarch import (  # noqa: E402
@@ -158,8 +159,17 @@ def check_isa(key, isa, forms, cases, rng):
         # every register the oracle reports.  A dropped bit in a register
         # outside `chk` is invisible to the campaign, and that is the property
         # worth asserting.
-        for (g, c, _st, _t), mt in zip(pending, mts):
-            chk = [r for r, _ in isa.gprs] + sorted(written_flags(isa, c))
+        # `chk` must be the CAMPAIGN's scored set, preserved flags included.
+        # Computing a different one makes this validator answer a question the
+        # campaign never asks, which is the flaw it exists to detect.
+        pres_cache: dict[bytes, set[str]] = {}
+        for (g, c, st0, t0), mt in zip(pending, mts):
+            if c not in pres_cache:
+                cases = [(st0, {f.name: rng.getrandbits(f.width) for f in isa.flags})
+                         for _ in range(PRESERVED_STATES)]
+                pres_cache[c] = preserved_flags(gt_sim, isa, c, cases, list(t0))
+            chk = ([r for r, _ in isa.gprs]
+                   + sorted(written_flags(isa, c) | pres_cache[c]))
             live = [(r, b) for r in isa.reg_names for b in range(isa.bits)
                     if (g.get(r, 0) >> b) & 1]
             if not live:
