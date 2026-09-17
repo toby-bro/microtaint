@@ -36,8 +36,10 @@ bare Qiling) so every `run_s` can be divided into ns per propagation step.
 - **`x_native_wall`** = `microtaint-all.wall_s / native.wall_s`.
 
 All six detector configurations are measured, not just `microtaint-all`, so the
-propagation cost and the detector cost are separable: `microtaint-none` is
-propagation only.
+propagation cost and the detector cost CAN be separated in principle:
+`microtaint-none` is propagation only. Whether they separate in PRACTICE depends
+on the spread being larger than the run-to-run noise, which in the shipped run
+it is not.
 
 Absolute times are machine-dependent. Take them only from an otherwise idle
 machine: this is one Python process and its numbers move by more than a factor
@@ -63,33 +65,53 @@ uv run python overhead_ladder.py bench.elf --gen-input 64 --runs 3 \
     --json overhead_ladder.json
 ```
 
-A representative result (3,768,369 guest instructions, idle machine, 5 runs):
+### The rungs, and what each one isolates
 
-| layer | ns/instr | marginal | x qiling | attributable to |
-|---|---|---|---|---|
-| native | 0.5 | | 0.0 | baseline |
-| qiling-only | 24.2 | +23.7 | 1.0 | emulator |
-| c-blockhook (pure-C per-BLOCK hook, empty) | 24.7 | +0.5 | 1.0 | emulator |
-| c-codehook (pure-C per-INSTRUCTION hook, empty) | 45.6 | +20.9 | 1.9 | emulator |
-| c-codehook-regs (+ read 4 guest registers) | 102.9 | +57.3 | 4.3 | emulator |
-| microtaint-plumbing (engine armed, nothing tainted) | 495.2 | +392.3 | 20.5 | **plumbing** |
-| microtaint-none | 1162.1 | +666.9 | 48.1 | **propagation** |
-| microtaint-all | 1290.7 | +128.6 | 53.4 | **detectors** |
-| *blockhook* (empty per-block Python hook) | *139.4* | | *5.8* | *reference* |
-| *codehook* (empty per-instruction Python hook) | *2037.5* | | *84.2* | *reference* |
-| *codehook-regs* (same, reading 4 registers) | *20370.9* | | *842.3* | *reference* |
-| *spawn* (fork+exec of a do-nothing binary) | *0.2* | | *0.0* | *reference* |
+Each rung adds exactly one layer, so the DIFFERENCE between two adjacent rungs
+is attributable to the thing that was added:
 
-**`c-blockhook` settles what block chaining costs: +0.5 ns/instr.** Losing
-Unicorn's translation-block chaining is free in practice, so the +21 that
-`c-codehook` adds is per-instruction DISPATCH and nothing else. An earlier
-reading of this ladder blamed chaining for the empty per-block PYTHON hook's
-139 ns/instr; that was CPython, not chaining, and the C rung is what
-distinguishes them.
+| layer | what it adds | attributable to |
+|---|---|---|
+| `native` | nothing; the guest run directly | baseline |
+| `qiling-only` | the emulator | emulator |
+| `c-blockhook` | a pure-C per-BLOCK hook, empty body | emulator |
+| `c-codehook` | a pure-C per-INSTRUCTION hook, empty body | emulator |
+| `c-codehook-regs` | the same, reading the four guest registers a taint engine needs | emulator |
+| `microtaint-plumbing` | the real engine, armed, with every taint source stubbed out | **plumbing** |
+| `microtaint-none` | propagation, no detectors | **propagation** |
+| `microtaint-all` | the detectors | **detectors** |
+| *`blockhook`* | an empty per-block PYTHON hook | *reference* |
+| *`codehook`* | an empty per-instruction PYTHON hook | *reference* |
+| *`codehook-regs`* | the same, reading four registers | *reference* |
+| *`spawn`* | fork+exec of a do-nothing binary | *reference* |
+
+**No figures are quoted in this file, deliberately.** Timing numbers belong with
+the run that produced them, and the `overhead_ladder.json` and
+`overhead_results.json` checked in beside this README predate the provenance
+schema the scripts now write: neither carries an `engine` key or a `cpu` key, so
+neither can be attributed to an engine version or to a machine with CPU boost
+off. An earlier version of this README quoted a table that the shipped JSON
+contradicts, including a marginal cost for the detectors that the data gives as
+NEGATIVE. Rather than restate figures that cannot be checked, run the ladder and
+read the table it prints; every current JSON records the engine commit, the
+dirty flag and the boost state, so the numbers arrive attributable.
+
+Both scripts REFUSE to run with CPU boost enabled (`ALLOW_CPU_BOOST=1`
+overrides, and the state is recorded either way), because a boosted machine
+makes the rungs incomparable.
+
+**`c-blockhook` settles what block chaining costs.** Compare it against
+`qiling-only`: losing Unicorn's translation-block chaining turns out to be close
+to free, so whatever `c-codehook` adds on top is per-instruction DISPATCH and
+nothing else. An earlier reading of this ladder blamed chaining for the empty
+per-block PYTHON hook's cost; that was CPython, not chaining, and the C rung is
+what distinguishes them.
 
 The three Python rows are slow to measure and cannot move when the engine
-changes, so `--only` re-runs just the chain after an optimisation; their figures
-above are from the 2026-09-11 full run.
+changes, so `--only` re-runs just the chain after an optimisation and carries
+the previous run's Python rows forward. When it does, the JSON records which run
+each rung came from: a table mixing rungs from two runs is only meaningful if it
+says so.
 
 **`microtaint-plumbing` is the rung that makes the rest attributable.** It is
 the real engine with the hook armed on every instruction, but with every taint
@@ -106,25 +128,36 @@ by structure (a PC target needs the implicit-taint decision, a memory write
 needs the store path) and evaluate even on a clean machine, so a threshold there
 would be measuring circuit shape rather than taint.
 
-**Per-instruction hooking is not what costs.** A pure-C `UC_HOOK_CODE` with an
-empty body is 48 ns/instr, only +23 over bare emulation, and that already
-includes losing Unicorn's translation-block chaining. Reading the four guest
-registers a taint engine needs brings it to 104. So the plumbing a
-per-instruction dynamic analysis cannot avoid is about 4x the emulator, not 60x.
+**Per-instruction hooking is not what costs.** Compare `c-codehook` against
+`qiling-only`: a pure-C `UC_HOOK_CODE` with an empty body adds a modest amount
+over bare emulation, and that already includes losing translation-block
+chaining. `c-codehook-regs` then adds reading the four guest registers a taint
+engine needs. Those two rungs bound what ANY per-instruction dynamic analysis
+owes before it computes anything, and it is a small multiple of the emulator
+rather than the order of magnitude the end-to-end number suggests.
 
-**The rest splits roughly in half.** Of microtaint-none's 1188 ns/instr, 510 is
-plumbing and 574 is propagation, so the taint algebra is about 48% of the
-engine's cost rather than all of it. Both halves are ours; they are just
-different work, and only the propagation half is affected by making the taint
-formulas cheaper.
+**The rest splits into plumbing and propagation**, and the split is what this
+ladder exists to measure: `microtaint-plumbing` minus `c-codehook-regs` is the
+plumbing, `microtaint-none` minus `microtaint-plumbing` is the taint algebra.
+Both halves are ours; they are just different work, and only the propagation
+half is affected by making the taint formulas cheaper. Read the proportion off
+your own run rather than from here, because it has already been quoted wrongly
+once.
 
-**The hosting language dominates the analysis.** The same empty hook written in
-Python costs 1963 ns/instr, 41x the C one, and more than microtaint's entire
-engine. A Python hook that merely reads four registers costs 19,705 ns/instr,
-12x microtaint doing full bit-precise propagation. Any tool that hooks every
-instruction from Python is slow for reasons unrelated to what it computes.
+**The hosting language dominates the analysis.** Compare `codehook` against
+`c-codehook`: the same empty hook written in Python costs more than an order of
+magnitude more, and more than microtaint's entire engine. `codehook-regs`, which
+merely reads four registers from Python, costs several times what microtaint
+spends doing full bit-precise propagation. Any tool that hooks every instruction
+from Python is slow for reasons unrelated to what it computes.
 
-**The detectors add 8%,** so disabling checks is not a speed-up worth having.
+**The detectors' marginal cost is at or below this experiment's noise floor.**
+In the shipped run the six detector configurations all fall within half a
+percent of one another, and `microtaint-all` measures very slightly FASTER than
+`microtaint-none`, which is not a real speed-up but a difference this setup
+cannot resolve. The honest statement is that disabling the checks buys nothing
+measurable here, not that they cost a specific percentage; `gen_paper_macros.py`
+now refuses to emit that percentage rather than printing a negative one.
 
 The Python rows are **reference points, not rungs**: microtaint uses a C hook
 and does not stand on them, so subtracting them is meaningless. An earlier
