@@ -147,8 +147,16 @@ class IsaSpec:
             v &= low
             return v | high if v & sign else v
 
+        def _sxt(t: int) -> int:
+            # Taint on the SIGN bit implies taint on the extension bits: in a
+            # sign-extended regime bits w..bits-1 are a FUNCTION of bit w-1, so
+            # anything controlling the sign controls them too, and a mask that
+            # stops at bit w-1 describes no reachable state.
+            t &= low
+            return (t | high) if t & sign else t
+
         return ({r: _sx(v) for r, v in state.items()},
-                {r: t & low for r, t in taint.items()})
+                {r: _sxt(t) for r, t in taint.items()})
 
     def state_format(self) -> list[Register]:
         return [Register(r, self.bits) for r in self.regs] + [
@@ -444,11 +452,31 @@ def bitflip_lower_bound(spec: IsaSpec, code: bytes, state: dict[str, int], taint
     runner = _Runner(spec, code)
     base = runner.run(state)
     lb = dict.fromkeys(spec.regs, 0)
+    # Only the BASE state was projected into the architecturally-defined regime;
+    # nothing re-projected the FLIPPED one.  MIPS64 32-bit ops are defined only
+    # on sign-extended words, so flipping bit 31 left bits 32-63 carrying the OLD
+    # sign: the value's sign could never change, and the resulting bound MISSES
+    # the entire high half.  Measured over 528 MIPS cases, 168 (32%) have a
+    # strictly larger correct bound, e.g. `xor $2,$4,$5` canonical
+    # V0=0xffffffff9f7fbbbb against 0x9f7fbbbb.  A too-small bound makes
+    # `lb & ~mt` more lenient, so this HID under-taints.
+    w = getattr(spec, 'canonical_word_bits', None)
+    if w is None:
+        w = getattr(spec, 'canon', None)
+    _narrow = w is not None and w < spec.bits
+    if _narrow:
+        _low = (1 << w) - 1
+        _sign = 1 << (w - 1)
+        _high = spec.mask ^ _low
     for r in spec.regs:
         for b in range(spec.bits):
             if (taint.get(r, 0) >> b) & 1:
                 s2 = dict(state)
-                s2[r] = (s2[r] ^ (1 << b)) & spec.mask
+                v = (s2[r] ^ (1 << b)) & spec.mask
+                if _narrow:
+                    v &= _low
+                    v = v | _high if v & _sign else v
+                s2[r] = v
                 out = runner.run(s2)
                 for rr in spec.regs:
                     lb[rr] |= base[rr] ^ out[rr]

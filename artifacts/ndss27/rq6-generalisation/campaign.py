@@ -92,7 +92,16 @@ class Bench:
         def sx(v):
             v &= low
             return v | high if v & sign else v
-        return {r: sx(v) for r, v in state.items()}, {r: t & low for r, t in taint.items()}
+
+        def sxt(t):
+            # Taint on the sign bit implies taint on the extension bits, which
+            # are a function of it.  See bitflip_lower_bound in
+            # multiarch_oracle.py: the oracle re-projects the flipped state, so
+            # the mask handed to the engine has to describe the same
+            # perturbation or the two sides answer different questions.
+            t &= low
+            return (t | high) if t & sign else t
+        return {r: sx(v) for r, v in state.items()}, {r: sxt(t) for r, t in taint.items()}
 
 
 def _from_isaspec(key) -> Bench:

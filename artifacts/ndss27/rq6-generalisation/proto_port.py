@@ -186,8 +186,16 @@ def _run_oracle(cfg, code, regvals):
         uc.reg_write(rid, regvals.get(name, 0) & MASK64)
     try:
         uc.emu_start(_CODE, _CODE + len(code))
-    except unicorn.UcError:
-        pass
+    except unicorn.UcError as exc:
+        # Swallowing this returned the register file UNCHANGED, so an
+        # instruction that never executed produced an oracle of 0, a `missed` of
+        # 0, and printed OK while being counted in lifted+sound.  Reproduced: a
+        # real `addu` gives oracle 0xffffffffffffffff, while four bytes of 0xff
+        # (which faults) gives 0x0 and scores sound.  A run that did not happen
+        # is not evidence about the engine.
+        raise RuntimeError(
+            f'the oracle could not execute {code.hex()}: {exc}',
+        ) from exc
     return {n: uc.reg_read(r) & MASK64 for n, r in cfg['uc_regs'].items()}
 
 
@@ -215,7 +223,7 @@ def run_isa(cfg):
         sim = make_sim(cfg)
     except Exception as e:
         print(f'  [FATAL] CellSimulator init failed: {e!r}')
-        return
+        return 0, 1, 0
     ok = unsound = err = 0
     for asm, dst, s1, s2 in cfg['prog']:
         try:
@@ -246,7 +254,15 @@ def run_isa(cfg):
             err += 1
             continue
         mt_dst = mt.get(dst, 0) & MASK64
-        oracle = true_taint(cfg, code, values, taint, dst)
+        try:
+            oracle = true_taint(cfg, code, values, taint, dst)
+        except RuntimeError as e:
+            # Counted, never scored: a form the oracle cannot execute is
+            # untested, and folding it in as a comparison is what let a faulting
+            # instruction print OK.
+            print(f'  {asm:22s} ORACLE-FAIL {e}')
+            err += 1
+            continue
         missed = oracle & ~mt_dst  # unsound under-taint
         status = 'OK  ' if missed == 0 else 'UNSOUND'
         if missed == 0:
@@ -257,13 +273,31 @@ def run_isa(cfg):
             f'  {asm:22s} [{len(code)}B] mt={mt_dst:#018x} oracle={oracle:#018x} over={(mt_dst & ~oracle):#x} {status}',
         )
     print(f'  --> lifted+sound={ok}  unsound={unsound}  errors={err}')
+    return unsound, err, ok
 
 
 if __name__ == '__main__':
+    # An exit code, because a script whose whole purpose is to report whether a
+    # port is sound must be able to say "no".  It had none: __main__ looped and
+    # fell off the end, so a run full of UNSOUND lines exited 0.
+    _unsound = _err = _ok = 0
     for builder in (build_mips, build_ppc):
         try:
-            run_isa(builder())
+            u, e, o = run_isa(builder())
+            _unsound += u
+            _err += e
+            _ok += o
         except Exception:
             import traceback
 
             traceback.print_exc()
+            _err += 1
+    if _unsound:
+        print(f'\nFAILED: {_unsound} unsound form(s)')
+        sys.exit(1)
+    if not _ok:
+        print('\nFAILED: nothing was scored, so this run says nothing')
+        sys.exit(1)
+    if _err:
+        print(f'\n{_err} form(s) could not be scored and are UNTESTED, not sound')
+    sys.exit(0)
