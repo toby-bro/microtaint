@@ -579,6 +579,42 @@ def _resolve_engine_root() -> str:
 ENGINE_ROOT = _resolve_engine_root()
 
 
+def _import_engine_under_test() -> None:
+    """Make the in-process microtaint BE the engine under test.
+
+    `written_flags` decides which flags the campaign scores, and it answers by
+    importing microtaint in THIS process.  The engine actually measured runs in a
+    subprocess at $MT_ENGINE_ROOT.  Those were two different trees -- the
+    benchmark venv here carries a copy from 2026-09-03 -- so the system under
+    test was choosing its own exam from a DIFFERENT build, and the shard's
+    provenance recorded only the engine's commit.  Measured across all 530 x86
+    forms the two agreed, but an unasserted agreement is a future divergence.
+
+    Putting the engine root first on sys.path removes the second build instead of
+    checking up on it.  Must run before anything imports microtaint, which is why
+    it is called at module import: mt_multiarch imports only stdlib and unicorn
+    above this line, and every caller reaches microtaint through it.
+    """
+    if not ENGINE_ROOT or not os.path.isdir(ENGINE_ROOT):
+        return
+    root = os.path.realpath(ENGINE_ROOT)
+    if sys.path and os.path.realpath(sys.path[0]) == root:
+        return
+    sys.path.insert(0, root)
+    mod = sys.modules.get('microtaint')
+    if mod is not None and not os.path.realpath(
+            getattr(mod, '__file__', '') or '').startswith(root):
+        raise RuntimeError(
+            f'microtaint was already imported from {mod.__file__} before the '
+            f'engine under test at {root} could be put first on sys.path, so '
+            f'written_flags would decide the scored flag set from the wrong '
+            f'build.  Import mt_multiarch before microtaint.'
+        )
+
+
+_import_engine_under_test()
+
+
 def mt_batch(isa: ISA, cases):
     """Run a batch of cases through microtaint in a fresh subprocess; return list of
     {reg: taint} aligned with `cases`."""
