@@ -57,7 +57,18 @@ verify_pinned() {
 }
 
 setup() {
-  [ -d "$CLONE/.git" ] || git clone --quiet --local "$REPO" "$CLONE"
+  # --no-hardlinks, not --local.  A --local clone hardlinks its objects, which
+  # fails with "Invalid cross-device link" whenever $WORK is on a different
+  # filesystem from the repo -- and the default $WORK is under $TMPDIR, which on
+  # Arch and most systemd distros is a tmpfs.  The clone then failed, every
+  # later git -C "$CLONE" failed, nothing was built, nothing was measured, and
+  # the script still exited 0 having reported "logs: 110 / 1".
+  if [ ! -d "$CLONE/.git" ]; then
+    git clone --quiet --no-hardlinks "$REPO" "$CLONE" || {
+      echo "FATAL: could not clone $REPO into $CLONE" >&2
+      exit 3
+    }
+  fi
   git -C "$CLONE" fetch --quiet origin 2>/dev/null || git -C "$CLONE" fetch --quiet "$REPO" 2>/dev/null || true
   git -C "$REPO" rev-list --reverse "$RANGE" > "$LIST"
   echo "range $RANGE -> $(wc -l < "$LIST") commits"
@@ -182,6 +193,18 @@ if [ "${PLOT_ONLY:-0}" != 1 ]; then
   build_missing
   bench_missing
   "$PY" "$HERE/find_solo.py" "$OUT" "$WORK" || true
+  # A sweep that measured none of the commits it was asked to measure is not a
+  # success.  Without this the script reported rc=0 after failing to clone,
+  # failing to build and failing to benchmark, which is indistinguishable from
+  # "everything was already up to date".
+  missing=0
+  while read -r c; do
+    ls "$OUT"/*-"$(git -C "$REPO" rev-parse --short "$c")"-timing.json >/dev/null 2>&1 || missing=$((missing + 1))
+  done < "$LIST"
+  if [ "$missing" -gt 0 ]; then
+    echo "FATAL: $missing of $(wc -l < "$LIST") commit(s) in $RANGE still have no timing log" >&2
+    exit 4
+  fi
 else
   git -C "$REPO" rev-list --reverse "$RANGE" > "$LIST"
 fi
