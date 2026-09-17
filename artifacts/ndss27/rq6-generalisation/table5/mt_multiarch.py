@@ -608,7 +608,7 @@ def _import_engine_under_test() -> None:
             f'microtaint was already imported from {mod.__file__} before the '
             f'engine under test at {root} could be put first on sys.path, so '
             f'written_flags would decide the scored flag set from the wrong '
-            f'build.  Import mt_multiarch before microtaint.'
+            f'build.  Import mt_multiarch before microtaint.',
         )
 
 
