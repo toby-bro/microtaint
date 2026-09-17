@@ -86,6 +86,9 @@ WITNESS = os.path.join(HERE, f'under_{ISA_KEY}.jsonl')
 CASES_PER_FORM = 16
 ENTRIES_PER_BATCH = 40   # one `uv run` spawn per 40 entries, not per entry
 CLOSURE_STATES = 40
+#: Consecutive failed engine batches before the campaign gives up.  One bad
+#: chunk is survivable; an unusable engine must not look like a clean run.
+MAX_CONSECUTIVE_BATCH_FAILURES = 5
 WITNESS_CAP = 500          # per instruction form; counts stay exact past the cap
 
 
@@ -140,7 +143,13 @@ def provenance(isa):
         'engine_env': {'MICROTAINT_TAINT_IR': '0', 'MICROTAINT_BLOCK': '0'},
         'engine_path': 'generate_static_rule + LogicCircuit/ChainedCircuit (not taint_ir)',
         'unicorn': unicorn.__version__, 'pypcode': pv,
-        'oracle': 'HardenedGTSim (context-restore per polarity run, memory reset, PC completion check)',
+        # This string is how a reader tells the fixed oracle from the broken
+        # one, so it must name what actually ran.  It said "PC completion
+        # check" -- the very mechanism that silently discarded 19M MIPS
+        # cases, replaced by an instruction-count hook precisely because of
+        # that -- and it said so in shards produced today.
+        'oracle': 'HardenedGTSim (two-polarity flip union, context-restore '
+                  'per run, memory reset, instruction-count completion hook)',
         'started': time.strftime('%Y-%m-%dT%H:%M:%S'),
         # The HARNESS, not just the engine.  Every number in Table 5 is defined
         # by this code, and recording only what was measured while saying
@@ -152,10 +161,9 @@ def provenance(isa):
         # dirty for reasons that have nothing to do with the measurement (other
         # work in the tree, untracked scratch), so it would report "dirty" on
         # every run and mean nothing.  These three paths are the harness.
-        'harness_dirty': bool(git('status', '--porcelain', '--',
-                                  'campaign_ae', 'mt_multiarch.py', 'corpora.py',
+        'harness_dirty': bool(git('status', '--porcelain', '--', HERE,
                                   repo=HARNESS_ROOT)),
-        'harness_paths': ['campaign_ae', 'mt_multiarch.py', 'corpora.py'],
+        'harness_paths': [os.path.relpath(HERE, HARNESS_ROOT)],
         'seed': SEED,
         'oracle_polarities': 2,
         'modelled_regs': [n for n, _ in isa.gprs],
@@ -285,6 +293,7 @@ def main():  # noqa: C901
     print(f'{isa.label}: adopted undeclared sources on {len(adopted)} entries',
           flush=True)
 
+    consecutive_batch_failures = 0
     wf = open(WITNESS, 'a')
     metrics, rounds, start = {}, 0, time.time()
 
@@ -388,11 +397,24 @@ def main():  # noqa: C901
 
             try:
                 mts = mt_batch(isa, batch)
-            except Exception as e:  # noqa: BLE001 -- keep the campaign alive
+                consecutive_batch_failures = 0
+            except Exception as e:  # noqa: BLE001 -- one bad chunk is survivable
                 print(f'  mt_batch failed on a chunk of {len(chunk)}: {e}', flush=True)
                 for label, _a, _c, _k, _cs in built:
                     m = metrics.setdefault(label, {})
                     m['mt_errors'] = m.get('mt_errors', 0) + 1
+                # Surviving ONE bad chunk keeps a long campaign alive; surviving
+                # every chunk turns a misconfiguration into a spin loop that
+                # reports zero under-taints over zero cases and exits 0.  With
+                # MT_ENGINE_ROOT pointing at a path that does not exist, this
+                # produced 1080 rounds in 25 seconds and a well-formed report.
+                consecutive_batch_failures += 1
+                if consecutive_batch_failures >= MAX_CONSECUTIVE_BATCH_FAILURES:
+                    raise SystemExit(
+                        f'{consecutive_batch_failures} consecutive mt_batch '
+                        f'failures: the engine at {ENGINE_ROOT!r} is not usable, '
+                        f'so this campaign is measuring nothing.  Last error: {e}',
+                    ) from e
                 continue
 
             off = 0

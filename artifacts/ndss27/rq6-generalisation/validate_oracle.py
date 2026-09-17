@@ -143,16 +143,31 @@ def check_mutation(spec, forms, states, rng):
                 continue
             except Exception:
                 continue
-            live = [(r, b) for r in spec.regs for b in range(spec.bits)
-                    if (lb[r] >> b) & 1]
-            if not live:
-                no_gt += 1
-                continue
             try:
                 mt = _mt(spec, code, st, tt)
             except Exception:
                 continue
-            # Remove exactly one bit the ground truth says must be tainted.
+            # Drop a bit the UNMUTATED ENGINE ACTUALLY REPORTED, not merely one
+            # the ground truth wants.
+            #
+            # Drawing (r, b) from `lb` alone made this a tautology: clearing that
+            # bit from the engine's answer and then testing `lb & ~hurt` finds it
+            # by construction, whatever the engine said.  Reproduced -- a real
+            # engine, an engine returning {}, one returning all zeros, one
+            # tainting everything and one returning a garbage register name all
+            # scored 24/24 caught.  The one property this script advertises as
+            # "what makes a zero meaningful" could not fail.
+            #
+            # Intersecting with the engine's own mask makes the mutation a real
+            # regression: it takes an engine that was RIGHT about this bit and
+            # makes it wrong, so the comparison has to notice.  An engine that
+            # never reported the bit has nothing to mutate and is not evidence
+            # that the check works, so it is counted separately.
+            live = [(r, b) for r in spec.regs for b in range(spec.bits)
+                    if (lb[r] >> b) & 1 and ((mt.get(r, 0) or 0) >> b) & 1]
+            if not live:
+                no_gt += 1
+                continue
             r, b = live[rng.randrange(len(live))]
             hurt = {k: (v or 0) for k, v in mt.items()}
             hurt[r] = (hurt.get(r, 0) or 0) & ~(1 << b)

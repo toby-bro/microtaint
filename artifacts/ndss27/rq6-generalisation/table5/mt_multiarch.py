@@ -569,10 +569,25 @@ def _resolve_engine_root() -> str:
     if env:
         return env
     here = os.path.dirname(os.path.abspath(__file__))
-    for cand in ('pcode-taint-engine', 'pcode-taint-engine-cvm'):
-        p = os.path.normpath(os.path.join(here, os.pardir, cand))
-        if os.path.isdir(p):
-            return p
+    # Walk UP looking for an engine checkout.  The old rule looked only for a
+    # SIBLING named pcode-taint-engine, which inside the artifact resolves to
+    # rq6-generalisation/pcode-taint-engine -- a path that does not exist -- while
+    # run_table5.sh and the README both promise that the default "measures this
+    # repository".  A reviewer who followed them got a 12-hour spin loop and a
+    # report of zero under-taints over zero cases.  Walking up finds the repo
+    # root from anywhere inside it, and still finds a sibling checkout.
+    d = here
+    for _ in range(8):
+        if os.path.isfile(os.path.join(d, 'microtaint', '__init__.py')):
+            return d
+        for cand in ('pcode-taint-engine', 'pcode-taint-engine-cvm'):
+            p = os.path.join(d, cand)
+            if os.path.isfile(os.path.join(p, 'microtaint', '__init__.py')):
+                return p
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
     return os.path.normpath(os.path.join(here, os.pardir, 'pcode-taint-engine'))
 
 
