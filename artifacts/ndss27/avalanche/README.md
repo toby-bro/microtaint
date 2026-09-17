@@ -71,7 +71,8 @@ The rebuild removes the copy:
   **engine's own `evaluate()`** runs on the modified tree. There is exactly one
   implementation of taint semantics.
 - `evaluate_precise` handles the root case: a tree whose root IS the
-  approximation has no parent to rewrite, which reported 0% for `imul` -- an
+  approximation has no parent to rewrite, which reported no avalanche share for
+  `imul` -- an
   instruction that is entirely approximation -- until it was fixed.
 
 ## What counts as over-approximation
@@ -112,14 +113,17 @@ Four more gates, each closing a way the table used to go quietly wrong:
   emitted tree has no approximating node, or the reverse, the run reports it.
   The two halves of Table 6 disagreed for years without anyone noticing.
 - **calibration** (`calibrate.py`) -- the paper states the attribution matches
-  the ground truth on `add`/`xor`/`mov`/`and` -> 0%, `imul` -> 100%,
-  `shl rax,4` -> 0%. That claim previously appeared **only in prose**; no code in
+  the ground truth: no avalanche share for the bitwise and movement forms, a
+  full one for `imul`, and none for a constant shift. That claim previously
+  appeared **only in prose**; no code in
   the artifact ever produced those numbers. It is now executable, and it caught
   both the original drift and a bug in its own replacement.
 
-`shl rax,cl` is deliberately expected at **0%**, not the paper's 86%: the engine
+`shl rax,cl` is deliberately expected to show NO avalanche share, unlike the
+figure the paper's prose carries for it: the engine
 gained `VariableShiftTaintExpr`, which claims exact, and the measurement agrees.
-That is a real precision gain, and the 86% describes an engine that no longer
+That is a real precision gain, and the older figure describes an engine that no
+longer
 exists.
 
 ## Naming

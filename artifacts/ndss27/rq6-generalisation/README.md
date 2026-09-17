@@ -19,13 +19,12 @@ uv run python campaign.py pass2 --in camp
 uv run python multiarch_fuzz.py     # randomised cross-ISA, ~10 min
 ```
 
-Pass 1 runs at about 52 cases/s averaged over the five ISAs (AMD64 53, ARM64 27,
-MIPS64BE 103, RISCV64 54, PPC32BE 81; the instruction mixes differ). The paper's
-`--n 1000000` per ISA is therefore about 26 hours for this experiment alone,
-past the one-day budget for a whole artifact, so the default here is `--n 20000`,
+Throughput differs per ISA because the instruction mixes differ.  The paper's
+per-ISA case count takes far longer than the one-day budget for a whole
+artifact, so the default here is a reduced `--n`,
 about 32 minutes for all five. More cases can only strengthen a zero, so the
 scaled-down run is a weaker instance of the same result. It reproduced at that
-scale: 1,500 cases per ISA, 0 under-taints.
+scale, and reports no under-taints.
 
 Precision varies between ISAs and that is not a defect: an ISA whose lifter
 models fewer flags gives the differential less to be precise about.
@@ -44,7 +43,7 @@ monkeypatch alone, which is what established that no engine edit was needed.
 
 The campaign above is a fast soundness smoke test over about 80 instruction
 forms: it answers "does anything under-taint", cheaply, and it is what
-`run-all.sh` runs. Table 5 needs the full per-ISA corpus (about 1,500 forms) and
+`run-all.sh` runs. Table 5 needs the full per-ISA corpus and
 the precision columns, and it takes hours. That harness lives in
 [`table5/`](./table5/) with its own README, launcher and validator.
 

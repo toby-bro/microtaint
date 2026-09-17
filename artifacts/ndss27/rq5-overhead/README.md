@@ -29,10 +29,9 @@ bare Qiling) so every `run_s` can be divided into ns per propagation step.
   taint with the emulator's own cost divided out. This is the meaningful one,
   and it is `run_s` over `run_s`. Do not compute it from `wall_s`: wall carries
   0.2 to 0.4 s of Python import and Qiling init that have nothing to do with
-  taint and dilute the ratio about fivefold (5.6x against 25.8x on the same
-  data).
+  taint and dilute the ratio severalfold on the same data.
 - **`ns_per_instr`** = `run_s` per guest instruction. The number to sanity-check
-  against the ~22 ns/instr floor.
+  against the bare-emulator floor, which the `qiling-only` rung measures.
 - **`x_native_wall`** = `microtaint-all.wall_s / native.wall_s`.
 
 All six detector configurations are measured, not just `microtaint-all`, so the
@@ -123,10 +122,11 @@ taint engine owes per instruction however its propagation is written.
 
 It reports `residual_register_taint` and fails the run if any register ended
 tainted, because "nothing was tainted" is the rung's whole claim. It does NOT
-gate on the prefilter share: about 5% of instructions are prefilter-ineligible
-by structure (a PC target needs the implicit-taint decision, a memory write
-needs the store path) and evaluate even on a clean machine, so a threshold there
-would be measuring circuit shape rather than taint.
+gate on the prefilter share: a small fraction of instructions are
+prefilter-ineligible by structure (a PC target needs the implicit-taint
+decision, a memory write needs the store path) and evaluate even on a clean
+machine, so a threshold there would be measuring circuit shape rather than
+taint.
 
 **Per-instruction hooking is not what costs.** Compare `c-codehook` against
 `qiling-only`: a pure-C `UC_HOOK_CODE` with an empty body adds a modest amount

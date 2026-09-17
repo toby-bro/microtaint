@@ -1,9 +1,13 @@
 # Table 5: cross-ISA soundness and precision
 
-The campaign behind Table 5. It runs the full per-ISA corpus (about 1,500
-instruction forms) against a bit-flip noninterference oracle and reports, per
-ISA, how many cases were checked, how many under-tainted, how often the engine's
-mask was bit-exact, and how much it over-tainted.
+The campaign behind Table 5. It runs the full per-ISA corpus against a bit-flip
+noninterference oracle and reports, per ISA, how many cases were checked, how
+many under-tainted, how often the engine's mask was bit-exact, and how much it
+over-tainted.
+
+**No measured value appears in this file.** The paper is the authority on every
+figure; this README describes what the experiment does and how to run it, so the
+two can never drift apart. Run the campaign and read the table it prints.
 
 The oracle taints an arbitrary mask and flips each tainted bit once, from BOTH
 polarities: once from the given state and once from the state with every tainted
@@ -13,19 +17,19 @@ bound on semantic dependence -- a single flip cannot witness a dependence that
 needs two inputs to move together. The second polarity exists because for the
 common families that blind spot sits at a CORNER: `a AND b` hides where both
 bits are 0, `a OR b` where both are 1. Measured against the exact enumeration on
-overlapping masks, the second polarity takes `and`/`or` from 11.0%/19.9% of real
-dependences missed to 0.0%, `add` from 9.5% to 0.2%, and `imul` from 4.8% to
-0.6%. The residual runs the safe way for soundness, since a too-small ground
-truth makes `gt & ~mt` more lenient, never stricter.
+overlapping masks, the second polarity recovers nearly all of the dependences a
+single polarity misses on `and`, `or`, `add` and `imul`. The residual runs the
+safe way for soundness, since a too-small ground truth makes `gt & ~mt` more
+lenient, never stricter.
 
 This is a different experiment from the one in the parent directory.
-`../campaign.py` is a fast soundness smoke test over about 80 forms; it answers
+`../campaign.py` is a fast soundness smoke test over a small corpus; it answers
 "does anything under-taint", cheaply, and it is what `run-all.sh` runs. This
 directory answers Table 5, which needs the full corpus and the precision
 columns, and it takes hours.
 
 ```sh
-./run_table5.sh 12      # the paper's scale, about 55M cases across five ISAs
+./run_table5.sh 12      # a long run across five ISAs
 ./run_table5.sh 0.2     # smoke run: proves the harness works, nothing else
 
 python table5.py --tex table5.tex --json table5.json
@@ -45,8 +49,8 @@ well-formed report:
   polarity runs of a case and initialised only four GPRs, so untracked
   registers carried run *i-1* into run *i*. `shrd rbp, rsp` has RBP as both
   source and destination and untracked, so the ground truth claimed PF depended
-  on a bit that is not even in the shift count. That one form produced **2,810
-  of the 2,875** under-taints in the 12h campaign of 2026-07-24.
+  on a bit that is not even in the shift count. That ONE form produced nearly
+  every under-taint reported by the 2026-07-24 campaign.
 
 * **The oracle measured nothing.** The fix for the above verified completion by
   reading PC. Unicorn does not update MIPS's PC after `emu_start` (it reads back
@@ -54,8 +58,8 @@ well-formed report:
   in a per-run `except Exception: continue`; `outs` came back empty; and the
   empty accumulator was returned **marked exact**. An all-zero ground truth
   makes `gt & ~mt` unconditionally zero, so no under-taint can ever be
-  reported. **19,085,696 MIPS cases** were scored that way on 2026-09-12, which
-  is 36% of that campaign.
+  reported. Most of one ISA's cases were scored that way on 2026-09-12, better
+  than a third of that whole campaign.
 
 So `validate_oracle.py` checks the properties that make a zero mean something,
 and exits non-zero if any fails:
@@ -85,20 +89,22 @@ The oracle sets up and inspects a fixed register set per ISA, and pins
 everything else to zero. Whatever is not in that set is not measured: a corpus
 entry naming it is not tested, it is tested AT ZERO. `a('mul r8', ['RAX'])`
 names `r8` deliberately, to exercise a register the engine has to get right, and
-against a four-register model it multiplied by zero. 74 x86 forms and 81 PPC
-forms had an empty ground truth over their entire run and scored bit-exact.
+against a four-register model it multiplied by zero. Dozens of x86 forms and
+dozens of PPC ones had an empty ground truth over their entire run and scored
+bit-exact.
 
 The sharper problem is that the state handed to the ENGINE is built from the
 same list. The oracle knew `r8` was zero; the engine was never told `r8` exists.
 The two sides were being asked about different machines, and the engine, which
-correctly assumed an unknown multiplier, was charged 4,192 cases and 540,768
-over-taint bits for it.
+correctly assumed an unknown multiplier, was charged every one of those cases
+as over-taint for it.
 
 So the model covers every general-purpose register the corpus can reach: 15 on
 x86-64, 31 on PPC32 plus all eight condition fields, and HI/LO on MIPS64 so that
 `mult` and `div` have a scored destination at all. ARM64 and RISCV are
 deliberately NOT widened: no corpus entry there leaves the first four registers,
-so it would cost 1.6-2.0x to measure nothing new, and the gap on those two is
+so it would cost measurably more to measure nothing new, and the gap on those
+two is
 the corpus rather than the model.
 
 Every added name is round-tripped through Unicorn AND the engine's register map
@@ -115,7 +121,7 @@ ground truth is tautologically the input mask -- a no-op of the same length
 produces it identically -- because flipping a bit of a register the instruction
 does not write changes exactly that bit of its output.
 
-Measured corpus-wide that is about 60% of every ground-truth bit, so a
+Measured corpus-wide that is the majority of every ground-truth bit, so a
 "bit-exact %" over all cases is in substantial part a test that a copy survives,
 which any engine passes. `table5.py` therefore reports both: exactness over all
 scored cases, and exactness over cases whose ground truth differs from the input
@@ -128,36 +134,37 @@ Some corpus entries are counted as `skipped`, never as passing. The distinction
 matters: a skipped form is one the campaign could say nothing about, and folding
 it into the answer as a pass is how a harness reports coverage it does not have.
 
-**x86-64: `adcx` and `adox` (10 forms) are never scored at all.** Unicorn does
+**x86-64: `adcx` and `adox` are never scored at all.** Unicorn does
 not implement the ADX extension, so every run raises `UC_ERR_INSN_INVALID`.
 Preflight now detects this by RUNNING each form at sampled states and
 quarantining any that never completes, so these are excluded before scoring
 rather than accumulating as invalidated cases, and the next such family is
-caught without anyone adding it to a list. Roughly 1.9% of the x86 corpus is
-**unmeasurable**, not measured-and-sound, and this campaign says nothing about
-how the engine handles those two mnemonics.
+caught without anyone adding it to a list. A small part of the x86 corpus is
+therefore **unmeasurable**, not measured-and-sound, and this campaign says
+nothing about how the engine handles those two mnemonics.
 
 This is also where the old oracle went wrong in the flattering direction. It
-scored `adcx`/`adox` at 28,890 cases each and 0% exact, on runs that never
-executed, so failures were folded in as real comparisons and quietly depressed
-the x86 exactness figure. Counting them as skipped is both more honest and more
-accurate.
+scored `adcx`/`adox` on runs that never executed, so failures were folded in as
+real comparisons and quietly depressed the x86 exactness figure. Counting them
+as skipped is both more honest and more accurate.
 
 **MIPS64: two different causes, both partial.**
 
 * `add` and `sub` are the TRAPPING variants and raise on signed overflow, so
-  roughly 14-17% of random operand pairs legitimately have no ground truth.
+  a sizeable share of random operand pairs legitimately has no ground truth.
   Confirmed by contrast: `addu` completes on every case.
 * `clz`, `clo`, `dclz`, `dclo`, `movn` and `movz` raise `UC_ERR_EXCEPTION` in
   this Unicorn build on about half of states. State-dependent rather than a flat
   "unsupported"; the precise trigger is not pinned down. These previously
-  reported `checked > 0` at 100% bit-exact for instructions that never ran: a
+  reported checked cases at perfect bit-exactness for instructions that never
+  ran: a
   case whose taint mask canonicalisation had emptied returned an empty ground
   truth MARKED VALID without invoking Unicorn at all, and an empty ground truth
   scores bit-exact against anything. Such a case is now a skip.
 
-Together these are 757,874 skipped cases, leaving MIPS64 at 96.9% of attempted
-cases actually checked. Every other ISA is at 100% except x86-64 at 98.5%.
+MIPS64 therefore checks a noticeably smaller share of its attempted cases than
+the other ISAs; x86-64 loses a little to the quarantined mnemonics above, and
+the rest lose nothing. The campaign prints the per-ISA figures.
 
 Every skipped case in this campaign comes from a run that could not complete,
 or from a taint mask that canonicalisation emptied. There is no enumeration
@@ -198,27 +205,27 @@ Cases with genuinely state-independent structure, like the parity flag reading
 only the result's low byte, are unaffected by this and are real over-taints.
 The caveat bites hardest on flags whose dependence is value-conditioned, and the
 zero flag is the extreme: measured on the earlier one-polarity campaign, ARM64's
-`ZR` moved in 1% of cases and x86's `ZF` in 9%, so nearly all of the over-taint
-charged against them is dependence the oracle cannot witness rather than
-imprecision the engine could remove.
+`ZR` and x86's `ZF` moved in only a small fraction of cases, so nearly all of the
+over-taint charged against them is dependence the oracle cannot witness rather
+than imprecision the engine could remove.
 
 ## The over-taint column
 
 Table 5's over-taint figure is the **mean of the per-case** tainted-to-minimum
 bit ratio. That is not the same as the ratio of summed bits, which weights
-large-taint cases more heavily and gives a materially different number (2.80x
-against 1.68x on AMD64), and it cannot be recovered from stored sums after the
-fact. `run_campaign.py` accumulates it per case; `table5.json` records both
+large-taint cases more heavily and gives a materially different number, and it
+cannot be recovered from stored sums after the fact. `run_campaign.py` accumulates it per case; `table5.json` records both
 aggregations so the caption can state which one it means.
 
 A mean is a poor summary of this distribution and the run shows why. Avalanche
 cases are legitimate: one tainted bit entering a multiply taints all 64 outputs,
-and no engine can do better. Those cases sit at 64-128x and drag the mean up, so
+and no engine can do better. Those cases sit far out in the tail and drag the
+mean up, so
 it reports how many multiplies the corpus contains as much as it reports the
 engine. The campaign therefore also keeps a log2 histogram of the per-case
 ratio, from which `table5.py` reports the median bucket. Measured over 68M
 cases, **every ISA has a median case of ratio <= 1**, i.e. the typical case is
-exact, while the means run 1.35x to 5.53x. Quote the mean and the median
+exact, while the means are substantially higher. Quote the mean and the median
 together, or the column says something it does not mean.
 
 ## Quarantine

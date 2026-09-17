@@ -16,10 +16,11 @@ C harnesses for libdft64 and TaintGrind itself. An engine whose environment is
 missing is recorded as skipped rather than crashing the run, so check the engine
 list in the summary before concluding anything about a comparison.
 
-The corpus is 9,858 tests over 127 mnemonics: random single instructions, short
+The corpus is several thousand tests over more than a hundred mnemonics: random
+single instructions, short
 sequences, systematic sweeps with five canonical taint masks, and the curated
 cases (`imul` semantics, real-world idioms, bug seeds, path-explosion stress).
-For the 3,263 tests with at most 15 tainted bits, every input combination is
+For the tests within the enumeration budget, every input combination is
 enumerated on Unicorn, and that subset is where soundness and precision are
 scored, because only there is the truth known rather than approximated.
 

@@ -74,29 +74,32 @@ uv run --project external/taintinduce python score_rule.py \
 For an addition the required dataflow structure is not a matter of opinion: a
 carry out of bit *i* travels upward, so bit *i* of either operand reaches output
 bit *j* for every *j* >= *i*. That is `w(w+1)/2` dataflows per source operand,
-1,056 for `add eax, ebx`. A bitwise instruction needs the diagonal instead.
+a number that grows quadratically with the operand width. A bitwise
+instruction needs the diagonal instead.
 `score_rule.py --carry-width W --carry-shape triangle|diagonal` asks three
 questions, in increasing order of what they prove:
 
 1. **Is the `(i, j)` pair in the rule at all?** Purely structural. There are no
-   holes, at 4, 8, 16 and 32 bits, for `add`, `sub` and `xor` alike. The failure
+   holes, at every width swept, for `add`, `sub` and `xor` alike. The failure
    is not a missing dataflow, which is worth knowing before concluding anything
    else.
 2. **Does it fire on a state that forces the carry?** Each pair carries a DNF
    condition, and that is what breaks. For each `(i, j)` the harness builds a
    state that forces the dependency (one 1 at bit *i*, a run of 1s across
    *i..j-1*), executes it on the real CPU, keeps it only if the dependency shows
-   up, then asks the rule. On `sub eax, ebx`, 447 of 1,056 constructed chains do
+   up, then asks the rule. On `sub eax, ebx` a substantial fraction of the
+   constructed chains do
    not fire. Deterministic, and it reruns identically.
 3. **Does it fire on random states?** The realistic case. For `add eax, ebx`,
-   only 411 of the 1,056 required dataflows ever turn up in a random draw at all;
-   of those, 93 always fire, 182 sometimes, 136 never.
+   only a minority of the required dataflows ever turn up in a random draw at
+   all, and of those only some always fire; the rest fire sometimes or never.
 
 TaintInduce relies on fuzzing to detect dependencies between bits.
 In our initial work to get TaintInduce working we realised that the cases/seeds it generated were far too few, and poor, so we added many more in the hope of managing to "fix" the additions, without succeeding.
 This is why for additions the results are far better than substractions, even if still unsufficient.
 
-`add` scores 0 silent in (2) and `sub` scores 447, and the asymmetry is in the
+`add` records no silent chains in (2) while `sub` records many, and the
+asymmetry is in the
 witnesses, not the rules: the constructed chains are built for addition, so on
 `add` they land on the shapes TaintInduce's own `Bitwalk` and `BitFill` seed
 strategies produce, and the rule has them. Read the `o` cells below as the
@@ -130,7 +133,7 @@ the far corner was never exercised at all. That corner is the paper's Case 2 in
 visual form: a random addition propagates a carry through bit *k* only when
 `a[k] xor b[k]` is 1, so a carry of distance *d* appears with probability about
 `2^-(d-1)`, and past *d* ~ 7 it does not appear in a sample of any practical
-size. At 32 bits, 645 of the 1,056 cells are in it.
+size, and at the widest width swept it covers the majority of the cells.
 
 ## Held-out scoring, for the outputs with no shape to check
 
@@ -170,36 +173,37 @@ the thing under test. Flags are not a separate run: every case scores its flag
 flows next to its data flows, so Table 3's CF/ZF/SF/OF row is read off the
 arithmetic cases.
 
-## Measured on the reference machine
+## Running the sweep
 
-One `./run_rq1.sh` (default tier), AMD Ryzen 7 5700U, 59 minutes, 32 held-out
-states per case, 64 random witness states per input bit. *Dataflows* is what the
+`./run_rq1.sh` (default tier) sweeps the families below. *Dataflows* is what the
 algebra requires; *silent* is how many do not fire on a state built to force
-them; *never exercised* is how many no random draw reached.
+them; *never exercised* is how many no random draw reached. The script prints
+the table; **the paper is the authority on every value in it.**
 
-| Family | Instruction | W | Dataflows | Silent | Random: always/partial/never | Never exercised | Held-out under-taint | Verdict |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| bit-moving | `bswap esi` | 32 | - | - | - | - | 0 | correct (5 s) |
-| control-flow | `jz .+16` | 32 | - | - | - | - | 0 | correct (16 s) |
-| logic | `xor eax, ebx` | 32 | 64 | 0 | 64/0/0 | 0 | 0 | correct, over-taints ZF (689 s) |
-| logic | `and eax, ebx` | 32 | 64 | 0 | 64/0/0 | 0 | 0 | correct, over-taints ZF (615 s) |
-| logic | `or eax, ebx` | 32 | 64 | 0 | 64/0/0 | 0 | 0 | correct (132 s) |
-| arithmetic | `ADD R1, R2` (JN) | 4 | 20 | 0 | 20/0/0 | 0 | 0 | correct (9 s) |
-| arithmetic | `add al, bl` | 8 | 72 | 0 | 37/22/5 | 8 | 74 (138 bits) | **UNSOUND** (40 s) |
-| arithmetic | `add ax, bx` | 16 | 272 | 0 | 52/87/49 | 84 | 220 (410 bits) | **UNSOUND** (67 s) |
-| arithmetic | `add eax, ebx` | 32 | 1056 | 0 | 93/182/136 | 645 | 562 (1127 bits) | **UNSOUND** (786 s) |
-| arithmetic | `sub eax, ebx` | 32 | 1056 | 447 | 85/202/123 | 646 | 551 (1018 bits) | **UNSOUND** (1174 s) |
-| arithmetic | `add rax, rbx` | 64 | - | - | - | - | - | did not converge (>900 s) |
+| Family | Instruction | Width |
+| --- | --- | --- |
+| bit-moving | `bswap esi` | 32 |
+| control-flow | `jz .+16` | 32 |
+| logic | `xor eax, ebx` | 32 |
+| logic | `and eax, ebx` | 32 |
+| logic | `or eax, ebx` | 32 |
+| arithmetic | `ADD R1, R2` (JN toy ISA) | 4 |
+| arithmetic | `add al, bl` | 8 |
+| arithmetic | `add ax, bx` | 16 |
+| arithmetic | `add eax, ebx` | 32 |
+| arithmetic | `sub eax, ebx` | 32 |
+| arithmetic | `add rax, rbx` | 64 |
 
-The 64-bit row is a separate probe with a 900 s budget; `--full` reruns it with
-the paper's hour. The four-figure times are almost all espresso: observation
-costs seconds, DNF minimisation costs minutes.
+The 64-bit row is a separate probe under its own budget; `--full` reruns it with
+the paper's hour. Run times are dominated by DNF minimisation, not observation.
 
-Read down the sweep. At 4 bits the seeds are exhaustive and all 20 required
-dataflows always fire. At 8 bits they are samples and 27 of the 64 witnessed
-dataflows already fail. At 32 bits, 318 of the 411 witnessed fail and 645 more
-are never witnessed: the required set grows quadratically with operand width and
-the seed budget does not.
+What to read off the sweep, qualitatively: at the narrowest width the seeds are
+EXHAUSTIVE and every required dataflow fires. As the width grows the seeds become
+samples, a growing share of the witnessed dataflows already fails, and a growing
+share is never witnessed at all. The required set grows quadratically with
+operand width while the seed budget does not, which is the whole point of the
+experiment: the bit-moving, control-flow and logic families stay correct at every
+width, and only the arithmetic family degrades.
 
 The logs name individual misses:
 
