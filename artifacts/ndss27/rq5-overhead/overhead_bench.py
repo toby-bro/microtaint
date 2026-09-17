@@ -1276,7 +1276,11 @@ def _main_single(args, p) -> int:
             },
         }
         with open(args.json, 'w') as f:
+            # Load is recorded alongside boost: the README says to take these
+            # numbers only from an idle machine, and without it nothing in the
+            # document says whether that held.
             json.dump({'engine': _engine_provenance(), 'cpu': require_no_cpu_boost(),
+                       'load_avg_1m': round(os.getloadavg()[0], 2),
                        **out_dict}, f, indent=2)
         print(f'\nFull results written to {args.json}')
 

@@ -535,6 +535,12 @@ def main() -> int:
                 raise SystemExit(f'{layer}: the C hook fired {calls:,} times against '
                                  f'{n_instrs:,} instructions; it is not hooking every one')
         results[layer] = {
+            # The 1-minute load average AT THIS RUNG.  Boost state was recorded
+            # and load was not, yet the README says to take these numbers only
+            # from an idle machine: two rungs measured under different load are
+            # not comparable, and nothing said which was which.  Recording it
+            # per rung makes that checkable after the fact instead of assumed.
+            'load_avg_1m': round(os.getloadavg()[0], 2),
             'run_s': statistics.median(samples), 'desc': desc,
             'per_block_hook': bool(extra.get('per_block_hook')),
             'guest_bytes': gb, 'n_runs': len(samples),
