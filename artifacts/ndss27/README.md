@@ -1,19 +1,16 @@
 # microtaint — NDSS 2027 artifact
 
-In this directory you will find all the experiments that were described in our paper.
-The dir is split by research question.
-
 ## Presentation of the artifacts
 
 All of the experiments mentionned in our submission are detailed and reproducible here.
 
-For each we provide the exact command (seeds included) to be able to reproduce the tables, and graphs in our paper.
+For each we provide the exact command to reproduce the tables, and graphs in our paper.
 Nevertheless as some of them are many hours long, we also provide the commands to run faster versions of each of these.
 
 ### Reproductibility
 
 In order to facilitate reproductibility all the commands we ran in the paper are reported in this directory, this includes the randomness seeds.
-Naturally the timings measured are subject to variations, for comparison the results we obtained were on a `AMD Ryzen 7 5700U (16) @ 1.80 GHz` on which boost was deactivated, and `cpupower` set to performance, this stabilizes the CPU's frequency so as to have meaningful results.
+Naturally the timings measured are subject to variations, for comparison the results we obtained were on a `AMD Ryzen 7 5700U (16) @ 1.80 GHz` on which boost was deactivated, and `cpupower` set to performance to stabilise the CPU's frequency and obtain meaningful results.
 
 ### Requirements
 
@@ -72,8 +69,9 @@ rather than against zero, because for those a finding is the result; see
 [`rq7-applications/README.md`](./rq7-applications/README.md).
 
 The script pins `MICROTAINT_TAINT_IR=0` for every child process, and finishes by
-regenerating the paper's macro files into the results directory. It never writes
-into the paper itself, so copy them across once you have read the diff.
+regenerating the paper's macro files into the results directory.
+
+The afore mentionned environment variable ensures that the microtaint engine evaluated by these scripts is the one described in the paper (as work on the engine has progressed whilst microtaint was under review).
 
 ## Structure of the repository
 
@@ -93,7 +91,7 @@ The exact command we used in [`rq2-comparison`](./rq2-comparison/) is detailed i
 The results that this dir produce answer the soundness (`RQ2`), as well as the precision (`RQ3`) and speed (`RQ4`) questions with a detailed comparison of all the different engines at our disposal.
 One run of `benchmark.py` scores all three, and the same directory regenerates the paper's figures and its LaTeX macros from that run.
 
-It also holds [`proofs`](./rq2-comparison/proofs/), the Z3 proofs that each category's rule can never under-taint (Appendix A).
+It also holds [`proofs`](./rq2-comparison/proofs/), the Z3 proofs that each category's rule can never under-taint. These are not part of the paper's artifacts officially, they are "bonus".
 
 ### Overhead evaluation (`RQ5`)
 
@@ -113,7 +111,7 @@ The detailed directory of this experiment are unsurprisignly in [rq6-generalisat
 The last part of our evaluation shows two programs in which bit-level granularity enables security analyses that were not achievable before.
 The two examples are a DNS header parser, and a square and multiply implementation.
 We also include four vulnerable binaries in [memory-safety](./rq7-applications/memory-safety/) to show that microtaint finds buffer overflows, use-after-free, side channels and writes through attacker-controlled pointers in classical binaries, which is the battery every engine is expected to have.
-In [rq7-applications](./rq7-applications/) you will find the dedicated [README](./rq7-applications/README.md), and in [other-engines](./rq7-applications/other-engines/) the same two analyses run against the six baselines.
+In [rq7-applications](./rq7-applications/) is the dedicated [README](./rq7-applications/README.md), and in [other-engines](./rq7-applications/other-engines/) the same two analyses run against the six baselines previously used in `RQ2-4`
 
 ### Avalanche's cost
 
@@ -122,41 +120,11 @@ It runs on three real workloads (coreutils `base64`, the `nft_byteorder` routine
 
 All related experiments and [README](./avalanche/README.md) can be found in the [avalanche](./avalanche) directory.
 
-## Lint and type checking
+## Code quality
 
-The scripts here are held to the same `ruff` and `mypy` gates as the engine, so
-`uv run ruff check artifacts/` and `uv run mypy artifacts/` both pass with no
-findings. Two deliberate relaxations, both narrow and both visible where they
-apply:
+Whilst all of the code presented in this directory has been AI-generated,
+all the scripts were re-read by the authors, and to the best of our knowledge,
+they seem to do what we want them to.
 
-**Lint.** `pyproject.toml` carries a `per-file-ignores` block for `artifacts/**`
-covering the rules that are wrong for standalone experiment scripts rather than
-merely inconvenient: `sys.path` setup before the imports it enables, per-engine
-lazy imports so a missing baseline is skipped instead of aborting a campaign,
-swallowing one engine's exception to keep scoring the rest, fixed subprocess
-command lines, emulator callback signatures we do not choose, and drivers long
-enough to read top to bottom. Every entry states its reason. Everything else in
-the lint configuration still applies here.
-
-**Types.** The substantive checks are on and every finding from them has been
-fixed: mypy caught a wrong annotation in `prove_soundness.py` (a mask fraction
-declared `bool`), an `importlib` spec used without its `None` case in two
-scripts, several `Popen` pipes read without checking they exist, and a variable
-in `benchmark.py` that held two unrelated things under one name.
-
-What is switched off, per file, is the requirement that every function carry a
-full signature:
-
-```python
-# mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg"
-```
-
-That line sits in 42 of the 50 scripts. The other eight are checked strictly,
-and a new script gets no exemption unless someone adds the line to it. Deleting
-the header from a script checks that script strictly again; a command-line
-`--enable-error-code` will not, because a per-file disable wins over it.
-
-Across the tree the exemption currently covers 201 unannotated definitions, the
-361 calls into them, and 69 bare generics. Writing those signatures would mostly
-mean spelling `Any` for opaque angr, Maat, Triton and PANDA handles, so it would
-buy little on top of the checks that are on.
+We applied the same quality-requirements as the main code to try and prevent as many bugs as possible, and facilitate comprehension.
+This includes strict type checking (with `mypy`) and linting (with `ruff`).

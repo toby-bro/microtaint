@@ -54,8 +54,7 @@ The corpus and the masks are fixed by the seed, and the ground truth is an
 enumeration, so the *inputs* are deterministic. The oracle's answers are not,
 quite: it drives 2^k Unicorn emulations through one reused instance, and on a
 long batch a few of them come back with register values no assignment produces.
-That can only ADD apparent under-taints, never hide one, so a run's unsound
-count is an upper bound.
+That can add apparent under-taints, so a run's unsound count is an upper bound.
 
 So verify before believing:
 
@@ -72,5 +71,3 @@ an instruction whose output cannot depend on any input, with the oracle claiming
 32 tainted bits in RAX.
 
 A CONFIRMED case is a real disagreement with the paper and worth reporting.
-
-`proofs/` holds the Z3 proofs of the category rules (Appendix A).

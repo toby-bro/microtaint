@@ -5,7 +5,7 @@ is that this does not converge where microtaint's synthesis does: carry chains,
 flags, and wide operands, where the observations needed to pin the rule down grow
 faster than they can be collected.
 
-## First, a working TaintInduce
+## Which TaintInduce
 
 There is none left. The original
 ([melynx/taintinduce](https://github.com/melynx/taintinduce)) targets Python 3.6
@@ -20,6 +20,32 @@ backends and to memory operands). The inference algorithm is the paper's.
 not the branch tip: everything after it is the work that grew into microtaint,
 and `master`'s entry point no longer runs the DNF inference at all. `64a703a` is
 the last state of the tree that is still TaintInduce.
+
+### Disclaimer
+
+While there were many logic bugs in the initial codebase we consider it fair to use our version with as many of these bugs patched.
+Some of these bugs made the original submission of taintinduce questionnable here are a few:
+
+- **They separated the conditions they generated on dataflows from the dataflows**: it is therefore impossible to claim they understand and model the conditionnal dataflows.
+- **The boolean minimisation of the conditions only happened on a subset of the affected bits (e.g. flags)**: they can't capture real data dependencies if they are excluding most relevant bits from the condition.
+- **They redefine what is an instruction**: they claim precision on millions of instructions, but they consider `and rax, 0x0`, `and rax, 0x1` to be two separate instructions, making it very easy to reach precision on more than $2^64$ instructions.
+Instructions with only one register are, for the overwhelming majority, without any conditionnal flows.
+Instructions with two registers (or memory values) on the other hand are way more complex, and on these taintinduce does not manage to converge, this is what we want to prove.
+
+We did not want to shame taintinduce's authors in the main paper, so we decided to spare them and keep these doubts in this README in the artifacts.
+
+These conclusions were found after months of work, whilst we honestly wanted to fix and improve taintinduce, and suprised us a lot.
+Our efforts to make it work and the evaluated taintinduce presented in this paper is therefore far better than any implementation of taintinduce released before in terms of speed and correctness.
+
+### Licensing
+
+After having shown me where taintinduce could be found, the authors did not reply when asked about the licensing of their work. This puts our work in a legal grey-zone as most of the codebase has been rewritten (from git's perspective).
+We nevertheless would like to insist once more on the importance of putting a LICENSE file in the artifacts, especially if they are to be published.
+This repository does not distribute TaintInduce only provide scripts that can enable the user to install it, so is legal.
+
+### Just Nibbles (JN) ISA
+
+In order to understand what happend in TaintInduce easily, we introduced a very simple ISA with 4-bit general purpose registers, a few basic operands on these (ADD, AND, XOR...), and arm-style NZCV flags, it is used to produce very simple cases in the following evaluation, for which ground truth can be computed.
 
 ## Run
 
@@ -66,6 +92,10 @@ questions, in increasing order of what they prove:
    only 411 of the 1,056 required dataflows ever turn up in a random draw at all;
    of those, 93 always fire, 182 sometimes, 136 never.
 
+TaintInduce relies on fuzzing to detect dependencies between bits.
+In our initial work to get TaintInduce working we realised that the cases/seeds it generated were far too few, and poor, so we added many more in the hope of managing to "fix" the additions, without succeeding.
+This is why for additions the results are far better than substractions, even if still unsufficient.
+
 `add` scores 0 silent in (2) and `sub` scores 447, and the asymmetry is in the
 witnesses, not the rules: the constructed chains are built for addition, so on
 `add` they land on the shapes TaintInduce's own `Bitwalk` and `BitFill` seed
@@ -79,9 +109,9 @@ dataflow with a condition fitted to the states it happened to sample.
 
 `--carry-width` draws the `(i, j)` grid. `add al, bl`:
 
-```
+```txt
   EAX[i] -> EAX[j]              EBX[i] -> EAX[j]
-      j: 01234567                   j: 01234567
+       j: 01234567                   j: 01234567
     i=0   ####oooo                i=0   #####ooo
     i=1    ####~~.                i=1    ######o
     i=2     ##~#~#                i=2     ###~..
@@ -104,21 +134,7 @@ size. At 32 bits, 645 of the 1,056 cells are in it.
 
 ## Held-out scoring, for the outputs with no shape to check
 
-Every case is also scored against a second, independent seed draw through the
-one-bit noninterference oracle on the real CPU. This is what covers the flags.
-
-It matters because TaintInduce's own validator,
-`validate_rule_explains_observations`, passes on every case below, including the
-unsound ones. It has to: it checks the rule against the observations it was
-fitted on. Look for `Rule validation successful: all 74918 observation behaviors
-explained.` in `results/<stamp>/arithmetic_X86_00d8.log`, directly above the
-verdict `UNSOUND`.
-
-Held-out scoring also keeps the two directions apart, which that validator does
-not: ground truth minus prediction non-empty is an under-taint and unsound;
-prediction minus ground truth is over-taint, imprecise but safe. Both register
-operands are taint sources, as §6.1 states and unlike the original TaintInduce
-evaluation.
+To not evaluate taintinduce on the cases it was fitted on, we make a second draw with an independant seed.
 
 Verdicts are `correct`, `correct (over-taints flags)`, `sound, over-taints data`,
 `UNSOUND`, `did not converge (>Ns)`, and `NO-DATA` when the oracle produced no
@@ -138,8 +154,8 @@ TaintInduce enumerates the state space below `2**14` states and samples above it
 (`observation.py`, `_gen_seeds`). Every case prints its side of that line:
 
 ```txt
-state: 12 bits (R1:4 R2:4 NZCV:4) -> seeds are EXHAUSTIVE
-state: 96 bits (EFLAGS:32 EAX:32 EBX:32) -> seeds are SAMPLED
+state: 12 bits (R1:4 R2:4 NZCV:4) -> seeds are EXHAUSTIVE      // JN
+state: 96 bits (EFLAGS:32 EAX:32 EBX:32) -> seeds are SAMPLED  // X86
 ```
 
 Below it the inference has seen every input and is right by construction. Above
@@ -195,26 +211,3 @@ That is `add al, bl` at `al = 0x9c`, `bl = 0xe3`: the sum is `0x7f`, flipping
 `bl[4]` makes it `0x8f`, and bits 4-7 all change along with SF and OF. The rule
 fires the dataflow into bit 4 and not the ones into 5, 6 and 7, although it
 contains all four.
-
-## Two traps
-
-**A vacuous oracle passes everything.** `jz .+2` branches to its own
-fall-through, so TaintInduce's jump detection never fires, EIP never enters the
-state format, and the case scores flag-to-flag identity flows while looking like
-it tests control flow. The runner uses `jz .+16`, and `score_rule.py` refuses a
-verdict on zero flows: it prints `NO-DATA`.
-
-**The inference is not deterministic; the scoring is.** `--holdout-seed` fixes
-the ground-truth set. The training set is not fixed: observation generation runs
-across a process pool and each worker draws from an RNG state inherited at fork.
-Two runs of `add al, bl` here inferred rules with 106 and 96 under-tainted flows,
-and the verdicts did not move. Treat a small difference in flow counts as noise.
-Given a fixed rule everything is exact, so re-scoring with `--rule` reproduces
-its numbers to the digit; that is how to re-examine a surprising result.
-
-The verdicts and the shape of the triangle are the claim and are stable. Exact
-counts are not, and the non-convergence rows are budget-dependent by
-construction: `did not converge (>3600s)` asserts that an hour was not enough.
-
-The microtaint half of Table 3, the synthesis timing (`<1 s` per opcode, 0.57 s
-for the 522-opcode x86 corpus, cold), is not run from this directory yet.

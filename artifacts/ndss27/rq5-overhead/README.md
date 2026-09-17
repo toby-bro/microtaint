@@ -11,44 +11,13 @@ uv run python overhead_bench.py --gen-input 64 --runs 5 --instr-count \
     --json overhead_results.json bench.elf
 ```
 
-Roughly 5 minutes. Add `--build-bench bench.c` instead of the positional
-`bench.elf` to rebuild the guest first.
+Add `--build-bench bench.c` instead of the positional `bench.elf` to rebuild the guest first.
 
-## Read this before trusting any number here
+## Detectors
 
-The published version of this experiment measured nothing. `bench.c` opens with
+The experiment here produces the table of the appendix, of which a reduced version is presented in the main content of the paper.
 
-```c
-long n = sys_read(0, state, INPUT_SIZE);
-if (n <= 0) { sys_exit(1); }
-```
-
-so with no stdin the guest exits at the first check and the 3.77 M instructions
-never run. The helpers wrap `ql.run()` in `except Exception: pass`, the recorded
-return code is the *helper's* and not the guest's, and microtaint installs its
-per-instruction hook lazily, only once taint exists. Every one of those failures
-is silent, and all of them are *fast*: the result was three clean sub-100 ms
-timings whose ratio, 1.58x, went into the paper as the end-to-end taint
-overhead. It was the ratio of two Python startup paths.
-
-The arithmetic that catches it: 67.7 ms over 3.77 M instructions is 18 ns per
-instruction, and bare Unicorn alone costs about 22. A taint engine cannot run
-below the emulator it runs inside.
-
-Three checks now make that failure loud instead of silent, and the harness
-**refuses to run** rather than report a number it cannot stand behind:
-
-- **`guest_bytes`** — `bench.c` writes its 8-byte hash *after* the mix rounds
-  and *before* the overflow, so a non-empty count proves the workload ran. Each
-  helper redirects fd 1 for the duration of `ql.run()` and reports the count.
-- **`instr_hook_registered`** — false means no taint was ever propagated.
-- **empty stdin** — refused up front, with the explanation above.
-
-Use `--allow-vacuous` only to debug the harness. Results produced with it are
-not publishable, and `gen_paper_macros.py` rejects a JSON without `guest_bytes`.
-
-Note that a *timing* threshold would never have caught any of this. The check
-has to be on what the guest did, not on how long it took.
+We evaluate many different steps as a form of ladder in which we add the different parts constitutive of microtaint, so as to show where are the actual bottlenecks of microtaint, and show precisely how much costs the taint propagation.
 
 ## What the numbers mean
 
@@ -61,7 +30,7 @@ bare Qiling) so every `run_s` can be divided into ns per propagation step.
   and it is `run_s` over `run_s`. Do not compute it from `wall_s`: wall carries
   0.2 to 0.4 s of Python import and Qiling init that have nothing to do with
   taint and dilute the ratio about fivefold (5.6x against 25.8x on the same
-  data). `gen_paper_macros.py` used to divide the walls; it no longer does.
+  data).
 - **`ns_per_instr`** = `run_s` per guest instruction. The number to sanity-check
   against the ~22 ns/instr floor.
 - **`x_native_wall`** = `microtaint-all.wall_s / native.wall_s`.
