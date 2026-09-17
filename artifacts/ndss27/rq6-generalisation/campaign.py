@@ -74,7 +74,7 @@ except Exception as _exc:
 else:
     _WRITTEN_FLAGS_ERR = None
 import unicorn.riscv_const as _rv
-from unicorn import UC_ARCH_RISCV, UC_MODE_RISCV64, Uc, UcError
+from unicorn import UC_ARCH_RISCV, UC_MODE_RISCV64
 
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
@@ -445,7 +445,11 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
         if missed:
             rep = {
                 'arch': b.label, 'asm': asm, 'bytes': code.hex(),
-                'state': {r: state[r] for r in srcs}, 'taint': {r: taint.get(r, 0) for r in srcs},
+                # The FULL state, not just the sources.  Pass 2 rebuilt every
+                # other register as zero, so it re-checked a DIFFERENT case than
+                # the one pass 1 reported and could dismiss a real finding.
+                'state': dict(state), 'taint': dict(taint),
+                'srcs_state': {r: state[r] for r in srcs},
                 'out': out_reg, 'srcs': srcs,
                 'mt': {r: (mt.get(r, 0) or 0) & b.mask for r in b.regs if (mt.get(r, 0) or 0) & b.mask},
                 'lb': {r: lb[r] for r in b.regs if lb[r]}, 'missed': missed,
@@ -513,43 +517,41 @@ def pass2_verify(report):
     b = build(key)
     code = bytes.fromhex(report['bytes'])
     mask = b.mask
+    # Reproduce the case pass 1 actually ran.  Older reports carry only the
+    # source registers; for those the rest is unknown and zero is the best
+    # available guess, which is why it is now recorded in full.
     state = dict.fromkeys(b.regs, 0)
+    state.update({n: 0 for n, _ in b.flag_regs})
     state.update(dict(report['state'].items()))
     taint = dict(report['taint'].items())
     state, taint = b.canonicalize(state, taint)
 
-    def fresh_run(st):
-        uc = Uc(b.uc_arch, b.uc_mode)
-        uc.mem_map(O.CODE_ADDR, 0x1000)
-        uc.mem_write(O.CODE_ADDR, code + b'\x00' * 16)
-        for r in b.regs:
-            uc.reg_write(b.uc_regs[r], st[r] & mask)
-        uc.emu_start(O.CODE_ADDR, O.CODE_ADDR + len(code))
-        return {r: uc.reg_read(b.uc_regs[r]) & mask for r in b.regs}
+    # Use the SAME ground truth as pass 1 rather than a second, weaker one.
+    # The old local re-implementation had no completion check (the omission that
+    # once scored 19M MIPS cases against an empty ground truth), swallowed
+    # UcError per flip -- which only SHRINKS the bound, the direction that hides
+    # a real under-taint -- did not re-canonicalise the flipped state, and did
+    # not score flags at all.  Every one of those makes pass 2 more lenient than
+    # pass 1, so it could dismiss a genuine finding.  `bitflip_lower_bound`
+    # raises CaseInvalid on any incomplete run and starts every run from a
+    # pristine context, so the independence pass 2 was written for is kept.
+    try:
+        lb = O.bitflip_lower_bound(b, code, state, taint)
+    except Exception as exc:
+        return 0, {'error': f'could not re-run: {exc}', 'unverifiable': True}
 
-    base = fresh_run(state)
-    lb = dict.fromkeys(b.regs, 0)
-    for r in report['srcs']:
-        tr = taint.get(r, 0)
-        for bit in range(b.bits):
-            if (tr >> bit) & 1:
-                s2 = dict(state)
-                s2[r] = (s2[r] ^ (1 << bit)) & mask
-                try:
-                    out = fresh_run(s2)
-                except UcError:
-                    continue
-                for rr in b.regs:
-                    lb[rr] |= base[rr] ^ out[rr]
     sim = CellSimulator(b.arch)
     ctx = EvalContext(input_taint=dict(taint), input_values=dict(state),
                       simulator=sim, implicit_policy=ImplicitTaintPolicy.IGNORE)
     mt = generate_static_rule(b.arch, code, b.state_format).evaluate(ctx)
+    dflags = defined_flags(b, code)
+    scored = [*b.regs, *(n for n, _ in b.flag_regs if n in dflags)]
     missed = 0
-    for r in b.regs:
-        missed |= lb[r] & ~(mt.get(r, 0) or 0) & mask
-    return missed, {'lb': {r: lb[r] for r in b.regs if lb[r]},
-                    'mt': {r: (mt.get(r, 0) or 0) & mask for r in b.regs if (mt.get(r, 0) or 0) & mask},
+    for r in scored:
+        w = b.flag_width(r) if r in b.flag_src else b.bits
+        missed |= lb.get(r, 0) & ~(mt.get(r, 0) or 0) & ((1 << w) - 1)
+    return missed, {'lb': {r: lb[r] for r in scored if lb.get(r)},
+                    'mt': {r: (mt.get(r, 0) or 0) & mask for r in scored if (mt.get(r, 0) or 0) & mask},
                     'missed': missed}
 
 

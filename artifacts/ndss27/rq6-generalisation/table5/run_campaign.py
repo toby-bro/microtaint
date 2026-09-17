@@ -305,6 +305,22 @@ def main():  # noqa: C901
             prev = json.load(open(OUT))
             metrics = prev.get('metrics', {})
             rounds = prev.get('rounds', 0)
+            # Restore the RNG too.  Only `metrics` and `rounds` were carried
+            # over, so a restarted worker replayed the IDENTICAL case stream
+            # from round 1 while `checked` kept accumulating: the headline case
+            # count credited duplicates as distinct cases.  The supervisor
+            # exists because this harness has historically segfaulted every
+            # ~10k cases, so restarts are the expected regime, not the
+            # exception.  A duplicate cannot hide an under-taint, so the
+            # soundness conclusion was never at risk; the SCALE claim was.
+            st = prev.get('rng_state')
+            if st is not None:
+                try:
+                    rng.setstate((st[0], tuple(st[1]), st[2]))
+                    print('resumed the case stream where it stopped', flush=True)
+                except Exception:  # noqa: BLE001 -- a stale or truncated state
+                    print('WARNING: could not restore the RNG state, this run '
+                          'will REPLAY cases already counted', flush=True)
             print(f'resumed at round {rounds}, '
                   f'{sum(v.get("checked", 0) for v in metrics.values()):,} cases', flush=True)
         except Exception:  # noqa: BLE001 -- a checkpoint caught mid-write
@@ -316,6 +332,7 @@ def main():  # noqa: C901
         json.dump({
             'isa': isa.label, 'isa_key': ISA_KEY, 'provenance': prov,
             'rounds': rounds, 'elapsed_h': round((time.time() - start) / 3600, 3),
+            'rng_state': rng.getstate(),
             'total_checked': sum(v.get('checked', 0) for v in metrics.values()),
             'total_under': sum(v.get('under', 0) for v in metrics.values()),
             'total_skipped': sum(v.get('skipped', 0) for v in metrics.values()),

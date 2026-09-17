@@ -122,6 +122,13 @@ def _median_bucket(hist):
     return None, None
 
 
+#: How much of an ISA's row may be absence rather than measurement before it is
+#: refused.  The 2026-09-12 MIPS incident was 36% of a campaign, and a gate that
+#: only fires at 100% would have certified it.
+MAX_BLIND_SHARE = 0.25
+MAX_SKIPPED_SHARE = 0.50
+
+
 def load(d):
     rows = {}
     for f in sorted(glob.glob(os.path.join(d, 'campaign_*.json'))):
@@ -183,6 +190,7 @@ def load(d):
             'blind_engine_silent': sum(x.get('exact', 0) for x in blind.values()),
             'blind_over': sum(x.get('over', 0) for x in blind.values()),
             'blind_under': sum(x.get('under', 0) for x in blind.values()),
+            'mt_errors': sum(x.get('mt_errors', 0) for x in m.values()),
             # Exactness over cases that witnessed SOMETHING.  `chk` scores every
             # modelled GPR including ones the instruction only reads, and for
             # those the ground truth is tautologically the input mask: a no-op
@@ -241,9 +249,39 @@ def main() -> int:
                             f'absence of measurement, not a result')
             continue
         if r['gt_bits'] == 0:
+            # Unreachable as written: `checked` and `gt_bits` are both summed
+            # over the observable forms, so checked > 0 implies gt_bits > 0.
+            # Kept because it costs nothing and states the invariant, but the
+            # vacuity story is carried by the PARTIAL checks below, not here.
             problems.append(f'{isa}: {r["checked"]} checked cases but ZERO '
                             f'ground-truth bits, so no under-taint could ever '
                             f'have been reported')
+        # PARTIAL vacuity.  The gate above only fires when an ISA measured
+        # NOTHING, so a recurrence shaped like the 2026-09-12 MIPS incident --
+        # which was 36% of a campaign, not 100% -- would certify.  These bound
+        # how much of a row is allowed to be absence rather than measurement.
+        attempted = r['checked'] + r.get('blind_checked', 0)
+        if attempted:
+            blind_share = r.get('blind_checked', 0) / attempted
+            if blind_share > MAX_BLIND_SHARE:
+                problems.append(
+                    f'{isa}: {100 * blind_share:.1f}% of cases were on forms with '
+                    f'no observable dependence (limit {100 * MAX_BLIND_SHARE:.0f}%), '
+                    f'so this row is mostly not a measurement')
+        skipped = r.get('skipped', 0)
+        if skipped and skipped / (r['checked'] + skipped) > MAX_SKIPPED_SHARE:
+            problems.append(
+                f'{isa}: {skipped:,} of {r["checked"] + skipped:,} cases were '
+                f'skipped ({100 * skipped / (r["checked"] + skipped):.1f}%, limit '
+                f'{100 * MAX_SKIPPED_SHARE:.0f}%), so most of what was attempted '
+                f'produced no comparison')
+        # mt_errors was recorded per form by the campaign and read by nothing:
+        # a run where a fraction of batches failed lost those cases silently.
+        errs = r.get('mt_errors', 0)
+        if errs:
+            problems.append(
+                f'{isa}: {errs} engine batch failure(s) during the campaign, so '
+                f'an unknown number of cases were never compared')
         if r['checked'] and r['ratio_n'] == 0:
             problems.append(f'{isa}: no per-case ratio recorded; re-run with a '
                             f'harness that accumulates ratio_sum/ratio_n')
