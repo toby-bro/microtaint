@@ -53,6 +53,26 @@ if _ENGINE_ROOT:
     sys.path.insert(0, os.path.abspath(_ENGINE_ROOT))
 
 import multiarch_oracle as O
+
+# Which flags an instruction's lift actually DEFINES.  Reused from the Table 5
+# harness that ships beside this one rather than reimplemented: it detects the
+# architecturally-UNDEFINED cases structurally, including the nasty one where
+# SLEIGH lifts an undefined flag by writing its own previous value back (x86
+# `shl r,imm` with count != 1 leaves OF undefined exactly that way).  Scoring an
+# undefined flag is how a faithful engine gets reported as under-tainting; that
+# shape once produced 1211 spurious reports out of 1500.
+#
+# If it cannot be imported, NO flag is scored, which is exactly the behaviour
+# this pass had before flags were added: the fallback is never worse than the
+# status quo, and it says so rather than silently scoring the wrong thing.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'table5'))
+try:
+    from mt_multiarch import written_flags as _written_flags
+except Exception as _exc:
+    _written_flags = None
+    _WRITTEN_FLAGS_ERR = str(_exc)
+else:
+    _WRITTEN_FLAGS_ERR = None
 import unicorn.riscv_const as _rv
 from unicorn import UC_ARCH_RISCV, UC_MODE_RISCV64, Uc, UcError
 
@@ -88,11 +108,19 @@ class Bench:
         self.uc_mode = uc_mode
         self.uc_regs = uc_regs           # microtaint-name -> unicorn reg id
         self.regs = regs                 # taint-source / scored GPR names (microtaint names)
-        self.flag_regs = flag_regs       # [(name, bits)] modelled but not seeded
+        self.flag_regs = flag_regs       # [(name, bits)] modelled AND scored
+        self.flag_src = {}               # name -> (uc_reg_id, bit_offset)
+        self.flag_base = {}              # uc_reg_id -> reserved bits
         self.canon = canon               # canonical_word_bits or None
         self.state_format = [Register(r, bits) for r in regs] + [Register(n, b) for n, b in flag_regs]
         self.entries = []                # (asm_label, code_bytes, out_reg, [src_regs])
         self.circuits = {}               # code.hex() -> compiled rule
+
+    def flag_width(self, name):
+        for n, w in self.flag_regs:
+            if n == name:
+                return w
+        return 1
 
     def canonicalize(self, state, taint):
         w = self.canon
@@ -114,13 +142,19 @@ class Bench:
             # perturbation or the two sides answer different questions.
             t &= low
             return (t | high) if t & sign else t
-        return {r: sx(v) for r, v in state.items()}, {r: sxt(t) for r, t in taint.items()}
+        # Flags are 1-4 bits and are NOT part of the sign-extended word regime:
+        # running sx() over them would mangle a 1-bit flag into 0xffff... .
+        fl = {n for n, _ in self.flag_regs}
+        return ({r: (v if r in fl else sx(v)) for r, v in state.items()},
+                {r: (t if r in fl else sxt(t)) for r, t in taint.items()})
 
 
 def _from_isaspec(key) -> Bench:
     s = O.ISAS[key]()
     b = Bench(s.label, s.arch, s.bits, s.uc_arch, s.uc_mode, s.uc_regs, s.regs,
               s.flag_regs, s.canonical_word_bits)
+    b.flag_src = dict(s.flag_src)
+    b.flag_base = dict(s.flag_base)
     for asm, out, srcs in s.prog:
         try:
             code = bytes(s.ks.asm(asm, O.CODE_ADDR)[0])
@@ -183,10 +217,60 @@ ALL_ARCHES = ['amd64', 'arm64', 'mips', 'riscv', 'ppc']
 # taint generation (mirrors multiarch_fuzz._gen_taint style: dense/adjacent/full/
 # correlated masks that stress carry/borrow/cancellation boundaries)
 # --------------------------------------------------------------------------- #
+_DEFINED_FLAGS: dict[tuple, frozenset] = {}
+
+
+class _FlagName:
+    """Minimal stand-in for the Table 5 Flag type: written_flags reads `.name`."""
+
+    __slots__ = ('name',)
+
+    def __init__(self, name):
+        self.name = name
+
+
+class _FlagShim:
+    """Minimal stand-in for the Table 5 ISA type, for written_flags only."""
+
+    __slots__ = ('flags', 'mt_arch')
+
+    def __init__(self, mt_arch, flags):
+        self.mt_arch = mt_arch
+        self.flags = flags
+
+
+def defined_flags(b: Bench, code: bytes) -> frozenset:
+    """Flags this instruction's lift DEFINES, and which are therefore scorable."""
+    if _written_flags is None or not b.flag_regs:
+        return frozenset()
+    key = (b.label, code)
+    got = _DEFINED_FLAGS.get(key)
+    if got is None:
+        # written_flags() expects the Table 5 ISA shape: `mt_arch` as the
+        # Architecture NAME and `flags` as objects with `.name`.  A Bench has
+        # neither, so passing it raised, the except swallowed it, and every
+        # instruction came back with NO defined flags -- which silently disabled
+        # the flag scoring this function exists to enable.  Caught by a mutation
+        # test showing 0 oracle flag bits and 0 engine flag bits.
+        shim = _FlagShim(b.arch.name, [_FlagName(n) for n, _ in b.flag_regs])
+        try:
+            got = frozenset(_written_flags(shim, code)) & {n for n, _ in b.flag_regs}
+        except Exception:  # unknown means "do not score it"
+            got = frozenset()
+        _DEFINED_FLAGS[key] = got
+    return got
+
+
 def gen_taint(rng, b: Bench, srcs):
     kind = rng.random()
     taint = {}
+    fw = dict(b.flag_regs)
     for r in srcs:
+        if r in fw:
+            # A flag source is 1-4 bits wide; drawing a 64-bit mask for it would
+            # claim taint in bits that do not exist.
+            taint[r] = rng.getrandbits(fw[r]) or 1
+            continue
         if kind < 0.25:                                   # single random bit
             taint[r] = 1 << rng.randrange(b.bits)
         elif kind < 0.45:                                 # run of adjacent bits
@@ -244,6 +328,7 @@ def quarantine_unexecutable(b, rng):
         ran = 0
         for _ in range(QUARANTINE_PROBES):
             state = {r: rng.getrandbits(b.bits) for r in b.regs}
+            state.update({n: rng.getrandbits(w) for n, w in b.flag_regs})
             taint = gen_taint(rng, b, srcs)
             state, taint = b.canonicalize(state, taint)
             try:
@@ -299,6 +384,7 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
     # five-ISA corpus, so RQ6 covered no implicit-flow instruction at all while
     # appearing to cover two.
     per_form: dict[str, dict[str, int]] = {}
+    flag_moved_undeclared: dict[str, int] = {}
     quarantined = quarantine_unexecutable(b, random.Random(seed ^ 0x51AB))
     if quarantined:
         for a in sorted(quarantined):
@@ -312,6 +398,9 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
     for i in range(n):
         asm, code, out_reg, srcs = rng.choice(live)
         state = {r: rng.getrandbits(b.bits) for r in b.regs}
+        # Flags are seeded, not left at zero: an instruction that READS a flag
+        # (adc, sbb, every conditional form) is only testable if the flag varies.
+        state.update({n: rng.getrandbits(w) for n, w in b.flag_regs})
         taint = gen_taint(rng, b, srcs)
         state, taint = b.canonicalize(state, taint)
         # oracle: the PROVEN-STABLE fresh-Unicorn-per-run lower bound (O._run rebuilds
@@ -336,11 +425,23 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
             continue
         compared += 1
         pf['compared'] += 1
-        if not any(lb[r] for r in b.regs):
+        # GPRs, plus the flags this instruction's lift DEFINES.  An undefined
+        # flag is excluded because the engine is right not to model it.
+        dflags = defined_flags(b, code)
+        scored = [*b.regs, *(n for n, _ in b.flag_regs if n in dflags)]
+        if not any(lb.get(r, 0) for r in scored):
             no_gt_taint += 1
+        # Cross-check the exclusion rather than trusting it: if the ORACLE saw a
+        # flag move that the lift does not declare, that is either an undefined
+        # flag (fine, and why it is excluded) or a lifter gap (not fine).  Either
+        # way it is recorded, so "which flags were not scored" is answerable.
+        for n, w in b.flag_regs:
+            if n not in dflags and lb.get(n, 0) & ((1 << w) - 1):
+                flag_moved_undeclared[n] = flag_moved_undeclared.get(n, 0) + 1
         missed = 0
-        for r in b.regs:
-            missed |= lb[r] & ~(mt.get(r, 0) or 0) & b.mask
+        for r in scored:
+            w = b.flag_width(r) if r in b.flag_src else b.bits
+            missed |= lb.get(r, 0) & ~(mt.get(r, 0) or 0) & ((1 << w) - 1)
         if missed:
             rep = {
                 'arch': b.label, 'asm': asm, 'bytes': code.hex(),
@@ -379,8 +480,13 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
     for a, cnt in sorted(dead.items()):
         print(f'[{b.label}]   *** {a!r}: 0 of {cnt} cases could be executed, so '
               f'this form is UNTESTED ***', flush=True)
+    if flag_moved_undeclared:
+        print(f'[{b.label}]   flags the oracle moved but the lift does not '
+              f'declare (excluded from scoring, see defined_flags): '
+              f'{dict(sorted(flag_moved_undeclared.items()))}', flush=True)
     return done, len(reports), {
         'attempted': done, 'compared': compared,
+        'flag_moved_undeclared': dict(sorted(flag_moved_undeclared.items())),
         'skipped_oracle': skipped_oracle, 'skipped_mt': skipped_mt,
         'no_gt_taint': no_gt_taint, 'effective': effective,
         'reports': len(reports),
@@ -388,8 +494,9 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
         'quarantined_forms': sorted(quarantined),
         # Recorded so a reader of the JSON cannot mistake the scope either.
         'scored_registers': list(b.regs),
-        'scored_flags': [],
-        'flags_declared_not_scored': [n for n, _ in b.flag_regs],
+        'scored_flags': [n for n, _ in b.flag_regs],
+        'flag_scoring': ('per-instruction, only flags the lift defines'
+                         if _written_flags else 'UNAVAILABLE'),
         'per_form': dict(sorted(per_form.items())),
     }
 
@@ -489,10 +596,17 @@ def main():
             # class.  Flags ARE scored, on all five ISAs and with the
             # undefined-flag exclusions that requires, by the Table 5 campaign
             # in table5/; this pass is the fast smoke gate, not that experiment.
+            _fl = [n for n, _ in b.flag_regs]
             print(f'[{b.label}]   SCOPE: comparing {len(b.regs)} GPR(s) '
-                  f'({", ".join(b.regs)}); flags are NOT compared by this pass '
-                  f'(see rq6-generalisation/table5/ for the flag-scoring '
-                  f'campaign)', flush=True)
+                  f'({", ".join(b.regs)}) and {len(_fl)} flag(s) '
+                  f'({", ".join(_fl) or "none in this ISA"}); per instruction, '
+                  f'only the flags its lift DEFINES are scored',
+                  flush=True)
+            if _fl and _written_flags is None:
+                print(f'[{b.label}]   *** flags are declared but CANNOT be '
+                      f'scored: {_WRITTEN_FLAGS_ERR} -- without the '
+                      f'undefined-flag discriminator, scoring them would report '
+                      f'a correct engine as unsound ***', flush=True)
             _done, _nrep, _cov = pass1_arch(
                 b, args.n, args.seed + i, f'{args.out}_{k}.jsonl')
             coverage[b.label] = _cov

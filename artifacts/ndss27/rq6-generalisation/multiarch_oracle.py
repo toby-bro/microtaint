@@ -124,6 +124,14 @@ class IsaSpec:
     # result -- a spurious under-taint (`sra` was 1211/1500 non-canonical, 0/1500
     # canonical).  Set to 32 for MIPS64 so seeds/taint stay in the defined regime.
     canonical_word_bits: int | None = None
+    #: How to read/write each modelled flag: name -> (uc_reg_id, bit_offset).
+    #: `flag_regs` alone says a flag EXISTS and how wide it is; without this the
+    #: oracle could not observe it, so _Runner returned only GPRs and no flag was
+    #: ever compared on any ISA.
+    flag_src: dict[str, tuple[int, int]] = field(default_factory=dict)
+    #: Bits that must be set in the flags register for a legal CPU state
+    #: (x86 EFLAGS bit 1 is reserved-and-always-1).
+    flag_base: dict[int, int] = field(default_factory=dict)
 
     @property
     def mask(self) -> int:
@@ -157,6 +165,12 @@ class IsaSpec:
 
         return ({r: _sx(v) for r, v in state.items()},
                 {r: _sxt(t) for r, t in taint.items()})
+
+    def flag_width(self, name: str) -> int:
+        for n, b in self.flag_regs:
+            if n == name:
+                return b
+        return 1
 
     def state_format(self) -> list[Register]:
         return [Register(r, self.bits) for r in self.regs] + [
@@ -217,11 +231,20 @@ def _ppc() -> IsaSpec:
         uc_mode=UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN,
         regs=gpr,
         uc_regs=uc_regs,
-        # PPC XER carry/overflow + CR0..CR7 condition fields.
-        flag_regs=(
-            [('XER_SO', 1), ('XER_OV', 1), ('XER_CA', 1)]
-            + [(f'CR{i}', 4) for i in range(8)]
-        ),
+        # CR0..CR7 only.  XER_SO/OV/CA are EXCLUDED because Unicorn's PPC does
+        # not model XER: measured, 0xffffffff+1 leaves XER at 0 and `adde`
+        # ignores CA, so the oracle cannot ground-truth a PPC carry and scoring
+        # it would measure Unicorn rather than the engine.
+        # LOWERCASE cr0..cr7: that is what SLEIGH names them, and written_flags
+        # matches the lift's output names exactly.  Spelled CR0 the lift reported
+        # no flag as written, so defined_flags came back empty and every PPC flag
+        # was silently excluded from scoring even though the oracle could see
+        # CR0 move.  The engine's evaluate() accepts either spelling, which is
+        # what made this look like it worked.
+        flag_regs=[(f'cr{i}', 4) for i in range(8)],
+        flag_src={
+            f'cr{i}': (getattr(uc_ppc, f'UC_PPC_REG_CR{i}'), 0) for i in range(8)
+        },
         prog=[
             ('add 3, 4, 5', 'R3', ['R4', 'R5']),
             ('subf 3, 4, 5', 'R3', ['R4', 'R5']),   # rD = rB - rA
@@ -237,6 +260,16 @@ def _ppc() -> IsaSpec:
             ('neg 3, 4', 'R3', ['R4']),
             ('extsb 3, 4', 'R3', ['R4']),     # sign-extend byte
             ('cntlzw 3, 4', 'R3', ['R4']),
+            # Record-form (.) instructions, which write CR0.  Without them the
+            # corpus never wrote any condition field, so the eight CR registers
+            # were modelled and never exercised.
+            ('add. 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('subf. 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('and. 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('or. 3, 4, 5', 'R3', ['R4', 'R5']),
+            ('neg. 3, 4', 'R3', ['R4']),
+            ('cmpw 0, 4, 5', 'R3', ['R4', 'R5']),
+            ('cmplw 0, 4, 5', 'R3', ['R4', 'R5']),
         ],
     )
 
@@ -253,7 +286,16 @@ def _arm64() -> IsaSpec:
         uc_mode=UC_MODE_ARM,
         regs=gpr,
         uc_regs=uc_regs,
-        flag_regs=[('N', 1), ('Z', 1), ('C', 1), ('V', 1)],  # ARM64 NZCV
+        # NG/ZR/CY/OV are what the ENGINE calls these, verified by probing it.
+        # This said N/Z/C/V, names the engine never writes, so scoring them would
+        # have read every ARM64 flag as a 100% under-taint.
+        flag_regs=[('NG', 1), ('ZR', 1), ('CY', 1), ('OV', 1)],
+        flag_src={
+            'NG': (uc_arm64.UC_ARM64_REG_NZCV, 31),
+            'ZR': (uc_arm64.UC_ARM64_REG_NZCV, 30),
+            'CY': (uc_arm64.UC_ARM64_REG_NZCV, 29),
+            'OV': (uc_arm64.UC_ARM64_REG_NZCV, 28),
+        },
         prog=[
             ('add x0, x1, x2', 'X0', ['X1', 'X2']),
             ('sub x0, x1, x2', 'X0', ['X1', 'X2']),
@@ -271,6 +313,19 @@ def _arm64() -> IsaSpec:
             ('clz x0, x1', 'X0', ['X1']),
             ('rbit x0, x1', 'X0', ['X1']),       # bit reverse -- pure routing
             ('rev x0, x1', 'X0', ['X1']),        # byte reverse
+            # Flag-SETTING forms.  Without these the corpus never wrote NZCV at
+            # all, so scoring the flags would have measured nothing: every
+            # `add`/`sub`/`and` above is the non-flag-setting encoding.
+            ('adds x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('subs x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('ands x0, x1, x2', 'X0', ['X1', 'X2']),
+            ('cmp x1, x2', 'X0', ['X1', 'X2']),
+            # Flag-CONSUMING: CY is an INPUT, so it is listed as a source and
+            # gets tainted.  This is the direction that catches an engine which
+            # drops a carry on the way IN.
+            ('adc x0, x1, x2', 'X0', ['X1', 'X2', 'CY']),
+            ('sbc x0, x1, x2', 'X0', ['X1', 'X2', 'CY']),
+            ('csel x0, x1, x2, eq', 'X0', ['X1', 'X2', 'ZR']),
         ],
     )
 
@@ -333,7 +388,27 @@ def _amd64() -> IsaSpec:
         uc_mode=UC_MODE_64,
         regs=gpr,
         uc_regs=uc_regs,
+        # Verified by probing the engine, not assumed: `add rax, rbx` with both
+        # sources fully tainted taints exactly CF, PF, ZF, SF and OF.  AF is
+        # deliberately absent -- Ghidra's x86 SLEIGH does not model it, so the
+        # engine can never produce AF taint and every add/sub would read as a
+        # spurious under-taint.
+        flag_regs=[('CF', 1), ('PF', 1), ('ZF', 1), ('SF', 1), ('OF', 1)],
+        flag_src={
+            'CF': (uc_x86.UC_X86_REG_EFLAGS, 0),
+            'PF': (uc_x86.UC_X86_REG_EFLAGS, 2),
+            'ZF': (uc_x86.UC_X86_REG_EFLAGS, 6),
+            'SF': (uc_x86.UC_X86_REG_EFLAGS, 7),
+            'OF': (uc_x86.UC_X86_REG_EFLAGS, 11),
+        },
+        flag_base={uc_x86.UC_X86_REG_EFLAGS: 0x2},
         prog=[
+            # Flag-CONSUMING forms first: CF is an INPUT here, so it is a source
+            # and gets tainted.  Nothing in this corpus read a flag before, so
+            # only the flag-PRODUCING direction was ever exercised.
+            ('adc rax, rbx', 'RAX', ['RAX', 'RBX', 'CF']),
+            ('sbb rax, rbx', 'RAX', ['RAX', 'RBX', 'CF']),
+            ('cmovz rax, rbx', 'RAX', ['RAX', 'RBX', 'ZF']),
             ('add rax, rbx', 'RAX', ['RAX', 'RBX']),
             ('sub rax, rbx', 'RAX', ['RAX', 'RBX']),
             ('and rax, rbx', 'RAX', ['RAX', 'RBX']),
@@ -427,7 +502,20 @@ class _Runner:
         # so the code page is rewritten in case a run modified it.
         uc.mem_write(CODE_ADDR, self.code + b'\x00' * 16)
         for r, v in state.items():
-            uc.reg_write(spec.uc_regs[r], v & spec.mask)
+            if r in spec.uc_regs:
+                uc.reg_write(spec.uc_regs[r], v & spec.mask)
+        # Flags are INPUTS too: `adc`, `sbb` and every conditional form read
+        # them, so seeding them is what makes a flag-consuming instruction
+        # testable at all.  Several flags can share one status register, so they
+        # are assembled before writing.
+        if spec.flag_src:
+            acc: dict[int, int] = dict(spec.flag_base)
+            for name, (rid, off) in spec.flag_src.items():
+                width = spec.flag_width(name)
+                v = state.get(name, 0) & ((1 << width) - 1)
+                acc[rid] = acc.get(rid, 0) | (v << off)
+            for rid, v in acc.items():
+                uc.reg_write(rid, v)
         self._last[0] = 0
         try:
             uc.emu_start(CODE_ADDR, self._end)
@@ -437,7 +525,17 @@ class _Runner:
             raise CaseInvalid(
                 f'execution stopped at {self._last[0]:#x}, expected {self._end:#x}',
             )
-        return {r: uc.reg_read(spec.uc_regs[r]) & spec.mask for r in spec.regs}
+        out = {r: uc.reg_read(spec.uc_regs[r]) & spec.mask for r in spec.regs}
+        # ...and OUTPUTS.  Returning only spec.regs is why no flag was ever
+        # compared on any ISA, so "0 under-taints" meant "0 in the destination
+        # GPR" -- in a project whose entire x86 bug class was flag carries.
+        cache: dict[int, int] = {}
+        for name, (rid, off) in spec.flag_src.items():
+            if rid not in cache:
+                cache[rid] = uc.reg_read(rid)
+            width = spec.flag_width(name)
+            out[name] = (cache[rid] >> off) & ((1 << width) - 1)
+        return out
 
 
 def bitflip_lower_bound(spec: IsaSpec, code: bytes, state: dict[str, int], taint: dict[str, int]) -> dict[str, int]:
@@ -451,7 +549,11 @@ def bitflip_lower_bound(spec: IsaSpec, code: bytes, state: dict[str, int], taint
     """
     runner = _Runner(spec, code)
     base = runner.run(state)
-    lb = dict.fromkeys(spec.regs, 0)
+    # Flags are scored on BOTH sides now: as taint sources whose bits get
+    # flipped, and as outputs whose movement is accumulated.
+    flags = [n for n, _ in spec.flag_regs]
+    scored = [*spec.regs, *flags]
+    lb = dict.fromkeys(scored, 0)
     # Only the BASE state was projected into the architecturally-defined regime;
     # nothing re-projected the FLIPPED one.  MIPS64 32-bit ops are defined only
     # on sign-extended words, so flipping bit 31 left bits 32-63 carrying the OLD
@@ -468,17 +570,22 @@ def bitflip_lower_bound(spec: IsaSpec, code: bytes, state: dict[str, int], taint
         _low = (1 << w) - 1
         _sign = 1 << (w - 1)
         _high = spec.mask ^ _low
-    for r in spec.regs:
-        for b in range(spec.bits):
+    for r in scored:
+        is_flag = r in spec.flag_src
+        width = spec.flag_width(r) if is_flag else spec.bits
+        for b in range(width):
             if (taint.get(r, 0) >> b) & 1:
                 s2 = dict(state)
-                v = (s2[r] ^ (1 << b)) & spec.mask
-                if _narrow:
-                    v &= _low
-                    v = v | _high if v & _sign else v
-                s2[r] = v
+                if is_flag:
+                    s2[r] = s2.get(r, 0) ^ (1 << b)
+                else:
+                    v = (s2[r] ^ (1 << b)) & spec.mask
+                    if _narrow:
+                        v &= _low
+                        v = v | _high if v & _sign else v
+                    s2[r] = v
                 out = runner.run(s2)
-                for rr in spec.regs:
+                for rr in scored:
                     lb[rr] |= base[rr] ^ out[rr]
     return lb
 
