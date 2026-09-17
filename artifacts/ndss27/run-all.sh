@@ -8,6 +8,12 @@
 #                                the paper's numbers and must not be quoted.
 #   ./run-all.sh --no-baselines  skip RQ1 and RQ2, the only steps that need the
 #                                other engines installed.
+#   ./run-all.sh --microtaint-only
+#                                run RQ2/3/4 for this engine alone, without the
+#                                other engines and without the ground-truth
+#                                oracle.  Re-checks THIS engine cheaply; the
+#                                comparison columns are absent by construction
+#                                and the run is marked as not quotable.
 #
 # Each experiment writes its raw output under results/<rq>/ and appends a verdict
 # to results/SUMMARY.md.  Nothing here deletes a previous run: results are
@@ -36,6 +42,7 @@ for a in "$@"; do
   case "$a" in
     --quick)        QUICK=1 ;;
     --no-baselines) BASELINES=0 ;;
+    --microtaint-only) MTONLY=1 ;;
     -h|--help)      sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
@@ -52,6 +59,18 @@ else
   RQ2_ARGS=(--number 7500 --sequences 1000 --sweep)
   RQ6_N=1000000
   MODE='full (the paper corpus)'
+fi
+
+# --microtaint-only: run RQ2/3/4 for THIS engine alone, with no ground-truth
+# oracle.  RQ2 otherwise needs angr, Maat, Triton, PANDA, taintgrind and
+# libdft64 all installed, and the 2^k oracle is the slowest part of the pass.
+# This keeps the experiment runnable for a reviewer who has none of the other
+# engines, and makes re-checking THIS engine after a change cheap.  The
+# comparison columns are absent by construction, so the run is explicitly
+# marked: it cannot be quoted as the cross-engine result.
+if [ "${MTONLY:-0}" = 1 ]; then
+  RQ2_ARGS+=(--workers microtaint --no-ground-truth)
+  MODE="$MODE, microtaint only (no baselines, no oracle: NOT the comparison)"
 fi
 
 {
