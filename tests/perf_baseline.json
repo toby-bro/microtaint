@@ -48,7 +48,7 @@
     "IMUL r32,r32,imm8": {
       "assigns": 4,
       "cells": 1,
-      "nodes": 54
+      "nodes": 64
     },
     "IMUL r64,r64,imm32": {
       "assigns": 3,
@@ -1368,7 +1368,7 @@
     "imul ax, 0x7f": {
       "assigns": 3,
       "cells": 1,
-      "nodes": 52
+      "nodes": 62
     },
     "imul ax, bx": {
       "assigns": 3,
@@ -1378,7 +1378,7 @@
     "imul eax, 0xffff": {
       "assigns": 4,
       "cells": 1,
-      "nodes": 54
+      "nodes": 64
     },
     "imul eax, ebx": {
       "assigns": 4,
@@ -1463,12 +1463,12 @@
     "lea eax, [ebx + ecx*8]": {
       "assigns": 2,
       "cells": 2,
-      "nodes": 80
+      "nodes": 82
     },
     "lea rax, [rbx + rcx*4 + 8]": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "lzcnt ax, bx": {
       "assigns": 3,
@@ -1568,7 +1568,7 @@
     "mul eax": {
       "assigns": 6,
       "cells": 0,
-      "nodes": 8
+      "nodes": 18
     },
     "mul ebx": {
       "assigns": 6,
@@ -2987,7 +2987,7 @@
     "add x0, x1, w2, sxth #1": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 430
+      "nodes": 431
     },
     "add x0, x1, w2, uxtb": {
       "assigns": 1,
@@ -2997,12 +2997,12 @@
     "add x0, x1, w2, uxtb #2": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "add x0, x1, w2, uxth #2": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "add x0, x1, x2": {
       "assigns": 1,
@@ -3012,42 +3012,42 @@
     "add x0, x1, x2, asr #1": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 39
+      "nodes": 40
     },
     "add x0, x1, x2, asr #5": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 83
+      "nodes": 84
     },
     "add x0, x1, x2, lsl #1": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "add x0, x1, x2, lsl #3": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "add x0, x1, x2, lsl #7": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "add x0, x1, x2, lsr #32": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "add x0, x1, x2, lsr #4": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "add x0, x1, x2, lsr #7": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "adds w0, w1, w2": {
       "assigns": 1,
@@ -3072,7 +3072,7 @@
     "adds x0, x1, w2, uxtb #2": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "adds x0, x1, x2": {
       "assigns": 1,
@@ -3082,47 +3082,47 @@
     "adds x0, x1, x2, asr #1": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 39
+      "nodes": 40
     },
     "adds x0, x1, x2, asr #5": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 83
+      "nodes": 84
     },
     "adds x0, x1, x2, lsl #1": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "adds x0, x1, x2, lsl #2": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "adds x0, x1, x2, lsl #3": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "adds x0, x1, x2, lsl #7": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "adds x0, x1, x2, lsr #3": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "adds x0, x1, x2, lsr #32": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "adds x0, x1, x2, lsr #4": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "and w0, w1, w2": {
       "assigns": 1,
@@ -4202,7 +4202,7 @@
     "neg x1, x2, lsl #3": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 528
+      "nodes": 535
     },
     "negs w0, w1": {
       "assigns": 1,
@@ -4222,7 +4222,7 @@
     "negs x1, x2, lsl #3": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 528
+      "nodes": 535
     },
     "ngc w0, w1": {
       "assigns": 1,
@@ -4517,7 +4517,7 @@
     "sbfm x0, x1, #16, #16": {
       "assigns": 1,
       "cells": 0,
-      "nodes": 2
+      "nodes": 9
     },
     "sbfm x0, x1, #4, #10": {
       "assigns": 1,
@@ -4527,7 +4527,7 @@
     "sbfm x0, x1, #8, #8": {
       "assigns": 1,
       "cells": 0,
-      "nodes": 2
+      "nodes": 9
     },
     "sbfx x0, x1, #16, #16": {
       "assigns": 1,
@@ -4662,7 +4662,7 @@
     "sub x0, x1, w2, uxtw #3": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "sub x0, x1, x2": {
       "assigns": 1,
@@ -4672,37 +4672,37 @@
     "sub x0, x1, x2, asr #1": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 39
+      "nodes": 40
     },
     "sub x0, x1, x2, asr #5": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 83
+      "nodes": 84
     },
     "sub x0, x1, x2, lsl #1": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "sub x0, x1, x2, lsl #3": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "sub x0, x1, x2, lsl #7": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "sub x0, x1, x2, lsr #32": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "sub x0, x1, x2, lsr #4": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "subs w0, w1, w2": {
       "assigns": 1,
@@ -4722,42 +4722,42 @@
     "subs x0, x1, x2, asr #1": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 39
+      "nodes": 40
     },
     "subs x0, x1, x2, asr #4": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 59
+      "nodes": 60
     },
     "subs x0, x1, x2, asr #5": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 83
+      "nodes": 84
     },
     "subs x0, x1, x2, lsl #1": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "subs x0, x1, x2, lsl #3": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "subs x0, x1, x2, lsl #7": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 37
+      "nodes": 38
     },
     "subs x0, x1, x2, lsr #32": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "subs x0, x1, x2, lsr #4": {
       "assigns": 1,
       "cells": 2,
-      "nodes": 35
+      "nodes": 36
     },
     "sxtb w0, w1": {
       "assigns": 1,
@@ -7860,7 +7860,7 @@
   },
   "_meta": {
     "description": "Deterministic per-instruction taint-prop work. RATCHET: values only ever decrease. Regenerate with UPDATE_PERF_BASELINE=1 (add PERF_ALLOW_REGRESSION=1 to permit an intentional increase).",
-    "generated": "2026-09-12T12:01:50.815769+00:00",
+    "generated": "2026-09-17T11:44:30.980885+00:00",
     "metrics": {
       "assigns": "top-level taint assignments emitted by the rule",
       "cells": "native cell re-executions per evaluate",

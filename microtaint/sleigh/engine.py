@@ -43,6 +43,8 @@ from microtaint.sleigh.partition import (
     ALG_ARITH,
     ALG_BITWISE,
     find_waist,
+    multiply_overflow_flag,
+    relocates_bits,
     varnode_taint_expr,
     waist_taint_expr,
 )
@@ -4063,6 +4065,35 @@ def generate_taint_assignments(  # noqa: C901
                     for _t in _floor_terms[1:]:
                         _fl = BinaryExpr(Op.OR, _fl, _t)
                     _w = out_bit_end - out_bit_start + 1
+                    # A CARRY IS NOT POSITIONAL.  Placing the floor at the right
+                    # bit positions is necessary and not sufficient: in a
+                    # carry-coupled downstream a tainted bit at position i can
+                    # move every position ABOVE i, so a union of positions still
+                    # under-taints.  `lea rax,[rbx+rcx*4+8]` with RBX bits 2 and
+                    # 3 tainted is the case: the union covers bits 2 and 3, the
+                    # carry out of bit 3 reaches bit 4, and nothing covered it.
+                    #
+                    # Smear upward by doubling, which is the same construction
+                    # the negate-through-shift borrow floor already uses; that
+                    # floor was written for INT_2COMP alone and every sibling
+                    # arithmetic opcode was left with the positional union.
+                    #
+                    # Gated on an ARITHMETIC downstream, so a bitwise downstream
+                    # (`bic x0,x1,x2,lsl #1`), which has no carry, keeps the
+                    # exact positional floor and its precision.
+                    if _waist.downstream_algebra == ALG_ARITH and relocates_bits(
+                            _waist.upstream):
+                        # ONE node, not a doubling tree.  `OR(x, LEFT(x, k))`
+                        # repeated log2(w) times duplicates the subtree each
+                        # round, so the floor cost 2^6 copies of its operand:
+                        # measured 37 -> 667 nodes on the shifted-add forms and
+                        # 430 -> 25,252 on `add x0,x1,w2,sxth #1`, which pushed
+                        # that instruction off the C fast path entirely.  The
+                        # AST has no sharing, so any OR/LEFT smear costs
+                        # O(width x |expr|); a dedicated node is the only shape
+                        # that is O(1), and AvalancheExpr is the one the
+                        # compiled stack already knows how to emit.
+                        _fl = AvalancheExpr(_fl, _w)
                     if _w < 64:
                         _fl = BinaryExpr(Op.AND, _fl, Constant((1 << _w) - 1, 8))
                     expr = BinaryExpr(Op.OR, expr, _fl)
@@ -4473,20 +4504,27 @@ def generate_taint_assignments(  # noqa: C901
     # overflows at BOTH sign extremes -- so the 2-corner differential cancels
     # while an interior value differs (measured: `imul rax, 3` CF, 1 in 2.4 M).
     #
-    # Gated on a product WIDER than 64 bits.  The <=32-bit forms multiply into a
-    # product the differential handles (0 under-taints at 46-85% exact in the
-    # campaign) and must keep that precision; only the 64-bit forms build a
-    # 128-bit product that neither the differential nor the uint64 compiled stack
-    # can represent, and those already avalanche their RESULT (0.0% exact), so
-    # flooring the 1-bit flag costs about one bit per case.
+    # Gated on the SHAPE of the predicate, not on the product's width.  It was
+    # gated on "product wider than 64 bits", justified by campaign evidence that
+    # the <=32-bit forms had 0 under-taints across 4,480+ cases each.  That
+    # evidence came from an oracle which cleared the tainted bits before probing
+    # and so could not have produced a counterexample: re-running the same corpus
+    # against an oracle that flips each tainted bit against the REAL state found
+    # `imul ax, 0x7f` under-tainting CF in 2 of 320 cases.  A gate confirmed by a
+    # test that cannot fail is not confirmed.
+    #
+    # The width was always incidental.  All three widths lift to the identical
+    # non-monotone predicate, differing only in the product varnode's size, so
+    # `multiply_overflow_flag` matches the predicate itself and covers both the
+    # signed and unsigned spellings.  Over the x86 corpus this newly floors 7
+    # forms (imul ax/eax, mul eax/ebx/r8d), each costing about one bit on a
+    # 1-bit flag.  `mulx` writes no flags at all, so it has no 1-bit slice and is
+    # unaffected either way; tests/test_imul_carry_undertaint.py pins that.
     if (
         not is_store_target
         and not isinstance(mapping, MemMapping)
         and out_bit_end == out_bit_start
-        and any(
-            o.opcode.name == 'INT_MULT' and o.output is not None and o.output.size > 8
-            for o in slice_ops
-        )
+        and multiply_overflow_flag(slice_ops)
         # ...and only ONE register value-dep.  With two, the symmetric-comparison
         # floor's pairwise-avalanche regime already fires and this adds nothing:
         # `imul rax, rbx` measured 0 under-taints and byte-identical taint output

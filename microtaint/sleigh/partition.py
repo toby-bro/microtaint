@@ -161,6 +161,73 @@ def _is_pow2_scale(op: PcodeOp, folded: dict[tuple[str, int, int], int]) -> int 
     return None
 
 
+def relocates_bits(ops: list[PcodeOp]) -> bool:
+    """True when `ops` MOVE bit positions, rather than merely passing them on.
+
+    A carry floor is owed because a shift has moved the tainted bits out from
+    under the differential's coverage.  A shift of ZERO moves nothing, and
+    SLEIGH spells an unscaled x86 index as `RCX * 0x1`, which `_is_pow2_scale`
+    reports as a shift by 0.  Without this distinction `lea rax,[rbx+rcx]` looks
+    like a fused shift-and-add and takes a carry smear it does not need, which
+    turned an exact answer into an all-ones mask.
+    """
+    folded = fold_constants(ops)
+    for op in _drop_constant_ops(ops):
+        k = _is_pow2_scale(op, folded)
+        if k:                       # pow2 multiply by more than 1
+            return True
+        if op.opcode.name in ('INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT'):
+            amt = const_value(op.inputs[1], folded) if len(op.inputs) > 1 else None
+            if amt is None or amt != 0:
+                return True         # unknown amount: assume it relocates
+    return False
+
+
+def multiply_overflow_flag(ops: list[PcodeOp]) -> bool:
+    """True when `ops` compute a flag from "the product did not fit".
+
+    Both spellings of the overflow predicate, recognised by SHAPE rather than by
+    width, because the width is incidental and gating on it is what left the
+    narrow forms unfloored:
+
+        signed   (imul):  CF = sext(SUBPIECE(P, 0)) != P
+        unsigned (mul):   hi = SUBPIECE(P, w);  CF = hi != 0
+
+    Both compare something DERIVED from a multiply's full product, so the test is
+    "a comparison one of whose operands traces back to an INT_MULT output through
+    truncation, copy or extension".  That is the non-monotone predicate itself,
+    which is the thing the 2-corner differential cannot see: a signed product
+    overflows at BOTH sign extremes, so the two corners cancel while an interior
+    value differs.
+
+    Over-inclusion is a precision cost and under-inclusion is a soundness bug, so
+    the closure is deliberately generous about how the product reaches the
+    comparison.
+    """
+    prods = {_key(o.output) for o in ops
+             if o.opcode.name == 'INT_MULT' and o.output is not None}
+    if not prods:
+        return False
+    derived = set(prods)
+    changed = True
+    while changed:
+        changed = False
+        for o in ops:
+            if o.output is None:
+                continue
+            if o.opcode.name in ('SUBPIECE', 'COPY', 'INT_SEXT', 'INT_ZEXT') and any(
+                    _key(i) in derived for i in o.inputs):
+                k = _key(o.output)
+                if k not in derived:
+                    derived.add(k)
+                    changed = True
+    return any(
+        o.opcode.name in ('INT_NOTEQUAL', 'INT_EQUAL')
+        and any(_key(i) in derived for i in o.inputs)
+        for o in ops
+    )
+
+
 def _algebra_of(ops: list[PcodeOp]) -> str | None:
     """The single algebra a segment belongs to, or None if it is mixed/unknown.
 
@@ -184,6 +251,20 @@ def _algebra_of(ops: list[PcodeOp]) -> str | None:
 
 def _does_work(ops: list[PcodeOp]) -> bool:
     return any(op.opcode.name not in ROUTING_OPCODES for op in _drop_constant_ops(ops))
+
+
+def _consumes_in_work(ops: list[PcodeOp], vn: Varnode) -> bool:
+    """True when a non-routing op in `ops` reads `vn` as a data operand.
+
+    Stands in for the downstream register read in condition (B).  A segment that
+    only routes the conduit onward (COPY/SUBPIECE) is plumbing; one that feeds it
+    to arithmetic is a second operation even when its other operand is a literal.
+    """
+    return any(
+        op.opcode.name not in ROUTING_OPCODES
+        and any(_overlaps(inp, vn) for inp in op.inputs if inp.space.name != 'const')
+        for op in _drop_constant_ops(ops)
+    )
 
 
 def _register_reads(ops: list[PcodeOp]) -> set[tuple[int, int]]:
@@ -285,13 +366,25 @@ def find_waist(
             continue
 
         # (B) both sides are genuine operations on data, not plumbing and not
-        # constant folding.  The register-read requirement is what rejects
-        # SLEIGH's rotate lifting, where the shift *amount* is computed as
-        # INT_SUB(64, 7): that is an arithmetic op reading no register, so
-        # without this check `ror`/`ubfx`/`extr` and RISC-V's shift-amount
-        # masking would all read as a fused arith->bitwise pair and a single
-        # rotate primitive would be split in half.
-        if not up_regs or not down_regs:
+        # constant folding.  The UPSTREAM register-read requirement is what
+        # rejects SLEIGH's rotate lifting, where the shift *amount* is computed
+        # as INT_SUB(64, 7): that is an arithmetic op reading no register, so
+        # without it `ror`/`ubfx`/`extr` and RISC-V's shift-amount masking would
+        # all read as a fused arith->bitwise pair and a single rotate primitive
+        # would be split in half.
+        if not up_regs:
+            continue
+        # The DOWNSTREAM does not owe a register read.  Requiring one conflated
+        # two different things: an op that COMPUTES a constant, which is
+        # plumbing and is already removed by _drop_constant_ops, and an op that
+        # ADDS a constant to tainted data, which is real work with a real carry
+        # chain.  `lea rax,[rcx*4+8]` is the second: its downstream is
+        # `0x8 + unique`, reading only the conduit and a constant, so no waist
+        # was found, no floor was placed, and the carry out of the shifted bits
+        # was covered by nothing but the 2-corner differential.  What the
+        # downstream must do is consume the CONDUIT in a non-routing op, which
+        # is the property the register read was standing in for.
+        if not down_regs and not _consumes_in_work(downstream, vn):
             continue
         if not (_does_work(upstream) and _does_work(downstream)):
             continue
