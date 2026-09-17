@@ -126,7 +126,13 @@ run_detector() {  # run_detector <rq> <dir> <kind> <cmd...>
   local rq=$1 dir=$2 kind=$3; shift 3
   log "$rq"
   _prepare "$rq" "$dir" || return 0
-  ( cd "$HERE/$dir" && "$@" ) >"$OUT/$rq/stdout.txt" 2>"$OUT/$rq/stderr.txt"
+  # stdin from /dev/null.  The guests read stdin, and rq7-uaf is invoked without
+  # --input, so with an inherited stdin it BLOCKS FOREVER waiting for a read
+  # that never completes: measured on a compute node, 0 bytes of output and 0%
+  # CPU after 21 minutes, while the same command with </dev/null finishes in a
+  # second and reports its finding.  An artifact that hangs at step four of RQ7
+  # is worse than one that fails there.
+  ( cd "$HERE/$dir" && "$@" ) >"$OUT/$rq/stdout.txt" 2>"$OUT/$rq/stderr.txt" </dev/null
   local rc=$?
   local n
   n=$(python3 - "$OUT/$rq/stdout.txt" "$kind" <<'PYEOF'
