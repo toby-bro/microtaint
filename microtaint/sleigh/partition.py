@@ -298,6 +298,76 @@ def _backward_cone(ops: list[PcodeOp], target: Varnode) -> list[PcodeOp]:
     return cone
 
 
+def _waist_at(
+    slice_ops: list[PcodeOp],
+    vn: Varnode,
+    require_distinct_algebra: bool,
+    require_disjoint_inputs: bool,
+) -> Waist | None:
+    """The waist cut at one candidate conduit, or None if it fails a condition.
+
+    Split out of `find_waist` so each condition reads as its own early
+    return rather than as one more branch in a loop that had grown past
+    what a reader can hold at once.
+    """
+    upstream = _backward_cone(slice_ops, vn)
+    downstream = [op for op in slice_ops if op not in upstream]
+    if not upstream or not downstream:
+        return None
+
+    # (A1) `vn` is the sole conduit: no downstream op may read any other
+    # value defined upstream, or the cut would not separate the dataflow.
+    up_outs = [o.output for o in upstream if o.output is not None]
+    leaks = any(
+        any(_overlaps(inp, uo) for uo in up_outs) and not _overlaps(inp, vn)
+        for op in downstream
+        for inp in op.inputs
+        if inp.space.name != 'const'
+    )
+    if leaks:
+        return None
+
+    # (A2) disjoint architectural inputs -- the losslessness condition.
+    up_regs = _register_reads(upstream)
+    down_regs = _register_reads(downstream)
+    if require_disjoint_inputs and (up_regs & down_regs):
+        return None
+
+    # (B) both sides are genuine operations on data, not plumbing and not
+    # constant folding.  The UPSTREAM register-read requirement is what
+    # rejects SLEIGH's rotate lifting, where the shift *amount* is computed
+    # as INT_SUB(64, 7): that is an arithmetic op reading no register, so
+    # without it `ror`/`ubfx`/`extr` and RISC-V's shift-amount masking would
+    # all read as a fused arith->bitwise pair and a single rotate primitive
+    # would be split in half.
+    if not up_regs:
+        return None
+    # The DOWNSTREAM does not owe a register read.  Requiring one conflated
+    # two different things: an op that COMPUTES a constant, which is
+    # plumbing and is already removed by _drop_constant_ops, and an op that
+    # ADDS a constant to tainted data, which is real work with a real carry
+    # chain.  `lea rax,[rcx*4+8]` is the second: its downstream is
+    # `0x8 + unique`, reading only the conduit and a constant, so no waist
+    # was found, no floor was placed, and the carry out of the shifted bits
+    # was covered by nothing but the 2-corner differential.  What the
+    # downstream must do is consume the CONDUIT in a non-routing op, which
+    # is the property the register read was standing in for.
+    if not down_regs and not _consumes_in_work(downstream, vn):
+        return None
+    if not (_does_work(upstream) and _does_work(downstream)):
+        return None
+
+    # (C) different taint algebras -- otherwise one regime composes them.
+    up_alg = _algebra_of(upstream)
+    down_alg = _algebra_of(downstream)
+    if up_alg is None or down_alg is None:
+        return None
+    if require_distinct_algebra and up_alg == down_alg:
+        return None
+
+    return Waist(vn, upstream, downstream, up_alg, down_alg, up_regs, down_regs)
+
+
 def find_waist(
     slice_ops: list[PcodeOp],
     target: Varnode,
@@ -342,62 +412,10 @@ def find_waist(
     ]
 
     for vn in candidates:
-        upstream = _backward_cone(slice_ops, vn)
-        downstream = [op for op in slice_ops if op not in upstream]
-        if not upstream or not downstream:
-            continue
-
-        # (A1) `vn` is the sole conduit: no downstream op may read any other
-        # value defined upstream, or the cut would not separate the dataflow.
-        up_outs = [o.output for o in upstream if o.output is not None]
-        leaks = any(
-            any(_overlaps(inp, uo) for uo in up_outs) and not _overlaps(inp, vn)
-            for op in downstream
-            for inp in op.inputs
-            if inp.space.name != 'const'
-        )
-        if leaks:
-            continue
-
-        # (A2) disjoint architectural inputs -- the losslessness condition.
-        up_regs = _register_reads(upstream)
-        down_regs = _register_reads(downstream)
-        if require_disjoint_inputs and (up_regs & down_regs):
-            continue
-
-        # (B) both sides are genuine operations on data, not plumbing and not
-        # constant folding.  The UPSTREAM register-read requirement is what
-        # rejects SLEIGH's rotate lifting, where the shift *amount* is computed
-        # as INT_SUB(64, 7): that is an arithmetic op reading no register, so
-        # without it `ror`/`ubfx`/`extr` and RISC-V's shift-amount masking would
-        # all read as a fused arith->bitwise pair and a single rotate primitive
-        # would be split in half.
-        if not up_regs:
-            continue
-        # The DOWNSTREAM does not owe a register read.  Requiring one conflated
-        # two different things: an op that COMPUTES a constant, which is
-        # plumbing and is already removed by _drop_constant_ops, and an op that
-        # ADDS a constant to tainted data, which is real work with a real carry
-        # chain.  `lea rax,[rcx*4+8]` is the second: its downstream is
-        # `0x8 + unique`, reading only the conduit and a constant, so no waist
-        # was found, no floor was placed, and the carry out of the shifted bits
-        # was covered by nothing but the 2-corner differential.  What the
-        # downstream must do is consume the CONDUIT in a non-routing op, which
-        # is the property the register read was standing in for.
-        if not down_regs and not _consumes_in_work(downstream, vn):
-            continue
-        if not (_does_work(upstream) and _does_work(downstream)):
-            continue
-
-        # (C) different taint algebras -- otherwise one regime composes them.
-        up_alg = _algebra_of(upstream)
-        down_alg = _algebra_of(downstream)
-        if up_alg is None or down_alg is None:
-            continue
-        if require_distinct_algebra and up_alg == down_alg:
-            continue
-
-        return Waist(vn, upstream, downstream, up_alg, down_alg, up_regs, down_regs)
+        waist = _waist_at(slice_ops, vn, require_distinct_algebra,
+                          require_disjoint_inputs)
+        if waist is not None:
+            return waist
 
     return None
 
