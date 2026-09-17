@@ -125,7 +125,13 @@ def main() -> int:
     cases = []
     for asm, taint, expect, tol in CASES:
         got, nbits = data_avalanche_share(asm, taint)
-        ok = abs(got - expect) <= tol
+        # nbits == 0 means the engine produced NO tainted output bit at all, so
+        # data_avalanche_share returned its 0.0 fallback rather than a measured
+        # share.  Six of the seven cases expect exactly 0.0 with zero tolerance,
+        # so a zero-taint engine matched six of them and the gate that "must
+        # pass before any number counts" rested on the single imul case.  No
+        # tainted bits means nothing was measured, whatever the percentage says.
+        ok = abs(got - expect) <= tol and nbits > 0
         bad += not ok
         cases.append({
             'asm': asm,
@@ -136,7 +142,8 @@ def main() -> int:
             'bits': nbits,
             'ok': bool(ok),
         })
-        print(f'{asm:16s} {expect:8.1f}% {got:8.1f}% {nbits:6d}   {"OK" if ok else "MISMATCH"}')
+        why = 'OK' if ok else ('NO TAINTED BITS' if nbits == 0 else 'MISMATCH')
+        print(f'{asm:16s} {expect:8.1f}% {got:8.1f}% {nbits:6d}   {why}')
 
     if args.json_out:
         with open(args.json_out, 'w') as fh:

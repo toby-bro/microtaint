@@ -222,6 +222,11 @@ GRANULARITY = {
 # At k=12 the worst-case wall clock per test is bounded much more
 # tightly, which matters for the overall 2-hour benchmark budget.
 GT_BIT_BUDGET = 15
+#: A tool must ANSWER at least this fraction of the cases it was given before
+#: its soundness and exactness rates mean anything.  Below it, the rates are
+#: computed over a self-selected subset: a worker that errors out precisely on
+#: the cases it cannot handle scores 100% on the ones it can.
+GT_MIN_ANSWER_RATE = 0.5
 
 # Registers tracked throughout
 REGISTERS = ['RAX', 'RBX', 'RCX', 'RDX']
@@ -4215,13 +4220,11 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
         for tool, res in entry['tool_results'].items():
             if tool == 'ground_truth':
                 continue
-            if 'error' in res:
-                continue
-            tool_out = res.get('output_taint', {})
             tool_gran = GRANULARITY.get(tool, 'reg')
             if tool not in gt_scoring:
                 gt_scoring[tool] = {
                     'n': 0,  # cases compared
+                    'errored': 0,  # tool refused/failed to answer this case
                     'exact': 0,  # tool == GT exactly (per case)
                     'sound_cases': 0,  # tool >= GT (no under-taint anywhere) per case
                     'unsound_cases': 0,  # tool < GT somewhere
@@ -4236,6 +4239,16 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
                     'jaccard_n': 0,
                 }
             s = gt_scoring[tool]
+            # A tool that ERRORS on a case has not been shown to be sound on it.
+            # Skipping it silently, which is what this did, removes the case from
+            # the denominator and from view: a worker that errored whenever any
+            # bit was tainted scored 100.0% sound, 100.0% exact, 0 unsound, over
+            # 27 of 157 cases, and gen_paper_macros.py emitted that as
+            # \mtSound{100.0}.  Errors are now counted, reported, and gated.
+            if 'error' in res:
+                s['errored'] += 1
+                continue
+            tool_out = res.get('output_taint', {})
             s['n'] += 1
             case_exact = True
             case_unsound = False
@@ -4294,8 +4307,12 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
 
     gt_summary = {}
     for tool, s in gt_scoring.items():
+        attempted = s['n'] + s['errored']
         gt_summary[tool] = {
+            'cases_attempted': attempted,
             'cases_compared': s['n'],
+            'cases_errored': s['errored'],
+            'answer_rate': round(s['n'] / attempted, 4) if attempted else 0,
             'exact_cases': s['exact'],
             'exact_case_rate': round(s['exact'] / s['n'], 4) if s['n'] else 0,
             'sound_cases': s['sound_cases'],
@@ -4440,8 +4457,8 @@ def print_summary(metrics: dict, selected_tools: list[str], reference_tool: str)
         gt_tools = bit_tools + reg_tools
 
         hdr = (
-            f"  {'Tool':<14} {'Sound%':>7} {'Exact%':>7} {'Jaccard':>8}"
-            f" {'OverBits':>9} {'UnderBits':>10} {'Unsound':>8}"
+            f"  {'Tool':<14} {'Cases':>7} {'Err':>6} {'Sound%':>7} {'Exact%':>7}"
+            f" {'Jaccard':>8} {'OverBits':>9} {'UnderBits':>10} {'Unsound':>8}"
         )
         print(hdr)
         print('  ' + '-' * (len(hdr) - 2))
@@ -4452,6 +4469,8 @@ def print_summary(metrics: dict, selected_tools: list[str], reference_tool: str)
             jac = f"{d['mean_jaccard_bit']:.4f}" if d['mean_jaccard_bit'] is not None else '  N/A '
             print(
                 f"  {tool:<14} "
+                f"{d['cases_compared']:>7} "
+                f"{d['cases_errored']:>6} "
                 f"{100*d['soundness_rate']:>6.1f}% "
                 f"{100*d['exact_case_rate']:>6.1f}% "
                 f"{jac:>8} "
@@ -4461,12 +4480,33 @@ def print_summary(metrics: dict, selected_tools: list[str], reference_tool: str)
             )
         print()
         print(
+            '  Cases    = cases the tool actually ANSWERED, the denominator of\n'
+            '             every rate on this row\n'
+            '  Err      = cases it refused or failed to answer.  These are NOT\n'
+            '             evidence of soundness and are excluded from Cases\n'
             '  Sound%   = fraction of cases where tool ⊇ GT (no missed taint)\n'
             '  Exact%   = fraction of cases where tool == GT exactly (per-bit equal)\n'
             '  Jaccard  = mean bit-level set similarity to GT (1.0 = exact)\n'
             '  OverBits = total spurious bits across all (case, register) pairs\n'
             '  UnderBits= total missed bits — must be 0 for a sound tool',
         )
+        # A tool that answered a small minority of its cases has not been
+        # measured, whatever its rates say.  Name it loudly rather than letting
+        # a 100% computed over 17% of the corpus reach a paper macro.
+        thin = [
+            (t, gt['per_tool'][t]) for t in gt_tools
+            if gt['per_tool'].get(t)
+            and (gt['per_tool'][t]['cases_compared'] == 0
+                 or gt['per_tool'][t]['answer_rate'] < GT_MIN_ANSWER_RATE)
+        ]
+        if thin:
+            print()
+            print('  NOT MEASURED, rates above are not supported by the data:')
+            for t, d in thin:
+                print(f"    {t}: answered {d['cases_compared']} of "
+                      f"{d['cases_attempted']} cases "
+                      f"({100 * d['answer_rate']:.1f}%), errored on "
+                      f"{d['cases_errored']}")
 
     print('=' * 72)
 

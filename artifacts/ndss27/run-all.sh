@@ -90,23 +90,45 @@ run() {  # run <rq> <dir> <cmd...>   a normal experiment: 0 is the pass
   return 0
 }
 
-run_detector() {  # run_detector <rq> <dir> <cmd...>
+run_detector() {  # run_detector <rq> <dir> <kind> <cmd...>
   # microtaint's CLI exit code is 0 = no security findings, 1 = at least one,
   # 2 = CLI error.  Each of these four targets contains exactly one planted bug,
-  # so 1 is the expected result and 0 means the detector MISSED it.  Recording
-  # the raw code as a failure, which is what this script used to do, files every
-  # successful detection as a failure; worse, treating 0 as success would make
-  # the artifact go green precisely when the detector stops working.
-  local rq=$1 dir=$2; shift 2
+  # so 1 is the expected result and 0 means the detector MISSED it.
+  #
+  # But the exit code ALONE cannot be trusted: a Python traceback also exits 1.
+  # Reproduced -- pointing the CLI at a non-existent rootfs made it raise before
+  # any analysis, exit 1, print nothing, and file as "PASS finding detected".
+  # Any import error, any uv resolution failure, and _resolve_rootfs on a
+  # non-Linux host do the same, so a macOS reviewer could collect four PASSes
+  # from a detector that never ran once.
+  #
+  # The harness already passes --json and threw the document away.  Read it:
+  # PASS requires a finding OF THE RIGHT KIND to actually be in the summary.
+  local rq=$1 dir=$2 kind=$3; shift 3
   log "$rq"
   _prepare "$rq" "$dir" || return 0
   ( cd "$HERE/$dir" && "$@" ) >"$OUT/$rq/stdout.txt" 2>"$OUT/$rq/stderr.txt"
   local rc=$?
-  case $rc in
-    1) record "$rq" PASS "finding detected" ;;
-    0) record "$rq" FAIL "no finding: the planted bug was MISSED" ;;
-    *) record "$rq" FAIL "harness error, exit $rc, see results/$STAMP/$rq/stderr.txt" ;;
-  esac
+  local n
+  n=$(python3 - "$OUT/$rq/stdout.txt" "$kind" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1]) as fh:
+        doc = json.load(fh)
+    print(int(doc['summary'][sys.argv[2]]))
+except Exception:
+    print(-1)
+PYEOF
+)
+  if [ "$n" -lt 0 ]; then
+    record "$rq" FAIL "no parseable --json output (exit $rc): the detector did not run, see results/$STAMP/$rq/stderr.txt"
+  elif [ "$n" -eq 0 ]; then
+    record "$rq" FAIL "no $kind finding: the planted bug was MISSED"
+  elif [ "$rc" -ne 1 ]; then
+    record "$rq" FAIL "$n $kind finding(s) but exit $rc, expected 1"
+  else
+    record "$rq" PASS "$n $kind finding(s) detected"
+  fi
   return 0
 }
 
@@ -146,10 +168,10 @@ fi
 
 # ------------------------------------------------------------------ RQ7
 D=rq7-applications/memory-safety
-run_detector rq7-bof "$D" uv run microtaint --json --check-bof --input input.bin -- ./bof.elf
-run_detector rq7-uaf "$D" uv run microtaint --json --check-uaf                   -- ./uaf.elf
-run_detector rq7-sc  "$D" uv run microtaint --json --check-sc  --input input.bin -- ./sc.elf
-run_detector rq7-aiw "$D" uv run microtaint --json --check-aiw --input input.bin -- ./aiw.elf
+run_detector rq7-bof "$D" bof uv run microtaint --json --check-bof --input input.bin -- ./bof.elf
+run_detector rq7-uaf "$D" uaf uv run microtaint --json --check-uaf                   -- ./uaf.elf
+run_detector rq7-sc  "$D" side_channel uv run microtaint --json --check-sc  --input input.bin -- ./sc.elf
+run_detector rq7-aiw "$D" aiw uv run microtaint --json --check-aiw --input input.bin -- ./aiw.elf
 run rq7-crypto-check    rq7-applications/crypto/square_and_multiply uv run python check_side_channel.py \
     --json "$OUT/rq7_ct_check.json"
 run rq7-crypto-localise rq7-applications/crypto/square_and_multiply uv run python localise_side_channel.py \

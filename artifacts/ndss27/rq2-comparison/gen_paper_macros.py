@@ -37,6 +37,10 @@ import os
 import sys
 
 # macro-prefix -> report tool key
+#: Mirrors benchmark.GT_MIN_ANSWER_RATE.  Kept as a literal so this script
+#: refuses an under-answered report even when run against an old benchmark.py.
+MIN_ANSWER_RATE = 0.5
+
 ENGINES = {
     'mt': 'microtaint',
     'an': 'angr',
@@ -157,6 +161,26 @@ def main():
         if g is None:
             print(f'% WARNING: engine {key} absent from report; its macros are skipped.', file=sys.stderr)
             continue
+        # A rate computed over a self-selected subset must not reach the paper.
+        # A tool that ERRORS on the cases it cannot handle and answers the rest
+        # scores 100% sound on what is left: the reviewer's saboteur answered 27
+        # of 157 cases and this emitted \mtSound{100.0} from it.  `answer_rate`
+        # is absent from reports written before that was counted, so an old
+        # report is refused rather than trusted.
+        rate = g.get('answer_rate')
+        if rate is None:
+            raise SystemExit(
+                f'{key}: this report predates answer-rate accounting, so the '
+                f'fraction of cases it actually answered is unknown and its '
+                f'soundness macro cannot be certified.  Re-run benchmark.py.',
+            )
+        if rate < MIN_ANSWER_RATE:
+            raise SystemExit(
+                f'{key}: answered only {g["cases_compared"]} of '
+                f'{g["cases_attempted"]} cases ({100 * rate:.1f}%), erroring on '
+                f'{g["cases_errored"]}.  Its rates describe a subset it selected '
+                f'for itself, so they are not emitted as macros.',
+            )
         v[pre + 'Sound'] = pct(g['soundness_rate'])
         v[pre + 'Exact'] = pct(g['exact_case_rate'])
         v[pre + 'Uns'] = str(g['unsound_cases'])

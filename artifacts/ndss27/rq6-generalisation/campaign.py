@@ -201,6 +201,40 @@ def _rule(b: Bench, code):
     return c
 
 
+#: States to try before declaring a corpus form unexecutable.
+QUARANTINE_PROBES = 12
+
+
+def quarantine_unexecutable(b, rng):
+    """Corpus forms this Unicorn build cannot execute at ANY sampled state.
+
+    Decided by running the instruction, so it needs no per-ISA list and cannot
+    go stale.  MIPS `movz`/`movn` raise UC_ERR_EXCEPTION on every state in
+    Unicorn 2.1.4, and the aggregate skip counter hid that: 100% of their cases
+    were discarded while they still appeared in the corpus size, so RQ6 looked
+    like it covered conditional moves and covered none.
+
+    Quarantining is not the same as passing.  These forms are excluded from
+    sampling AND reported, so the claim is "not measured" rather than "sound".
+    """
+    dead = {}
+    for asm, code, _out, srcs in b.entries:
+        ran = 0
+        for _ in range(QUARANTINE_PROBES):
+            state = {r: rng.getrandbits(b.bits) for r in b.regs}
+            taint = gen_taint(rng, b, srcs)
+            state, taint = b.canonicalize(state, taint)
+            try:
+                O.bitflip_lower_bound(b, code, state, taint)  # type: ignore[arg-type]
+                ran += 1
+                break
+            except Exception:  # not executing IS the result here
+                continue
+        if not ran:
+            dead[asm] = QUARANTINE_PROBES
+    return dead
+
+
 def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
     rng = random.Random(seed)
     sim = CellSimulator(b.arch)
@@ -230,8 +264,25 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
     #   no_gt_taint     the ground truth found nothing to miss (20% on MIPS)
     # compared - no_gt_taint is the sample the zero actually rests on.
     skipped_oracle = skipped_mt = no_gt_taint = compared = 0
+    # Per-FORM accounting.  The aggregate skip counter hid that MIPS `movz` and
+    # `movn` raise UC_ERR_EXCEPTION on EVERY state in this Unicorn build, so 100%
+    # of their cases were discarded and they were reported as neither tested nor
+    # failed.  They are also the only conditional-move forms in the whole
+    # five-ISA corpus, so RQ6 covered no implicit-flow instruction at all while
+    # appearing to cover two.
+    per_form: dict[str, dict[str, int]] = {}
+    quarantined = quarantine_unexecutable(b, random.Random(seed ^ 0x51AB))
+    if quarantined:
+        for a in sorted(quarantined):
+            print(f'[{b.label}]   QUARANTINE {a!r}: Unicorn could not execute it '
+                  f'at any of {QUARANTINE_PROBES} sampled states, so it is '
+                  f'excluded and reported as UNMEASURED, not as sound',
+                  flush=True)
+    live = [e for e in b.entries if e[0] not in quarantined]
+    if not live:
+        print(f'[{b.label}]   *** every corpus form is unexecutable ***', flush=True)
     for i in range(n):
-        asm, code, out_reg, srcs = rng.choice(b.entries)
+        asm, code, out_reg, srcs = rng.choice(live)
         state = {r: rng.getrandbits(b.bits) for r in b.regs}
         taint = gen_taint(rng, b, srcs)
         state, taint = b.canonicalize(state, taint)
@@ -240,6 +291,8 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
         # My Bench duck-types onto O.bitflip_lower_bound (regs/bits/mask/uc_*).  Fresh
         # Uc per run means no leakage at all -- so pass 1 here already has NO false
         # positives from state leaks; pass 2 remains as an independent double-check.
+        pf = per_form.setdefault(asm, {'attempted': 0, 'compared': 0})
+        pf['attempted'] += 1
         try:
             lb = O.bitflip_lower_bound(b, code, state, taint)  # type: ignore[arg-type]  # Bench duck-types onto IsaSpec
         except Exception:
@@ -254,6 +307,7 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
             skipped_mt += 1
             continue
         compared += 1
+        pf['compared'] += 1
         if not any(lb[r] for r in b.regs):
             no_gt_taint += 1
         missed = 0
@@ -291,11 +345,20 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
     if compared == 0:
         print(f'[{b.label}]   *** NOTHING WAS COMPARED: this zero means the '
               f'harness never ran, not that the engine is sound ***', flush=True)
+    # A form that was sampled but never once executed is untested, not sound.
+    dead = {a: v['attempted'] for a, v in per_form.items()
+            if v['attempted'] and not v['compared']}
+    for a, cnt in sorted(dead.items()):
+        print(f'[{b.label}]   *** {a!r}: 0 of {cnt} cases could be executed, so '
+              f'this form is UNTESTED ***', flush=True)
     return done, len(reports), {
         'attempted': done, 'compared': compared,
         'skipped_oracle': skipped_oracle, 'skipped_mt': skipped_mt,
         'no_gt_taint': no_gt_taint, 'effective': effective,
         'reports': len(reports),
+        'dead_forms': dead,
+        'quarantined_forms': sorted(quarantined),
+        'per_form': dict(sorted(per_form.items())),
     }
 
 
@@ -388,7 +451,37 @@ def main():
         with open(f'{args.out}_coverage.json', 'w') as cf:
             json.dump(coverage, cf, indent=2)
         print(f'[coverage] {args.out}_coverage.json', flush=True)
-        return
+        # An exit code, because run-all.sh records PASS iff this process exits 0.
+        # Without one, a completely dead engine printed its under-taints and
+        # still filed rq6-pass1 as PASS: the headline RQ6 result was a constant.
+        # Two ways to fail: found something, or measured nothing.
+        problems = []
+        for label, cov in coverage.items():
+            if cov.get('compared', 0) == 0:
+                problems.append(
+                    f'{label}: ZERO cases were compared out of '
+                    f'{cov.get("attempted", 0)} attempted, so this ISA is an '
+                    f'absence of measurement, not a clean result',
+                )
+            for form, n in sorted(cov.get('dead_forms', {}).items()):
+                problems.append(
+                    f'{label}: {form!r} could not be executed on ANY of its {n} '
+                    f'cases, so it is untested rather than sound',
+                )
+        reported = sum(1 for k in arches
+                       if os.path.exists(f'{args.out}_{k}.jsonl')
+                       and os.path.getsize(f'{args.out}_{k}.jsonl') > 0)
+        if reported:
+            problems.append(
+                f'{reported} ISA(s) wrote under-taint reports; run pass2 to '
+                f'isolate them',
+            )
+        if problems:
+            print('\nPASS1 FAILED:')
+            for p_ in problems:
+                print(f'  {p_}')
+            return 1
+        return 0
 
     # pass2
     import glob
@@ -414,7 +507,13 @@ def main():
                 for rep in real:
                     f.write(json.dumps(rep) + '\n')
     print(f'\n=== TOTAL: {grand_raw} raw pass-1 reports -> {grand_real} REAL under-taints after isolation ===')
+    # A verified under-taint is a soundness failure and must exit non-zero, or
+    # run-all.sh files it as PASS.
+    if grand_real:
+        print(f'PASS2 FAILED: {grand_real} verified under-taint(s)')
+        return 1
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

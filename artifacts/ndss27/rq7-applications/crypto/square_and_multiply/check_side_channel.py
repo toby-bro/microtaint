@@ -58,16 +58,33 @@ def run_mt(binary: Path, variant: str, input_bytes: bytes) -> int:
         cmd = [*_microtaint_cmd(), '--check-sc', '--json', '--quiet', '--input', inp, '--', str(binary), variant]
         r = subprocess.run(cmd, capture_output=True, timeout=60)
         text = r.stdout.decode('ascii', errors='replace')
+        # A crash must NOT read as "no side channel", because "no side channel
+        # on pow_ct" IS the constant-time claim this script exists to make.
+        # Returning 0 on a missing or malformed document made the two
+        # indistinguishable: with MICROTAINT_CLI=/bin/false this printed
+        # "PASS pow_ct: 0 SC findings" and wrote sc_findings 0, ok true, which
+        # is what Table 7 reads.  The CLI's contract is 0 = no findings,
+        # 1 = findings, anything else = it did not run.
+        if r.returncode not in (0, 1):
+            die(f'{binary.name} {variant}: microtaint exited {r.returncode}, so '
+                f'it did not analyse anything.  stderr:\n'
+                f'{r.stderr.decode("ascii", errors="replace")[-2000:]}')
         # The target binary may write to stdout before microtaint appends JSON;
         # find the JSON blob by locating the first '{'.
         idx = text.find('{')
         if idx == -1:
-            return 0
+            die(f'{binary.name} {variant}: microtaint exited {r.returncode} but '
+                f'printed no JSON document, so there is no verdict to read')
         try:
             data = json.loads(text[idx:])
-        except json.JSONDecodeError:
-            return 0
-        return data.get('summary', {}).get('side_channel', 0)  # type: ignore[no-any-return]
+        except json.JSONDecodeError as exc:
+            die(f'{binary.name} {variant}: microtaint printed malformed JSON '
+                f'({exc}), so there is no verdict to read')
+        summary = data.get('summary')
+        if not isinstance(summary, dict) or 'side_channel' not in summary:
+            die(f'{binary.name} {variant}: the JSON document has no '
+                f'summary.side_channel field')
+        return summary['side_channel']  # type: ignore[no-any-return]
     finally:
         os.unlink(inp)
 

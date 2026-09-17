@@ -119,8 +119,17 @@ def _run_x86(code: bytes, regs: dict[str, int]) -> dict[str, int]:
     uc.reg_write(ux.UC_X86_REG_EFLAGS, eflags)
     try:
         uc.emu_start(0x1000, 0x1000 + len(code))
-    except Exception:
-        return {}
+    except Exception as exc:
+        # An emulation failure must NOT read as "the instruction produced no
+        # output".  _true_taint_x86 ORs XOR-deltas of these dicts, so returning
+        # {} yielded an all-zero ground truth with no error and no vacuity
+        # check, and the paper's headline run ("tainting QR gives a clean
+        # verdict") then passed against a ground truth that was identically
+        # zero.  A ground truth that cannot be computed is a broken experiment,
+        # not a clean result.
+        raise RuntimeError(
+            f'the ground-truth oracle could not execute {code.hex()}: {exc}',
+        ) from exc
     result: dict[str, int] = {}
     for n, rid in _X86_GP.items():
         result[n] = uc.reg_read(rid)
@@ -326,10 +335,24 @@ def print_run_table() -> None:
     print('  ' + dim('-' * 99))
     for r in RUNS:
         verdict = green('PASS') if r.passed else red('FAIL')
+        # A run with NOTHING tainted has an all-zero ground truth by
+        # construction: _true_taint_x86 flips no bit, so it never even invokes
+        # Unicorn.  Run D is exactly that, and it passes for any engine that
+        # does not invent taint -- which is worth checking, but is not evidence
+        # that the oracle works.  Say so, rather than letting a reader count it
+        # as one of four independent confirmations.
+        note = '' if r.taint_mask else dim('  (no taint in: vacuously zero)')
         print(
             f'  {r.label:<55} '
             f'{r.taint_mask:#05x} {r.value:#05x} {r.expected_al_taint:#05x} '
-            f'{r.mt_al:#05x} {r.gt_al:#05x}  {verdict}',
+            f'{r.mt_al:#05x} {r.gt_al:#05x}  {verdict}{note}',
+        )
+    # The oracle must have found SOMETHING somewhere, or every comparison above
+    # is against an empty ground truth and every PASS is free.
+    if not any(r.gt_al for r in RUNS):
+        raise SystemExit(
+            'the ground truth found no taint in ANY run, so every verdict above '
+            'is a comparison against zero and none of them can fail',
         )
 
 

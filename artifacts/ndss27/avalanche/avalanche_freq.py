@@ -690,6 +690,15 @@ def main():
         print('\nThe table above is computed over whatever survived these, so the '
               'percentages are\nnot over the population they claim.')
         return 1
+    # A run in which NOTHING was tainted has no failures either, and printed
+    # exactly this line.  Table 6's producer must not certify a table computed
+    # over an empty population.
+    if not STATS['insns_tainted'] or not STATS['total_out_bits']:
+        print('\nREFUSING TO CERTIFY: the run tainted '
+              f'{STATS["insns_tainted"]:,} instructions and '
+              f'{STATS["total_out_bits"]:,} output bits, so the table above is '
+              'computed over nothing and cannot fail')
+        return 1
     print('\n[ok] no failure on any recorded path: every hooked instruction '
           'reached the table')
     return 0
