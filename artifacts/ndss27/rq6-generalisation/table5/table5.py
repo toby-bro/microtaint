@@ -247,6 +247,37 @@ def main() -> int:
         if r['checked'] and r['ratio_n'] == 0:
             problems.append(f'{isa}: no per-case ratio recorded; re-run with a '
                             f'harness that accumulates ratio_sum/ratio_n')
+    # Shards must agree about WHAT PRODUCED THEM.  A 0.089h smoke shard from a
+    # DIRTY engine, carrying the superseded "PC completion check" oracle string,
+    # was sitting in this directory and certified happily with --allow-partial,
+    # NaN in both exactness columns and all.  Nothing compared a shard's oracle,
+    # engine commit or dirty flag against the run being certified.
+    provs = {isa: (r.get('provenance') or {}) for isa, r in rows.items()}
+    oracles = {isa: p.get('oracle') for isa, p in provs.items() if p.get('oracle')}
+    if len(set(oracles.values())) > 1:
+        problems.append(
+            'shards disagree about which ORACLE produced them, so they are not '
+            'one campaign: ' + '; '.join(f'{k}={v!r}' for k, v in sorted(oracles.items())),
+        )
+    commits = {isa: p.get('engine_commit') for isa, p in provs.items()
+               if p.get('engine_commit')}
+    if len(set(commits.values())) > 1:
+        problems.append(
+            'shards measured DIFFERENT engine commits, so the rows cannot be '
+            'compared: ' + '; '.join(f'{k}={(v or "")[:12]}' for k, v in sorted(commits.items())),
+        )
+    dirty = sorted(isa for isa, p in provs.items() if p.get('engine_dirty'))
+    if dirty:
+        problems.append(
+            f'{", ".join(dirty)}: measured a DIRTY engine checkout, so the '
+            f'commit recorded does not identify the code that ran',
+        )
+    for isa, r in rows.items():
+        if r['checked'] and not r.get('val_checked'):
+            problems.append(
+                f'{isa}: shard predates the register/flag exactness split, so '
+                f'its precision columns are NaN rather than measurements',
+            )
     missing = [k for k in ORDER if k not in rows]
     if missing and not args.allow_partial:
         problems.append(f'missing ISAs: {", ".join(missing)}')

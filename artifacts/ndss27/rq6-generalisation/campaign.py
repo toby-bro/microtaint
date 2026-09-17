@@ -39,6 +39,19 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Honour $MT_ENGINE_ROOT here too.  Only the Table 5 campaign read it, so this
+# pass -- the one run-all.sh actually runs for RQ6 -- always measured whatever
+# microtaint happened to be importable, no matter which engine the reviewer
+# pinned.  Must run before `import microtaint` below.
+_ENGINE_ROOT = os.environ.get('MT_ENGINE_ROOT')
+if _ENGINE_ROOT:
+    if not os.path.isfile(os.path.join(_ENGINE_ROOT, 'microtaint', '__init__.py')):
+        raise SystemExit(
+            f'MT_ENGINE_ROOT={_ENGINE_ROOT!r} is not a microtaint checkout '
+            f'(no microtaint/__init__.py), so the pin would be silently ignored',
+        )
+    sys.path.insert(0, os.path.abspath(_ENGINE_ROOT))
+
 import multiarch_oracle as O
 import unicorn.riscv_const as _rv
 from unicorn import UC_ARCH_RISCV, UC_MODE_RISCV64, Uc, UcError
@@ -260,7 +273,13 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
     # Append + flush each report immediately: a chunk that segfaults (the LE-64
     # native-cell x Unicorn interaction) then loses no found under-taints, and the
     # supervisor can relaunch with the next seed.
-    out_f = open(out_path, 'a')
+    # Truncate, do not append.  Re-running with the same --out concatenated the
+    # previous run's reports onto this one (reproduced: 79 -> 237 -> 316 -> 395
+    # lines across re-runs into one directory), and pass 2 then re-verified and
+    # double-counted them.  The docstring anticipates relaunching after a
+    # segfault, which is exactly when this bites; run-all.sh's timestamped OUT
+    # merely hid it.
+    out_f = open(out_path, 'w')
     reports = []
     t0 = time.time()
     last = t0
@@ -446,7 +465,12 @@ def main():
         # in exactly the case that matters.  The manifest is written up front and
         # does not depend on finding anything.
         with open(f'{args.out}_run.json', 'w') as mf:
-            json.dump({'engine': _engine_provenance(), 'n': args.n,
+            import microtaint as _mt_pkg
+            json.dump({'engine': _engine_provenance(),
+                       'engine_import_path': os.path.dirname(
+                           os.path.dirname(os.path.abspath(_mt_pkg.__file__))),
+                       'mt_engine_root': _ENGINE_ROOT,
+                       'n': args.n,
                        'seed': args.seed, 'arches': arches,
                        'started': str(datetime.datetime.now())}, mf, indent=2)
         print(f'[provenance] {args.out}_run.json', flush=True)
