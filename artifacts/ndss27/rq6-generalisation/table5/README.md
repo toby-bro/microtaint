@@ -1,10 +1,22 @@
 # Table 5: cross-ISA soundness and precision
 
 The campaign behind Table 5. It runs the full per-ISA corpus (about 1,500
-instruction forms) against a `2^k` noninterference oracle, in practice a
-one-bit-flip differential for about 90% of cases (see below), and reports,
-per ISA, how many cases were checked, how many under-tainted, how often the
-engine's mask was bit-exact, and how much it over-tainted.
+instruction forms) against a bit-flip noninterference oracle and reports, per
+ISA, how many cases were checked, how many under-tainted, how often the engine's
+mask was bit-exact, and how much it over-tainted.
+
+The oracle taints an arbitrary mask and flips each tainted bit once, from BOTH
+polarities: once from the given state and once from the state with every tainted
+bit inverted, unioning the two. That costs `2(k+1)` runs for `k` tainted bits,
+linear rather than the `2^k` an exact enumeration needs, and it is still a lower
+bound on semantic dependence -- a single flip cannot witness a dependence that
+needs two inputs to move together. The second polarity exists because for the
+common families that blind spot sits at a CORNER: `a AND b` hides where both
+bits are 0, `a OR b` where both are 1. Measured against the exact enumeration on
+overlapping masks, the second polarity takes `and`/`or` from 11.0%/19.9% of real
+dependences missed to 0.0%, `add` from 9.5% to 0.2%, and `imul` from 4.8% to
+0.6%. The residual runs the safe way for soundness, since a too-small ground
+truth makes `gt & ~mt` more lenient, never stricter.
 
 This is a different experiment from the one in the parent directory.
 `../campaign.py` is a fast soundness smoke test over about 80 forms; it answers
@@ -67,6 +79,49 @@ nothing measurable.
 certify a table in which any ISA has zero checked cases, or checked cases with
 zero ground-truth bits.
 
+## What the oracle watches, and why that is the whole ballgame
+
+The oracle sets up and inspects a fixed register set per ISA, and pins
+everything else to zero. Whatever is not in that set is not measured: a corpus
+entry naming it is not tested, it is tested AT ZERO. `a('mul r8', ['RAX'])`
+names `r8` deliberately, to exercise a register the engine has to get right, and
+against a four-register model it multiplied by zero. 74 x86 forms and 81 PPC
+forms had an empty ground truth over their entire run and scored bit-exact.
+
+The sharper problem is that the state handed to the ENGINE is built from the
+same list. The oracle knew `r8` was zero; the engine was never told `r8` exists.
+The two sides were being asked about different machines, and the engine, which
+correctly assumed an unknown multiplier, was charged 4,192 cases and 540,768
+over-taint bits for it.
+
+So the model covers every general-purpose register the corpus can reach: 15 on
+x86-64, 31 on PPC32 plus all eight condition fields, and HI/LO on MIPS64 so that
+`mult` and `div` have a scored destination at all. ARM64 and RISCV are
+deliberately NOT widened: no corpus entry there leaves the first four registers,
+so it would cost 1.6-2.0x to measure nothing new, and the gap on those two is
+the corpus rather than the model.
+
+Every added name is round-tripped through Unicorn AND the engine's register map
+before it is used. That check is not ceremony: MIPS `T0`-`T3` failed it, because
+Unicorn calls `$8`-`$11` `T0`-`T3` while the engine calls them `A4`-`A7` under
+the N64 ABI. Adding them would have varied a register whose taint is silently
+discarded, replacing a visible vacuity (pinned to zero, empty ground truth) with
+an invisible one.
+
+## Half of a ground truth is the input passing through
+
+The scored set includes registers an instruction only READS. For those the
+ground truth is tautologically the input mask -- a no-op of the same length
+produces it identically -- because flipping a bit of a register the instruction
+does not write changes exactly that bit of its output.
+
+Measured corpus-wide that is about 60% of every ground-truth bit, so a
+"bit-exact %" over all cases is in substantial part a test that a copy survives,
+which any engine passes. `table5.py` therefore reports both: exactness over all
+scored cases, and exactness over cases whose ground truth differs from the input
+mask somewhere, alongside the fraction of ground-truth bits that are signal
+rather than passthrough.
+
 ## Instructions the oracle cannot execute
 
 Some corpus entries are counted as `skipped`, never as passing. The distinction
@@ -74,11 +129,13 @@ matters: a skipped form is one the campaign could say nothing about, and folding
 it into the answer as a pass is how a harness reports coverage it does not have.
 
 **x86-64: `adcx` and `adox` (10 forms) are never scored at all.** Unicorn does
-not implement the ADX extension, so every run raises
-`UC_ERR_INSN_INVALID` and every case is invalidated: 162,960 attempted, 0
-checked. So roughly 1.9% of the x86 corpus is **unmeasurable**, not
-measured-and-sound, and this campaign says nothing about how the engine handles
-those two mnemonics.
+not implement the ADX extension, so every run raises `UC_ERR_INSN_INVALID`.
+Preflight now detects this by RUNNING each form at sampled states and
+quarantining any that never completes, so these are excluded before scoring
+rather than accumulating as invalidated cases, and the next such family is
+caught without anyone adding it to a list. Roughly 1.9% of the x86 corpus is
+**unmeasurable**, not measured-and-sound, and this campaign says nothing about
+how the engine handles those two mnemonics.
 
 This is also where the old oracle went wrong in the flattering direction. It
 scored `adcx`/`adox` at 28,890 cases each and 0% exact, on runs that never
@@ -93,42 +150,40 @@ accurate.
   Confirmed by contrast: `addu` completes on every case.
 * `clz`, `clo`, `dclz`, `dclo`, `movn` and `movz` raise `UC_ERR_EXCEPTION` in
   this Unicorn build on about half of states. State-dependent rather than a flat
-  "unsupported"; the precise trigger is not pinned down.
+  "unsupported"; the precise trigger is not pinned down. These previously
+  reported `checked > 0` at 100% bit-exact for instructions that never ran: a
+  case whose taint mask canonicalisation had emptied returned an empty ground
+  truth MARKED VALID without invoking Unicorn at all, and an empty ground truth
+  scores bit-exact against anything. Such a case is now a skip.
 
 Together these are 757,874 skipped cases, leaving MIPS64 at 96.9% of attempted
 cases actually checked. Every other ISA is at 100% except x86-64 at 98.5%.
 
-Every skipped case in this campaign comes from a run that could not complete.
-The oracle also has a `k <= 13` budget beyond which it would fall back to a
-non-exact lower bound, but the generator caps k at 8, so that path is never
-taken here and nothing is skipped for being too heavily tainted.
+Every skipped case in this campaign comes from a run that could not complete,
+or from a taint mask that canonicalisation emptied. There is no enumeration
+budget: the oracle is linear in `k`, so a case tainting every bit of every
+source register is affordable and nothing is skipped for being too heavily
+tainted.
 
-## Over-taint is measured against a one-bit-flip oracle, so some of it is ours
+## Over-taint is measured against a lower bound, so some of it is ours
 
 The over-taint numbers must not be read as "the engine is this imprecise". Part
 of the gap belongs to the oracle, by construction.
 
-**The scored population is about 90% SINGLE-BIT-FLIP cases.** The generator
-sweeps every bit of every source register one at a time (k = 1) and adds only
-`MULTI_PER_RND = 6` multi-bit cases per base state with k drawn from 2 to 8.
-Measured per form per round: 92.0% of x86-64 cases are k = 1, 94.4% on ARM64,
-92.8% MIPS64, 86.6% PPC32, 93.7% RV64GC. So while the oracle is a `2^k`
-enumeration in form, in practice k is nearly always 1 and it is a one-bit-flip
-differential.
-
-For such a case the ground truth is: flip this ONE input bit at ONE concrete
-state, and record which output bits change. That is exact for that state and
-that bit, and it is a LOWER BOUND on semantic dependence in two separate ways.
-An output can depend on an input bit only in combination with other bits, which
-a single flip never exhibits (carry interactions are the obvious family). And an
-output can depend on an input bit at some other state while being insensitive at
-this one.
+The ground truth for a case is: flip each tainted input bit once, from each of
+two polarities, at ONE concrete state, and record which output bits change. That
+is a LOWER BOUND on semantic dependence in two separate ways. An output can
+depend on an input bit only in combination with others, and while two polarities
+catch the corner cases where AND and OR hide, they do not catch everything: a
+zero flag depends on every result bit but changes only when the result crosses
+zero, which no single flip from either corner exhibits. And an output can depend
+on an input bit at some other state while being insensitive at this one.
 
 A sound engine has to taint an output bit if it can depend on the input at any
-reachable state. The oracle only ever witnesses one. So a bit the engine taints
-that does not move at this particular state is counted as over-taint even when
-the engine is right and the oracle simply did not sample the state that would
-have shown it.
+reachable state. The oracle witnesses two corners of one state. So a bit the
+engine taints that does not move here is counted as over-taint even when the
+engine is right and the oracle simply did not sample the state that would have
+shown it.
 
 Two consequences for how the column should be quoted:
 
@@ -141,7 +196,11 @@ Two consequences for how the column should be quoted:
 
 Cases with genuinely state-independent structure, like the parity flag reading
 only the result's low byte, are unaffected by this and are real over-taints.
-The caveat bites hardest on flags whose dependence is value-conditioned.
+The caveat bites hardest on flags whose dependence is value-conditioned, and the
+zero flag is the extreme: measured on the earlier one-polarity campaign, ARM64's
+`ZR` moved in 1% of cases and x86's `ZF` in 9%, so nearly all of the over-taint
+charged against them is dependence the oracle cannot witness rather than
+imprecision the engine could remove.
 
 ## The over-taint column
 

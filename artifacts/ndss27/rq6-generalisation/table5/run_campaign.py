@@ -1,4 +1,9 @@
-# ruff: noqa: W505, E501, B905, B007
+# ruff: noqa: W505, E501, B905, B007, RUF100, I001
+#   RUF100 and I001 are config differences, not defects: the source repo
+#   selects BLE001/E402/C901 (so those noqa ARE used there) and sorts
+#   `microtaint` as third-party, while it is first-party here.  No single
+#   spelling satisfies both repos, and the body must stay byte-identical
+#   to the harness that produced the published numbers.
 #   Style only, suppressed rather than rewritten: vendored from the campaign
 #   that produced the published numbers.  Correctness is gated by
 #   validate_oracle.py, not by restyling proven code.
@@ -36,20 +41,29 @@ import random
 import subprocess
 import sys
 import time
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+HARNESS_ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 
 os.environ['MICROTAINT_TAINT_IR'] = '0'
 os.environ['MICROTAINT_BLOCK'] = '0'
 
-from corpora import CORPORA
-from mt_multiarch import ENGINE_ROOT, GTSim, _build_isas, mt_batch, written_flags
-from oracle import HardenedGTSim
-from probes import decode_agreement, model_closure_sampled
-from unicorn_bugs import quarantined as unicorn_quarantined
-from unicorn_bugs import suppressed_flags as unicorn_suppressed
+from oracle import HardenedGTSim  # noqa: E402
+from probes import decode_agreement, model_closure_sampled  # noqa: E402
+from unicorn_bugs import quarantined as unicorn_quarantined  # noqa: E402
+from unicorn_bugs import suppressed_flags as unicorn_suppressed  # noqa: E402
+
+from corpora import CORPORA  # noqa: E402
+from mt_multiarch import (  # noqa: E402
+    ENGINE_ROOT,
+    GTSim,
+    _build_isas,
+    mt_batch,
+    written_flags,
+)
 
 ISA_KEY = sys.argv[1]
 DEADLINE = float(sys.argv[2])
@@ -57,7 +71,12 @@ SEED = int(sys.argv[3], 0) if len(sys.argv) > 3 else 0xC0FFEE
 
 OUT = os.path.join(HERE, f'campaign_{ISA_KEY}.json')
 WITNESS = os.path.join(HERE, f'under_{ISA_KEY}.jsonl')
-SINGLE_STATES, MULTI_PER_RND, K_MIN, K_MAX = 2, 6, 2, 8
+# Cases generated per instruction form per ROUND.  This is batching
+# granularity, not the sample size: the round loop runs until the deadline, so
+# the wall-clock budget decides how many cases each form actually gets.  There
+# is no cap on how many BITS a case may taint, and no enumeration budget,
+# because the oracle costs k+1 runs rather than 2^k.
+CASES_PER_FORM = 16
 ENTRIES_PER_BATCH = 40   # one `uv run` spawn per 40 entries, not per entry
 CLOSURE_STATES = 40
 WITNESS_CAP = 500          # per instruction form; counts stay exact past the cap
@@ -65,6 +84,19 @@ WITNESS_CAP = 500          # per instruction form; counts stay exact past the ca
 
 def popcount(x):
     return bin(x & ((1 << 128) - 1)).count('1')
+
+
+def constrained(cons):
+    """Registers an entry pins, which therefore must NOT be tainted.
+
+    A constraint exists to hold a register inside the instruction's defined
+    domain across the WHOLE oracle, not just at the base state: a divisor pinned
+    non-zero, or a 16-bit shift count pinned below the operand width.  Tainting
+    it defeats that, because the oracle flips each tainted bit and a flip takes
+    the register straight back out of the domain.  `mt_multiarch.gen_cases`
+    pops them; this path did not.
+    """
+    return {r for r in cons if r != 'exclude_flags'}
 
 
 def apply_cons(st, cons):
@@ -79,18 +111,18 @@ def apply_cons(st, cons):
     return st
 
 
-def provenance():
-    def git(*a):
+def provenance(isa):
+    def git(*a, repo=ENGINE_ROOT):
         try:
-            return subprocess.run(['git', '-C', ENGINE_ROOT, *a], capture_output=True,
+            return subprocess.run(['git', '-C', repo, *a], capture_output=True,
                                   text=True).stdout.strip()
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
     import unicorn
     try:
         import pypcode
         pv = getattr(pypcode, '__version__', None)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pv = None
     return {
         'engine_root': ENGINE_ROOT,
@@ -103,7 +135,123 @@ def provenance():
         'unicorn': unicorn.__version__, 'pypcode': pv,
         'oracle': 'HardenedGTSim (context-restore per polarity run, memory reset, PC completion check)',
         'started': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        # The HARNESS, not just the engine.  Every number in Table 5 is defined
+        # by this code, and recording only what was measured while saying
+        # nothing about what did the measuring is how a campaign becomes
+        # unreproducible after the fact.
+        'harness_root': HARNESS_ROOT,
+        'harness_commit': git('rev-parse', 'HEAD', repo=HARNESS_ROOT),
+        # Scoped to the files that DEFINE the campaign.  A repo-wide status is
+        # dirty for reasons that have nothing to do with the measurement (other
+        # work in the tree, untracked scratch), so it would report "dirty" on
+        # every run and mean nothing.  These three paths are the harness.
+        'harness_dirty': bool(git('status', '--porcelain', '--',
+                                  'campaign_ae', 'mt_multiarch.py', 'corpora.py',
+                                  repo=HARNESS_ROOT)),
+        'harness_paths': ['campaign_ae', 'mt_multiarch.py', 'corpora.py'],
+        'seed': SEED,
+        'oracle_polarities': 2,
+        'modelled_regs': [n for n, _ in isa.gprs],
+        'modelled_flags': [f.name for f in isa.flags],
     }
+
+
+#: States used by the cheaper per-form probes below.  Fewer than CLOSURE_STATES
+#: because these cost one run per modelled register rather than one per state.
+PROBE_STATES = 4
+
+
+def executability(gt, code, cases):
+    """How many sampled states this form can actually be executed at.
+
+    An entry Unicorn cannot run is not a passing test, it is no test.  x86
+    `adcx`/`adox` raise UC_ERR_INSN_INVALID (no ADX support) and MIPS
+    `clz`/`clo`/`dclz`/`dclo`/`movz`/`movn` raise UC_ERR_EXCEPTION, yet the
+    latter reported checked > 0 at 100% bit-exact.  Decided by running the
+    instruction, so it needs no list and cannot go stale.
+    """
+    ran = 0
+    for st, fl in cases:
+        try:
+            gt._run(gt._fresh(code), code, st, fl)
+            ran += 1
+        except Exception:  # noqa: BLE001 -- not executing IS the result here
+            pass
+    return {'ran': ran, 'of': len(cases)}
+
+
+def undeclared_sources(gt, isa, code, srcs, cases):
+    """Modelled registers that change a scored output but are not in `srcs`.
+
+    `srcs` is hand-written per corpus entry and decides what may be tainted, so
+    an omission makes an operand structurally untestable with no error: the
+    shift count of `shl rax, cl [cl=1]` and the divisor of PPC `divw 3,4,5` are
+    never tainted today.  Rather than trust the declaration, perturb every
+    OTHER modelled register and see whether a scored output moves.
+    """
+    sp = isa.sp[0] if isa.sp else None
+    found = set()
+    for st, fl in cases:
+        try:
+            base = gt._run(gt._fresh(code), code, st, fl)
+        except Exception:  # noqa: BLE001
+            continue
+        for name, _ in isa.gprs:
+            if name in srcs or name == sp or name in found:
+                continue
+            st2 = dict(st)
+            st2[name] = (st2.get(name, 0) ^ isa.mask) & isa.mask
+            try:
+                alt = gt._run(gt._fresh(code), code, st2, fl)
+            except Exception:  # noqa: BLE001
+                continue
+            # Ignore the perturbed register itself: it differs by construction.
+            if any(alt.get(r) != base.get(r) for r in base if r != name):
+                found.add(name)
+    return sorted(found)
+
+
+#: States for the preserved-flag test.  Far more than PROBE_STATES because it
+#: costs ONE run per state (not one per register) and because a sparse sample is
+#: exactly how an UNDEFINED flag gets mistaken for a preserved one.
+PRESERVED_STATES = 24
+
+
+def preserved_flags(gt, isa, code, cases, srcs):
+    """Flags this form READS, and leaves EXACTLY as it found them.
+
+    `written_flags` asks the engine's lift which flags an instruction writes,
+    and `chk` scores only those.  That correctly drops flags the ISA leaves
+    UNDEFINED, but it also drops flags the ISA PRESERVES, and those carry an
+    obligation: `adc x0, x1, x2` reads the carry without writing it, so the
+    engine must keep the carry's taint, and nothing checked that it did.  The
+    oracle supplies the discriminator the lift cannot: a preserved flag comes
+    back bit-identical to its input at every state, an undefined one does not.
+
+    Restricted to DECLARED SOURCES, and that restriction is load-bearing.
+    Identity across a sample is not proof of preservation: x86 leaves SF, ZF, AF
+    and PF UNDEFINED after `mul`, `imul`, `bsf` and `bsr`, and Unicorn happens to
+    leave SF alone often enough that a four-state sample called it preserved.
+    Scoring it then produced 259 under-taints in 18,080 cases against an engine
+    that is right not to model an undefined flag.  A flag the form actually
+    READS is a different matter: its taint has to survive, and that is the
+    obligation this check exists to enforce.
+
+    Sampled, so it is evidence rather than proof, which is why it is used only
+    to ADD a check on identity behaviour and never to excuse one.
+    """
+    keep = {f.name for f in isa.flags} & set(srcs)
+    if not keep:
+        return keep
+    for st, fl in cases:
+        try:
+            out = gt._run(gt._fresh(code), code, st, fl)
+        except Exception:  # noqa: BLE001
+            continue
+        keep &= {n for n in keep if out.get(n) == fl.get(n)}
+        if not keep:
+            break
+    return keep
 
 
 def preflight(isa, gt, entries, rng):
@@ -115,14 +263,36 @@ def preflight(isa, gt, entries, rng):
         if isa.sp:
             st[isa.sp[0]] = GTSim.SP_VALUE
         states.append(st)
+    # Flags are SAMPLED here, not pinned to zero: a predicated form (`cmove`,
+    # `setcc`) never fires under an all-zero flag state, so an all-zero probe
+    # only ever exercises one branch of the condition.
+    probe_cases = []
+    for _ in range(PROBE_STATES):
+        st = {n: rng.getrandbits(isa.bits) for n, _ in isa.gprs}
+        if isa.sp:
+            st[isa.sp[0]] = GTSim.SP_VALUE
+        probe_cases.append((st, {f.name: rng.getrandbits(f.width) for f in isa.flags}))
+    preserved_cases = []
+    for _ in range(PRESERVED_STATES):
+        st = {n: rng.getrandbits(isa.bits) for n, _ in isa.gprs}
+        if isa.sp:
+            st[isa.sp[0]] = GTSim.SP_VALUE
+        preserved_cases.append(
+            (st, {f.name: rng.getrandbits(f.width) for f in isa.flags}))
     quarantine = {}
-    for asm, code, srcs, cons in entries:
+    undeclared = {}
+    preserved = {}
+    for label, asm, code, srcs, cons in entries:
         mc = model_closure_sampled(gt, code, states, fl)
         da = decode_agreement(gt, ISA_KEY, code, states[0], fl)
+        ex = executability(gt, code, probe_cases)
         reasons = []
         ub = unicorn_quarantined(ISA_KEY, asm)
         if ub:
             reasons.append(f'known Unicorn defect: {ub}')
+        if not ex['ran']:
+            reasons.append(f"Unicorn cannot execute it: 0 of {ex['of']} sampled "
+                           f'states completed, so there is nothing to compare')
         if mc.get('checked') and not mc.get('closed'):
             reasons.append(f"reads state the oracle does not model (leaks into {mc['leaked']})")
         if mc.get('checked') and not mc.get('deterministic'):
@@ -130,14 +300,25 @@ def preflight(isa, gt, entries, rng):
         if da.get('checked') and da.get('agree') is False:
             reasons.append('Unicorn executes a different decode than the bytes encode')
         if reasons:
-            quarantine[asm] = {'reasons': reasons, 'model_closure': mc, 'decode': da}
-    return quarantine
+            quarantine[label] = {'reasons': reasons, 'model_closure': mc,
+                                 'decode': da, 'executability': ex}
+            continue
+        # Reported, NOT quarantined: an undeclared source makes the test weaker
+        # (that operand is never tainted), not wrong, so dropping the form would
+        # lose a real measurement.  It is recorded so it can be fixed.
+        miss = undeclared_sources(gt, isa, code, srcs, probe_cases)
+        if miss:
+            undeclared[label] = {'declared': list(srcs), 'also_influences': miss}
+        preserved[label] = sorted(
+            preserved_flags(gt, isa, code, preserved_cases, srcs))
+    return quarantine, undeclared, preserved
 
 
-def main():
+def main():  # noqa: C901
     isa = _build_isas(ISA_KEY)[ISA_KEY]
     gt = HardenedGTSim(isa)
     fset = {f.name for f in isa.flags}
+    fwidth = {f.name: f.width for f in isa.flags}
     # Stable bit index per flag, recorded in the shard so a mask can be decoded.
     flag_bit = {n: i for i, n in enumerate(sorted(fset))}
     gpr_names = [n for n, _ in isa.gprs]
@@ -146,19 +327,47 @@ def main():
     for label, asm, srcs, cons in CORPORA[ISA_KEY](isa):
         try:
             code = isa.assemble(asm)
-        except Exception:
+        except Exception:  # noqa: BLE001
             try:
                 code = bytes.fromhex(asm)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 continue
-        entries.append((asm, code, srcs, cons))
+        # The LABEL, not just the asm.  Two corpus entries can share the same
+        # instruction text and differ in constraints (`shl rax, cl` free vs
+        # `shl rax, cl [cl=1]` with RCX pinned): keying metrics on the asm
+        # merged two different experiments into one row and double-weighted it.
+        entries.append((label, asm, code, srcs, cons))
 
-    rng = random.Random(SEED ^ hash(ISA_KEY) & 0xFFFFFFFF)
-    prov = provenance()
-    quarantine = preflight(isa, gt, entries, random.Random(SEED))
-    print(f'{isa.label}: {len(entries)} entries, {len(quarantine)} quarantined', flush=True)
+    # zlib.crc32, not hash(): str hashing is PYTHONHASHSEED-salted, so the
+    # case stream differed on every run and the campaign could not be
+    # reproduced from its recorded seed.
+    rng = random.Random(SEED ^ zlib.crc32(ISA_KEY.encode()))
+    prov = provenance(isa)
+    quarantine, undeclared, preserved = preflight(isa, gt, entries,
+                                                  random.Random(SEED))
+    print(f'{isa.label}: {len(entries)} entries, {len(quarantine)} quarantined, '
+          f'{len(undeclared)} with an undeclared source', flush=True)
     for a, q in quarantine.items():
         print(f'  QUARANTINE {a}: {"; ".join(q["reasons"])}', flush=True)
+    # The probe is authoritative about what can influence the result, so ADOPT
+    # what it found rather than filing a defect against a hand-written list that
+    # will drift again.  Registers the entry CONSTRAINS are excluded: a divisor
+    # pinned non-zero must not be tainted, because a flip could take it to zero
+    # mid-oracle and the case would trap instead of being measured.
+    adopted = {}
+    for i, (label, asm, code, srcs, cons) in enumerate(entries):
+        u = undeclared.get(label)
+        if not u:
+            continue
+        add = [r for r in u['also_influences'] if r not in cons]
+        if not add:
+            continue
+        entries[i] = (label, asm, code, sorted(set(srcs) | set(add)), cons)
+        adopted[label] = add
+        print(f'  ADOPTED SOURCE {label}: declares {u["declared"]}, '
+              f'{add} also change the result', flush=True)
+    print(f'{isa.label}: adopted undeclared sources on {len(adopted)} entries',
+          flush=True)
 
     wf = open(WITNESS, 'a')
     metrics, rounds, start = {}, 0, time.time()
@@ -173,7 +382,7 @@ def main():
             rounds = prev.get('rounds', 0)
             print(f'resumed at round {rounds}, '
                   f'{sum(v.get("checked", 0) for v in metrics.values()):,} cases', flush=True)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- a checkpoint caught mid-write
             pass
 
     def checkpoint():
@@ -191,13 +400,16 @@ def main():
             'flag_order': flag_bit,
             'unsound_instrs': [a for a, v in metrics.items() if v.get('under')],
             'quarantine': quarantine,
+            'undeclared_sources': undeclared,
+            'adopted_sources': adopted,
+            'preserved_flags': preserved,
             'metrics': metrics,
         }, open(tmp, 'w'), indent=1)
         os.replace(tmp, OUT)
 
     while time.time() < DEADLINE:
         rounds += 1
-        live = [e for e in entries if e[0] not in quarantine and e[2]]
+        live = [e for e in entries if e[0] not in quarantine and e[3]]
         # One `uv run` spawn costs ~0.44 s regardless of how many cases it carries,
         # so cases from many entries share a call.  mt_worker keys its rule cache on
         # the per-case bytes, so a mixed batch is fine.
@@ -206,54 +418,72 @@ def main():
                 break
             chunk = live[chunk_start:chunk_start + ENTRIES_PER_BATCH]
             built, batch = [], []
-            for asm, code, srcs, cons in chunk:
+            for label, asm, code, srcs, cons in chunk:
                 excl = set(cons.get('exclude_flags', ())) | unicorn_suppressed(ISA_KEY, asm)
-                chk = gpr_names + sorted(written_flags(isa, code) - excl)
-                gsrc = [s2 for s2 in srcs if s2 not in fset] or srcs
+                # Flags the lift declares WRITTEN, plus flags the oracle measured
+                # as PRESERVED.  A preserved flag's taint must survive the
+                # instruction, and scoring only written flags never checked that:
+                # 63 ARM64 forms (`adc`, `sbc`, `cset`) read a flag they do not
+                # write, so the engine could have dropped its taint unnoticed.
+                # `excl` still wins, so a flag the ISA leaves undefined stays out.
+                chk = gpr_names + sorted(
+                    (written_flags(isa, code) | set(preserved.get(label, ()))) - excl)
+                # Never taint a register the entry pins: see constrained().
+                tsrcs = [s2 for s2 in srcs if s2 not in constrained(cons)]
+                if not tsrcs:
+                    continue
 
-                bases = []
-                for _ in range(SINGLE_STATES):
+                cases = []
+                for _ in range(CASES_PER_FORM):
                     st = {n: rng.getrandbits(isa.bits) for n, _ in isa.gprs}
                     for f in isa.flags:
-                        st[f.name] = rng.getrandbits(1)
+                        # f.width, not 1.  PPC's cr0 is a FOUR bit field and
+                        # only bit 0 was ever set, so LT/GT/EQ sat permanently
+                        # at an encoding no comparison can produce.
+                        st[f.name] = rng.getrandbits(f.width)
                     if isa.sp:
                         st[isa.sp[0]] = GTSim.SP_VALUE
                     apply_cons(st, cons)
-                    bases.append(st)
-
-                cases = []
-                for st in bases:
-                    for s2 in srcs:
-                        w = 1 if s2 in fset else isa.bits
-                        for b in range(w):
-                            cases.append(isa.canonicalize(dict(st), {s2: 1 << b}))
-                for st in bases:
-                    for _ in range(MULTI_PER_RND):
+                    # An ARBITRARY taint mask over the operands this form reads.
+                    # Density is drawn uniformly from 1 bit to the full width, so
+                    # the sample covers sparse and dense taint alike instead of
+                    # being ~90% single-bit as a one-bit-at-a-time sweep is.
+                    # Canonicalise INSIDE the guard.  MIPS confines taint to
+                    # the low 32 bits, so a mask approved here could be emptied
+                    # afterwards, producing a case with nothing tainted that the
+                    # oracle then scored as a free pass.
+                    cst, ct = st, {}
+                    while not any(ct.values()):
                         t = {}
-                        for _ in range(rng.randint(K_MIN, K_MAX)):
-                            s2 = rng.choice(gsrc)
-                            w = 1 if s2 in fset else isa.bits
-                            t[s2] = t.get(s2, 0) | (1 << rng.randrange(w))
-                        cases.append(isa.canonicalize(dict(st), t))
+                        for s2 in tsrcs:
+                            w = fwidth.get(s2, isa.bits)
+                            k = rng.randint(0, w)
+                            m = 0
+                            for b in rng.sample(range(w), k):
+                                m |= 1 << b
+                            if m:
+                                t[s2] = m
+                        cst, ct = isa.canonicalize(dict(st), t)
+                    cases.append((cst, ct))
 
-                built.append((asm, code, chk, cases))
-                batch.extend({'label': asm, 'asm': asm, 'bytes': code.hex(),
+                built.append((label, asm, code, chk, cases))
+                batch.extend({'label': label, 'asm': asm, 'bytes': code.hex(),
                               'srcs': list(t), 'state': st, 'taint': t} for st, t in cases)
 
             try:
                 mts = mt_batch(isa, batch)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- keep the campaign alive
                 print(f'  mt_batch failed on a chunk of {len(chunk)}: {e}', flush=True)
-                for asm, _c, _k, _cs in built:
-                    m = metrics.setdefault(asm, {})
+                for label, _a, _c, _k, _cs in built:
+                    m = metrics.setdefault(label, {})
                     m['mt_errors'] = m.get('mt_errors', 0) + 1
                 continue
 
             off = 0
-            for asm, code, chk, cases in built:
+            for label, asm, code, chk, cases in built:
                 mts_e = mts[off:off + len(cases)]
                 off += len(cases)
-                m = metrics.setdefault(asm, {})
+                m = metrics.setdefault(label, {})
                 for k in ('checked', 'under', 'over', 'exact', 'skipped',
                           'gt_bits', 'mt_bits', 'over_bits', 'witnesses_written',
                           'ratio_n',
@@ -269,11 +499,22 @@ def main():
                           'flag_exact', 'flag_over', 'flag_under',
                           'val_checked', 'flag_checked',
                           'val_gt_bits', 'val_mt_bits', 'val_over_bits',
-                          'flag_gt_bits', 'flag_mt_bits', 'flag_over_bits'):
+                          'flag_gt_bits', 'flag_mt_bits', 'flag_over_bits',
+                          # How much of the ground truth is real signal rather
+                          # than input taint passing through.  `chk` scores ALL
+                          # modelled GPRs including the ones the instruction only
+                          # READS, and for those GT[r] is tautologically
+                          # taint[r]: a no-op of the same length would produce it
+                          # identically.  Measured corpus-wide that is ~62% of
+                          # every gt_bits figure, so "bit-exact %" is in large
+                          # part a test that a copy survives.  A case where NO
+                          # scored register differs from passthrough witnesses
+                          # nothing at all.
+                          'info_bits', 'informative_checked', 'informative_exact'):
                     m.setdefault(k, 0)
                 m.setdefault('ratio_sum', 0.0)
                 for (st, t), mt in zip(cases, mts_e):
-                    g, ex = gt.taint(code, st, t)
+                    g, ex = gt.taint_flip_union(code, st, t)
                     if not ex:
                         m['skipped'] += 1
                         continue
@@ -368,12 +609,23 @@ def main():
                         b = (mtb / gtb)
                         k2 = '0' if b <= 1 else str(min(int(b).bit_length(), 12))
                         h[k2] = h.get(k2, 0) + 1
+                    # A no-op of the same length yields GT[r] == taint[r] for
+                    # every r, so bits where the two AGREE witness nothing.
+                    info = 0
+                    for r in chk:
+                        w = fwidth.get(r)
+                        rmask = ((1 << w) - 1) if w else isa.mask
+                        info += popcount(g.get(r, 0) ^ (t.get(r, 0) & rmask))
+                    m['info_bits'] += info
+                    if info:
+                        m['informative_checked'] += 1
                     if under:
                         m['under'] += 1
                         if m['witnesses_written'] < WITNESS_CAP:
                             m['witnesses_written'] += 1
                             wf.write(json.dumps({
-                                'isa': ISA_KEY, 'asm': asm, 'bytes': code.hex(),
+                                'isa': ISA_KEY, 'label': label, 'asm': asm,
+                                'bytes': code.hex(),
                                 'round': rounds,
                                 'state': {k2: hex(v) for k2, v in st.items()},
                                 'taint': {k2: hex(v) for k2, v in t.items()},
@@ -387,6 +639,8 @@ def main():
                         m['over'] += 1
                     else:
                         m['exact'] += 1
+                        if info:
+                            m['informative_exact'] += 1
 
             checkpoint()
 

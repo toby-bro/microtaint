@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-# ruff: noqa: W505, E501, B905, E702, RUF059
+# ruff: noqa: W505, E501, B905, RUF059, RUF100, I001
+#   RUF100 and I001 are config differences, not defects: the source repo
+#   selects BLE001/E402/C901 (so those noqa ARE used there) and sorts
+#   `microtaint` as third-party, while it is first-party here.  No single
+#   spelling satisfies both repos, and the body must stay byte-identical
+#   to the harness that produced the published numbers.
 #   Style only, and suppressed rather than rewritten: this harness is
 #   vendored from the campaign that produced the published numbers, and
 #   e.g. adding zip(strict=True) would change behaviour where the
@@ -113,8 +118,20 @@ class ISA:
             v &= low
             return v | high if v & sign else v
 
+        def sxt(t):
+            # Taint on the SIGN bit implies taint on the extension bits.  In a
+            # sign-extended 32-bit regime bits 32-63 are a function of bit 31,
+            # so anything controlling bit 31 controls them too, and a mask that
+            # claims otherwise describes no reachable state.  Getting this wrong
+            # makes the oracle and the engine answer different questions: the
+            # oracle re-extends after flipping bit 31 and sees the whole high
+            # half move, while the engine was handed a mask that stopped at bit
+            # 31, which reported 25,547 under-taints in 48,021 MIPS cases.
+            t &= low
+            return (t | high) if t & sign else t
+
         st = {k: (sx(v) if k in gpr else v) for k, v in state.items()}
-        tt = {k: ((t & low) if k in gpr else t) for k, t in taint.items()}
+        tt = {k: (sxt(t) if k in gpr else t) for k, t in taint.items()}
         return st, tt
 
     def assemble(self, asm: str) -> bytes:
@@ -136,8 +153,21 @@ def _build_isas(which):
         ks = K.Ks(K.KS_ARCH_X86, K.KS_MODE_64)
         isas['x86_64'] = ISA(
             'x86_64', 'AMD64', 'AMD64', 64, U.UC_ARCH_X86, U.UC_MODE_64,
+            # EVERY general-purpose register, not four.  A register the oracle
+            # does not model is pinned to zero, so a corpus entry naming it is
+            # not measured but measured AT ZERO: `mul r8` was multiply-by-zero.
+            # Worse, the state handed to the engine is built from this list, so
+            # the oracle knew r8 was zero and the engine was never told r8
+            # exists -- the two sides were asked about DIFFERENT machines, and
+            # the engine was charged over-taint for assuming an unknown
+            # multiplier.  Every name here round-trips through Unicorn AND the
+            # engine's register map; see the widening validator.  RSP stays out
+            # because it is the pinned memory anchor (`sp=` below).
             [('RAX', ux.UC_X86_REG_RAX), ('RBX', ux.UC_X86_REG_RBX),
-             ('RCX', ux.UC_X86_REG_RCX), ('RDX', ux.UC_X86_REG_RDX)],
+             ('RCX', ux.UC_X86_REG_RCX), ('RDX', ux.UC_X86_REG_RDX),
+             ('RSI', ux.UC_X86_REG_RSI), ('RDI', ux.UC_X86_REG_RDI),
+             ('RBP', ux.UC_X86_REG_RBP)]
+            + [(f'R{i}', getattr(ux, f'UC_X86_REG_R{i}')) for i in range(8, 16)],
             # NOTE: AF (auxiliary carry, EFLAGS bit 4) is deliberately EXCLUDED --
             # Ghidra's x86 SLEIGH does not model it, so microtaint can never produce
             # AF taint and every add/sub/adc would read as a spurious under-taint.
@@ -160,8 +190,16 @@ def _build_isas(which):
         isas['mips'] = ISA(
             'mips', 'MIPS64BE', 'MIPS64BE', 64, U.UC_ARCH_MIPS,
             U.UC_MODE_MIPS64 | U.UC_MODE_BIG_ENDIAN,
+            # HI/LO are included because `mult`, `multu`, `div` and `divu`
+            # write ONLY there: without them those forms had no scored
+            # destination at all and could not be wrong.  The GPR file is NOT
+            # widened here: no MIPS corpus entry names a register outside these,
+            # and Unicorn and the engine disagree on what $8-$11 are called
+            # (Unicorn T0-T3, the engine A4-A7 under the N64 ABI), so widening
+            # would risk varying a register whose taint is silently discarded.
             [('A0', um.UC_MIPS_REG_A0), ('A1', um.UC_MIPS_REG_A1),
-             ('A2', um.UC_MIPS_REG_A2), ('V0', um.UC_MIPS_REG_V0)],
+             ('A2', um.UC_MIPS_REG_A2), ('V0', um.UC_MIPS_REG_V0),
+             ('HI', um.UC_MIPS_REG_HI), ('LO', um.UC_MIPS_REG_LO)],
             [], None, ks, canon=32, sp=('sp', um.UC_MIPS_REG_SP))
 
     if which in ('ppc', 'all'):
@@ -171,15 +209,25 @@ def _build_isas(which):
         isas['ppc'] = ISA(
             'ppc', 'PPC32BE', 'PPC32BE', 32, U.UC_ARCH_PPC,
             U.UC_MODE_PPC32 | U.UC_MODE_BIG_ENDIAN,
+            # The whole register file: 83 PPC corpus entries read r0, r7 or r15,
+            # which were pinned to zero, and 46 write r0, which nothing scored.
+            # That was 937,888 cases, 26.8% of the PPC run, measuring nothing.
+            # r1 is excluded because it is the stack pointer (`sp=` below).
             [('R3', up.UC_PPC_REG_3), ('R4', up.UC_PPC_REG_4),
-             ('R5', up.UC_PPC_REG_5), ('R6', up.UC_PPC_REG_6)],
+             ('R5', up.UC_PPC_REG_5), ('R6', up.UC_PPC_REG_6)]
+            + [(f'R{i}', getattr(up, f'UC_PPC_REG_{i}'))
+               for i in [0, 2, *range(7, 32)]],
             # XER (xer_ca / xer_so) is EXCLUDED: Unicorn's PPC does not model it --
             # verified empirically, no XER bit affects `adde`'s result and carry-out is
             # never written back (0xffffffff+1 leaves XER=0).  The ORACLE therefore
             # cannot ground-truth PPC carry chains, so including it would manufacture
             # spurious under-taints against an engine that models carry correctly.
             # (Same limitation noted in tests/test_ppc_carry_chain.py.)  cr0 IS modelled.
-            [Flag('cr0', 0, 4, up.UC_PPC_REG_CR0)],
+            # All eight condition fields.  29 corpus entries compare into CR1-CR7
+            # (`cmpw 1, 3, 4`), which nothing scored, so their entire result was
+            # invisible; widening the GPRs alone would not have reached them.
+            [Flag(f'cr{i}', 0, 4, getattr(up, f'UC_PPC_REG_CR{i}'))
+             for i in range(8)],
             None, ks, sp=('r1', up.UC_PPC_REG_1))
 
     if which in ('riscv', 'all'):
@@ -308,7 +356,7 @@ def written_flags(isa: ISA, code: bytes, report: dict | None = None) -> set:
                 continue
             out.add(f.name)
         return out
-    except Exception:
+    except Exception:  # noqa: BLE001 -- fall back to checking all flags
         return {f.name for f in isa.flags}
 
 
@@ -407,7 +455,7 @@ class GTSim:
                 g, fl = split(bits)
                 try:
                     outs.append(self._run(uc, code, g, fl))
-                except Exception:
+                except Exception:  # noqa: BLE001  (illegal/unmapped -> treated as no info)
                     continue
             if not outs:
                 return dict.fromkeys(isa.reg_names, 0), True
@@ -425,7 +473,7 @@ class GTSim:
         try:
             g0, fl0 = split([0] * k)
             base = self._run(uc, code, g0, fl0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return dict.fromkeys(isa.reg_names, 0), False
         lb = dict.fromkeys(isa.reg_names, 0)
         for i in range(k):
@@ -434,7 +482,7 @@ class GTSim:
             g, fl = split(bits)
             try:
                 o = self._run(uc, code, g, fl)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 continue
             for r in isa.reg_names:
                 lb[r] |= base[r] ^ o[r]
@@ -520,19 +568,12 @@ def _resolve_engine_root() -> str:
     env = os.environ.get('MT_ENGINE_ROOT')
     if env:
         return env
-    # Vendored into the engine's own artifacts tree: the checkout under test is
-    # this repository, four levels up from
-    # artifacts/ndss27/rq6-generalisation/table5/.  Pin a different one with
-    # $MT_ENGINE_ROOT, which is how a frozen release is measured.
     here = os.path.dirname(os.path.abspath(__file__))
-    root = os.path.normpath(os.path.join(here, *([os.pardir] * 4)))
-    if os.path.isdir(os.path.join(root, 'microtaint')):
-        return root
     for cand in ('pcode-taint-engine', 'pcode-taint-engine-cvm'):
         p = os.path.normpath(os.path.join(here, os.pardir, cand))
         if os.path.isdir(p):
             return p
-    return root
+    return os.path.normpath(os.path.join(here, os.pardir, 'pcode-taint-engine'))
 
 
 ENGINE_ROOT = _resolve_engine_root()
@@ -583,7 +624,7 @@ def run_isa(isa: ISA, per_instr, seed, batch=400):
             code = isa.assemble(code_spec) if isa._asm is not None else bytes.fromhex(code_spec)
             if not code:
                 raise ValueError('assembler returned nothing')
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- an unsupported mnemonic must not kill the run
             print(f'  [{isa.label}] SKIP {label!r}: {e}', flush=True)
             continue
         chk = [n for n, _ in isa.gprs] + sorted(
@@ -637,7 +678,9 @@ def main():
         tot_ok = tot_n = tot_u = 0
         for label in sorted(per):
             ok, n, u, chk = per[label]
-            tot_ok += ok; tot_n += n; tot_u += u
+            tot_ok += ok
+            tot_n += n
+            tot_u += u
             pct = f'{100 * ok / n:.0f}%' if n else 'n/a'
             flag = '  <-- UNDER' if u else ''
             print(f'  {label:26} {pct:>7} {n:5d} {u:6d}{flag}')

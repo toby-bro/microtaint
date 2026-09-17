@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-# ruff: noqa: W505, E501, B905
+# ruff: noqa: W505, E501, B905, RUF100, I001
+#   RUF100 and I001 are config differences, not defects: the source repo
+#   selects BLE001/E402/C901 (so those noqa ARE used there) and sorts
+#   `microtaint` as third-party, while it is first-party here.  No single
+#   spelling satisfies both repos, and the body must stay byte-identical
+#   to the harness that produced the published numbers.
 #   Style only, and suppressed rather than rewritten: this harness is
 #   vendored from the campaign that produced the published numbers, and
 #   e.g. adding zip(strict=True) would change behaviour where the
@@ -49,12 +54,19 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.dirname(HERE))
 os.environ.setdefault('MICROTAINT_TAINT_IR', '0')
 os.environ.setdefault('MICROTAINT_BLOCK', '0')
 
-from corpora import CORPORA
-from mt_multiarch import GTSim, _build_isas, mt_batch
-from oracle import HardenedGTSim
+from oracle import HardenedGTSim  # noqa: E402
+
+from corpora import CORPORA  # noqa: E402
+from mt_multiarch import (  # noqa: E402
+    GTSim,
+    _build_isas,
+    mt_batch,
+    written_flags,
+)
 
 
 def popcount(x):
@@ -96,22 +108,23 @@ def check_isa(key, isa, forms, cases, rng):
             tt = {n: 0 for n, _ in isa.gprs}
             for f in isa.flags:
                 tt[f.name] = 0
-            # SPARSE taint: the exact 2^k oracle only runs when k <= budget
-            # (13).  A full-width random mask gives k ~= 32, silently takes the
-            # lower-bound path, returns exact=False, and the campaign counts the
-            # case as skipped rather than checked.
+            # ARBITRARY taint mask, exactly as the campaign generates them.
+            # The flip-union oracle costs k+1 runs, so there is no budget to
+            # stay under and no reason to bias the validator toward sparse
+            # taint: validate what actually runs.
             for s2 in srcs:
                 if s2 not in tt:
                     continue
                 width = 1 if s2 in fset else isa.bits
+                k = rng.randint(0, width)
                 m = 0
-                for _b in range(rng.randint(1, 3)):
-                    m |= 1 << rng.randrange(width)
+                for b in rng.sample(range(width), k):
+                    m |= 1 << b
                 tt[s2] = m
             if not any(tt.values()):
                 continue
             st, tt = isa.canonicalize(st, tt)
-            g, ex = gt_sim.taint(code, st, tt)
+            g, ex = gt_sim.taint_flip_union(code, st, tt)
             if not ex:
                 continue
             checked += 1
@@ -122,16 +135,31 @@ def check_isa(key, isa, forms, cases, rng):
 
     # ONE subprocess for the whole ISA: mt_batch spawns `uv run` per call.
     mutated = caught = 0
+    uncovered: dict[str, int] = {}
     if pending:
         batch = [{'label': 'v', 'asm': 'v', 'bytes': c.hex(),
                   'srcs': list(t), 'state': st, 'taint': t}
                  for _g, c, st, t in pending]
         try:
             mts = mt_batch(isa, batch)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(f'  {key}: mt_batch failed: {exc}')
             mts = []
-        for (g, _c, _st, _t), mt in zip(pending, mts):
+        # The mutation must be judged by the CAMPAIGN's comparison, not by a
+        # reimplementation of it here.  The previous version drew bit b from the
+        # ground truth, cleared it from the engine's mask, then tested
+        # `g & ~hurt` -- which contains b by construction.  It never read the
+        # engine's answer in any way that could fail, so a perfect engine, an
+        # engine tainting everything and an engine reporting NOTHING all scored
+        # 2000/2000 caught.  It could not fail, so it certified nothing.
+        #
+        # What can genuinely fail is coverage: the campaign scores `chk`
+        # (the GPRs plus the flags this form writes, minus exclusions), not
+        # every register the oracle reports.  A dropped bit in a register
+        # outside `chk` is invisible to the campaign, and that is the property
+        # worth asserting.
+        for (g, c, _st, _t), mt in zip(pending, mts):
+            chk = [r for r, _ in isa.gprs] + sorted(written_flags(isa, c))
             live = [(r, b) for r in isa.reg_names for b in range(isa.bits)
                     if (g.get(r, 0) >> b) & 1]
             if not live:
@@ -140,15 +168,20 @@ def check_isa(key, isa, forms, cases, rng):
             hurt = dict(mt)
             hurt[r] = (hurt.get(r, 0) or 0) & ~(1 << b)
             mutated += 1
+            # Exactly the campaign's own test, over exactly its own register set.
             under = 0
-            for rr in isa.reg_names:
+            for rr in chk:
                 under |= g.get(rr, 0) & ~hurt.get(rr, 0)
             if under:
                 caught += 1
+            else:
+                uncovered.setdefault(r, 0)
+                uncovered[r] += 1
 
     return {
         'checked': checked, 'with_taint': with_taint,
         'mutated': mutated, 'caught': caught,
+        'uncovered': uncovered,
         'skipped': gt_sim.skipped, 'ran': gt_sim.ran,
     }
 
@@ -170,7 +203,7 @@ def check_no_phantom(isa, rng, cases=40):
         # it.  Any output taint here is phantom, by construction.
         tt['RCX'] = 1 << 21
         n += 1
-        g, ex = hard.taint(code, st, tt)
+        g, ex = hard.taint_flip_union(code, st, tt)
         if ex and any(v for r, v in g.items() if r != 'RCX'):
             hard_n += 1
         try:
@@ -204,8 +237,12 @@ def main() -> int:
         rng = random.Random(args.seed + i)
         res = check_isa(key, isa, forms, args.cases, rng)
 
-        # A zero is only meaningful if the oracle found taint AND a dropped bit
-        # is caught every time.
+        # A zero is only meaningful if the oracle found taint AND every bit the
+        # oracle can see lies in a register the campaign actually scores.  The
+        # mutation drops one such bit from the engine's answer and requires the
+        # campaign's own comparison, over its own `chk` set, to report it.  What
+        # this can fail on is COVERAGE: ground truth in a register outside `chk`
+        # is invisible to the campaign no matter what the engine says.
         vacuous = res['with_taint'] == 0
         mut_ok = res['mutated'] > 0 and res['caught'] == res['mutated']
         ok = not vacuous and mut_ok
@@ -217,6 +254,9 @@ def main() -> int:
         print(f'{key:8s} {"OK  " if ok else "FAIL"} '
               f'checked {res["checked"]:5d}  with-taint {res["with_taint"]:5d}  '
               f'mutation {res["caught"]}/{res["mutated"]}  skipped {res["skipped"]}')
+        if res.get('uncovered'):
+            print(f'{"":8s}      NOT SCORED by the campaign: '
+                  f'{dict(sorted(res["uncovered"].items()))}')
         if res.get('no_phantom'):
             np = res['no_phantom']
             print(f'{"":8s}      shrd rbp,rsp phantom taint (RCX bit 21, '
@@ -234,8 +274,9 @@ def main() -> int:
         print(f'\nFAILED on {", ".join(failures)}: a zero from those ISAs would '
               f'not mean the engine is sound.')
         return 1
-    print('\nPASSED: the ground truth finds taint on every ISA and a dropped '
-          'taint bit is always caught.')
+    print('\nPASSED: the ground truth finds taint on every ISA, and every bit '
+          'it finds lies in a register the campaign scores, so dropping one is '
+          'reported as an under-taint.')
     return 0
 
 

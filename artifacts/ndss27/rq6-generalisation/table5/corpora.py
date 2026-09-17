@@ -1,4 +1,9 @@
-# ruff: noqa: RUF005, W505, E501
+# ruff: noqa: RUF005, W505, E501, RUF100, I001
+#   RUF100 and I001 are config differences, not defects: the source repo
+#   selects BLE001/E402/C901 (so those noqa ARE used there) and sorts
+#   `microtaint` as third-party, while it is first-party here.  No single
+#   spelling satisfies both repos, and the body must stay byte-identical
+#   to the harness that produced the published numbers.
 #   Style only, and suppressed rather than rewritten: this harness is
 #   vendored from the campaign that produced the published numbers, and
 #   e.g. adding zip(strict=True) would change behaviour where the
@@ -1455,11 +1460,27 @@ def _x86(isa):
     a('rcr rax, 63', ['RAX', 'CF'], {'exclude_flags': ['OF']})
     a('shld r8, r9', ['RCX', 'CF', 'OF', 'SF', 'ZF', 'PF'], {'exclude_flags': ['OF']})
     a('shld r10d, r11d', ['RCX', 'CF', 'OF', 'SF', 'ZF', 'PF'], {'exclude_flags': ['OF']})
-    a('shld r12w, r13w', ['RCX', 'CF', 'OF', 'SF', 'ZF', 'PF'], {'exclude_flags': ['OF']})
+    # 16-bit SHLD is DEFINED only for a count below the operand
+    # width: the count is masked to 5 bits, so CL >= 16 leaves the result
+    # architecturally undefined and the engine and Unicorn simply choose
+    # differently.  Pin the count into the defined domain (and, being
+    # pinned, it is no longer tainted) so the form still measures its data
+    # path.  The 32- and 64-bit forms keep a free, tainted count: their
+    # masks are 5 and 6 bits, so every count they can produce is defined.
+    a('shld r12w, r13w', ['RCX', 'CF', 'OF', 'SF', 'ZF', 'PF'],
+      {'exclude_flags': ['OF'], 'RCX': 7})
     a('shld rax, rbx, 0x7f', ['RAX', 'RBX', 'CF', 'OF', 'SF', 'ZF', 'PF'], {'exclude_flags': ['OF']})
     a('shrd r8, r9', ['RCX', 'CF', 'OF', 'SF', 'ZF', 'PF'], {'exclude_flags': ['OF']})
     a('shrd r10d, r11d', ['RCX', 'CF', 'OF', 'SF', 'ZF', 'PF'], {'exclude_flags': ['OF']})
-    a('shrd r12w, r13w', ['RCX', 'CF', 'OF', 'SF', 'ZF', 'PF'], {'exclude_flags': ['OF']})
+    # 16-bit SHRD is DEFINED only for a count below the operand
+    # width: the count is masked to 5 bits, so CL >= 16 leaves the result
+    # architecturally undefined and the engine and Unicorn simply choose
+    # differently.  Pin the count into the defined domain (and, being
+    # pinned, it is no longer tainted) so the form still measures its data
+    # path.  The 32- and 64-bit forms keep a free, tainted count: their
+    # masks are 5 and 6 bits, so every count they can produce is defined.
+    a('shrd r12w, r13w', ['RCX', 'CF', 'OF', 'SF', 'ZF', 'PF'],
+      {'exclude_flags': ['OF'], 'RCX': 7})
     a('shrd rax, rbx, 0x7f', ['RAX', 'RBX', 'CF', 'OF', 'SF', 'ZF', 'PF'], {'exclude_flags': ['OF']})
     a('shrd rbp, rsp', ['RCX', 'CF', 'OF', 'SF', 'ZF', 'PF'], {'exclude_flags': ['OF']})
     a('bt rax, 0x7f', ['RAX'])

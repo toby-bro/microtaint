@@ -1,4 +1,9 @@
-# ruff: noqa: W505, E501
+# ruff: noqa: W505, E501, RUF100, I001
+#   RUF100 and I001 are config differences, not defects: the source repo
+#   selects BLE001/E402/C901 (so those noqa ARE used there) and sorts
+#   `microtaint` as third-party, while it is first-party here.  No single
+#   spelling satisfies both repos, and the body must stay byte-identical
+#   to the harness that produced the published numbers.
 #   Style only, and suppressed rather than rewritten: this harness is
 #   vendored from the campaign that produced the published numbers, and
 #   e.g. adding zip(strict=True) would change behaviour where the
@@ -47,7 +52,7 @@ def capstone_decode(isa_key, code, addr=0x1000):
         out = [(i.address, i.size, f'{i.mnemonic} {i.op_str}'.strip())
                for i in md.disasm(code, addr)]
         return out or None
-    except Exception:
+    except Exception:  # noqa: BLE001 -- capstone gap is not a campaign failure
         return None
 
 
@@ -58,7 +63,7 @@ def unicorn_trace(gt, code, state, flags):
     h = uc.hook_add(UC_HOOK_CODE, lambda _u, a, s, _d: seen.append((a, s)))
     try:
         gt._run(uc, code, state, flags)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     finally:
         uc.hook_del(h)
@@ -89,12 +94,12 @@ def model_closure(gt, code, state, flags):
     try:
         clean = gt._run(uc, code, state, flags)
         again = gt._run(uc, code, state, flags)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {'checked': False}
     # Re-run without restoring, so whatever the last run left behind is live.
     try:
         dirty = super(type(gt), gt)._run(uc, code, state, flags)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {'checked': True, 'deterministic': clean == again,
                 'closed': False, 'note': 'dirty run faulted'}
     return {
