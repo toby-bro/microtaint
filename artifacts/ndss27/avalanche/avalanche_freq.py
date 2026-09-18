@@ -499,10 +499,9 @@ class PreloadStdin:
     # `.name` is the path it was opened from; this stand-in had none, so the
     # syscall raised AttributeError and execution halted.
     #
-    # Whether the guest reaches that branch depends on the HOST's libc, not on
-    # the guest binary: Qiling runs with rootfs=/, so a dynamic guest loads the
-    # host's ld.so and libc.  Debian 12 (glibc 2.36) takes it and Arch (2.42)
-    # does not, so the same base64 binary crashed on one and not the other.
+    # Whether the guest takes that branch depends on its libc: Debian 12's
+    # coreutils `base64` fstats stdin before reading, GNU coreutils built
+    # elsewhere may not, so this crashed on some distributions and not others.
     # `/dev/stdin` is the honest answer: it is what fd 0 means, and it stats.
     name = '/dev/stdin'
 
@@ -562,6 +561,32 @@ def run(binary, binary_args, stdin_data, rootfs='/', budget=0, taint_file=None):
     except Exception as exc:
         print(f'[!] execution halted: {exc}', file=sys.stderr)
     return wrapper
+
+
+def _binary_provenance(path):
+    """Identify the exact program that was measured.
+
+    The base64 workload showed why this is not bookkeeping: three distro builds
+    of GNU base64 gave avalanche fractions of 18.74%, 18.74% and 15.97% on the
+    same machine, so a row that does not say WHICH binary it measured cannot be
+    compared with another run.  Recorded for every workload, not just base64.
+    """
+    import hashlib
+    import subprocess
+
+    info = {'path': path}
+    try:
+        with open(path, 'rb') as fh:
+            info['sha256'] = hashlib.sha256(fh.read()).hexdigest()
+    except OSError as exc:
+        info['sha256'] = f'unreadable: {exc}'
+    try:
+        out = subprocess.run([path, '--version'], capture_output=True, text=True, timeout=10)
+        info['version'] = out.stdout.splitlines()[0].strip() if out.stdout else ''
+    except (OSError, subprocess.SubprocessError, IndexError):
+        # Not every workload is a GNU tool with --version; the hash still pins it.
+        info['version'] = ''
+    return info
 
 
 def _print_report(title):
@@ -674,6 +699,7 @@ def main():
         blob = {
             'title': args.title,
             'binary': args.binary,
+            'binary_provenance': _binary_provenance(args.binary),
             'stats': STATS,
             'insn_count': dict(insn_count),
             'asg_count': dict(asg_count),

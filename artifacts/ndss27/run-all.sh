@@ -196,6 +196,10 @@ build_guest() {  # build_guest <label> <dir> <cmd...>
 build_guest 'memory-safety guests'   rq7-applications/memory-safety make
 build_guest 'avalanche nftables'     avalanche/nftables            make
 build_guest 'avalanche siphash'      avalanche/siphash             make
+# Pinned upstream coreutils, so the base64 row measures the same program
+# everywhere.  Downloads a tarball on first run; if there is no network the
+# step below reports SKIP with the command, and base64-system still runs.
+build_guest 'avalanche base64'       avalanche/base64              make
 
 # Neither rq5 artefact is tracked (git ls-files confirms), so a fresh clone has
 # neither.  Built here with the others rather than half-way down the script.
@@ -208,9 +212,30 @@ build_guest 'avalanche siphash'      avalanche/siphash             make
 # Table 6.  Cheap, and it exercises the whole lifting path, so it fails fast.
 run avalanche-calibrate avalanche uv run python calibrate.py \
     --json-out "$OUT/avalanche_calibrate.json"
-run avalanche-base64 avalanche uv run python avalanche_freq.py --title base64 \
+# THREE base64 columns, because the binary decides the answer and the spread
+# should be visible rather than accidental.  See avalanche/base64/Makefile for
+# the measured spread and why each one is here.
+#
+#   debian12  Debian 12's own coreutils, extracted from a hash-pinned .deb.  A
+#             prebuilt binary is bit-identical everywhere (no compiler in the
+#             loop), so this is the REFERENCE column.
+#   static    pinned upstream release built here, -O0 -static: self-contained,
+#             but reproducible only given the same compiler.
+#   system    whatever /usr/bin/base64 this machine has, deliberately unpinned,
+#             to show what the reviewer's own machine reports.
+if need avalanche/base64/base64_debian12 avalanche-base64-debian12 'make -C avalanche/base64'; then
+  run avalanche-base64-debian12 avalanche uv run python avalanche_freq.py --title base64-debian12 \
+      --stdin 'The quick brown fox jumps over the lazy dog' \
+      --json-out "$OUT/avalanche_base64_debian12.json" ./base64/base64_debian12
+fi
+if need avalanche/base64/base64_static avalanche-base64-static 'make -C avalanche/base64'; then
+  run avalanche-base64-static avalanche uv run python avalanche_freq.py --title base64-static \
+      --stdin 'The quick brown fox jumps over the lazy dog' \
+      --json-out "$OUT/avalanche_base64_static.json" ./base64/base64_static
+fi
+run avalanche-base64-system avalanche uv run python avalanche_freq.py --title base64-system \
     --stdin 'The quick brown fox jumps over the lazy dog' \
-    --json-out "$OUT/avalanche_base64.json" /usr/bin/base64
+    --json-out "$OUT/avalanche_base64_system.json" /usr/bin/base64
 if need avalanche/nftables/nftables_harness avalanche-nftables 'make -C avalanche/nftables'; then
   run avalanche-nftables avalanche uv run python avalanche_freq.py --title nftables \
       --stdin-bytes "$(python3 -c 'print((bytes([80,2,0])+bytes(range(80))).hex())')" \

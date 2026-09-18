@@ -1,0 +1,7 @@
+coreutils-*.tar.xz
+coreutils-*/
+coreutils_*.deb
+debtmp/
+base64_debian12
+base64_static
+base64_bin
