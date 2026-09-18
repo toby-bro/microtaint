@@ -16,15 +16,43 @@ Naturally the timings measured are subject to variations, for comparison the res
 
 No dedicated hardware is needed, a commodity computer is sufficient.
 
-All the microtaints experiments can be run with a standard python installation running python 3.12 to 3.14.
+The requirements below were established by installing the artifact from scratch
+in a minimal Debian 12 virtual machine (the `genericcloud` image, 324 packages,
+no compiler and no git), rather than by listing what the authors' machines
+happened to have. A desktop install already provides all of it.
 
-All the provided scripts use [uv](https://docs.astral.sh/uv) to manage the dependencies, python versions... we highly recommend installing it, to prevent any grueling work.
+On a Debian or Ubuntu system, the core experiments need exactly:
 
-Two experiments need more software than that.
-The engine comparison needs the six baselines, and `rq2-comparison/setup_envs.sh` installs them all: for the python libraries (triton, maat, angr, microtaint) `uv` is the only thing needed, but panda and taintgrind need docker.
-Lastly for libdft64 we made a script which patches the source code to enable it to be compiled in 2026, and compiles it.
-The taintinduce comparison needs our fork of taintinduce, which `rq1-synthesis_vs_inference/setup_taintinduce.sh` clones, pins and installs.
-Classical dev dependencies such as `make` and a C compiler are naturally required.
+```sh
+sudo apt install git build-essential curl
+```
+
+`git` because the artifact is a repository and the evaluated version is a tag,
+`build-essential` because microtaint compiles Cython and C extensions and
+because several experiments build their guest binaries from source, and `curl`
+only to fetch `uv` (skip it if `uv` is already installed).
+
+All the provided scripts use [uv](https://docs.astral.sh/uv) to manage the
+dependencies and the Python version, and we highly recommend installing it to
+prevent any grueling work. `uv` downloads its own interpreter, so the system
+Python does not matter: Debian 12 ships 3.11, which is below what microtaint
+requires, and everything still works. Python 3.12 through 3.14 are supported
+and `uv` selects one automatically.
+
+Three experiments need more than that, and each is skipped cleanly if the extra
+software is absent:
+
+* The engine comparison needs the six baselines, and
+  `rq2-comparison/setup_envs.sh` installs them all: for the python libraries
+  (triton, maat, angr, microtaint) `uv` is the only thing needed, but panda and
+  taintgrind need docker. Lastly for libdft64 we made a script which patches
+  the source code to enable it to be compiled in 2026, and compiles it.
+* The taintinduce comparison needs our fork of taintinduce, which
+  `rq1-synthesis_vs_inference/setup_taintinduce.sh` clones, pins and installs.
+* Two of the three `base64` avalanche workloads are fetched on first run (a
+  pinned Debian package and a pinned upstream release), so that build step
+  needs network access once. The third measures the machine's own
+  `/usr/bin/base64` and needs nothing.
 
 ## Installing microtaint
 
