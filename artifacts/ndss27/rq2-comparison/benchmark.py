@@ -173,7 +173,8 @@ PANDA_DOCKER_CMD = [
     f'{CWD}:/benchmark',
     '-v',
     'panda_qcows:/root/.panda',
-    'pandare/panda',
+    # The digest-pinned image tagged by setup_envs.sh, never a floating :latest.
+    'pandare/panda:pinned',
     'python3',
     '/benchmark/worker_panda.py',
 ]

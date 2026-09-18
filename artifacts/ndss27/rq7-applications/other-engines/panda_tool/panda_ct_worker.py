@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-panda_ct_worker.py -- runs INSIDE the pandare/panda:latest container.
+panda_ct_worker.py -- runs INSIDE the pandare/panda:pinned container.
 
 Full-system x86_64 PANDA + taint2 driver for the constant-time / control-flow
 side-channel workload (crypto/square_and_multiply/test_constant_time.c).

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-panda_dns_worker.py -- runs INSIDE the pandare/panda:latest container.
+panda_dns_worker.py -- runs INSIDE the pandare/panda:pinned container.
 
 Full-system x86_64 PANDA + taint2 driver for the DNS OPCODE bit-field probe
 (dns_bitfield.c). Reproduces the LDNS_OPCODE_WIRE extract on the RFC1035

@@ -68,7 +68,19 @@ make
 cd ../../
 
 echo '[+] Pulling PANDA...'
-docker pull pandare/panda:latest
+# PINNED BY DIGEST, not by :latest.  A floating tag means a reviewer running
+# this next year compares against a different PANDA than the paper measured,
+# and nothing in the output would say so.  This digest is the manifest list, so
+# it is immutable and still resolves per architecture.
+#
+# pandare/panda:latest as of 2026-06-09.  To move it deliberately:
+#   docker buildx imagetools inspect pandare/panda:latest   # read the digest
+PANDA_DIGEST='sha256:e4bb0346e9f9cd9f0b4a2f75b353cbf041005687b4af47d5705cfee054aec71b'
+docker pull "pandare/panda@${PANDA_DIGEST}"
+# Local alias so the workers can name one stable thing instead of repeating the
+# digest; `:pinned` is deliberately not `:latest`, so it cannot be silently
+# replaced by a later `docker pull`.
+docker tag "pandare/panda@${PANDA_DIGEST}" pandare/panda:pinned
 echo "[*] Building PANDA Env..."
 uv venv .venv_panda
 uv pip install --python .venv_panda pandare

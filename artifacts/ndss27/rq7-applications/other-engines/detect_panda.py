@@ -2,7 +2,7 @@
 """PANDA/taint2 baseline for the CT and DNS workloads (writes results/panda.json).
 
 taint2 is full-system byte/register dynamic taint; it runs inside the
-pandare/panda:latest container against an x86_64 guest.
+pandare/panda:pinned container against an x86_64 guest.
 Byte granularity is the crux: CT is register-precise on the branch flags so it
 matches microtaint (vuln leaks, ct clean); DNS taints the whole flag byte, so it
 cannot separate QR from OPCODE -> byte-granularity false positive (like libdft).
@@ -24,7 +24,9 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / 'results'
-CONTAINER = 'pandare/panda:latest'
+# Tagged from a digest-pinned pull by rq2-comparison/setup_envs.sh, so this
+# names one fixed image rather than whatever :latest is today.
+CONTAINER = 'pandare/panda:pinned'
 QCOW_DIR = Path(os.path.expanduser('~/.panda'))
 
 CT_BIN = 'bin/test_constant_time'
