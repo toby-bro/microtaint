@@ -1,0 +1,6 @@
+# The parent .gitignore excludes campaign_*.json and under_*.jsonl so a LIVE run
+# never gets committed by accident.  Archived runs under this directory are the
+# exception: they are evidence, kept deliberately, and are never read by
+# table5.py (it globs its own directory only).
+!campaign_*.json
+!under_*.jsonl
