@@ -490,7 +490,21 @@ except Exception:
 # ---------------------------------------------------------------------------
 class PreloadStdin:
     """Minimal stdin stream: preloaded, tainted-on-read, tolerant of the
-    fd lifecycle calls Qiling makes (close/fileno/seek/flush)."""
+    fd lifecycle calls Qiling makes (close/fileno/seek/flush/name)."""
+
+    # Qiling resolves `fstat(0)` -- which the guest issues as
+    # `newfstatat(0, "", AT_EMPTY_PATH)` -- through
+    # `transform_path`, whose AT_EMPTY_PATH branch returns `ql.os.fd[dirfd].name`
+    # and then stats that HOST path.  Every real Qiling fd is a `ql_file`, whose
+    # `.name` is the path it was opened from; this stand-in had none, so the
+    # syscall raised AttributeError and execution halted.
+    #
+    # Whether the guest reaches that branch depends on the HOST's libc, not on
+    # the guest binary: Qiling runs with rootfs=/, so a dynamic guest loads the
+    # host's ld.so and libc.  Debian 12 (glibc 2.36) takes it and Arch (2.42)
+    # does not, so the same base64 binary crashed on one and not the other.
+    # `/dev/stdin` is the honest answer: it is what fd 0 means, and it stats.
+    name = '/dev/stdin'
 
     def __init__(self, data: bytes):
         self._buf = bytearray(data)
