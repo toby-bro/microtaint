@@ -21,7 +21,18 @@ EXACT_CATS = ('Mapped', 'Transportable', 'Translatable', 'Monotonic')
 ROW_CATS = ('Mapped', 'Transportable', 'Translatable', 'Monotonic',
             'Transportable (Eq)', 'Weldable', 'Avalanche')
 #: LaTeX-safe short name per workload.
-TAG = {'base64': 'Bsf', 'nftables': 'Nft', 'siphash': 'Sip'}
+#
+#: A TeX control sequence is letters only, so these tags must contain no digit,
+#: hyphen or space.  `base64-debian12` maps to the same `Bsf` the paper already
+#: uses, because that workload IS the reference column: Debian 12's own
+#: coreutils binary, extracted from a hash-pinned .deb, identical on every
+#: machine.  The other two base64 builds get their own tags so they can be
+#: quoted as variants without colliding with it.
+TAG = {'base64': 'Bsf',
+       'base64-debian12': 'Bsf',
+       'base64-static': 'BsfStatic',
+       'base64-system': 'BsfSystem',
+       'nftables': 'Nft', 'siphash': 'Sip'}
 
 
 def main() -> int:
@@ -45,7 +56,15 @@ def main() -> int:
     exact_shares = []
     flag_shares = []
     for title, d in data.items():
-        t = TAG.get(title, title.title())
+        # Refuse an unknown workload rather than inventing a tag from its title.
+        # `title.title()` turned `base64-debian12` into `Base64-Debian12`, and a
+        # macro named \avlBase64-Debian12N is not a control sequence at all: the
+        # file would have been written and only broken later, inside LaTeX.
+        if title not in TAG:
+            raise SystemExit(
+                f'unknown workload title {title!r}: add it to TAG with a '
+                f'letters-only tag before generating macros from it.')
+        t = TAG[title]
         ic, st = d['insn_count'], d['stats']
         n = sum(ic.values())
         v[f'avl{t}N'] = f'{n:,}'.replace(',', '{,}')

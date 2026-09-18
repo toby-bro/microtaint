@@ -317,10 +317,15 @@ run rq6-pass2 rq6-generalisation uv run python campaign.py pass2 --in "$OUT/camp
 # results directory.  Copy them over the paper's copies yourself once you have
 # read the diff; this script does not write into the paper.
 log 'paper macros'
-if [ -f "$OUT/avalanche_base64.json" ] && [ -f "$OUT/avalanche_nftables.json" ] \
+# The paper's base64 macros come from the REFERENCE column (Debian 12's own
+# coreutils, hash-pinned, identical on every machine).  The static and system
+# builds are measured alongside it to show the spread, but feeding all three
+# here would also skew the cross-workload aggregates, which average over
+# workloads and would then count base64 three times.
+if [ -f "$OUT/avalanche_base64_debian12.json" ] && [ -f "$OUT/avalanche_nftables.json" ] \
    && [ -f "$OUT/avalanche_siphash.json" ]; then
   ( cd "$HERE/avalanche" && uv run python gen_avalanche_macros.py \
-      "$OUT/avalanche_base64.json" "$OUT/avalanche_nftables.json" \
+      "$OUT/avalanche_base64_debian12.json" "$OUT/avalanche_nftables.json" \
       "$OUT/avalanche_siphash.json" --out "$OUT/avalanche_numbers.tex" ) \
     >>"$OUT/log.txt" 2>&1 \
     && record macros-avalanche PASS "$OUT/avalanche_numbers.tex" \
