@@ -184,6 +184,118 @@ def _last_write(ops: Sequence[_Op], vn: _Vn, limit: int) -> tuple[_Op | None, in
     return last, last_idx, last_exact
 
 
+BITWISE_OPS = ('INT_AND', 'INT_OR', 'INT_XOR', 'INT_NEGATE')
+
+
+def bitwise_value_taint(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper,  # noqa: C901
+                        limit: int, depth: int = 0) -> _ChainExprs | None:
+    """Resolve `vn` (as read at program point `limit`) to (value, taint) exprs
+    through PURE BITWISE logic, or None if the shape is not handled.
+
+    This exists so a flag floor that needs the instruction's RESULT can get it
+    without an ``InstructionCellExpr``.  A cell re-executes the whole
+    instruction through the simulator (~3.3us); a bitwise result is a handful of
+    AND/OR/XOR nodes over operands the circuit already has, so resolving it
+    symbolically keeps the floor free.
+
+    Bitwise logic is the family where this is exactly computable: output bit i
+    is a function of input bit i alone, so no bit ever moves position and the
+    taint formulas below are exact for independent operands and a sound
+    over-estimate for correlated ones (``x ^ x`` reports its inputs' taint
+    rather than the constant 0 it really is).  Anything that shifts, adds,
+    multiplies or permutes is NOT handled and returns None, because there the
+    per-bit correspondence fails.
+    """
+    if depth > 24:
+        return None
+    if vn.space.name == 'const':
+        return _ChainExprs(Constant(vn.offset, 8), Constant(0, 8), vn.size * 8)
+    d, idx, exact = _last_write(ops, vn, limit)
+    if d is None:
+        if vn.space.name != 'register':
+            return None
+        m = mapper.map_to_state(vn.offset, vn.size)
+        if m is None or getattr(m, 'name', None) is None or hasattr(m, 'addr_reg'):
+            return None
+        w = m.bit_end - m.bit_start + 1
+        return _ChainExprs(
+            TaintOperand(m.name, m.bit_start, m.bit_end, is_taint=False),
+            TaintOperand(m.name, m.bit_start, m.bit_end, is_taint=True),
+            w,
+        )
+    if d.output is None:
+        return None
+    name = d.opcode.name
+    obits = d.output.size * 8
+    if not exact:
+        # A wider COPY/ZEXT preserves the low bytes it wrote from, so reading a
+        # low-aligned sub-range is that op's input read just before it.  This is
+        # the `xor eax,ebx` shape: the 32-bit result is written to EAX and then
+        # zero-extended into RAX, so ZF's read of EAX lands on the WIDER write.
+        # Any other overlap would need a sub-range of a wider write and would
+        # break the per-bit correspondence, so it declines.
+        src = d.inputs[0] if d.inputs else None
+        if (name in ('COPY', 'INT_ZEXT') and src is not None
+                and d.output.offset == vn.offset and src.offset == vn.offset
+                and src.size >= vn.size):
+            return bitwise_value_taint(ops, vn, mapper, idx, depth + 1)
+        return None
+    if name in ('COPY', 'INT_ZEXT'):
+        inner = bitwise_value_taint(ops, d.inputs[0], mapper, idx, depth + 1)
+        if inner is None:
+            return None
+        # zext widens with zero value and zero taint in the new high bits.
+        return _ChainExprs(inner.value, inner.taint, obits)
+    if name == 'SUBPIECE' and len(d.inputs) == 2:
+        k = _const_of(d.inputs[1])
+        if k is None:
+            return None
+        inner = bitwise_value_taint(ops, d.inputs[0], mapper, idx, depth + 1)
+        if inner is None:
+            return None
+        sh = Constant(k * 8, 8)
+        return _ChainExprs(
+            _mask(BinaryExpr(Op.RIGHT, inner.value, sh), obits),
+            _mask(BinaryExpr(Op.RIGHT, inner.taint, sh), obits),
+            obits,
+        )
+    if name == 'INT_NEGATE' and len(d.inputs) == 1:
+        inner = bitwise_value_taint(ops, d.inputs[0], mapper, idx, depth + 1)
+        if inner is None:
+            return None
+        # Bitwise complement: every output bit flips, so the taint is unchanged.
+        ones = Constant((1 << obits) - 1, 8)
+        return _ChainExprs(_mask(BinaryExpr(Op.XOR, inner.value, ones), obits), inner.taint, obits)
+    if name in ('INT_AND', 'INT_OR', 'INT_XOR') and len(d.inputs) == 2:
+        a = bitwise_value_taint(ops, d.inputs[0], mapper, idx, depth + 1)
+        b = bitwise_value_taint(ops, d.inputs[1], mapper, idx, depth + 1)
+        if a is None or b is None:
+            return None
+        ones = Constant((1 << obits) - 1, 8)
+        both = BinaryExpr(Op.AND, a.taint, b.taint)
+        if name == 'INT_XOR':
+            val = BinaryExpr(Op.XOR, a.value, b.value)
+            # Every output bit flips with either input bit.
+            tnt: Expr = BinaryExpr(Op.OR, a.taint, b.taint)
+        elif name == 'INT_AND':
+            val = BinaryExpr(Op.AND, a.value, b.value)
+            # A tainted bit reaches the output only where the OTHER operand is 1
+            # (or is itself tainted, and so could be 1).
+            tnt = BinaryExpr(Op.OR, both, BinaryExpr(
+                Op.OR,
+                BinaryExpr(Op.AND, a.taint, b.value),
+                BinaryExpr(Op.AND, b.taint, a.value)))
+        else:
+            val = BinaryExpr(Op.OR, a.value, b.value)
+            # Dual of AND: a tainted bit shows only where the other operand is 0.
+            tnt = BinaryExpr(Op.OR, both, BinaryExpr(
+                Op.OR,
+                BinaryExpr(Op.AND, a.taint, BinaryExpr(Op.XOR, b.value, ones)),
+                BinaryExpr(Op.AND, b.taint, BinaryExpr(Op.XOR, a.value, ones))))
+        return _ChainExprs(_mask(val, obits), _mask(tnt, obits), obits)
+    return None
+
+
 def _chain(ops: Sequence[_Op], vn: _Vn, mapper: StateMapper, limit: int,  # noqa: C901
            mem_resolver: _MemResolver | None = None, depth: int = 0) -> _ChainExprs | None:
     """Resolve `vn` (as read at program point `limit`) to (value, taint) exprs

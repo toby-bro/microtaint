@@ -30,7 +30,7 @@ from microtaint.instrumentation.ast import (
     VariableShiftTaintExpr,
 )
 from microtaint.sleigh.constfold import const_value, fold_constants, is_constant_op
-from microtaint.sleigh.flag_closed_form import closed_form_taint
+from microtaint.sleigh.flag_closed_form import bitwise_value_taint, closed_form_taint
 from microtaint.sleigh.lifter import get_context
 from microtaint.sleigh.mapper import (
     AFFINE_ROUTING_OPCODES,
@@ -4641,6 +4641,29 @@ def generate_taint_assignments(  # noqa: C901
          if o.opcode.name not in ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT')),
         None,
     )
+    # Which over-estimate of the RESULT taint is available for this slice.
+    #
+    # carry: a carry out of a tainted bit only ever propagates UPWARD, so
+    # smearing each source taint up and unioning covers every bit the sum's
+    # taint can reach.
+    #
+    # bitwise: output bit i is a function of input bit i alone, so the union of
+    # the source taints is already an over-estimate and needs no smear.  Keeping
+    # it unsmeared is what makes the floor precise here: it fires only when the
+    # result's untainted bits really are all zero.  The `all(...)` is what keeps
+    # this sound -- a slice that also shifts, multiplies or permutes moves taint
+    # across bit positions and is excluded, since neither estimate covers a move
+    # DOWNWARD.
+    _EQ_CARRY_OPS = ('INT_ADD', 'INT_SUB', 'INT_2COMP')
+    _EQ_BITWISE_OPS = ('INT_AND', 'INT_OR', 'INT_XOR', 'INT_NEGATE')
+    _EQ_MOVE_OPS = ('COPY', 'SUBPIECE', 'PIECE', 'INT_ZEXT', 'INT_SEXT',
+                    'INT_EQUAL', 'INT_NOTEQUAL')
+    _eq_has_carry = any(o.opcode.name in _EQ_CARRY_OPS for o in slice_ops)
+    _eq_bitwise_only = (
+        not _eq_has_carry
+        and any(o.opcode.name in _EQ_BITWISE_OPS for o in slice_ops)
+        and all(o.opcode.name in _EQ_BITWISE_OPS + _EQ_MOVE_OPS for o in slice_ops)
+    )
     if (
         not is_store_target
         and not isinstance(mapping, MemMapping)
@@ -4648,9 +4671,11 @@ def generate_taint_assignments(  # noqa: C901
         and _eq_term is not None
         and _eq_term.opcode.name in ('INT_EQUAL', 'INT_NOTEQUAL')
         and len(_eq_term.inputs) == 2
-        # only carry/borrow-propagating arithmetic, where smear-up is a sound
-        # over-estimate of the result taint
-        and any(o.opcode.name in ('INT_ADD', 'INT_SUB', 'INT_2COMP') for o in slice_ops)
+        # Two families, each with its own sound over-estimate of the result taint
+        # (computed below): carry/borrow-propagating arithmetic, and pure bitwise
+        # logic.  Anything else (shifts, multiplies, permutations) moves taint
+        # between bit positions in a way neither estimate covers, and declines.
+        and (_eq_has_carry or _eq_bitwise_only)
         and not _slice_has_constant_dominator(slice_ops)
     ):
         _c_in = next((i for i in _eq_term.inputs if i.space.name == 'const'), None)
@@ -4677,8 +4702,26 @@ def generate_taint_assignments(  # noqa: C901
                     ):
                         _r_in = _o.output
                         break
+        # CELL-FREE PATH.  A bitwise result is a handful of AND/OR/XOR nodes over
+        # operands the circuit already holds, so resolve it symbolically instead
+        # of paying an InstructionCellExpr (~3.3us) to re-execute the
+        # instruction.  This also gives the result's EXACT taint rather than the
+        # carry-smear over-estimate, so the floor fires only where it must.
+        _bw = None
+        _bw_const = 0
+        if _eq_bitwise_only and _c_in is not None and _r_in is not None:
+            _eq_at = next((_i for _i, _o in enumerate(slice_ops) if _o is _eq_term), len(slice_ops))
+            _bw = bitwise_value_taint(slice_ops, _r_in, mapper, _eq_at)
+            _bw_const = _c_in.offset
+        if _bw is not None:
+            _bw_floor: Expr = EqualityTaintExpr(
+                _bw.value, _bw.taint,
+                Constant(_bw_const, _bw.width), Constant(0, _bw.width), _bw.width,
+            )
+            expr = BinaryExpr(Op.OR, expr, BinaryExpr(Op.AND, _bw_floor, Constant(1, 8)))
+
         _rm = mapper.map_to_state(_r_in.offset, _r_in.size) if _r_in is not None else None
-        if _c_in is not None and _r_in is not None and isinstance(_rm, RegMapping):
+        if _bw is None and _c_in is not None and _r_in is not None and isinstance(_rm, RegMapping):
             _w = _r_in.size * 8
             _src_t: Expr | None = None
             for _dm in dep_set.value_deps:
@@ -4687,10 +4730,11 @@ def generate_taint_assignments(  # noqa: C901
                     _src_t = _t if _src_t is None else BinaryExpr(Op.OR, _src_t, _t)
             if _src_t is not None:
                 _smear = _src_t
-                _step = 1
-                while _step < _w:
-                    _smear = BinaryExpr(Op.OR, _smear, BinaryExpr(Op.LEFT, _smear, Constant(_step, 8)))
-                    _step *= 2
+                if _eq_has_carry:
+                    _step = 1
+                    while _step < _w:
+                        _smear = BinaryExpr(Op.OR, _smear, BinaryExpr(Op.LEFT, _smear, Constant(_step, 8)))
+                        _step *= 2
                 _smear = BinaryExpr(Op.AND, _smear, Constant((1 << _w) - 1, 8))
                 # The cell re-executes the instruction; it needs the concrete VALUES
                 # of the registers it reads (an empty input map evaluates to 0).
