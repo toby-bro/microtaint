@@ -176,8 +176,33 @@ need() {  # need <rq> <file> <how-to-build> -> 0 if present
 # them and every experiment that needs one would fail one by one.  Build what we
 # can up front and report the rest as SKIP with the command to run.
 log 'build guests'
-( cd "$HERE/rq7-applications/memory-safety" && make ) \
-    >"$OUT/build.log" 2>&1 && echo 'memory-safety guests: built' >>"$OUT/build.log"
+: >"$OUT/build.log"
+
+# Build EVERY guest binary the default (non-baseline) path needs, not just the
+# memory-safety ones.  The avalanche harnesses used to be left to the `need`
+# guards below, so a fresh clone reported two SKIPs and told the reader to go
+# run `make` by hand -- for binaries this script is perfectly able to build.
+# A SKIP should mean "this needs software we cannot install for you", not "we
+# did not bother to run make".
+build_guest() {  # build_guest <label> <dir> <cmd...>
+  local label=$1 dir=$2; shift 2
+  if ( cd "$HERE/$dir" && "$@" ) >>"$OUT/build.log" 2>&1; then
+    echo "$label: built" >>"$OUT/build.log"
+  else
+    echo "$label: BUILD FAILED, see the output above" >>"$OUT/build.log"
+  fi
+}
+
+build_guest 'memory-safety guests'   rq7-applications/memory-safety make
+build_guest 'avalanche nftables'     avalanche/nftables            make
+build_guest 'avalanche siphash'      avalanche/siphash             make
+
+# Neither rq5 artefact is tracked (git ls-files confirms), so a fresh clone has
+# neither.  Built here with the others rather than half-way down the script.
+[ -e "$HERE/rq5-overhead/bench.elf" ] || \
+  build_guest 'rq5 bench.elf' rq5-overhead uv run python overhead_bench.py --build-bench bench.c --runs 0
+[ -e "$HERE/rq5-overhead/ladder_hooks.so" ] || \
+  build_guest 'rq5 ladder_hooks.so' rq5-overhead gcc -O2 -fPIC -shared -o ladder_hooks.so ladder_hooks.c
 
 # ------------------------------------------------------------------ avalanche
 # Table 6.  Cheap, and it exercises the whole lifting path, so it fails fast.
@@ -224,21 +249,11 @@ fi
 # A timing measurement, so it runs before the two CPU-saturating steps below.
 # Both scripts refuse to run with CPU boost enabled (ALLOW_CPU_BOOST=1 overrides
 # and the boost state is recorded in the JSON either way).
-# BUILD the two artefacts rather than skipping.  Neither bench.elf nor
-# ladder_hooks.so is tracked (git ls-files confirms), so a fresh clone has
-# neither, and the old SKIP remedy named `make -C rq5-overhead bench.elf` when
-# there is no Makefile in that directory at all.  Worse, the single `need`
-# wrapped BOTH rq5 steps while naming only rq5-ladder, so on a fresh clone
-# SUMMARY.md contained no line whatsoever for rq5-bench: the headline overhead
-# experiment silently did not exist in the verdict list.
-if [ ! -e "$HERE/rq5-overhead/bench.elf" ]; then
-  ( cd "$HERE/rq5-overhead" && uv run python overhead_bench.py --build-bench bench.c --runs 0 ) \
-      >>"$OUT/build.log" 2>&1 && echo 'rq5 bench.elf: built' >>"$OUT/build.log"
-fi
-if [ ! -e "$HERE/rq5-overhead/ladder_hooks.so" ]; then
-  ( cd "$HERE/rq5-overhead" && gcc -O2 -fPIC -shared -o ladder_hooks.so ladder_hooks.c ) \
-      >>"$OUT/build.log" 2>&1 && echo 'rq5 ladder_hooks.so: built' >>"$OUT/build.log"
-fi
+# Both rq5 artefacts are built up front with the other guests.  Each rq5 step
+# still gets its OWN `need` below: the single `need` used to wrap BOTH steps
+# while naming only rq5-ladder, so on a fresh clone SUMMARY.md contained no line
+# whatsoever for rq5-bench and the headline overhead experiment silently did not
+# exist in the verdict list.
 if need rq5-overhead/bench.elf rq5-ladder 'cd rq5-overhead && uv run python overhead_bench.py --build-bench bench.c --runs 0'; then
   if need rq5-overhead/ladder_hooks.so rq5-ladder 'cd rq5-overhead && gcc -O2 -fPIC -shared -o ladder_hooks.so ladder_hooks.c'; then
     run rq5-ladder rq5-overhead uv run python overhead_ladder.py bench.elf --gen-input 64 \
