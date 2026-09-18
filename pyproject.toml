@@ -455,3 +455,14 @@ omit = [
     "*/stubs/*",
     "demo.py",
 ]
+
+[tool.uv]
+# Qiling 1.4.6 declares `python-fx` in its metadata but never imports it: there
+# is no `import fx` anywhere in the package, dynamic or otherwise (fx is a
+# standalone JSON-viewer CLI).  It drags in Pillow, which drags in a C build
+# needing zlib and libjpeg headers on any Python where Pillow ships no wheel.
+#
+# An override whose marker can never be true removes the dependency without
+# patching Qiling.  This deletes an imaging library, and its system headers,
+# from a taint engine's dependency tree.
+override-dependencies = ["python-fx ; sys_platform == 'never'"]
