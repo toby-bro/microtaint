@@ -19,6 +19,8 @@
 # REFUSES to certify a run in which any ISA measured nothing.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/../../find_uv.sh"
+find_uv || exit 1
 HOURS="${1:-12}"
 
 # The artifact measures the LogicCircuit engine; taint_ir and block mode are

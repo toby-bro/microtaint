@@ -27,10 +27,8 @@ TAINTINDUCE_COMMIT='64a703a2ce539d725bc4dbf3d90394fb8c9443eb'
 here=$(cd "$(dirname "$0")" && pwd)
 dest="$here/external/taintinduce"
 
-if ! command -v uv &> /dev/null; then
-    echo '[!] uv not found, aborting... check https://docs.astral.sh/uv/ for installation instructions.'
-    exit 1
-fi
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/find_uv.sh"
+find_uv || exit 1
 
 # The DNF minimiser is a prebuilt espresso binary committed into the repository,
 # and it is an x86-64 ELF.  On any other host the inference dies at its first

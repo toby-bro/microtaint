@@ -6,10 +6,8 @@ og_dir=$(pwd)
 echo "[*] Setting up virtual environments with uv..."
 
 # Install uv if not present
-if ! command -v uv &> /dev/null; then
-    echo '[!] uv not found, aborting... check https://docs.astral.sh/uv/ for installation instructions.'
-    exit 1
-fi
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/find_uv.sh"
+find_uv || exit 1
 
 # 1. Master Orchestrator
 echo "[*] Building Master Env..."

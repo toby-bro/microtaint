@@ -27,6 +27,12 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+# Every experiment below runs through `uv`, so find it before doing anything
+# else: installed-but-not-on-PATH is the normal state right after uv's own
+# installer, and failing here with one message beats failing in each experiment.
+. "$HERE/find_uv.sh"
+find_uv || exit 1
+
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$HERE/results/$STAMP"
 mkdir -p "$OUT"

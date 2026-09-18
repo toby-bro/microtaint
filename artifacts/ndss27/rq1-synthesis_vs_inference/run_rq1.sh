@@ -16,6 +16,8 @@
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
+. "$here/../find_uv.sh"
+find_uv || exit 1
 ti="$here/external/taintinduce"
 
 if [ ! -d "$ti/.venv" ]; then
