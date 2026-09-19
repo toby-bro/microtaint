@@ -170,7 +170,6 @@ C_HARNESS_WORKERS = {
     # so the engine reported an error for every case and dropped out of the
     # comparison entirely.
     'taintgrind': f'docker run -i --rm -v {CWD}:/pwd taintgrind:latest /pwd/harness.bin',
-
     'libdft64': f'{PIN_ROOT}/pin -t {LIBDFT_TOOL} -- ./harness.bin',
 }
 PANDA_DOCKER_CMD = [
@@ -4649,6 +4648,16 @@ def main():
     )
     parser.add_argument('--no-summary', action='store_true', help='Skip summary metrics table')
     parser.add_argument(
+        '--allow-missing-engines',
+        action='store_true',
+        help=(
+            'Exit 0 even if a requested engine contributed no results. Without '
+            'this, an engine that failed to start, timed out booting or failed '
+            'to compile makes the run exit non-zero, because a comparison '
+            'missing a baseline is not the comparison it looks like.'
+        ),
+    )
+    parser.add_argument(
         '--quiet',
         action='store_true',
         help=(
@@ -4947,17 +4956,20 @@ def main():
     worker_pool = BatchedWorkerPool()
     c_harness_cmds: dict[str, str] = {}
 
+    failed_starts: list[str] = []
     for name in selected:
         if name in PYTHON_WORKERS:
             try:
                 worker_pool.start_worker(name, PYTHON_WORKERS[name].split())
             except Exception as exc:
                 print(f'[{name}] Failed to start: {exc}', file=sys.stderr)
+                failed_starts.append(name)
         elif name == 'panda':
             try:
                 worker_pool.start_worker('panda', PANDA_DOCKER_CMD, boot_timeout=600)
             except Exception as exc:
                 print(f'[panda] Failed to start: {exc}', file=sys.stderr)
+                failed_starts.append('panda')
         elif name in C_HARNESS_WORKERS:
             c_harness_cmds[name] = C_HARNESS_WORKERS[name]
 
@@ -5210,6 +5222,40 @@ def main():
     with open(fname, 'w') as f:
         json.dump(report, f, indent=2, default=str)
     print(f'\n[+] Done. Report: {fname}')
+
+    # ── Did every engine we were ASKED for actually run? ──────────────────
+    #
+    # This used to exit 0 whenever anything ran at all, so a comparison missing
+    # half its baselines was indistinguishable from a complete one: run-all.sh
+    # recorded PASS while angr, panda and taintgrind had each contributed
+    # nothing.  A comparison is only a comparison if the engines are in it.
+    #
+    # An engine counts as having run if it completed at least one case.  That
+    # catches all three ways one drops out: a worker that never starts (angr's
+    # import error), one that starts too slowly (panda's boot timeout) and a
+    # C harness that fails to compile (taintgrind without valgrind headers).
+    # ground_truth is excluded: it is the oracle, not an engine under
+    # comparison, and it legitimately declines cases over its enumeration
+    # budget.
+    tool_metrics = (report.get('metrics') or {}).get('per_tool') or {}
+    silent = sorted(
+        {*failed_starts}
+        | {
+            t for t in all_tool_names
+            if t != 'ground_truth' and tool_metrics.get(t, {}).get('completed', 0) == 0
+        },
+    )
+    if silent and not args.allow_missing_engines:
+        print(
+            f'\n[!!!] {len(silent)} requested engine(s) contributed NO results: '
+            f'{", ".join(silent)}\n'
+            '      The report above is not the comparison it claims to be.\n'
+            '      Fix the environment (rq2-comparison/README.md lists what each\n'
+            '      engine needs), or pass --allow-missing-engines to accept a\n'
+            '      partial run deliberately.',
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 if __name__ == '__main__':
