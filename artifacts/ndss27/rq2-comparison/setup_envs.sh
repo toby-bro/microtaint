@@ -131,6 +131,23 @@ echo '[+] Setting up Taintgrind...'
 [ -d external/taintgrind ] && echo "[=] external/taintgrind present" || git clone https://github.com/wmkhoo/taintgrind external/taintgrind
 cd external/taintgrind/
 git checkout 4a59adff7e67ad6793bb362746bc05352bb4e795
+
+# Upstream's Dockerfile installs gcc-multilib but not g++-multilib, and
+# build_taintgrind.sh ends with `make check`, which compiles 32-bit C++ tests
+# (valgrind's memcheck/tests/x86/pcmpgt.cpp among them).  gcc-multilib brings
+# the 32-bit C headers only, so that fails with
+#
+#   /usr/include/c++/7/cstdlib:41:10: fatal error: bits/c++config.h:
+#       No such file or directory
+#
+# and the image never builds.  Patched here, the way Pin is patched above,
+# rather than in the upstream repository we pin by commit.  Guarded by grep so
+# a re-run does not append the package twice.
+grep -q 'g\+\+-multilib' Dockerfile \
+    && echo '[=] Dockerfile already installs g++-multilib' \
+    || { sed -i 's/gcc-multilib/gcc-multilib g++-multilib/' Dockerfile
+         echo '[+] added g++-multilib to the taintgrind Dockerfile'; }
+
 docker build -t taintgrind:latest .
 cd ../../
 
