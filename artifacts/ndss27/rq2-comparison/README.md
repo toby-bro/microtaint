@@ -34,6 +34,16 @@ An engine whose environment is missing is recorded as errored and the run still
 exits 0, so **read the per-engine table before quoting anything**: a comparison
 missing a baseline looks exactly like a successful run in the exit code.
 
+**TaintGrind's harness is built without libc**, unlike every other engine's.
+TaintGrind's `expr2vbits_Unop` has no case for `Iop_Ctz64`/`Iop_Clz64`, which
+glibc's string and startup routines emit, so a glibc-linked harness makes it
+panic (`the 'impossible' happened`) before reaching the instruction under test.
+The harness therefore defines its own `_start` and calls `write(2)` and
+`clock_gettime(2)` directly. Its taint semantics are unaffected, since
+`TNT_TAINT`/`TNT_IS_TAINTED` are Valgrind client requests rather than library
+calls, but the measured region contains less surrounding code than the other
+engines', which is worth knowing when reading its per-step cost.
+
 `benchmark.py` drives one worker per engine (`worker_angr.py`, `worker_maat.py`,
 `worker_triton.py`, `worker_panda.py`, `worker_microtaint.py`) and compiles the
 C harnesses for libdft64 and TaintGrind itself. An engine whose environment is
