@@ -109,9 +109,9 @@ make
 cd ../../
 
 echo '[+] Pulling PANDA...'
-# PINNED BY DIGEST, not by :latest.  A floating tag means a reviewer running
-# this next year compares against a different PANDA than the paper measured,
-# and nothing in the output would say so.  This digest is the manifest list, so
+# PINNED BY DIGEST, not by :latest.  A floating tag means a run next year
+# compares against a different PANDA than the paper measured, and nothing in
+# the output would say so.  This digest is the manifest list, so
 # it is immutable and still resolves per architecture.
 #
 # pandare/panda:latest as of 2026-06-09.  To move it deliberately:
@@ -147,7 +147,28 @@ echo '[+] Setting up Taintgrind...'
 # Idempotent: `set -e` turns a second run into an abort otherwise.
 [ -d external/taintgrind ] && echo "[=] external/taintgrind present" || git clone https://github.com/wmkhoo/taintgrind external/taintgrind
 cd external/taintgrind/
-git checkout 4a59adff7e67ad6793bb362746bc05352bb4e795
+TAINTGRIND_COMMIT='4a59adff7e67ad6793bb362746bc05352bb4e795'
+git checkout "$TAINTGRIND_COMMIT"
+
+# Pin the clone INSIDE the image too.  The checkout above only fixes this
+# outer copy, which supplies taintgrind.h and the Dockerfile; the Dockerfile
+# then does its own `git clone https://github.com/wmkhoo/taintgrind` with no
+# revision, so the TaintGrind that actually runs was whatever master happened
+# to be on the day the image was built.
+#
+# That is not hypothetical.  The paper's run (May 2026) scored TaintGrind on
+# 279 bit-scan cases (bsf, bsr, lzcnt, tzcnt, popcnt) with zero errors.  An
+# image built in September 2026 picked up commit 9875412 (2026-07-20) and
+# panics on the first `bsr`:
+#
+#   Taintgrind: the 'impossible' happened: tnt_translate: expr2vbits_Unop
+#
+# so the comparison silently changed engine version between runs.  Pinning the
+# inner clone to the same commit as the outer one makes the image reproducible.
+grep -q "$TAINTGRIND_COMMIT" Dockerfile \
+    && echo '[=] Dockerfile already pins the taintgrind revision' \
+    || { sed -i "s|git clone https://github.com/wmkhoo/taintgrind|git clone https://github.com/wmkhoo/taintgrind \&\& cd taintgrind \&\& git checkout $TAINTGRIND_COMMIT|" Dockerfile
+         echo "[+] pinned the taintgrind revision inside the Dockerfile"; }
 
 # Upstream's Dockerfile installs gcc-multilib but not g++-multilib, and
 # build_taintgrind.sh ends with `make check`, which compiles 32-bit C++ tests
