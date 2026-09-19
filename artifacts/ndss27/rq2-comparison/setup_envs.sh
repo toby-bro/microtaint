@@ -61,8 +61,9 @@ PIN_DIR="pin-${PIN_VERSION}-gcc-linux"
 PIN_URL="https://software.intel.com/sites/landingpage/pintool/downloads/${PIN_TGZ}"
 
 # Idempotent, like the clones above.  This script has a lot of network in it
-# (five package environments, a 35MB Pin tarball, a ~1GB container image and
-# two container builds), so a transient failure part way through is normal, and
+# (five package environments, a 35MB Pin tarball, a ~1GB container image, a
+# 3GB guest image and two container builds), so a transient failure part way
+# through is normal, and
 # the fix for one is to run it again.  Unconditional `wget` turned that into
 # another download whose only effect was to leave a `.tar.gz.1` file
 # beside the real one.
@@ -73,8 +74,7 @@ openssl cms -verify -binary -in "$PIN_TGZ.sig" -inform DER -content "$PIN_TGZ" -
 # Unpack and patch together: the patches must be applied exactly once per
 # extraction.  Guarding them separately would either re-patch an already
 # patched tree or leave a freshly extracted one unpatched, depending on which
-# guard fired -- and the second sed matches its own output, so re-running it
-# appends the flag again every time.
+# guard fired.
 if [ -d "$PIN_DIR" ]; then
     echo "[=] $PIN_DIR present, already unpacked and patched"
 else
@@ -125,6 +125,23 @@ docker tag "pandare/panda@${PANDA_DIGEST}" pandare/panda:pinned
 echo "[*] Building PANDA Env..."
 uv venv --allow-existing .venv_panda
 uv pip install --python .venv_panda pandare
+
+# Pre-fetch PANDA's guest image HERE, not during the benchmark.
+#
+# On first use pandare downloads bionic-server-cloudimg-amd64-noaslr-nokaslr.qcow2
+# into the panda_qcows volume.  That image is 3GB, and benchmark.py gives a
+# worker 600s to report READY, so the download cannot finish inside the boot
+# timeout on any ordinary link: the first run dies with "[panda] Timeout
+# waiting for READY", leaves a partial .qcow2.tmp behind, and PANDA is missing
+# from the comparison.  Setup is where a 3GB download belongs; the benchmark
+# should only run.
+#
+# get_qcow fetches without booting a guest, and is a no-op once the image is
+# there, so this stays idempotent.
+echo '[+] Pre-fetching the PANDA guest image (3GB, once; this takes a while)...'
+docker run --rm -v panda_qcows:/root/.panda "pandare/panda@${PANDA_DIGEST}" \
+    python3 -c 'from pandare.qcows import Qcows; Qcows.get_qcow("x86_64")' \
+    || echo '[!] PANDA guest image pre-fetch failed; the first benchmark run may time out.'
 
 echo '[+] Setting up Taintgrind...'
 # Idempotent: `set -e` turns a second run into an abort otherwise.
