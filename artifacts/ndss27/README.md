@@ -46,7 +46,19 @@ software is absent:
   `rq2-comparison/setup_envs.sh` installs them all: for the python libraries
   (triton, maat, angr, microtaint) `uv` is the only thing needed, but panda and
   taintgrind need docker. Lastly for libdft64 we made a script which patches
-  the source code to enable it to be compiled in 2026, and compiles it.
+  the source code to enable it to be compiled in 2026, and compiles it. Two
+  host packages beyond the core three are required for it:
+
+  ```sh
+  sudo apt install docker.io valgrind
+  sudo usermod -aG docker "$USER"   # then start a NEW login session
+  ```
+
+  `valgrind` because `benchmark.py` compiles TaintGrind's C harness on the host
+  against `/usr/include/valgrind`; without it that engine silently drops out of
+  the comparison. The script downloads roughly 5GB in total (mostly PANDA's 3GB guest image) and is idempotent,
+  so a run interrupted by a network failure can simply be run again. See
+  [`rq2-comparison/README.md`](./rq2-comparison/README.md).
 * The taintinduce comparison needs our fork of taintinduce, which
   `rq1-synthesis_vs_inference/setup_taintinduce.sh` clones, pins and installs.
 * Two of the three `base64` avalanche workloads are fetched on first run (a

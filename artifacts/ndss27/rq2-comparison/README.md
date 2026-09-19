@@ -10,6 +10,30 @@ baselines.
 uv run python benchmark.py      # ~3 h, dominated by container life-cycle
 ```
 
+`setup_envs.sh` needs, beyond the artifact's own requirements:
+
+* **docker**, for three images: libdft64 and TaintGrind are built from
+  commit-pinned upstream repositories, and PANDA is pulled by digest. Your user
+  must be able to run `docker` without sudo, which after
+  `sudo usermod -aG docker $USER` needs a NEW login session to take effect.
+* **valgrind**, on the host. `benchmark.py` compiles TaintGrind's C harness
+  itself with `-I/usr/include/valgrind`, so without the headers that engine
+  reports `compile failed: valgrind.h: No such file or directory` and drops out
+  of the comparison. This is separate from the TaintGrind container.
+* **network**, for roughly 5GB: a 35MB Pin tarball, a ~1GB PANDA image, its
+  **3GB** guest qcow, and the packages each container build installs. The qcow
+  is fetched during setup on purpose: `benchmark.py` allows a worker 600s to
+  boot, which a 3GB download cannot meet, so leaving it to the first benchmark
+  run drops PANDA from the comparison.
+
+The script is idempotent. Re-running it after a failure picks up where it
+stopped rather than redoing the downloads, which matters because most of its
+runtime is network and a partial run is the normal failure.
+
+An engine whose environment is missing is recorded as errored and the run still
+exits 0, so **read the per-engine table before quoting anything**: a comparison
+missing a baseline looks exactly like a successful run in the exit code.
+
 `benchmark.py` drives one worker per engine (`worker_angr.py`, `worker_maat.py`,
 `worker_triton.py`, `worker_panda.py`, `worker_microtaint.py`) and compiles the
 C harnesses for libdft64 and TaintGrind itself. An engine whose environment is
