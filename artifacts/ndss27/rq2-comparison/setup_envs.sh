@@ -10,23 +10,29 @@ echo "[*] Setting up virtual environments with uv..."
 find_uv || exit 1
 
 # 1. Master Orchestrator
+#
+# --allow-existing on every venv below, for the same reason the Pin download and
+# the clones are guarded: this script is mostly network, so a partial run is
+# normal and the remedy is to run it again.  Without it `uv venv` refuses with
+# "a virtual environment already exists" and `set -e` aborts the whole script on
+# its FIRST step, so a re-run could never get past what it had already done.
 echo "[*] Building Master Env..."
-uv venv .venv_master
+uv venv --allow-existing .venv_master
 uv pip install --python .venv_master keystone-engine unicorn
 
 # 2. Triton
 echo "[*] Building Triton Env..."
-uv venv .venv_triton
+uv venv --allow-existing .venv_triton
 uv pip install --python .venv_triton triton-library
 
 # 3. Angr
 echo "[*] Building Angr Env..."
-uv venv .venv_angr
+uv venv --allow-existing .venv_angr
 uv pip install --python .venv_angr angr
 
 # 4. Maat
 echo "[*] Building Maat Env..."
-uv venv .venv_maat --python=3.11
+uv venv --allow-existing .venv_maat --python=3.11
 uv pip install --python .venv_maat pymaat
 
 # 5. Microtaint -- THIS repository, not PyPI.
@@ -37,7 +43,7 @@ uv pip install --python .venv_maat pymaat
 # review, and nothing in the output said so.
 echo "[*] Building Microtaint Env..."
 repo_root=$(cd "$og_dir/../../.." && pwd)
-uv venv .venv_microtaint
+uv venv --allow-existing .venv_microtaint
 uv pip install --python .venv_microtaint "$repo_root"
 .venv_microtaint/bin/python -c "
 import importlib.metadata as m
@@ -50,14 +56,34 @@ mkdir -p external
 cd external/
 #PIN_VERSION='external-3.31-98869-gfa6f126a8'
 PIN_VERSION='3.20-98437-gf02b61307'
-wget "https://software.intel.com/sites/landingpage/pintool/downloads/pin-${PIN_VERSION}-gcc-linux.tar.gz"
-wget "https://software.intel.com/sites/landingpage/pintool/downloads/pin-${PIN_VERSION}-gcc-linux.tar.gz.sig"
-openssl cms -verify -binary -in pin-${PIN_VERSION}-gcc-linux.tar.gz.sig -inform DER -content pin-${PIN_VERSION}-gcc-linux.tar.gz -out /dev/null -noverify
-tar -xzf pin-${PIN_VERSION}-gcc-linux.tar.gz
-echo '[+] Patching Pin for libdft64...'
-sed -i 's/range\.m_base/range\._base/' pin-${PIN_VERSION}-gcc-linux/extras/components/include/util/range.hpp
-sed -i 's/-Wall -Werror -Wno-unknown-pragmas/-Wall -Werror -Wno-unknown-pragmas -Wno-error=non-c-typedef-for-linkage/' pin-${PIN_VERSION}-gcc-linux/source/tools/Config/makefile.unix.config
-export PIN_ROOT=$(pwd)/pin-${PIN_VERSION}-gcc-linux
+PIN_TGZ="pin-${PIN_VERSION}-gcc-linux.tar.gz"
+PIN_DIR="pin-${PIN_VERSION}-gcc-linux"
+PIN_URL="https://software.intel.com/sites/landingpage/pintool/downloads/${PIN_TGZ}"
+
+# Idempotent, like the clones above.  This script has a lot of network in it
+# (five package environments, a 35MB Pin tarball, a ~1GB container image and
+# two container builds), so a transient failure part way through is normal, and
+# the fix for one is to run it again.  Unconditional `wget` turned that into
+# another download whose only effect was to leave a `.tar.gz.1` file
+# beside the real one.
+[ -f "$PIN_TGZ" ]     && echo "[=] $PIN_TGZ present"     || wget "$PIN_URL"
+[ -f "$PIN_TGZ.sig" ] && echo "[=] $PIN_TGZ.sig present" || wget "$PIN_URL.sig"
+openssl cms -verify -binary -in "$PIN_TGZ.sig" -inform DER -content "$PIN_TGZ" -out /dev/null -noverify
+
+# Unpack and patch together: the patches must be applied exactly once per
+# extraction.  Guarding them separately would either re-patch an already
+# patched tree or leave a freshly extracted one unpatched, depending on which
+# guard fired -- and the second sed matches its own output, so re-running it
+# appends the flag again every time.
+if [ -d "$PIN_DIR" ]; then
+    echo "[=] $PIN_DIR present, already unpacked and patched"
+else
+    tar -xzf "$PIN_TGZ"
+    echo '[+] Patching Pin for libdft64...'
+    sed -i 's/range\.m_base/range\._base/' "$PIN_DIR/extras/components/include/util/range.hpp"
+    sed -i 's/-Wall -Werror -Wno-unknown-pragmas/-Wall -Werror -Wno-unknown-pragmas -Wno-error=non-c-typedef-for-linkage/' "$PIN_DIR/source/tools/Config/makefile.unix.config"
+fi
+export PIN_ROOT=$(pwd)/$PIN_DIR
 cd libdft64/
 git checkout 20804d5bae5d8aed31a71761b1a1149e35a0da95
 # or simply 
@@ -80,7 +106,7 @@ docker pull "pandare/panda@${PANDA_DIGEST}"
 # replaced by a later `docker pull`.
 docker tag "pandare/panda@${PANDA_DIGEST}" pandare/panda:pinned
 echo "[*] Building PANDA Env..."
-uv venv .venv_panda
+uv venv --allow-existing .venv_panda
 uv pip install --python .venv_panda pandare
 
 echo '[+] Setting up Taintgrind...'
