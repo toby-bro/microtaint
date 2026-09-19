@@ -159,9 +159,18 @@ PYTHON_WORKERS = {
     'triton': '.venv_triton/bin/python worker_triton.py',
 }
 C_HARNESS_WORKERS = {
-    'taintgrind': (
-        f'docker run -i --rm -v {CWD}:/pwd taintgrind:latest /code/valgrind/build/bin/taintgrind /pwd/harness.bin'
-    ),
+    # The image's ENTRYPOINT is already `/code/valgrind/build/bin/taintgrind $@`
+    # (which in turn execs `valgrind --tool=taintgrind`), so the arguments are
+    # the guest program alone.  Naming the tool again here made TaintGrind
+    # analyse its own launcher, with the harness as that launcher's argument:
+    #
+    #   Command: /code/valgrind/build/bin/taintgrind /pwd/harness.bin
+    #   Taintgrind: the 'impossible' happened: tnt_translate: expr2vbits_Unop
+    #
+    # so the engine reported an error for every case and dropped out of the
+    # comparison entirely.
+    'taintgrind': f'docker run -i --rm -v {CWD}:/pwd taintgrind:latest /pwd/harness.bin',
+
     'libdft64': f'{PIN_ROOT}/pin -t {LIBDFT_TOOL} -- ./harness.bin',
 }
 PANDA_DOCKER_CMD = [

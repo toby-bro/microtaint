@@ -77,6 +77,6 @@ $V/external/pin-*/pin -t obj-intel64/dns_taint.so -- ./dns_bitfield
 # TaintGrind: harnesses that mark their own source with TNT_TAINT
 gcc -O0 -g -static -no-pie -fno-stack-protector -I. -I/usr/include/valgrind -o ct_tg  ct_tg.c
 gcc -O0 -g -static -no-pie -fno-stack-protector -I. -I/usr/include/valgrind -o dns_tg dns_tg.c
-docker run -i --rm -v "$PWD:/pwd" taintgrind:latest \
-    /code/valgrind/build/bin/taintgrind /pwd/ct_tg vuln
+# the image's ENTRYPOINT already runs taintgrind, so pass the guest alone
+docker run -i --rm -v "$PWD:/pwd" taintgrind:latest /pwd/ct_tg vuln
 ```
