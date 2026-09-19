@@ -32,6 +32,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 # installer, and failing here with one message beats failing in each experiment.
 . "$HERE/find_uv.sh"
 find_uv || exit 1
+. "$HERE/check_deps.sh"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$HERE/results/$STAMP"
@@ -42,59 +43,6 @@ mkdir -p "$OUT"
 # for every child process instead of trusting each script to pin it itself.
 export MICROTAINT_TAINT_IR=0
 
-# ---------------------------------------------------------------------------
-# Dependency preflight
-#
-# Every missing dependency used to announce itself in its own way, hours apart
-# and deep inside an experiment: `cc` not found from uv's build, `valgrind.h`
-# missing from a C harness compile, docker refusing a socket.  Check them all
-# here and say what to install, once, before anything runs.
-# ---------------------------------------------------------------------------
-check_deps() {
-  local missing=() hints=()
-
-  # Core: needed by every experiment, baselines or not.
-  #   gcc/make  microtaint's C+Cython extensions, and the guest binaries
-  #   python3   used by this script and by the harnesses
-  #   tar/curl  fetching and unpacking the pinned base64 workloads
-  #   ar        extracting base64 from the pinned .deb (binutils)
-  for c in gcc make python3 tar curl ar; do
-    command -v "$c" >/dev/null 2>&1 || missing+=("$c")
-  done
-  [ ${#missing[@]} -gt 0 ] && hints+=("  sudo apt install build-essential curl tar binutils")
-
-  if [ "$BASELINES" -eq 1 ]; then
-    local bmissing=()
-    for c in docker wget openssl git; do
-      command -v "$c" >/dev/null 2>&1 || bmissing+=("$c")
-    done
-    # benchmark.py compiles TaintGrind's C harness on the HOST against these
-    # headers; without them that engine drops out of the comparison.
-    [ -f /usr/include/valgrind/valgrind.h ] || bmissing+=("valgrind headers (/usr/include/valgrind/valgrind.h)")
-    if [ ${#bmissing[@]} -gt 0 ]; then
-      missing+=("${bmissing[@]}")
-      hints+=("  sudo apt install docker.io valgrind wget openssl git   # for the baselines")
-    fi
-    # Membership in the docker group only takes effect in a NEW login session,
-    # so being in the group is not the same as being able to use the socket.
-    if command -v docker >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
-      missing+=("a usable docker socket (docker info failed)")
-      hints+=("  sudo usermod -aG docker \"$USER\"   # then start a NEW login session")
-    fi
-  fi
-
-  if [ ${#missing[@]} -gt 0 ]; then
-    {
-      echo "[!] missing ${#missing[@]} dependenc(y/ies):"
-      printf '      - %s\n' "${missing[@]}"
-      echo '    install:'
-      printf '%s\n' "${hints[@]}"
-      [ "$BASELINES" -eq 1 ] && echo '    or re-run with --no-baselines to skip RQ1 and RQ2.'
-    } >&2
-    return 1
-  fi
-  return 0
-}
 
 QUICK=0
 BASELINES=1
@@ -108,7 +56,7 @@ for a in "$@"; do
   esac
 done
 
-check_deps || exit 1
+check_deps "$BASELINES" || exit 1
 
 
 if [ "$QUICK" = 1 ]; then
@@ -285,7 +233,7 @@ run avalanche-calibrate avalanche uv run python calibrate.py \
 #   static    pinned upstream release built here, -O0 -static: self-contained,
 #             but reproducible only given the same compiler.
 #   system    whatever /usr/bin/base64 this machine has, deliberately unpinned,
-#             to show what the reviewer's own machine reports.
+#             to show what this machine reports.
 if need avalanche/base64/base64_debian12 avalanche-base64-debian12 'make -C avalanche/base64'; then
   run avalanche-base64-debian12 avalanche uv run python avalanche_freq.py --title base64-debian12 \
       --stdin 'The quick brown fox jumps over the lazy dog' \
