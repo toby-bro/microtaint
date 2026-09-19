@@ -2,7 +2,7 @@
  "isa": "AMD64",
  "isa_key": "x86_64",
  "provenance": {
-  "engine_root": "/local/home/jstraus/microtaint",
+  "engine_root": "/home/user/microtaint",
   "engine_commit": "384a86b857516625d10043e704b8c744f6b5aed5",
   "engine_branch": "unify-rework",
   "engine_describe": "384a86b",
@@ -16,7 +16,7 @@
   "pypcode": "4.0.0",
   "oracle": "HardenedGTSim (context-restore per polarity run, memory reset, PC completion check)",
   "started": "2026-09-17T21:15:32",
-  "harness_root": "/local/home/jstraus/microtaint/artifacts/ndss27/rq6-generalisation",
+  "harness_root": "/home/user/microtaint/artifacts/ndss27/rq6-generalisation",
   "harness_commit": "384a86b857516625d10043e704b8c744f6b5aed5",
   "harness_dirty": false,
   "harness_paths": [

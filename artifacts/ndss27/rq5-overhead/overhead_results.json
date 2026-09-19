@@ -216,7 +216,7 @@
     }
   },
   "_meta": {
-    "binary": "/home/jns/Documents/Telecom/PRIM/pcode-taint-engine/artifacts/ndss27/rq5-overhead/bench.elf",
+    "binary": "/home/user/microtaint/artifacts/ndss27/rq5-overhead/bench.elf",
     "binary_args": [],
     "guest_instructions": 3768369,
     "stdin_bytes": 64,
