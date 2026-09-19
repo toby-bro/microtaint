@@ -41,7 +41,19 @@ import sys
 import time
 
 import angr
-import claripy
+
+# angr 10 vendors claripy: it is built from the clarirs sources as part of
+# angr.rustylib and aliased to angr.claripy, and angr's own __init__ says there
+# is "deliberately no top-level `claripy` module".  Older angr ships claripy as
+# a separate distribution, so try that first and fall back.
+#
+# Do NOT "fix" this by installing the standalone claripy package alongside
+# angr 10: it pulls a different z3 and breaks angr itself with
+#   ImportError: libz3.so.5.1: cannot open shared object file
+try:
+    import claripy
+except ModuleNotFoundError:
+    from angr import claripy
 
 logging.getLogger('angr').setLevel(logging.ERROR)
 logging.getLogger('cle').setLevel(logging.ERROR)
