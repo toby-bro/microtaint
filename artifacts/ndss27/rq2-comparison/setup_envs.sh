@@ -81,7 +81,24 @@ else
     tar -xzf "$PIN_TGZ"
     echo '[+] Patching Pin for libdft64...'
     sed -i 's/range\.m_base/range\._base/' "$PIN_DIR/extras/components/include/util/range.hpp"
-    sed -i 's/-Wall -Werror -Wno-unknown-pragmas/-Wall -Werror -Wno-unknown-pragmas -Wno-error=non-c-typedef-for-linkage/' "$PIN_DIR/source/tools/Config/makefile.unix.config"
+
+    # -Wno-error=non-c-typedef-for-linkage cannot be applied unconditionally.
+    # libdft64 builds with -Werror, so a compiler that HAS that warning fails on
+    # Pin 3.20's headers, which predate it.  But a compiler that does NOT have
+    # it rejects the suppression itself, as a hard error:
+    #
+    #   cc1plus: error: '-Wno-error=non-c-typedef-for-linkage':
+    #            no option '-Wnon-c-typedef-for-linkage'
+    #
+    # Measured: g++ 16.2 accepts the flag, g++ 12.2 (Debian 12) rejects it, so
+    # hardcoding it builds on the machine it was written on and breaks
+    # elsewhere.  Ask the compiler instead.
+    if echo 'int main(){}' | g++ -x c++ -Wno-error=non-c-typedef-for-linkage -fsyntax-only - 2>/dev/null; then
+        sed -i 's/-Wall -Werror -Wno-unknown-pragmas/-Wall -Werror -Wno-unknown-pragmas -Wno-error=non-c-typedef-for-linkage/' "$PIN_DIR/source/tools/Config/makefile.unix.config"
+        echo '[+] this g++ has -Wnon-c-typedef-for-linkage, suppressed it'
+    else
+        echo '[=] this g++ has no -Wnon-c-typedef-for-linkage, nothing to suppress'
+    fi
 fi
 export PIN_ROOT=$(pwd)/$PIN_DIR
 cd libdft64/
