@@ -3854,6 +3854,120 @@ int main(void) {{
 """
 
 
+def _build_c_source_freestanding(tc: dict) -> str:
+    """The TaintGrind harness, built without libc.
+
+    TaintGrind cannot instrument glibc.  With a glibc-linked harness it panics
+    inside its own translator before reaching the instruction under test:
+
+        Ctz64
+        Taintgrind: the 'impossible' happened: tnt_translate: expr2vbits_Unop
+
+    glibc's string and startup routines use count-trailing/leading-zeros, and
+    TaintGrind's expr2vbits_Unop has no case for Iop_Ctz64/Iop_Clz64.  Measured:
+    the panic happens whether the harness is static or dynamic, whether it is
+    compiled on the host or inside the container, and with the optimised string
+    routines disabled via GLIBC_TUNABLES.  A -nostdlib binary runs cleanly.
+
+    So this variant talks to the kernel directly: write(2) for the result line
+    and clock_gettime(2) for the timing, with a hand-rolled integer formatter.
+    Nothing but the instruction under test and these few syscalls is executed,
+    which also makes the measurement tighter than the libc version.
+
+    TNT_TAINT and TNT_IS_TAINTED are Valgrind client requests, which are inline
+    asm and need no libc, so the taint semantics are unchanged.
+
+    libdft64 keeps the ordinary libc harness: Pin has no such limitation, and
+    changing a baseline's harness without cause would change what it measures.
+    """
+    asm_lines = tc.get('asm_lines', [tc['assembly']])
+    if asm_lines and asm_lines[0].startswith('<') and asm_lines[0].endswith('>'):
+        raw = bytes.fromhex(tc['bytes'])
+        asm_lines = [
+            '.byte ' + ','.join(f'0x{b:02x}' for b in raw[i : i + 12])
+            for i in range(0, len(raw), 12)
+        ]
+    asm_body_lines = '\n'.join(f'        "{line}\\n\\t"' for line in asm_lines)
+
+    apply_ = ''.join(
+        f'    TNT_TAINT(&{r.lower()[:3]},8);\n'
+        for r in REGISTERS
+        if tc['taint'].get(r, 0)
+    )
+    state = tc['state']
+    return f"""\
+#include <stdint.h>
+#include "taintgrind.h"
+
+/* write(2) and clock_gettime(2) straight to the kernel: no libc is linked. */
+static void __wr(const char *s, unsigned long n) {{
+    __asm__ volatile ("syscall" :: "a"(1L), "D"(1L), "S"(s), "d"(n)
+                      : "rcx", "r11", "memory");
+}}
+static unsigned long __now_ns(void) {{
+    struct {{ long sec; long nsec; }} ts = {{0, 0}};
+    __asm__ volatile ("syscall" :: "a"(228L), "D"(1L), "S"(&ts)
+                      : "rcx", "r11", "memory");
+    return (unsigned long)ts.sec * 1000000000UL + (unsigned long)ts.nsec;
+}}
+static char *__utoa(unsigned long v, char *p) {{
+    char t[24]; int i = 0;
+    if (!v) {{ *p++ = '0'; return p; }}
+    while (v) {{ t[i++] = (char)('0' + (v % 10)); v /= 10; }}
+    while (i) *p++ = t[--i];
+    return p;
+}}
+static char *__lit(const char *s, char *p) {{
+    while (*s) *p++ = *s++;
+    return p;
+}}
+
+void _start(void) {{
+    uint64_t rax = {state.get('RAX', 0)}ULL;
+    uint64_t rbx = {state.get('RBX', 0)}ULL;
+    uint64_t rcx = {state.get('RCX', 0)}ULL;
+    uint64_t rdx = {state.get('RDX', 0)}ULL;
+{apply_}
+    unsigned long __t0 = __now_ns();
+    __asm__ volatile (
+        "mov %[rax], %%rax\\n\\t"
+        "mov %[rbx], %%rbx\\n\\t"
+        "mov %[rcx], %%rcx\\n\\t"
+        "mov %[rdx], %%rdx\\n\\t"
+        ".intel_syntax noprefix\\n\\t"
+{asm_body_lines}
+        ".att_syntax prefix\\n\\t"
+        "mov %%rax, %[rax]\\n\\t"
+        "mov %%rbx, %[rbx]\\n\\t"
+        "mov %%rcx, %[rcx]\\n\\t"
+        "mov %%rdx, %[rdx]\\n\\t"
+        : [rax] "+m" (rax), [rbx] "+m" (rbx), [rcx] "+m" (rcx), [rdx] "+m" (rdx)
+        :: "rax", "rbx", "rcx", "rdx", "cc", "memory"
+    );
+    unsigned long __t1 = __now_ns();
+
+    int rax_tainted=0,rbx_tainted=0,rcx_tainted=0,rdx_tainted=0;
+    TNT_IS_TAINTED(rax_tainted,&rax,8);
+    TNT_IS_TAINTED(rbx_tainted,&rbx,8);
+    TNT_IS_TAINTED(rcx_tainted,&rcx,8);
+    TNT_IS_TAINTED(rdx_tainted,&rdx,8);
+
+    char buf[256];
+    char *p = buf;
+    p = __lit("{{\\"output_taint\\":{{\\"RAX\\":", p); p = __utoa(rax_tainted ? 1UL : 0UL, p);
+    p = __lit(",\\"RBX\\":", p);                   p = __utoa(rbx_tainted ? 1UL : 0UL, p);
+    p = __lit(",\\"RCX\\":", p);                   p = __utoa(rcx_tainted ? 1UL : 0UL, p);
+    p = __lit(",\\"RDX\\":", p);                   p = __utoa(rdx_tainted ? 1UL : 0UL, p);
+    p = __lit("}},\\"time_ns\\":", p);              p = __utoa(__t1 - __t0, p);
+    p = __lit("}}\\n", p);
+    __wr(buf, (unsigned long)(p - buf));
+
+    __asm__ volatile ("syscall" :: "a"(60L), "D"(0L));
+    __builtin_unreachable();
+}}
+"""
+
+
 def compile_c_harness(
     tc: dict,
     tool: str,
@@ -3872,7 +3986,9 @@ def compile_c_harness(
 
     Raises subprocess.CalledProcessError on compile failure (stderr captured).
     """
-    src = _build_c_source(tc, tool)
+    # TaintGrind gets a libc-free harness: it cannot instrument glibc (see
+    # _build_c_source_freestanding).  libdft64 keeps the ordinary one.
+    src = _build_c_source_freestanding(tc) if tool == 'taintgrind' else _build_c_source(tc, tool)
 
     # Prefer /dev/shm (RAM, no disk I/O) for the binary
     shm = '/dev/shm'
@@ -3895,7 +4011,12 @@ def compile_c_harness(
         out_path,
     ]
     if tool == 'taintgrind':
-        cmd += ['-static', '-I./external/taintgrind', '-I/usr/include/valgrind']
+        # -nostdlib/-ffreestanding: the harness defines its own _start and talks
+        # to the kernel directly, because TaintGrind panics translating glibc.
+        cmd += [
+            '-static', '-nostdlib', '-ffreestanding',
+            '-I./external/taintgrind', '-I/usr/include/valgrind',
+        ]
 
     subprocess.run(
         cmd,
