@@ -215,3 +215,16 @@ That is `add al, bl` at `al = 0x9c`, `bl = 0xe3`: the sum is `0x7f`, flipping
 `bl[4]` makes it `0x8f`, and bits 4-7 all change along with SF and OF. The rule
 fires the dataflow into bit 4 and not the ones into 5, 6 and 7, although it
 contains all four.
+
+## Cost
+
+Measured on sixteen cores with CPU boost disabled.
+
+`./run_rq1.sh --quick` takes about ten minutes, which is what `run-all.sh
+--quick` runs. `./run_rq1.sh` without arguments takes about an hour, and
+`--full` adds the 64-bit non-convergence probe and can take an hour longer.
+
+Almost all of that is espresso, the DNF minimiser: minimisation on a 96-bit x86
+state costs minutes per instruction, while the observation phase costs seconds.
+Setting up TaintInduce is a two-minute clone and install, mostly downloading
+wheels, and needs an x86-64 host because espresso ships as a compiled binary.

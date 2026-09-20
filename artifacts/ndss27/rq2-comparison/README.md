@@ -106,3 +106,18 @@ an instruction whose output cannot depend on any input, with the oracle claiming
 32 tainted bits in RAX.
 
 A CONFIRMED case is a real disagreement with the paper and worth reporting.
+
+## Cost
+
+Measured on sixteen cores with CPU boost disabled.
+
+| corpus | cases | time |
+| --- | --- | --- |
+| `--quick` (500 single + 100 sequence) | 600 | 18 min |
+| the paper's corpus (7500 + 1000 + sweep) | 9858 | about 3 h |
+
+This is the most demanding experiment for resources as well as time. It runs
+seven engines at once, and peak memory across a whole `--quick` run was
+1.65 GB, reached here rather than anywhere else, with angr the largest single
+contributor. Installing the six engines needs about 5 GB of downloads and 13 GB
+of disk, dominated by the container images.

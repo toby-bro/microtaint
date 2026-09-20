@@ -66,6 +66,36 @@ software is absent:
   needs network access once. The third measures the machine's own
   `/usr/bin/base64` and needs nothing.
 
+#### How long it takes, and how much it costs
+
+Measured on the minimal Debian 12 virtual machine described above, from a
+cold start, with four virtual cores and 4GB of memory.
+
+| step | time | disk after |
+| --- | --- | --- |
+| `apt install git build-essential` | 1 min 31 s | |
+| install `uv` | 3 s | |
+| clone and check out the tag | 1 s | |
+| `uv sync --locked --all-extras` | 1 min 58 s | 2.1 GB |
+| **microtaint, total** | **3 min 33 s** | **2.1 GB** |
+| the six engines and TaintInduce | about half an hour of work, plus 5 GB of downloads | 15 GB |
+
+The last line is mostly network rather than work, so its wall-clock depends on
+the connection: 5 GB of downloads, dominated by PANDA's 3 GB guest image.
+
+Memory never exceeded 500 MB while installing microtaint, and peaked at
+1.65 GB during an engine comparison with all seven engines running at once.
+Neither ever touched swap on a machine that had none, so 4 GB is enough for
+every experiment. We would still suggest 8 GB for the full corpus, since angr
+is the memory-hungry engine and its footprint grows with the number of
+symbolic states a case produces.
+
+For the experiments themselves, `./run-all.sh --quick --no-baselines` took
+1 h 45 min on eight virtual cores. The full `./run-all.sh` takes about two
+days, dominated by the cross-ISA campaign. As a smaller calibration point,
+forty single-instruction cases scored against all seven engines take one
+hundred seconds.
+
 ## Installing microtaint
 
 The version evaluated in the paper is `v0.7.2` of microtaint, it can be installed locally, (the whole compilation process takes a few minutes at most).
@@ -112,6 +142,69 @@ The script pins `MICROTAINT_TAINT_IR=0` for every child process, and finishes by
 regenerating the paper's macro files into the results directory.
 
 The afore mentionned environment variable ensures that the microtaint engine evaluated by these scripts is the one described in the paper (as work on the engine has progressed whilst microtaint was under review).
+
+## What each experiment shows, and how to tell it worked
+
+Each claim in the artifact abstract is supported by one experiment. `run-all.sh`
+runs them all in the order below, cheapest first, and writes a verdict line per
+experiment into `results/<timestamp>/SUMMARY.md`.
+
+**The first success criterion is mechanical**: every line in `SUMMARY.md` reads
+`PASS`, and the script exits zero. A `FAIL` is a broken run. A `SKIP` means the
+experiment did not run at all, usually because software it needs is absent, and
+is never counted as a success. The second criterion is that the numbers below
+land near the paper's. They will not match exactly, and the third column says
+how far off is reasonable.
+
+| claim | experiment | what the paper reports | what a re-run should show |
+| --- | --- | --- | --- |
+| Taint rules can be generated for any instruction, unlike TaintInduce | `rq1-synthesis_vs_inference/run_rq1.sh` | TaintInduce converges on the narrow families only, and not at 64 bits | microtaint synthesises a rule for every instruction attempted. TaintInduce's failures are timeouts and non-convergence, so their exact count moves with the time budget |
+| microtaint is sound on x86-64, and the other engines are not | RQ2, `rq2-comparison/benchmark.py` | 0 unsound cases for microtaint. angr 43, TaintGrind 32, Triton 206, libdft64 210, Maat 300, PANDA 464 | 0 for microtaint is the claim and should reproduce exactly. The others move by a few percent with the corpus, but the ordering holds |
+| microtaint is precise | RQ3, same run | 100.0% sound, 83.8% bit-exact, mean Jaccard 0.962 (the accepted version reports 82.4% and 0.953, from an earlier run of the same experiment) | within a point or so of either. Sound% must stay at 100 |
+| microtaint is faster per propagation than every other engine | RQ4, same run | see Figures 6 and 7 | absolute times are hardware-dependent and will differ. What must hold is that microtaint has the lowest p50 per-step latency of the seven |
+| the overhead is plumbing, not taint propagation | RQ5, `rq5-overhead/` | the taint work is a small part of the total, 18.1x the emulation floor | the ratio is hardware-dependent. Disable CPU boost, or the rungs are not comparable with each other |
+| microtaint is sound across ISAs, with little porting effort | RQ6, `rq6-generalisation/` | no under-taint on any of the five ISAs | zero under-taints. This is a soundness claim, so any non-zero result is a real finding and worth reporting to us |
+| bit precision finds what byte-granular engines cannot | RQ7, `rq7-applications/` | the DNS case is a false positive for every byte-granular engine | microtaint separates the two fields, the byte-granular engines do not |
+| how much the avalanche fallback costs | `avalanche/` | base64 16.1% of data bits, nftables and siphash 0.0% | identical, if the same binaries are measured. See the note on base64 below |
+
+
+Two of these deserve a warning.
+
+**The avalanche base64 row depends on the binary.** Three builds of GNU base64
+gave 18.74%, 18.74% and 15.97% avalanche on one machine, so the number is a
+property of the binary as much as of the engine. The artifact therefore
+measures three: a hash-pinned Debian package, a build from pinned upstream
+source, and the machine's own `/usr/bin/base64`. Read the `debian12` column,
+which is the pinned one and the reference.
+
+The accepted version of the paper measured the development machine's own
+coreutils 9.11 rather than a pinned binary. The pinned Debian package is
+coreutils 9.1, and it gives the same 370 instructions, 16.1% of data bits and
+53.3% of flag bits, so pinning changed which binary is named but not the
+values. The other two columns are there to show how far the number moves when
+the binary changes, and are not comparable with the paper.
+
+**If one of the six other engines is not working, the comparison fails rather
+than leaving it out.** A failure here points at that engine's installation,
+not at microtaint, and the message names the engines that produced nothing.
+Re-running `rq2-comparison/setup_envs.sh` is the usual fix, and
+`--allow-missing-engines` accepts a partial comparison deliberately.
+
+### What a run regenerates
+
+Everything lands in `results/<timestamp>/`, alongside the raw output:
+
+* `SUMMARY.md`, the verdict per experiment, which is the first thing to read
+* `benchmark_numbers.tex` and `avalanche_numbers.tex`, every number the paper
+  quotes, regenerated from this run. Each line is one value, named as it
+  appears in the text, so they can be read against the paper directly
+* `fig_unsoundness.pdf`, `fig_precision.pdf`, `fig_perf_latency.pdf`,
+  `fig_perf_throughput.pdf` and `fig_overhead.pdf`, which are Figures 4 to 8
+* the JSON report behind each experiment, so any number can be recomputed
+
+For comparison, `reference-runs/` holds the full output of runs of our own,
+including a complete cross-ISA campaign, so a new run can be read against ours
+without waiting for the long experiments to finish.
 
 ## Structure of the repository
 

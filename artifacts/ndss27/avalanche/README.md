@@ -145,3 +145,20 @@ the table cannot be read as describing different taxonomies.
 | `gen_avalanche_macros.py` | emits every Table 6 number as a LaTeX macro |
 | `diagnose_unknown.py` | re-runs with every swallowed path reported, for triage |
 | `coreutils_unsound_freq.py` | unrelated: unsound-instruction frequency |
+
+## Cost
+
+Measured on sixteen cores with CPU boost disabled, as part of
+`./run-all.sh --quick`.
+
+| workload | time |
+| --- | --- |
+| calibration | a few seconds |
+| each of the three `base64` builds | 4 to 8 s |
+| nftables | 7 s |
+| siphash | 5 s |
+
+Under half a minute in total, and the same on the full corpus: this experiment
+has no reduced mode, so `--quick` and the full run measure the same thing.
+Memory is negligible. The first run fetches two pinned `base64` binaries, about
+30 MB.

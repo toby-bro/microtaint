@@ -65,3 +65,16 @@ what was actually checked. The gap is not uniform across ISAs, and MIPS64BE has
 the lowest effective fraction on this corpus. A zero means "no under-taint in
 the cases that were genuinely compared", and the second half of that sentence is
 in the coverage file.
+
+## Cost
+
+Measured on sixteen cores with CPU boost disabled.
+
+`run-all.sh --quick` runs 20000 cases per ISA and takes about eight minutes.
+The full corpus is 1000000 cases per ISA, fifty times as many.
+
+The standalone Table 5 campaign in `table5/` is open-ended instead: it takes a
+number of hours as an argument and runs the five ISAs in parallel until that
+deadline. For scale, a 24 hour run on a six-core machine covered 89.8 million
+cases. Memory is modest, a few hundred MB per ISA worker, and the only
+significant disk use is the per-ISA report.

@@ -58,3 +58,15 @@ means the detector missed it. A harness that reads non-zero as failure files
 every successful detection as a failure, and one that reads 0 as success goes
 green precisely when the detector has stopped working. `run-all.sh` checks for
 the expected code rather than for zero.
+
+## Cost
+
+Measured on sixteen cores with CPU boost disabled.
+
+Every detector here runs in about a second: buffer overflow, use after free,
+side channel and arbitrary write are one second each, the two constant-time
+crypto checks four seconds each, and the DNS case one second. Under fifteen
+seconds for the whole directory, with negligible memory.
+
+Building the guest binaries needs a C compiler and takes a few seconds.
+`run-all.sh` builds them itself.

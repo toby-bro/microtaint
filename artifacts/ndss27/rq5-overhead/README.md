@@ -165,3 +165,21 @@ version had them in the chain and the marginal column went negative, which is
 how that mistake announces itself. `ladder_hooks.c` counts its own invocations
 and the harness checks that count against the instruction count, because a C
 hook that silently never fired would read as "free".
+
+## Cost
+
+Measured on sixteen cores with CPU boost disabled.
+
+| step | time |
+| --- | --- |
+| the ladder, `--quick` | 58 min |
+| the end-to-end benchmark, `--quick` | 4 min |
+
+The ladder is the single longest step in a quick run, because it measures each
+rung repeatedly to separate configurations whose costs are close together.
+Memory is modest, a few hundred MB.
+
+**Disable CPU boost before running this.** The rungs are compared against each
+other, so they must all be measured at the same clock, and both scripts refuse
+to run with boost enabled. Even with boost off, the reduced corpus cannot
+separate the detectors from the noise: that figure needs the full corpus.
