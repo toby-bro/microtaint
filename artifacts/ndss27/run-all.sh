@@ -348,14 +348,37 @@ fi
 RQ2_REPORT="$(ls -t "$OUT"/report_*.json 2>/dev/null | head -1)"
 if [ -n "$RQ2_REPORT" ]; then
   OV=()
+  # The reduced corpus runs the overhead ladder with too few repetitions to
+  # separate the detectors from the noise, and gen_paper_macros.py refuses to
+  # state a percentage from noise.  On --quick, emit every macro that IS
+  # resolvable and name the one that is not, rather than producing nothing.
+  UNRES=()
+  [ "$QUICK" = 1 ] && UNRES=(--allow-unresolved)
   [ -f "$OUT/overhead_results.json" ] && OV=(--overhead "$OUT/overhead_results.json")
   ( cd "$HERE/rq2-comparison" && uv run python gen_paper_macros.py "$RQ2_REPORT" \
-      "${OV[@]}" --out "$OUT/benchmark_numbers.tex" ) \
+      "${OV[@]}" "${UNRES[@]}" --out "$OUT/benchmark_numbers.tex" ) \
     >>"$OUT/log.txt" 2>&1 \
     && record macros-benchmark PASS "$OUT/benchmark_numbers.tex" \
     || record macros-benchmark FAIL 'gen_paper_macros.py failed'
 else
   record macros-benchmark SKIP 'no rq2 report to generate from'
+fi
+
+# ------------------------------------------------------------------ figures
+# The paper's five evaluation figures, from the run that just happened.  These
+# need matplotlib and numpy, which the artifact does not otherwise depend on,
+# so they come from `uv run --with` rather than from the project environment.
+if [ -n "$RQ2_REPORT" ]; then
+  OVP=()
+  [ -f "$OUT/overhead_results.json" ] && OVP=("$OUT/overhead_results.json")
+  ( cd "$HERE/rq2-comparison" && uv run --with matplotlib --with numpy \
+      python plot_figures.py "$RQ2_REPORT" "${OVP[@]}" \
+      && mv -f fig_*.pdf "$OUT/" ) \
+    >>"$OUT/log.txt" 2>&1 \
+    && record figures PASS "$OUT/fig_*.pdf" \
+    || record figures FAIL 'plot_figures.py failed'
+else
+  record figures SKIP 'no rq2 report to plot from'
 fi
 
 printf '\n%s\n' "Results in $OUT" | tee -a "$OUT/log.txt"
