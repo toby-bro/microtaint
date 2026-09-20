@@ -10,13 +10,6 @@ Nevertheless as some of them are many hours long, we also provide the commands t
 ### Reproductibility
 
 In order to facilitate reproductibility all the commands we ran in the paper are reported in this directory, this includes the randomness seeds.
-
-Every experiment that draws random cases pins its seed, so two runs of the same
-command draw the same corpus: the engine comparison uses seed 12, which is the
-one the paper was drawn with and which `RQ2_SEED` overrides, the cross-ISA
-campaign uses seed 1, TaintInduce uses 1 for inference and a separate seed for
-the held-out scoring set, and the overhead benchmark generates its input from a
-fixed seed. The avalanche workloads take fixed input and draw nothing.
 Naturally the timings measured are subject to variations, for comparison the results we obtained were on a `AMD Ryzen 7 5700U (16) @ 1.80 GHz` on which boost was deactivated, and `cpupower` set to performance to stabilise the CPU's frequency and obtain meaningful results.
 
 ### Requirements
@@ -24,9 +17,7 @@ Naturally the timings measured are subject to variations, for comparison the res
 No dedicated hardware is needed, a commodity computer is sufficient.
 
 The requirements below were established by installing the artifact from scratch
-in a minimal Debian 12 virtual machine (the `genericcloud` image, 324 packages,
-no compiler and no git), rather than by listing what the authors' machines
-happened to have. A desktop install already provides all of it.
+in a minimal Debian 12 virtual machine, a desktop install should provides all of the requirements.
 
 On a Debian or Ubuntu system, the core experiments need exactly:
 
@@ -39,12 +30,9 @@ sudo apt install git build-essential curl
 because several experiments build their guest binaries from source, and `curl`
 only to fetch `uv` (skip it if `uv` is already installed).
 
-All the provided scripts use [uv](https://docs.astral.sh/uv) to manage the
-dependencies and the Python version, and we highly recommend installing it to
-prevent any grueling work. `uv` downloads its own interpreter, so the system
-Python does not matter: Debian 12 ships 3.11, which is below what microtaint
-requires, and everything still works. Python 3.12 through 3.14 are supported
-and `uv` selects one automatically.
+All the provided scripts use [uv](https://docs.astral.sh/uv) to manage the dependencies and the Python version, and we highly recommend installing it to prevent any grueling work.
+`uv` downloads its own interpreter, so the system Python does not matter.
+Python 3.12 through 3.14 are supported and `uv` selects one automatically.
 
 Three experiments need more than that, and each is skipped cleanly if the extra
 software is absent:
@@ -173,7 +161,6 @@ how far off is reasonable.
 | microtaint is sound across ISAs, with little porting effort | RQ6, `rq6-generalisation/` | no under-taint on any of the five ISAs | zero under-taints. This is a soundness claim, so any non-zero result is a real finding and worth reporting to us |
 | bit precision finds what byte-granular engines cannot | RQ7, `rq7-applications/` | the DNS case is a false positive for every byte-granular engine | microtaint separates the two fields, the byte-granular engines do not |
 | how much the avalanche fallback costs | `avalanche/` | base64 16.1% of data bits, nftables and siphash 0.0% | identical, if the same binaries are measured. See the note on base64 below |
-
 
 Two of these deserve a warning.
 

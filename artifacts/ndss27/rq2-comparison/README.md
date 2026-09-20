@@ -12,7 +12,14 @@ uv run python benchmark.py --seed 12    # ~3 h, dominated by container life-cycl
 
 Seed 12 is the one the paper's corpus was drawn with. `benchmark.py` defaults
 to no seed, which draws a fresh corpus on every run, so pass it explicitly
-whenever two runs need to be comparable. `run-all.sh` passes it for you.
+whenever two runs need to be comparable. `run-all.sh` passes it for you, and
+`RQ2_SEED` overrides it.
+
+This is the only experiment whose corpus is drawn at run time and whose seed
+therefore has to be given. The cross-ISA campaign uses seed 1, TaintInduce uses
+1 for inference and a separate seed for its held-out scoring set, the overhead
+benchmark generates its input from a fixed seed, and the avalanche workloads
+take fixed input and draw nothing.
 
 `setup_envs.sh` needs, beyond the artifact's own requirements:
 
