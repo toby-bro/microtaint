@@ -181,7 +181,10 @@ grep -q "$TAINTGRIND_COMMIT" Dockerfile \
 # and the image never builds.  Patched here, the way Pin is patched above,
 # rather than in the upstream repository we pin by commit.  Guarded by grep so
 # a re-run does not append the package twice.
-grep -q 'g\+\+-multilib' Dockerfile \
+# -F, because the pattern contains `+`: in a basic regular expression `\+`
+# means "one or more", so the guard never matched its own output and every
+# re-run appended the package again.
+grep -qF 'g++-multilib' Dockerfile \
     && echo '[=] Dockerfile already installs g++-multilib' \
     || { sed -i 's/gcc-multilib/gcc-multilib g++-multilib/' Dockerfile
          echo '[+] added g++-multilib to the taintgrind Dockerfile'; }
