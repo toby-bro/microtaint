@@ -32,7 +32,7 @@ only to fetch `uv` (skip it if `uv` is already installed).
 
 All the provided scripts use [uv](https://docs.astral.sh/uv) to manage the dependencies and the Python version, and we highly recommend installing it to prevent any grueling work.
 `uv` downloads its own interpreter, so the system Python does not matter.
-Python 3.12 through 3.14 are supported and `uv` selects one automatically.
+Python 3.12 (pypcode requires `>=3.12`, and we use `TypeAlias`es) through 3.14 are supported and `uv` selects one automatically.
 
 Three experiments need more than that, and each is skipped cleanly if the extra
 software is absent:
@@ -45,13 +45,13 @@ software is absent:
   host packages beyond the core three are required for it:
 
   ```sh
-  sudo apt install docker.io valgrind
-  sudo usermod -aG docker "$USER"   # then start a NEW login session
+  sudo apt install docker.io valgrind # install docker how you want, but this works
+  sudo usermod -aG docker "$USER"     # then start a NEW login session
   ```
 
   `valgrind` because `benchmark.py` compiles TaintGrind's C harness on the host
   against `/usr/include/valgrind`; without it that engine silently drops out of
-  the comparison. The script downloads roughly 5GB in total (mostly PANDA's 3GB guest image) and is idempotent,
+  the comparison. The script downloads roughly 5GB in total (mostly PANDA's 3GB guest image) and is quite idempotent,
   so a run interrupted by a network failure can simply be run again. See
   [`rq2-comparison/README.md`](./rq2-comparison/README.md).
 * The taintinduce comparison needs our fork of taintinduce, which
@@ -106,11 +106,11 @@ Or using a pre-compiled version from PyPI.
 uv init --bare --no-workspace --python 3.13 && uv add 'microtaint==0.7.2'
 ```
 
-Every number in the paper comes from that one tag, measured in a single
-re-run, so a figure and the prose around it cannot disagree about which engine
-produced them. Experiments that take an engine path explicitly (the Table 5
-campaign) accept `$MT_ENGINE_ROOT` so a frozen checkout can be measured while
-the harness stays current.
+`./setup-all.sh` does the above and the six compared engines and TaintInduce in
+one command, checking the dependencies first so a missing one is reported
+before the downloads rather than after them. `./setup-all.sh --no-baselines`
+installs microtaint alone. It is written for Debian and Ubuntu package names
+and only tested there, so elsewhere follow the commands above.
 
 ## Running everything
 
