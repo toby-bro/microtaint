@@ -4317,11 +4317,20 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
                 path_scaling[cat][n][tool].append(res['time_ns'] / 1e6)
 
     path_explosion_out: dict = {}
+    path_explosion_median: dict = {}
     for cat, n_map in path_scaling.items():
         path_explosion_out[cat] = {}
         for n, tool_map in n_map.items():
+            # The mean is the historical statistic and the one the published
+            # numbers were read from.  The paper's path-explosion table claims
+            # a MEDIAN, so that is recorded too, in its own map rather than
+            # mixed in here where every value is a per-tool number.
             path_explosion_out[cat][n] = {
                 tool: round(statistics.mean(lats), 2) for tool, lats in tool_map.items() if lats
+            }
+            path_explosion_median.setdefault(cat, {})[n] = {
+                tool: round(statistics.median(lats), 2)
+                for tool, lats in tool_map.items() if lats
             }
 
     # ── Ground-truth scoring (noninterference, k <= GT_BIT_BUDGET) ──────────
@@ -4333,6 +4342,7 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
     gt_cases_total = 0
     gt_cases_within_budget = 0
     gt_k_distribution: dict = defaultdict(int)
+    gt_skipped_k: list = []
 
     for entry in report_results:
         gt_res = entry['tool_results'].get('ground_truth')
@@ -4344,6 +4354,9 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
             sk = gt_res.get('skipped_k')
             if sk is not None:
                 gt_k_distribution[f'>{GT_BIT_BUDGET}'] += 1
+                # The histogram folds every skipped case into one bucket, so
+                # how far over budget they were cannot be recovered from it.
+                gt_skipped_k.append(sk)
             continue
         gt_cases_within_budget += 1
         k = gt_res.get('k', 0)
@@ -4371,6 +4384,12 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
                     'under_bits_total': 0,  # total missed bits — must be 0 if sound
                     'jaccard_sum': 0.0,  # sum of bit-level Jaccard per (case, reg)
                     'jaccard_n': 0,
+                    # Which test-mode pillars and which instruction categories
+                    # the unsound cases fall in.  The per-case verdict is only
+                    # computed here, so a table that wants the breakdown cannot
+                    # recover it from the report afterwards unless we keep it.
+                    'unsound_modes': defaultdict(int),
+                    'unsound_categories': defaultdict(int),
                 }
             s = gt_scoring[tool]
             # A tool that ERRORS on a case has not been shown to be sound on it.
@@ -4438,6 +4457,9 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
                 s['sound_cases'] += 1
             else:
                 s['unsound_cases'] += 1
+                inst = entry.get('instruction', {})
+                s['unsound_modes'][inst.get('mode') or 'unknown'] += 1
+                s['unsound_categories'][inst.get('category') or 'unknown'] += 1
 
     gt_summary = {}
     for tool, s in gt_scoring.items():
@@ -4459,18 +4481,26 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
             'over_bits_total': s['over_bits_total'],
             'under_bits_total': s['under_bits_total'],
             'mean_jaccard_bit': round(s['jaccard_sum'] / s['jaccard_n'], 4) if s['jaccard_n'] else None,
+            'unsound_modes': dict(s['unsound_modes']),
+            'unsound_categories': dict(s['unsound_categories']),
         }
 
     return {
         'per_tool': out_per_tool,
         'per_category': out_per_cat,
         'path_explosion_scaling': path_explosion_out,
+        'path_explosion_scaling_median': path_explosion_median,
         'ground_truth': {
             'cases_total': gt_cases_total,
             'cases_within_budget': gt_cases_within_budget,
             'cases_skipped': gt_cases_total - gt_cases_within_budget,
             'budget_bits': GT_BIT_BUDGET,
             'k_distribution': dict(gt_k_distribution),
+            # How far over budget the skipped cases were.  The histogram cannot
+            # say, because it folds them all into one bucket.
+            'skipped_k_mean': (round(statistics.mean(gt_skipped_k), 1)
+                               if gt_skipped_k else None),
+            'skipped_k_max': max(gt_skipped_k) if gt_skipped_k else None,
             'per_tool': gt_summary,
         },
         'compared_cases': n_compared,

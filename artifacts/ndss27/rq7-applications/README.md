@@ -70,3 +70,21 @@ seconds for the whole directory, with negligible memory.
 
 Building the guest binaries needs a C compiler and takes a few seconds.
 `run-all.sh` builds them itself.
+
+## Regenerating the paper's tables
+
+`gen_apps_tables.py` builds the constant-time attribution and DNS bit-field
+tables, in both LaTeX and Markdown:
+
+```sh
+uv run python gen_apps_tables.py --results-dir ../results/<stamp> \
+    --tex apps.tex --md apps.md
+```
+
+Our own rows come from the run directory given, so the table describes that
+run. The other engines' rows come from `other-engines/results/<tool>.json`,
+which the `detect_*` scripts in that directory write. The generator refuses to
+emit a table that is missing an engine, because a short comparison table reads
+as a complete one.
+
+`run-all.sh` calls this itself and writes the result to the run directory.

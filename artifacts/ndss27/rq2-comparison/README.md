@@ -132,3 +132,22 @@ seven engines at once, and peak memory across a whole `--quick` run was
 1.65 GB, reached here rather than anywhere else, with angr the largest single
 contributor. Installing the six engines needs about 5 GB of downloads and 13 GB
 of disk, dominated by the container images.
+
+## Regenerating the paper's tables
+
+`gen_eval_tables.py` builds seven of the paper's tables from a report, in both
+LaTeX and Markdown:
+
+```sh
+uv run python gen_eval_tables.py report_<stamp>.json --tex eval.tex --md eval.md
+```
+
+It emits the soundness and precision table, the ground-truth coverage, the
+over-taint comparison, the per-engine unsoundness summary, the latency and
+throughput table, the agreement against the reference labelling, and the
+path-explosion scaling. A table whose inputs a run did not produce is named on
+stderr and left out: a `--no-baselines` report has one engine, and a one-row
+comparison is not a comparison. The path-explosion table needs the extra
+suites, which the paper's corpus runs and a `--quick` corpus does not.
+
+`run-all.sh` calls this itself and writes the result to the run directory.

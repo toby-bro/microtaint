@@ -389,6 +389,46 @@ else
   record figures SKIP 'no rq2 report to plot from'
 fi
 
+# ------------------------------------------------------------------- tables
+# The paper's tables, from this run rather than transcribed by hand.  Each
+# generator refuses to emit a table whose inputs the run did not produce, so a
+# --quick or --no-baselines run gets the subset it actually measured.
+if [ -n "$RQ2_REPORT" ]; then
+  ( cd "$HERE/rq2-comparison" && uv run python gen_eval_tables.py "$RQ2_REPORT" \
+      --tex "$OUT/eval_tables.tex" --md "$OUT/eval_tables.md" ) \
+    >>"$OUT/log.txt" 2>&1 \
+    && record tables-eval PASS "$OUT/eval_tables.md" \
+    || record tables-eval FAIL 'gen_eval_tables.py failed'
+else
+  record tables-eval SKIP 'no rq2 report to generate from'
+fi
+
+# The two application tables need this run's RQ7 output and the checked-in
+# verdicts of the other engines, which the detect_* scripts produce.
+if [ -f "$OUT/rq7_ct_localise.json" ] && [ -f "$OUT/rq7_dns.json" ]; then
+  ( cd "$HERE/rq7-applications" && uv run python gen_apps_tables.py \
+      --results-dir "$OUT" --tex "$OUT/apps_tables.tex" --md "$OUT/apps_tables.md" ) \
+    >>"$OUT/log.txt" 2>&1 \
+    && record tables-apps PASS "$OUT/apps_tables.md" \
+    || record tables-apps FAIL 'gen_apps_tables.py failed'
+else
+  record tables-apps SKIP 'rq7 produced no localisation or dns result'
+fi
+
+# The cross-ISA table comes from the separate, open-ended table5 campaign
+# (rq6-generalisation/table5/run_table5.sh), not from the RQ6 pass above: the
+# two use different harnesses and different file formats.  Generate it only if
+# that campaign has been run, and never pretend the RQ6 pass produced it.
+if ls "$HERE"/rq6-generalisation/table5/campaign_*.json >/dev/null 2>&1; then
+  ( cd "$HERE/rq6-generalisation/table5" && uv run python table5.py \
+      --tex "$OUT/table5.tex" --json "$OUT/table5.json" ) \
+    >>"$OUT/log.txt" 2>&1 \
+    && record tables-multiisa PASS "$OUT/table5.tex" \
+    || record tables-multiisa FAIL 'table5.py refused to certify the campaign'
+else
+  record tables-multiisa SKIP 'table5 campaign not run (see rq6-generalisation/table5/)'
+fi
+
 printf '\n%s\n' "Results in $OUT" | tee -a "$OUT/log.txt"
 printf 'Verdicts:\n' ; grep -E '^\S+\s+(PASS|FAIL|SKIP|NOTE)' "$OUT/SUMMARY.md" || true
 if grep -qE '^\S+\s+FAIL' "$OUT/SUMMARY.md"; then

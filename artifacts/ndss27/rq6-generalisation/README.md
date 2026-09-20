@@ -78,3 +78,26 @@ number of hours as an argument and runs the five ISAs in parallel until that
 deadline. For scale, a 24 hour run on a six-core machine covered 89.8 million
 cases. Memory is modest, a few hundred MB per ISA worker, and the only
 significant disk use is the per-ISA report.
+
+## Regenerating the cross-ISA table
+
+`table5/table5.py` builds the paper's cross-ISA table from the campaign shards:
+
+```sh
+cd table5 && uv run python table5.py --tex table5.tex --json table5.json
+```
+
+It reads `campaign_<isa>.json` from its own directory, so it describes the
+`run_table5.sh` campaign and not the RQ6 pass in `run-all.sh`, which uses a
+different harness and a different file format. `--dir` points it elsewhere,
+which is how our own 24 hour run is read back:
+
+```sh
+uv run python table5.py --dir ../../reference-runs/rq6-campaign-ryzen5-3600-24h
+```
+
+It refuses to emit a table in which any ISA measured nothing, and deletes the
+output files rather than leaving a paste-ready table behind on a refusal.
+
+`run-all.sh` calls it when the campaign has been run, and records a skip
+otherwise.
