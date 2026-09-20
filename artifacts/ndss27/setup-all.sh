@@ -16,6 +16,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 . "$HERE/find_uv.sh"
 find_uv || exit 1
 . "$HERE/check_deps.sh"
+. "$HERE/ensure_git.sh"
 
 BASELINES=1
 for a in "$@"; do
@@ -39,6 +40,9 @@ step() {  # step <label> <dir> <cmd...>
     return 1
   fi
 }
+
+# An unpacked archive has no .git, and the version comes from git.
+ensure_git "$REPO" || exit 1
 
 # microtaint itself: builds the C and Cython extensions.
 step 'microtaint' "$REPO" uv sync --locked --all-extras || exit 1
