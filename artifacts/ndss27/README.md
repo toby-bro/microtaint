@@ -10,6 +10,13 @@ Nevertheless as some of them are many hours long, we also provide the commands t
 ### Reproductibility
 
 In order to facilitate reproductibility all the commands we ran in the paper are reported in this directory, this includes the randomness seeds.
+
+Every experiment that draws random cases pins its seed, so two runs of the same
+command draw the same corpus: the engine comparison uses seed 12, which is the
+one the paper was drawn with and which `RQ2_SEED` overrides, the cross-ISA
+campaign uses seed 1, TaintInduce uses 1 for inference and a separate seed for
+the held-out scoring set, and the overhead benchmark generates its input from a
+fixed seed. The avalanche workloads take fixed input and draw nothing.
 Naturally the timings measured are subject to variations, for comparison the results we obtained were on a `AMD Ryzen 7 5700U (16) @ 1.80 GHz` on which boost was deactivated, and `cpupower` set to performance to stabilise the CPU's frequency and obtain meaningful results.
 
 ### Requirements

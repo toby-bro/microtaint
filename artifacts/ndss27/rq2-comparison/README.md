@@ -7,8 +7,12 @@ baselines.
 
 ```sh
 ./setup_envs.sh                 # once, installs the six baselines
-uv run python benchmark.py      # ~3 h, dominated by container life-cycle
+uv run python benchmark.py --seed 12    # ~3 h, dominated by container life-cycle
 ```
+
+Seed 12 is the one the paper's corpus was drawn with. `benchmark.py` defaults
+to no seed, which draws a fresh corpus on every run, so pass it explicitly
+whenever two runs need to be comparable. `run-all.sh` passes it for you.
 
 `setup_envs.sh` needs, beyond the artifact's own requirements:
 

@@ -44,6 +44,14 @@ mkdir -p "$OUT"
 export MICROTAINT_TAINT_IR=0
 
 
+# The seed the paper's engine comparison was drawn with.  benchmark.py defaults
+# to none, which draws a fresh corpus every time: the run is then not
+# reproducible even against itself, and two runs cannot be compared case by
+# case.  Every other experiment already pins its randomness (RQ1 infer_seed=1,
+# RQ5 gen_input 0xC0FFEE, RQ6 --seed 1, the avalanche workloads take fixed
+# input), so this was the only one left.
+RQ2_SEED="${RQ2_SEED:-12}"
+
 QUICK=0
 BASELINES=1
 for a in "$@"; do
@@ -60,14 +68,14 @@ check_deps "$BASELINES" || exit 1
 
 
 if [ "$QUICK" = 1 ]; then
-  RQ2_ARGS=(--number 500 --sequences 100)
+  RQ2_ARGS=(--number 500 --sequences 100 --seed "$RQ2_SEED")
   RQ6_N=20000
   MODE='quick (reduced corpus, NOT the paper numbers)'
 else
   # benchmark.py defaults to 500 single + 100 sequence + no sweep = 600 cases.
   # The paper's corpus is 9,858.  Passing nothing here is what silently produced
   # a 600-case "full" run once, so the flags are explicit and not defaulted.
-  RQ2_ARGS=(--number 7500 --sequences 1000 --sweep)
+  RQ2_ARGS=(--number 7500 --sequences 1000 --sweep --seed "$RQ2_SEED")
   RQ6_N=1000000
   MODE='full (the paper corpus)'
 fi
