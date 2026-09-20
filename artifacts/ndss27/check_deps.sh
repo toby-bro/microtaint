@@ -6,6 +6,36 @@
 # missing from a C harness compile, docker refusing a socket.  Check them all
 # here and say what to install, once, before anything runs.
 # ---------------------------------------------------------------------------
+# Print an install command for THIS distribution.  A hint naming `apt` on an
+# Arch machine is not a hint, and the package names differ in every field: the
+# compilers are `build-essential` or `base-devel`, `ar` is `binutils` either
+# way, and Debian's docker package is `docker.io`.
+_install_cmd() {  # _install_cmd <core|baselines>
+  local kind=$1
+  if command -v apt-get >/dev/null 2>&1; then
+    case $kind in
+      core)      echo '  sudo apt install build-essential curl tar binutils' ;;
+      baselines) echo '  sudo apt install docker.io valgrind wget openssl git' ;;
+    esac
+  elif command -v pacman >/dev/null 2>&1; then
+    case $kind in
+      core)      echo '  sudo pacman -S --needed base-devel curl tar python' ;;
+      baselines) echo '  sudo pacman -S --needed docker valgrind wget openssl git'
+                 echo '  sudo systemctl enable --now docker' ;;
+    esac
+  elif command -v dnf >/dev/null 2>&1; then
+    case $kind in
+      core)      echo '  sudo dnf install gcc make binutils curl tar python3' ;;
+      baselines) echo '  sudo dnf install docker valgrind-devel wget openssl git' ;;
+    esac
+  else
+    case $kind in
+      core)      echo '  install: a C compiler, make, binutils (ar), curl, tar, python3' ;;
+      baselines) echo '  install: docker, valgrind (with its headers), wget, openssl, git' ;;
+    esac
+  fi
+}
+
 check_deps() {  # check_deps <1 if the baselines are wanted, else 0>
   local want_baselines=${1:-0}
   local missing=() hints=()
@@ -18,7 +48,7 @@ check_deps() {  # check_deps <1 if the baselines are wanted, else 0>
   for c in gcc make python3 tar curl ar; do
     command -v "$c" >/dev/null 2>&1 || missing+=("$c")
   done
-  [ ${#missing[@]} -gt 0 ] && hints+=("  sudo apt install build-essential curl tar binutils")
+  [ ${#missing[@]} -gt 0 ] && hints+=("$(_install_cmd core)")
 
   if [ "$want_baselines" -eq 1 ]; then
     local bmissing=()
@@ -30,7 +60,9 @@ check_deps() {  # check_deps <1 if the baselines are wanted, else 0>
     [ -f /usr/include/valgrind/valgrind.h ] || bmissing+=("valgrind headers (/usr/include/valgrind/valgrind.h)")
     if [ ${#bmissing[@]} -gt 0 ]; then
       missing+=("${bmissing[@]}")
-      hints+=("  sudo apt install docker.io valgrind wget openssl git   # for the baselines")
+      # A trailing comment would land on the LAST line of a multi-line hint,
+      # so the label goes on its own line above the commands.
+      hints+=("  # for the baselines:" "$(_install_cmd baselines)")
     fi
     # Membership in the docker group only takes effect in a NEW login session,
     # so being in the group is not the same as being able to use the socket.
