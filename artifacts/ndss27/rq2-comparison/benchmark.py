@@ -4013,8 +4013,12 @@ def compile_c_harness(
     if tool == 'taintgrind':
         # -nostdlib/-ffreestanding: the harness defines its own _start and talks
         # to the kernel directly, because TaintGrind panics translating glibc.
+        # -fno-stack-protector is required, not cosmetic: distributions differ on
+        # whether gcc enables the stack protector by default (Arch does, Debian
+        # does not), and with -nostdlib there is no __stack_chk_fail to link
+        # against, so the harness fails to link on half of them.
         cmd += [
-            '-static', '-nostdlib', '-ffreestanding',
+            '-static', '-nostdlib', '-ffreestanding', '-fno-stack-protector',
             '-I./external/taintgrind', '-I/usr/include/valgrind',
         ]
 
