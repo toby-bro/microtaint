@@ -1,0 +1,25 @@
+{
+  "findings": [
+    {
+      "kind": "taint_source",
+      "address": "0x80000000de60",
+      "description": "Taint introduced: 8 bytes from stdin at 0x80000000de60",
+      "size": 8,
+      "source": "stdin"
+    },
+    {
+      "kind": "side_channel",
+      "address": "0x401113",
+      "description": "Potential crypto side-channel: branch at 0x401113 depends on tainted data",
+      "instruction": "jne 0x40111f",
+      "taint_mask": "0xffffffffffffffff"
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "bof": 0,
+    "uaf": 0,
+    "side_channel": 1,
+    "aiw": 0
+  }
+}

@@ -1,0 +1,7 @@
+camp_amd64.jsonl: 0 raw -> 0 REAL under-taints (isolated re-verify)
+camp_arm64.jsonl: 0 raw -> 0 REAL under-taints (isolated re-verify)
+camp_mips.jsonl: 0 raw -> 0 REAL under-taints (isolated re-verify)
+camp_ppc.jsonl: 0 raw -> 0 REAL under-taints (isolated re-verify)
+camp_riscv.jsonl: 0 raw -> 0 REAL under-taints (isolated re-verify)
+
+=== TOTAL: 0 raw pass-1 reports -> 0 REAL under-taints after isolation ===

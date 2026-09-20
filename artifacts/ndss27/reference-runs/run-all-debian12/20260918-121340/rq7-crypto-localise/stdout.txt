@@ -1,0 +1,35 @@
+pow_branch key branch at 0x401648; tainting one exponent bit at a time
+  secret bit  0 -> side-channel at step 1  (expect 1)  OK
+  secret bit  1 -> side-channel at step 2  (expect 2)  OK
+  secret bit  2 -> side-channel at step 3  (expect 3)  OK
+  secret bit  3 -> side-channel at step 4  (expect 4)  OK
+  secret bit  4 -> side-channel at step 5  (expect 5)  OK
+  secret bit  5 -> side-channel at step 6  (expect 6)  OK
+  secret bit  6 -> side-channel at step 7  (expect 7)  OK
+  secret bit  7 -> side-channel at step 8  (expect 8)  OK
+  secret bit  8 -> side-channel at step 9  (expect 9)  OK
+  secret bit  9 -> side-channel at step 10  (expect 10)  OK
+  secret bit 10 -> side-channel at step 11  (expect 11)  OK
+  secret bit 11 -> side-channel at step 12  (expect 12)  OK
+  secret bit 12 -> side-channel at step 13  (expect 13)  OK
+  secret bit 13 -> side-channel at step 14  (expect 14)  OK
+  secret bit 14 -> side-channel at step 15  (expect 15)  OK
+  secret bit 15 -> side-channel at step 16  (expect 16)  OK
+  secret bit 16 -> side-channel at step 17  (expect 17)  OK
+  secret bit 17 -> side-channel at step 18  (expect 18)  OK
+  secret bit 18 -> side-channel at step 19  (expect 19)  OK
+  secret bit 19 -> side-channel at step 20  (expect 20)  OK
+  secret bit 20 -> side-channel at step 21  (expect 21)  OK
+  secret bit 21 -> side-channel at step 22  (expect 22)  OK
+  secret bit 22 -> side-channel at step 23  (expect 23)  OK
+  secret bit 23 -> side-channel at step 24  (expect 24)  OK
+  secret bit 24 -> side-channel at step 25  (expect 25)  OK
+  secret bit 25 -> side-channel at step 26  (expect 26)  OK
+  secret bit 26 -> side-channel at step 27  (expect 27)  OK
+  secret bit 27 -> side-channel at step 28  (expect 28)  OK
+  secret bit 28 -> side-channel at step 29  (expect 29)  OK
+  secret bit 29 -> side-channel at step 30  (expect 30)  OK
+  secret bit 30 -> side-channel at step 31  (expect 31)  OK
+  secret bit 31 -> side-channel at step 32  (expect 32)  OK
+[json] /home/user/microtaint/artifacts/ndss27/results/20260918-121340/rq7_ct_localise.json
+PASS: microtaint localises every single-bit secret to its exact step

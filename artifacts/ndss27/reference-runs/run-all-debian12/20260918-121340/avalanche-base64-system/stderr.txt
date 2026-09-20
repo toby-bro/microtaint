@@ -1,0 +1,3 @@
+[93m[!][39m 	0x7ffff7de6f57: syscall ql_syscall_rseq number = 0x14e(334) not implemented
+[93m[!][39m 	0x7fffb7ed93c8: syscall ql_syscall_fadvise64 number = 0xdd(221) not implemented
+[SRC] Taint introduced: 43 bytes from stdin at 0x5555555632f0

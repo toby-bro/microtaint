@@ -1,0 +1,2 @@
+[93m[!][39m 	0x43bc37: syscall ql_syscall_rseq number = 0x14e(334) not implemented
+[SRC] Taint introduced: 83 bytes from stdin at 0x4b1500

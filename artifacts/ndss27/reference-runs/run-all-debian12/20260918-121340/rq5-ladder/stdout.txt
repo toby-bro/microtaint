@@ -1,0 +1,53 @@
+# workload: /home/user/microtaint/artifacts/ndss27/rq5-overhead/bench.elf, 3,793,969 guest instructions, 64 tainted stdin bytes, 100 runs/rung
+  per-rung overrides: {'codehook': 30, 'codehook-regs': 15}
+# taint_ir and block mode pinned OFF (per-instruction LogicCircuit path)
+
+====================================================================================================
+layer                   time (s)   ns/instr   marginal  x qiling  attributable to
+----------------------------------------------------------------------------------------------------
+native                     0.002        0.5          -       0.0  baseline    
+qiling-only                0.097       25.6       25.1       1.0  emulator    
+c-blockhook                0.099       26.1        0.5       1.0  emulator    
+c-codehook                 0.175       46.2       20.1       1.8  emulator    
+c-codehook-regs            0.401      105.8       59.6       4.1  emulator    
+codehook                   8.183     2157.0          -      84.2  hosting     
+codehook-regs             80.809    21299.3          -     831.4  hosting     
+microtaint-plumbing        2.074      546.7      440.9      21.3  plumbing    
+microtaint-none            7.333     1932.9     1386.2      75.4  microtaint  
+microtaint-all             7.374     1943.7       10.8      75.9  microtaint  
+----------------------------------------------------------------------------------------------------
+  reference points (NOT rungs microtaint stands on: it uses a C hook, not these)
+blockhook                  0.562      148.0          -       5.8  empty per-BLOCK Python hook
+====================================================================================================
+
+What the ladder says:
+  * the emulator costs 26 ns/instr with nothing hooked.
+  * losing Unicorn's block chaining costs +0 ns/instr: that is a
+    pure-C hook that fires once per basic block and does nothing.
+  * getting control on EVERY instruction in pure C costs 46 ns/instr,
+    +20 over a per-block hook. That difference is per-instruction
+    DISPATCH, with the chaining loss already paid above.
+  * reading 4 guest registers from that C callback adds +60 ns/instr,
+    so control plus the state a taint engine needs is 106 ns/instr.
+  * the engine's PLUMBING is 547 ns/instr (+441 over that):
+    the hook, reading the operands the instruction actually uses, the
+    address->circuit cache, the prefilter, and for a memory operand an
+    effective address and a shadow lookup. No taint is computed; this is
+    what a byte-granular engine owes per instruction however it is written.
+  * the ANALYSIS adds +1397 ns/instr on top (72% of the total):
+    evaluating the taint circuit for the instructions that carry taint,
+    and checking the detectors. Note what is NOT in here: the
+    address->circuit lookup is already paid in the plumbing rung, because
+    the prefilter needs the compiled circuit to decide anything. So this
+    buys the EVALUATION, not the acquisition -- the instructions that stop
+    taking the untainted exit and go through the algebra instead.
+    That is the honest number to attack.
+  * for scale: the same empty hook written in PYTHON costs 2157 ns/instr,
+    47x the C one, and more than microtaint's entire engine (1944).
+    The hosting language dominates the analysis, so a Python-hooked tool
+    is not slow because of what it computes.
+  * of that analysis cost, the four detectors are +11 ns/instr:
+    they are recorded in C and rendered once, so they cost nothing
+    measurable. This rung is kept as a guard, not as a headline.
+
+written to /home/user/microtaint/artifacts/ndss27/results/20260918-121340/overhead_ladder.json

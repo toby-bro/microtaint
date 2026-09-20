@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "kind": "taint_source",
+      "address": "0x80000000de48",
+      "description": "Taint introduced: 32 bytes from stdin at 0x80000000de48",
+      "size": 32,
+      "source": "stdin"
+    },
+    {
+      "kind": "buffer_overflow",
+      "address": "0x40110a",
+      "description": "Buffer overflow: tainted data hijacked control flow at 0x40110a",
+      "instruction": "ret"
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "bof": 1,
+    "uaf": 0,
+    "side_channel": 0,
+    "aiw": 0
+  }
+}

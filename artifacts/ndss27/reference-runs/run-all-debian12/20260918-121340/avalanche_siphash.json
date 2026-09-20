@@ -1,0 +1,98 @@
+{
+  "title": "siphash",
+  "binary": "./siphash/siphash_bin",
+  "binary_provenance": {
+    "path": "./siphash/siphash_bin",
+    "sha256": "2878018120ca8d7727bfd387ac2ba642147d66e9c89ac109d5adabce1b7add0d",
+    "version": ""
+  },
+  "stats": {
+    "insns_hooked": 1020,
+    "insns_tainted": 325,
+    "total_out_bits": 10031,
+    "total_aval_bits": 360,
+    "data_out_bits": 9465,
+    "data_aval_bits": 0,
+    "flag_out_bits": 566,
+    "flag_aval_bits": 360,
+    "budget_hit": false
+  },
+  "insn_count": {
+    "Mapped": 75,
+    "Monotonic": 17,
+    "Transportable": 174,
+    "Translatable": 55,
+    "Transportable (Eq)": 3,
+    "Avalanche": 1
+  },
+  "asg_count": {
+    "Mapped": 120,
+    "Transportable (Eq)": 263,
+    "Avalanche": 126,
+    "Monotonic": 191,
+    "Transportable": 178,
+    "Translatable": 57
+  },
+  "asg_out_bits": {
+    "Mapped": 1458,
+    "Transportable (Eq)": 263,
+    "Avalanche": 126,
+    "Monotonic": 737,
+    "Transportable": 5726,
+    "Translatable": 1721
+  },
+  "asg_aval_bits": {
+    "Mapped": 0,
+    "Transportable (Eq)": 135,
+    "Avalanche": 126,
+    "Monotonic": 99,
+    "Transportable": 0,
+    "Translatable": 0
+  },
+  "failures": {},
+  "mech_bits": {
+    "AvalancheExpr": 307,
+    "FullMaskAvalancheExpr": 9
+  },
+  "asg_data_out": {
+    "Mapped": 1458,
+    "Monotonic": 560,
+    "Transportable": 5726,
+    "Translatable": 1721
+  },
+  "asg_data_aval": {
+    "Mapped": 0,
+    "Monotonic": 0,
+    "Transportable": 0,
+    "Translatable": 0
+  },
+  "asg_flag_out": {
+    "Transportable (Eq)": 263,
+    "Avalanche": 126,
+    "Monotonic": 177
+  },
+  "asg_flag_aval": {
+    "Transportable (Eq)": 135,
+    "Avalanche": 126,
+    "Monotonic": 99
+  },
+  "classifier_tree_disagreements": {
+    "Mapped vs tree_approximates=True": 32,
+    "Monotonic vs tree_approximates=True": 177,
+    "Conditionally Transportable vs tree_approximates=True": 227,
+    "Transportable vs tree_approximates=True": 93
+  },
+  "approximating_types": [
+    "AvalancheExpr",
+    "FullMaskAvalancheExpr",
+    "VariableMultiplyTaintExpr"
+  ],
+  "engine": {
+    "version": "0.7.3.dev0+g2b5d38517.d20260918",
+    "commit": "2b5d385177cff34f20f5e8cf8df3ba27f85fff50",
+    "commit_short": "2b5d385177cf",
+    "branch": null,
+    "dirty": true,
+    "describe": "v0.7.2-dirty"
+  }
+}

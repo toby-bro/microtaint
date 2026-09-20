@@ -1,0 +1,11 @@
+instruction       expected  measured   bits   verdict
+add rax, rbx          0.0%      0.0%     64   OK
+xor rax, rbx          0.0%      0.0%     64   OK
+mov rax, rbx          0.0%      0.0%     64   OK
+and rax, rbx          0.0%      0.0%     32   OK
+shl rax, 4            0.0%      0.0%     60   OK
+imul rax, rbx       100.0%    100.0%     60   OK
+shl rax, cl           0.0%      0.0%     64   OK
+[json] /home/user/microtaint/artifacts/ndss27/results/20260918-121340/avalanche_calibrate.json
+
+CALIBRATION PASSED: the attribution reproduces every known answer.

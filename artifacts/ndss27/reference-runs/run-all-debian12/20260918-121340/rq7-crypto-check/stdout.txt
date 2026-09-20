@@ -1,0 +1,3 @@
+PASS  pow_branch: 1 SC finding(s)
+PASS  pow_ct: 0 SC findings
+[json] /home/user/microtaint/artifacts/ndss27/results/20260918-121340/rq7_ct_check.json

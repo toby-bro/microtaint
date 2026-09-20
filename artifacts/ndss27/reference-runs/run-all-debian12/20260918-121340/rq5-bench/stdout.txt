@@ -1,0 +1,37 @@
+# wrote 64 byte deterministic input → /tmp/bench_input_64_00c0ffee.bin
+# stdin source: /tmp/bench_input_64_00c0ffee.bin (64 bytes)
+# Guest instructions executed: 3793969
+# Bench: /home/user/microtaint/artifacts/ndss27/rq5-overhead/bench.elf 
+# Configurations: ['native', 'qiling-only', 'microtaint-none', 'microtaint-bof', 'microtaint-uaf', 'microtaint-sc', 'microtaint-aiw', 'microtaint-all']
+# Runs per config: 5
+# Rootfs: /
+
+
+====================================================================================================================
+Configuration           wall (s)   peak RSS  qil init    ql.run   ns/instr   ×qiling   ×native  guest B
+--------------------------------------------------------------------------------------------------------------------
+native                     0.007     22.0 M         —         —          —         —       1.0       16
+qiling-only                0.588     59.6 M     0.214     0.097       25.5       1.0      88.6       16
+microtaint-none            8.189    115.6 M     0.370     7.393     1948.7      76.4    1232.9       16
+microtaint-bof             8.111    115.5 M     0.386     7.351     1937.6      76.0    1221.2       16
+microtaint-uaf             8.200    115.6 M     0.374     7.363     1940.7      76.1    1234.6       16
+microtaint-sc              8.082    115.9 M     0.382     7.333     1932.7      75.8    1216.8       16
+microtaint-aiw             8.151    115.7 M     0.375     7.368     1941.9      76.2    1227.2       16
+microtaint-all             8.241    115.6 M     0.382     7.454     1964.8      77.0    1240.7       16
+====================================================================================================================
+
+Columns:
+  ns/instr  : ql.run() divided by guest instructions (needs --instr-count)
+  ×qiling   : ql.run() over qiling-only ql.run() — the taint cost, emulator divided out
+  guest B   : bytes the GUEST wrote; proves the workload ran (see VacuousRunError)
+  wall (s)  : total wall-clock time of the subprocess
+  CPU  (s)  : user_cpu + sys_cpu of the subprocess (children rusage)
+  peak RSS  : max resident set size of the subprocess, MiB
+  qil init  : qiling/wrapper construction time (in-process measurement)
+  ql.run    : ql.run() time, i.e. taint-propagation phase
+  ×native   : ratio of wall time to the native run
+
+Note:  qil init + ql.run < wall  →  the difference is python startup,
+       module imports, and shutdown / report finalisation.
+
+Full results written to /home/user/microtaint/artifacts/ndss27/results/20260918-121340/overhead_results.json

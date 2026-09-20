@@ -1,0 +1,305 @@
+{
+  "engine": {
+    "version": "0.7.3.dev0+g2b5d38517.d20260918",
+    "commit": "2b5d385177cff34f20f5e8cf8df3ba27f85fff50",
+    "commit_short": "2b5d385177cf",
+    "branch": null,
+    "dirty": true,
+    "describe": "v0.7.2-dirty"
+  },
+  "cpu": {
+    "cpu_boost": null,
+    "detected_via": "no boost/turbo control under /sys/devices/system/cpu",
+    "scaling_driver": null
+  },
+  "load_avg_1m": 1.1,
+  "native": {
+    "label": "native",
+    "wall_s": 0.006641941999987466,
+    "user_cpu_s": 0.001429,
+    "sys_cpu_s": 0.0,
+    "peak_rss_mib": 21.98046875,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 5,
+      "wall_s_min": 0.006435043000237783,
+      "wall_s_max": 0.007041755001409911,
+      "import_s": null,
+      "init_s": null,
+      "run_s": null,
+      "run_s_min": null,
+      "run_s_max": null,
+      "guest_bytes": 16,
+      "stdin_bytes": 64,
+      "wrapper_stats": {},
+      "env_taint_ir": null,
+      "env_block": null,
+      "taint_ir_modules": null
+    }
+  },
+  "qiling-only": {
+    "label": "qiling-only",
+    "wall_s": 0.5881602259996725,
+    "user_cpu_s": 0.53937,
+    "sys_cpu_s": 0.047831,
+    "peak_rss_mib": 59.640625,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 5,
+      "wall_s_min": 0.5685483289998956,
+      "wall_s_max": 0.6107420320004167,
+      "import_s": 0.11428013300064777,
+      "init_s": 0.21430331099873,
+      "run_s": 0.09674994500164757,
+      "run_s_min": 0.09400776499933272,
+      "run_s_max": 0.09743925300062983,
+      "guest_bytes": 16,
+      "stdin_bytes": 64,
+      "wrapper_stats": {},
+      "env_taint_ir": null,
+      "env_block": null,
+      "taint_ir_modules": null
+    }
+  },
+  "microtaint-none": {
+    "label": "microtaint-none",
+    "wall_s": 8.189155223999478,
+    "user_cpu_s": 8.065782,
+    "sys_cpu_s": 0.088132,
+    "peak_rss_mib": 115.56640625,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 5,
+      "wall_s_min": 8.042348233999292,
+      "wall_s_max": 8.209635215000162,
+      "import_s": 0.15410269299900392,
+      "init_s": 0.3704424379993725,
+      "run_s": 7.39325936899877,
+      "run_s_min": 7.289093033001336,
+      "run_s_max": 7.450698780001403,
+      "guest_bytes": 16,
+      "stdin_bytes": 64,
+      "wrapper_stats": {
+        "instr_cache_hits": 0,
+        "instr_cache_misses": 0,
+        "instr_hook_registered": true
+      },
+      "env_taint_ir": "0",
+      "env_block": "0",
+      "taint_ir_modules": []
+    }
+  },
+  "microtaint-bof": {
+    "label": "microtaint-bof",
+    "wall_s": 8.110988116999579,
+    "user_cpu_s": 8.033869,
+    "sys_cpu_s": 0.092067,
+    "peak_rss_mib": 115.54296875,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 5,
+      "wall_s_min": 8.09758575900014,
+      "wall_s_max": 8.188779226999031,
+      "import_s": 0.15988036000089778,
+      "init_s": 0.3857344230000308,
+      "run_s": 7.351012606999575,
+      "run_s_min": 7.307433395000771,
+      "run_s_max": 7.381475677999333,
+      "guest_bytes": 16,
+      "stdin_bytes": 64,
+      "wrapper_stats": {
+        "instr_cache_hits": 0,
+        "instr_cache_misses": 0,
+        "instr_hook_registered": true
+      },
+      "env_taint_ir": "0",
+      "env_block": "0",
+      "taint_ir_modules": []
+    }
+  },
+  "microtaint-uaf": {
+    "label": "microtaint-uaf",
+    "wall_s": 8.2000569060001,
+    "user_cpu_s": 8.050676,
+    "sys_cpu_s": 0.08399,
+    "peak_rss_mib": 115.640625,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 5,
+      "wall_s_min": 8.036088240000026,
+      "wall_s_max": 8.277550893999432,
+      "import_s": 0.1522368309997546,
+      "init_s": 0.37397438600055466,
+      "run_s": 7.362771871999939,
+      "run_s_min": 7.270604652001566,
+      "run_s_max": 7.514818704999925,
+      "guest_bytes": 16,
+      "stdin_bytes": 64,
+      "wrapper_stats": {
+        "instr_cache_hits": 0,
+        "instr_cache_misses": 0,
+        "instr_hook_registered": true
+      },
+      "env_taint_ir": "0",
+      "env_block": "0",
+      "taint_ir_modules": []
+    }
+  },
+  "microtaint-sc": {
+    "label": "microtaint-sc",
+    "wall_s": 8.082131609000498,
+    "user_cpu_s": 8.004508,
+    "sys_cpu_s": 0.087963,
+    "peak_rss_mib": 115.91015625,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 5,
+      "wall_s_min": 7.999813169000845,
+      "wall_s_max": 8.294147104999865,
+      "import_s": 0.1551961309996841,
+      "init_s": 0.3818799159998889,
+      "run_s": 7.332614936000027,
+      "run_s_min": 7.225837494999723,
+      "run_s_max": 7.520056373999978,
+      "guest_bytes": 16,
+      "stdin_bytes": 64,
+      "wrapper_stats": {
+        "instr_cache_hits": 0,
+        "instr_cache_misses": 0,
+        "instr_hook_registered": true
+      },
+      "env_taint_ir": "0",
+      "env_block": "0",
+      "taint_ir_modules": []
+    }
+  },
+  "microtaint-aiw": {
+    "label": "microtaint-aiw",
+    "wall_s": 8.151094140999703,
+    "user_cpu_s": 8.022633,
+    "sys_cpu_s": 0.092294,
+    "peak_rss_mib": 115.67578125,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 5,
+      "wall_s_min": 8.014151538000078,
+      "wall_s_max": 8.199250456998925,
+      "import_s": 0.15406886900018435,
+      "init_s": 0.37522836700009066,
+      "run_s": 7.36755138800072,
+      "run_s_min": 7.262717686000542,
+      "run_s_max": 7.437925897000241,
+      "guest_bytes": 16,
+      "stdin_bytes": 64,
+      "wrapper_stats": {
+        "instr_cache_hits": 0,
+        "instr_cache_misses": 0,
+        "instr_hook_registered": true
+      },
+      "env_taint_ir": "0",
+      "env_block": "0",
+      "taint_ir_modules": []
+    }
+  },
+  "microtaint-all": {
+    "label": "microtaint-all",
+    "wall_s": 8.24081078800009,
+    "user_cpu_s": 8.125137,
+    "sys_cpu_s": 0.112053,
+    "peak_rss_mib": 115.609375,
+    "extra": {
+      "returncode": 0,
+      "n_runs": 5,
+      "wall_s_min": 8.045174974000474,
+      "wall_s_max": 8.313807841999733,
+      "import_s": 0.16282551399854128,
+      "init_s": 0.38242649499989056,
+      "run_s": 7.454467552999631,
+      "run_s_min": 7.276052627001263,
+      "run_s_max": 7.562893838998207,
+      "guest_bytes": 16,
+      "stdin_bytes": 64,
+      "wrapper_stats": {
+        "instr_cache_hits": 0,
+        "instr_cache_misses": 0,
+        "instr_hook_registered": true
+      },
+      "env_taint_ir": "0",
+      "env_block": "0",
+      "taint_ir_modules": []
+    }
+  },
+  "_meta": {
+    "binary": "/home/user/microtaint/artifacts/ndss27/rq5-overhead/bench.elf",
+    "binary_args": [],
+    "guest_instructions": 3793969,
+    "stdin_bytes": 64,
+    "stdin_source": "/tmp/bench_input_64_00c0ffee.bin",
+    "engine_path": "per-instruction LogicCircuit (taint_ir and block mode pinned off)",
+    "artifact_engine_env": {
+      "MICROTAINT_TAINT_IR": "0",
+      "MICROTAINT_BLOCK": "0"
+    },
+    "runs_per_config": 5,
+    "rootfs": "/",
+    "min_guest_bytes": 1,
+    "derived": {
+      "native": {
+        "run_s": null,
+        "ns_per_instr": null,
+        "x_qiling_run": null,
+        "x_native_wall": 1.0,
+        "guest_bytes": 16
+      },
+      "qiling-only": {
+        "run_s": 0.09674994500164757,
+        "ns_per_instr": 25.500984589396374,
+        "x_qiling_run": 1.0,
+        "x_native_wall": 88.55244836537001,
+        "guest_bytes": 16
+      },
+      "microtaint-none": {
+        "run_s": 7.39325936899877,
+        "ns_per_instr": 1948.6873427270411,
+        "x_qiling_run": 76.41616094844156,
+        "x_native_wall": 1232.9459100990239,
+        "guest_bytes": 16
+      },
+      "microtaint-bof": {
+        "run_s": 7.351012606999575,
+        "ns_per_instr": 1937.5521009790998,
+        "x_qiling_run": 75.97950166146754,
+        "x_native_wall": 1221.1771974243202,
+        "guest_bytes": 16
+      },
+      "microtaint-uaf": {
+        "run_s": 7.362771871999939,
+        "ns_per_instr": 1940.6515635736453,
+        "x_qiling_run": 76.10104452126104,
+        "x_native_wall": 1234.5872496350576,
+        "guest_bytes": 16
+      },
+      "microtaint-sc": {
+        "run_s": 7.332614936000027,
+        "ns_per_instr": 1932.7029124381427,
+        "x_qiling_run": 75.78934474717437,
+        "x_native_wall": 1216.832608447311,
+        "guest_bytes": 16
+      },
+      "microtaint-aiw": {
+        "run_s": 7.36755138800072,
+        "ns_per_instr": 1941.9113303247127,
+        "x_qiling_run": 76.1504452315219,
+        "x_native_wall": 1227.2154952595317,
+        "guest_bytes": 16
+      },
+      "microtaint-all": {
+        "run_s": 7.454467552999631,
+        "ns_per_instr": 1964.820364372938,
+        "x_qiling_run": 77.04880403676393,
+        "x_native_wall": 1240.7230879185095,
+        "guest_bytes": 16
+      }
+    }
+  }
+}

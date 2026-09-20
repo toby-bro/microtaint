@@ -1,0 +1,93 @@
+{
+  "experiment": "avalanche-calibration",
+  "engine": {
+    "version": "0.7.3.dev0+g2b5d38517.d20260918",
+    "commit": "2b5d385177cff34f20f5e8cf8df3ba27f85fff50",
+    "commit_short": "2b5d385177cf",
+    "branch": null,
+    "dirty": true,
+    "describe": "v0.7.2-dirty"
+  },
+  "passed": true,
+  "n_cases": 7,
+  "n_failed": 0,
+  "cases": [
+    {
+      "asm": "add rax, rbx",
+      "taint": {
+        "RAX": 18446744073709551615
+      },
+      "expected_pct": 0.0,
+      "measured_pct": 0.0,
+      "tolerance_pct": 0.0,
+      "bits": 64,
+      "ok": true
+    },
+    {
+      "asm": "xor rax, rbx",
+      "taint": {
+        "RAX": 18446744073709551615
+      },
+      "expected_pct": 0.0,
+      "measured_pct": 0.0,
+      "tolerance_pct": 0.0,
+      "bits": 64,
+      "ok": true
+    },
+    {
+      "asm": "mov rax, rbx",
+      "taint": {
+        "RBX": 18446744073709551615
+      },
+      "expected_pct": 0.0,
+      "measured_pct": 0.0,
+      "tolerance_pct": 0.0,
+      "bits": 64,
+      "ok": true
+    },
+    {
+      "asm": "and rax, rbx",
+      "taint": {
+        "RAX": 18446744073709551615
+      },
+      "expected_pct": 0.0,
+      "measured_pct": 0.0,
+      "tolerance_pct": 0.0,
+      "bits": 32,
+      "ok": true
+    },
+    {
+      "asm": "shl rax, 4",
+      "taint": {
+        "RAX": 18446744073709551615
+      },
+      "expected_pct": 0.0,
+      "measured_pct": 0.0,
+      "tolerance_pct": 0.0,
+      "bits": 60,
+      "ok": true
+    },
+    {
+      "asm": "imul rax, rbx",
+      "taint": {
+        "RAX": 18446744073709551615
+      },
+      "expected_pct": 100.0,
+      "measured_pct": 100.0,
+      "tolerance_pct": 0.0,
+      "bits": 60,
+      "ok": true
+    },
+    {
+      "asm": "shl rax, cl",
+      "taint": {
+        "RCX": 255
+      },
+      "expected_pct": 0.0,
+      "measured_pct": 0.0,
+      "tolerance_pct": 0.0,
+      "bits": 64,
+      "ok": true
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "title": "nftables",
+  "binary": "./nftables/nftables_harness",
+  "binary_provenance": {
+    "path": "./nftables/nftables_harness",
+    "sha256": "72705b1c0a30ea51a0fd800eaa917159c427eb8141e243201b6dcaccb5ec06f6",
+    "version": ""
+  },
+  "stats": {
+    "insns_hooked": 10744,
+    "insns_tainted": 35,
+    "total_out_bits": 2605,
+    "total_aval_bits": 3,
+    "data_out_bits": 2600,
+    "data_aval_bits": 0,
+    "flag_out_bits": 5,
+    "flag_aval_bits": 3,
+    "budget_hit": false
+  },
+  "insn_count": {
+    "Mapped": 19,
+    "Avalanche": 1,
+    "Transportable": 11,
+    "Translatable": 3,
+    "Monotonic": 1
+  },
+  "asg_count": {
+    "Mapped": 40,
+    "Avalanche": 2,
+    "Transportable": 34,
+    "Translatable": 6,
+    "Monotonic": 2,
+    "Transportable (Eq)": 1
+  },
+  "asg_out_bits": {
+    "Mapped": 1424,
+    "Avalanche": 2,
+    "Transportable": 864,
+    "Translatable": 312,
+    "Monotonic": 2,
+    "Transportable (Eq)": 1
+  },
+  "asg_aval_bits": {
+    "Mapped": 0,
+    "Avalanche": 2,
+    "Transportable": 0,
+    "Translatable": 0,
+    "Monotonic": 0,
+    "Transportable (Eq)": 1
+  },
+  "failures": {},
+  "mech_bits": {
+    "AvalancheExpr": 3,
+    "FullMaskAvalancheExpr": 0
+  },
+  "asg_data_out": {
+    "Mapped": 1424,
+    "Transportable": 864,
+    "Translatable": 312
+  },
+  "asg_data_aval": {
+    "Mapped": 0,
+    "Transportable": 0,
+    "Translatable": 0
+  },
+  "asg_flag_out": {
+    "Avalanche": 2,
+    "Monotonic": 2,
+    "Transportable (Eq)": 1
+  },
+  "asg_flag_aval": {
+    "Avalanche": 2,
+    "Monotonic": 0,
+    "Transportable (Eq)": 1
+  },
+  "classifier_tree_disagreements": {
+    "Mapped vs tree_approximates=True": 11,
+    "Transportable vs tree_approximates=True": 34,
+    "Monotonic vs tree_approximates=True": 1,
+    "Conditionally Transportable vs tree_approximates=True": 1
+  },
+  "approximating_types": [
+    "AvalancheExpr",
+    "FullMaskAvalancheExpr",
+    "VariableMultiplyTaintExpr"
+  ],
+  "engine": {
+    "version": "0.7.3.dev0+g2b5d38517.d20260918",
+    "commit": "2b5d385177cff34f20f5e8cf8df3ba27f85fff50",
+    "commit_short": "2b5d385177cf",
+    "branch": null,
+    "dirty": true,
+    "describe": "v0.7.2-dirty"
+  }
+}

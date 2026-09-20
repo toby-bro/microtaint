@@ -1,0 +1,17 @@
+{
+  "findings": [
+    {
+      "kind": "use_after_free",
+      "address": "0x7fffb7dd6000",
+      "description": "Use-after-free: access to poisoned (freed) memory at 0x7fffb7dd6000",
+      "access_size": 1
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "bof": 0,
+    "uaf": 1,
+    "side_channel": 0,
+    "aiw": 0
+  }
+}

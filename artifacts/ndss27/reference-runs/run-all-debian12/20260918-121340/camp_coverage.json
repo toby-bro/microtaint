@@ -1,0 +1,541 @@
+{
+  "AMD64": {
+    "attempted": 20000,
+    "compared": 20000,
+    "flag_moved_undeclared": {
+      "OF": 565,
+      "PF": 773,
+      "SF": 1514,
+      "ZF": 1746
+    },
+    "skipped_oracle": 0,
+    "skipped_mt": 0,
+    "no_gt_taint": 63,
+    "effective": 19937,
+    "reports": 0,
+    "dead_forms": {},
+    "quarantined_forms": [],
+    "scored_registers": [
+      "RAX",
+      "RBX",
+      "RCX",
+      "RDX"
+    ],
+    "scored_flags": [
+      "CF",
+      "PF",
+      "ZF",
+      "SF",
+      "OF"
+    ],
+    "flag_scoring": "per-instruction, only flags the lift defines",
+    "per_form": {
+      "adc rax, rbx": {
+        "attempted": 1656,
+        "compared": 1656
+      },
+      "add rax, rbx": {
+        "attempted": 1682,
+        "compared": 1682
+      },
+      "and rax, rbx": {
+        "attempted": 1668,
+        "compared": 1668
+      },
+      "cmovz rax, rbx": {
+        "attempted": 1746,
+        "compared": 1746
+      },
+      "imul rax, rbx": {
+        "attempted": 1665,
+        "compared": 1665
+      },
+      "neg rax": {
+        "attempted": 1619,
+        "compared": 1619
+      },
+      "or rax, rbx": {
+        "attempted": 1705,
+        "compared": 1705
+      },
+      "sbb rax, rbx": {
+        "attempted": 1680,
+        "compared": 1680
+      },
+      "shl rax, 4": {
+        "attempted": 1654,
+        "compared": 1654
+      },
+      "shr rax, 4": {
+        "attempted": 1624,
+        "compared": 1624
+      },
+      "sub rax, rbx": {
+        "attempted": 1670,
+        "compared": 1670
+      },
+      "xor rax, rbx": {
+        "attempted": 1631,
+        "compared": 1631
+      }
+    }
+  },
+  "ARM64": {
+    "attempted": 20000,
+    "compared": 20000,
+    "flag_moved_undeclared": {
+      "CY": 1649,
+      "ZR": 878
+    },
+    "skipped_oracle": 0,
+    "skipped_mt": 0,
+    "no_gt_taint": 0,
+    "effective": 20000,
+    "reports": 0,
+    "dead_forms": {},
+    "quarantined_forms": [],
+    "scored_registers": [
+      "X0",
+      "X1",
+      "X2",
+      "X3",
+      "X4",
+      "X5",
+      "X6",
+      "X7"
+    ],
+    "scored_flags": [
+      "NG",
+      "ZR",
+      "CY",
+      "OV"
+    ],
+    "flag_scoring": "per-instruction, only flags the lift defines",
+    "per_form": {
+      "adc x0, x1, x2": {
+        "attempted": 856,
+        "compared": 856
+      },
+      "add x0, x1, x2": {
+        "attempted": 768,
+        "compared": 768
+      },
+      "adds x0, x1, x2": {
+        "attempted": 903,
+        "compared": 903
+      },
+      "and x0, x1, x2": {
+        "attempted": 883,
+        "compared": 883
+      },
+      "ands x0, x1, x2": {
+        "attempted": 885,
+        "compared": 885
+      },
+      "asr x0, x1, #4": {
+        "attempted": 909,
+        "compared": 909
+      },
+      "bic x0, x1, x2": {
+        "attempted": 919,
+        "compared": 919
+      },
+      "clz x0, x1": {
+        "attempted": 882,
+        "compared": 882
+      },
+      "cmp x1, x2": {
+        "attempted": 893,
+        "compared": 893
+      },
+      "csel x0, x1, x2, eq": {
+        "attempted": 878,
+        "compared": 878
+      },
+      "eor x0, x1, x2": {
+        "attempted": 867,
+        "compared": 867
+      },
+      "lsl x0, x1, #4": {
+        "attempted": 871,
+        "compared": 871
+      },
+      "lslv x0, x1, x2": {
+        "attempted": 870,
+        "compared": 870
+      },
+      "lsr x0, x1, #4": {
+        "attempted": 867,
+        "compared": 867
+      },
+      "madd x0, x1, x2, x3": {
+        "attempted": 873,
+        "compared": 873
+      },
+      "mul x0, x1, x2": {
+        "attempted": 829,
+        "compared": 829
+      },
+      "orr x0, x1, x2": {
+        "attempted": 808,
+        "compared": 808
+      },
+      "rbit x0, x1": {
+        "attempted": 906,
+        "compared": 906
+      },
+      "rev x0, x1": {
+        "attempted": 882,
+        "compared": 882
+      },
+      "sbc x0, x1, x2": {
+        "attempted": 793,
+        "compared": 793
+      },
+      "sub x0, x1, x2": {
+        "attempted": 855,
+        "compared": 855
+      },
+      "subs x0, x1, x2": {
+        "attempted": 909,
+        "compared": 909
+      },
+      "sxtb x0, w1": {
+        "attempted": 894,
+        "compared": 894
+      }
+    }
+  },
+  "MIPS64BE": {
+    "attempted": 20000,
+    "compared": 20000,
+    "flag_moved_undeclared": {},
+    "skipped_oracle": 0,
+    "skipped_mt": 0,
+    "no_gt_taint": 4023,
+    "effective": 15977,
+    "reports": 0,
+    "dead_forms": {},
+    "quarantined_forms": [
+      "movn $2, $4, $5",
+      "movz $2, $4, $5"
+    ],
+    "scored_registers": [
+      "ZERO",
+      "AT",
+      "V0",
+      "V1",
+      "A0",
+      "A1",
+      "A2",
+      "A3",
+      "T0",
+      "T1"
+    ],
+    "scored_flags": [],
+    "flag_scoring": "per-instruction, only flags the lift defines",
+    "per_form": {
+      "addu $2, $4, $5": {
+        "attempted": 1585,
+        "compared": 1585
+      },
+      "and $2, $4, $5": {
+        "attempted": 1559,
+        "compared": 1559
+      },
+      "nor $2, $4, $5": {
+        "attempted": 1498,
+        "compared": 1498
+      },
+      "or $2, $4, $5": {
+        "attempted": 1547,
+        "compared": 1547
+      },
+      "sll $2, $4, 4": {
+        "attempted": 1528,
+        "compared": 1528
+      },
+      "sllv $2, $4, $5": {
+        "attempted": 1540,
+        "compared": 1540
+      },
+      "slt $2, $4, $5": {
+        "attempted": 1519,
+        "compared": 1519
+      },
+      "sltu $2, $4, $5": {
+        "attempted": 1462,
+        "compared": 1462
+      },
+      "sra $2, $4, 4": {
+        "attempted": 1590,
+        "compared": 1590
+      },
+      "srl $2, $4, 4": {
+        "attempted": 1576,
+        "compared": 1576
+      },
+      "srlv $2, $4, $5": {
+        "attempted": 1469,
+        "compared": 1469
+      },
+      "subu $2, $4, $5": {
+        "attempted": 1560,
+        "compared": 1560
+      },
+      "xor $2, $4, $5": {
+        "attempted": 1567,
+        "compared": 1567
+      }
+    }
+  },
+  "RISCV64": {
+    "attempted": 20000,
+    "compared": 20000,
+    "flag_moved_undeclared": {},
+    "skipped_oracle": 0,
+    "skipped_mt": 0,
+    "no_gt_taint": 0,
+    "effective": 20000,
+    "reports": 0,
+    "dead_forms": {},
+    "quarantined_forms": [],
+    "scored_registers": [
+      "t0",
+      "t1",
+      "t2",
+      "t3",
+      "t4",
+      "a0",
+      "a1",
+      "a2"
+    ],
+    "scored_flags": [],
+    "flag_scoring": "per-instruction, only flags the lift defines",
+    "per_form": {
+      "add t0,t1,t2": {
+        "attempted": 734,
+        "compared": 734
+      },
+      "addi t0,t1,5": {
+        "attempted": 775,
+        "compared": 775
+      },
+      "addw t0,t1,t2": {
+        "attempted": 786,
+        "compared": 786
+      },
+      "and t0,t1,t2": {
+        "attempted": 790,
+        "compared": 790
+      },
+      "andi t0,t1,15": {
+        "attempted": 781,
+        "compared": 781
+      },
+      "mul t0,t1,t2": {
+        "attempted": 759,
+        "compared": 759
+      },
+      "mulh t0,t1,t2": {
+        "attempted": 809,
+        "compared": 809
+      },
+      "mulhu t0,t1,t2": {
+        "attempted": 739,
+        "compared": 739
+      },
+      "mulw t0,t1,t2": {
+        "attempted": 734,
+        "compared": 734
+      },
+      "or t0,t1,t2": {
+        "attempted": 753,
+        "compared": 753
+      },
+      "sll t0,t1,t2": {
+        "attempted": 748,
+        "compared": 748
+      },
+      "slli t0,t1,4": {
+        "attempted": 730,
+        "compared": 730
+      },
+      "slliw t0,t1,4": {
+        "attempted": 743,
+        "compared": 743
+      },
+      "sllw t0,t1,t2": {
+        "attempted": 799,
+        "compared": 799
+      },
+      "slt t0,t1,t2": {
+        "attempted": 800,
+        "compared": 800
+      },
+      "sltu t0,t1,t2": {
+        "attempted": 755,
+        "compared": 755
+      },
+      "sra t0,t1,t2": {
+        "attempted": 830,
+        "compared": 830
+      },
+      "srai t0,t1,4": {
+        "attempted": 782,
+        "compared": 782
+      },
+      "sraw t0,t1,t2": {
+        "attempted": 793,
+        "compared": 793
+      },
+      "srl t0,t1,t2": {
+        "attempted": 768,
+        "compared": 768
+      },
+      "srli t0,t1,4": {
+        "attempted": 746,
+        "compared": 746
+      },
+      "srlw t0,t1,t2": {
+        "attempted": 756,
+        "compared": 756
+      },
+      "sub t0,t1,t2": {
+        "attempted": 809,
+        "compared": 809
+      },
+      "subw t0,t1,t2": {
+        "attempted": 777,
+        "compared": 777
+      },
+      "xor t0,t1,t2": {
+        "attempted": 791,
+        "compared": 791
+      },
+      "xori t0,t1,-1": {
+        "attempted": 713,
+        "compared": 713
+      }
+    }
+  },
+  "PPC32BE": {
+    "attempted": 20000,
+    "compared": 20000,
+    "flag_moved_undeclared": {},
+    "skipped_oracle": 0,
+    "skipped_mt": 0,
+    "no_gt_taint": 0,
+    "effective": 20000,
+    "reports": 0,
+    "dead_forms": {},
+    "quarantined_forms": [],
+    "scored_registers": [
+      "R0",
+      "R1",
+      "R2",
+      "R3",
+      "R4",
+      "R5",
+      "R6",
+      "R7"
+    ],
+    "scored_flags": [
+      "cr0",
+      "cr1",
+      "cr2",
+      "cr3",
+      "cr4",
+      "cr5",
+      "cr6",
+      "cr7"
+    ],
+    "flag_scoring": "per-instruction, only flags the lift defines",
+    "per_form": {
+      "add 3, 4, 5": {
+        "attempted": 951,
+        "compared": 951
+      },
+      "add. 3, 4, 5": {
+        "attempted": 918,
+        "compared": 918
+      },
+      "and 3, 4, 5": {
+        "attempted": 984,
+        "compared": 984
+      },
+      "and. 3, 4, 5": {
+        "attempted": 929,
+        "compared": 929
+      },
+      "cmplw 0, 4, 5": {
+        "attempted": 912,
+        "compared": 912
+      },
+      "cmpw 0, 4, 5": {
+        "attempted": 973,
+        "compared": 973
+      },
+      "cntlzw 3, 4": {
+        "attempted": 948,
+        "compared": 948
+      },
+      "extsb 3, 4": {
+        "attempted": 931,
+        "compared": 931
+      },
+      "mullw 3, 4, 5": {
+        "attempted": 965,
+        "compared": 965
+      },
+      "nand 3, 4, 5": {
+        "attempted": 933,
+        "compared": 933
+      },
+      "neg 3, 4": {
+        "attempted": 1019,
+        "compared": 1019
+      },
+      "neg. 3, 4": {
+        "attempted": 949,
+        "compared": 949
+      },
+      "or 3, 4, 5": {
+        "attempted": 980,
+        "compared": 980
+      },
+      "or. 3, 4, 5": {
+        "attempted": 964,
+        "compared": 964
+      },
+      "slw 3, 4, 5": {
+        "attempted": 949,
+        "compared": 949
+      },
+      "slwi 3, 4, 4": {
+        "attempted": 963,
+        "compared": 963
+      },
+      "sraw 3, 4, 5": {
+        "attempted": 948,
+        "compared": 948
+      },
+      "srw 3, 4, 5": {
+        "attempted": 911,
+        "compared": 911
+      },
+      "subf 3, 4, 5": {
+        "attempted": 962,
+        "compared": 962
+      },
+      "subf. 3, 4, 5": {
+        "attempted": 944,
+        "compared": 944
+      },
+      "xor 3, 4, 5": {
+        "attempted": 967,
+        "compared": 967
+      }
+    }
+  }
+}

@@ -1,0 +1,92 @@
+
+=== microtaint 0.7.3.dev0+g2b5d38517.d20260918 -- bit-precision DNS flag-byte experiment ===
+  Sequence:    and al, 0x78 ; shr al, 3
+  Bytes:       2478c0e803
+  Source:      RFC 1035 sec. 4.1.1, third byte of the DNS header
+  Macro:       LDNS_OPCODE_WIRE (ldns, BSD-3-Clause)
+  Layers:      QR | OPCODE(4) | AA | TC | RD
+
+Per-run results (post-AL taint mask):
+  Run                                                      T_in  V_in   Exp    MT    GT  Verdict
+  ---------------------------------------------------------------------------------------------------
+  A: QR only (mask 0x80)                                  0x080 0x080 0x000 0x000 0x000  PASS
+  B: OPCODE only (mask 0x78)                              0x078 0x010 0x00f 0x00f 0x00f  PASS
+  C: whole byte (mask 0xFF) -- byte-precision baseline    0x0ff 0x010 0x00f 0x00f 0x00f  PASS
+  D: no taint (negative control)                          0x000 0x010 0x000 0x000 0x000  PASS  (no taint in: vacuously zero)
+
+Per-run detail:
+
+  + A: QR only (mask 0x80)
+      QR bit (bit 7) is tainted, but AND/0x78 zeroes it out before SHR.
+      input :       T_RAX=0x80    V_RAX=0x80
+      expected:     T_AL_post = 0x00
+      microtaint:   RAX=0x0, CF=0x0, OF=0x1, ZF=0x0, SF=0x0, PF=0x1
+      ground truth: RAX=0x0, CF=0x0, OF=0x0, ZF=0x0, SF=0x0, PF=0x0
+      note:        EFLAGS over-tainted on OF, PF (GT clean, MT tainted)
+
+  + B: OPCODE only (mask 0x78)
+      OPCODE bits (6..3) tainted; AND keeps them, SHR shifts them to bits 3..0.
+      input :       T_RAX=0x78    V_RAX=0x10
+      expected:     T_AL_post = 0x0f
+      microtaint:   RAX=0xf, CF=0x0, OF=0x1, ZF=0x1, SF=0x0, PF=0x1
+      ground truth: RAX=0xf, CF=0x0, OF=0x0, ZF=0x1, SF=0x0, PF=0x1
+      note:        EFLAGS over-tainted on OF (GT clean, MT tainted)
+
+  + C: whole byte (mask 0xFF) -- byte-precision baseline
+      Coarse byte-level taint -- the answer a byte-precision DTA produces for ANY of A, B, C.
+      input :       T_RAX=0xff    V_RAX=0x10
+      expected:     T_AL_post = 0x0f
+      microtaint:   RAX=0xf, CF=0x0, OF=0x1, ZF=0x1, SF=0x0, PF=0x1
+      ground truth: RAX=0xf, CF=0x0, OF=0x0, ZF=0x1, SF=0x0, PF=0x1
+      note:        EFLAGS over-tainted on OF (GT clean, MT tainted)
+
+  + D: no taint (negative control)
+      No source taint -- engine must not invent any.
+      input :       T_RAX=0x00    V_RAX=0x10
+      expected:     T_AL_post = 0x00
+      microtaint:   RAX=0x0, CF=0x0, OF=0x0, ZF=0x0, SF=0x0, PF=0x0
+      ground truth: RAX=0x0, CF=0x0, OF=0x0, ZF=0x0, SF=0x0, PF=0x0
+
+=== Conclusions ===
+
+1. Bit-precision discrimination (the headline claim).
+   Run A (QR-only)     -> AL taint = 0x00   (QR bit erased by & 0x78)
+   Run B (OPCODE-only) -> AL taint = 0x0f   (OPCODE shifted to bits 0..3)
+   Same byte position, opposite verdicts.  A byte-precision DTA cannot
+   distinguish these two cases; microtaint discriminates them exactly.
+
+2. Soundness and precision on the data register (AL).
+   In all 4 runs, microtaint's predicted AL taint mask is bit-exact equal to the
+   per-bit Unicorn ground truth: engine >= GT (no missed deps) AND
+   engine <= GT (no over-tainting).
+
+3. Run B vs Run C: precision in A is not bought by losing coverage in B.
+   With OPCODE-only taint (B) the engine reports AL taint = 0x0f,
+   identical to the whole-byte-tainted baseline (C) of 0x0f.
+   The extra precision in Run A is therefore a refinement on top of
+   correct byte-level behaviour, not a regression on it.
+
+4. No spurious taint without a source.
+   Run D feeds the same value (0x10) through the same sequence with
+   no input taint.  The engine reports zero taint on every output register and flag.
+
+5. Known caveat: EFLAGS over-tainting on the AND/SHR sequence.
+   Microtaint reports condition flags as tainted in runs A/B/C even
+   when the per-bit ground truth shows the flag does not depend on the
+   tainted bits.  Specifically: A.OF, A.PF, B.OF, C.OF
+   This is the family of issues the upstream test suite tracks under
+   group G-A (constant-result idioms) and G-B (shift carry semantics).
+   It does not affect the OPCODE-extraction result on AL, and the DNS
+   dispatch in parse_flags reads `op` (a register), not these flags.
+   But: any claim of "bit-exact precision on the entire architectural
+   state" must be qualified -- the precision is exact on the data path,
+   not on EFLAGS.
+
+----------------------------------------------------------------------
+OVERALL: 4/4 runs PASS on the AL taint-mask assertion.
+  Bit-precision over byte-precision is demonstrated end-to-end on the
+  RFC 1035 OPCODE-extraction sequence with bit-exact agreement to a
+  per-bit Unicorn ground truth on the data register, with one documented
+  caveat on EFLAGS over-tainting that does not affect this experiment.
+----------------------------------------------------------------------
+[json] /home/user/microtaint/artifacts/ndss27/results/20260918-121340/rq7_dns.json

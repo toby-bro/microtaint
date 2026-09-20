@@ -1,0 +1,88 @@
+{
+  "title": "base64-system",
+  "binary": "/usr/bin/base64",
+  "binary_provenance": {
+    "path": "/usr/bin/base64",
+    "sha256": "ae021af1f99f233eef24c17f9d43843ac36a7c5de1025af794682a89938312e5",
+    "version": "base64 (GNU coreutils) 9.1"
+  },
+  "stats": {
+    "insns_hooked": 4894,
+    "insns_tainted": 370,
+    "total_out_bits": 6183,
+    "total_aval_bits": 1159,
+    "data_out_bits": 5750,
+    "data_aval_bits": 928,
+    "flag_out_bits": 433,
+    "flag_aval_bits": 231,
+    "budget_hit": false
+  },
+  "insn_count": {
+    "Mapped": 237,
+    "Transportable": 132,
+    "Monotonic": 1
+  },
+  "asg_count": {
+    "Mapped": 375,
+    "Transportable (Eq)": 245,
+    "Avalanche": 159,
+    "Transportable": 269,
+    "Monotonic": 29
+  },
+  "asg_out_bits": {
+    "Mapped": 3118,
+    "Transportable (Eq)": 245,
+    "Avalanche": 159,
+    "Transportable": 2632,
+    "Monotonic": 29
+  },
+  "asg_aval_bits": {
+    "Mapped": 0,
+    "Transportable (Eq)": 43,
+    "Avalanche": 159,
+    "Transportable": 928,
+    "Monotonic": 29
+  },
+  "failures": {},
+  "mech_bits": {
+    "AvalancheExpr": 1115,
+    "FullMaskAvalancheExpr": 43
+  },
+  "asg_data_out": {
+    "Mapped": 3118,
+    "Transportable": 2632
+  },
+  "asg_data_aval": {
+    "Mapped": 0,
+    "Transportable": 928
+  },
+  "asg_flag_out": {
+    "Transportable (Eq)": 245,
+    "Avalanche": 159,
+    "Monotonic": 29
+  },
+  "asg_flag_aval": {
+    "Transportable (Eq)": 43,
+    "Avalanche": 159,
+    "Monotonic": 29
+  },
+  "classifier_tree_disagreements": {
+    "Mapped vs tree_approximates=True": 6,
+    "Conditionally Transportable vs tree_approximates=True": 130,
+    "Transportable vs tree_approximates=True": 213,
+    "Monotonic vs tree_approximates=True": 29
+  },
+  "approximating_types": [
+    "AvalancheExpr",
+    "FullMaskAvalancheExpr",
+    "VariableMultiplyTaintExpr"
+  ],
+  "engine": {
+    "version": "0.7.3.dev0+g2b5d38517.d20260918",
+    "commit": "2b5d385177cff34f20f5e8cf8df3ba27f85fff50",
+    "commit_short": "2b5d385177cf",
+    "branch": null,
+    "dirty": true,
+    "describe": "v0.7.2-dirty"
+  }
+}

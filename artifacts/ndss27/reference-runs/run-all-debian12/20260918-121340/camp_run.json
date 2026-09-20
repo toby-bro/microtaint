@@ -1,0 +1,22 @@
+{
+  "engine": {
+    "version": "0.7.3.dev0+g2b5d38517.d20260918",
+    "commit": "2b5d385177cff34f20f5e8cf8df3ba27f85fff50",
+    "commit_short": "2b5d385177cf",
+    "branch": null,
+    "dirty": true,
+    "describe": "v0.7.2-dirty"
+  },
+  "engine_import_path": "/home/user/microtaint",
+  "mt_engine_root": null,
+  "n": 20000,
+  "seed": 1,
+  "arches": [
+    "amd64",
+    "arm64",
+    "mips",
+    "riscv",
+    "ppc"
+  ],
+  "started": "2026-09-18 13:51:40.078062"
+}

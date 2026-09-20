@@ -1,0 +1,56 @@
+
+=== build guests ===
+
+=== avalanche-calibrate ===
+    PASS avalanche-calibrate exit 0
+
+=== avalanche-base64-pinned ===
+    PASS avalanche-base64-pinned exit 0
+
+=== avalanche-base64-system ===
+    PASS avalanche-base64-system exit 0
+
+=== avalanche-nftables ===
+    PASS avalanche-nftables exit 0
+
+=== avalanche-siphash ===
+    PASS avalanche-siphash exit 0
+
+=== rq7-bof ===
+    PASS rq7-bof 1 bof finding(s) detected
+
+=== rq7-uaf ===
+    PASS rq7-uaf 1 uaf finding(s) detected
+
+=== rq7-sc ===
+    PASS rq7-sc 1 side_channel finding(s) detected
+
+=== rq7-aiw ===
+    PASS rq7-aiw 1 aiw finding(s) detected
+
+=== rq7-crypto-check ===
+    PASS rq7-crypto-check exit 0
+
+=== rq7-crypto-localise ===
+    PASS rq7-crypto-localise exit 0
+
+=== rq7-dns ===
+    PASS rq7-dns exit 0
+
+=== rq5-ladder ===
+    PASS rq5-ladder exit 0
+
+=== rq5-bench ===
+    PASS rq5-bench exit 0
+
+=== rq6-pass1 ===
+    PASS rq6-pass1 exit 0
+
+=== rq6-pass2 ===
+    PASS rq6-pass2 exit 0
+
+=== paper macros ===
+    SKIP macros-avalanche needs all three avalanche reports
+    SKIP macros-benchmark no rq2 report to generate from
+
+Results in /home/user/microtaint/artifacts/ndss27/results/20260918-121340

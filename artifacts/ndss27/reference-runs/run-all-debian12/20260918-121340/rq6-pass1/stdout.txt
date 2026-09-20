@@ -1,0 +1,65 @@
+[provenance] /home/user/microtaint/artifacts/ndss27/results/20260918-121340/camp_run.json
+=== PASS1 AMD64: 20000 cases (seed 1, 12 instrs) ===
+[AMD64]   SCOPE: comparing 4 GPR(s) (RAX, RBX, RCX, RDX) and 5 flag(s) (CF, PF, ZF, SF, OF); per instruction, only the flags its lift DEFINES are scored
+  [AMD64] 10s n=2231/OF reports=0 cmp=2231 skip=0 223 cases/s
+  [AMD64] 20s n=4508/OF reports=0 cmp=4508 skip=0 225 cases/s
+  [AMD64] 30s n=6841/OF reports=0 cmp=6841 skip=0 228 cases/s
+  [AMD64] 40s n=9154/OF reports=0 cmp=9154 skip=0 229 cases/s
+  [AMD64] 50s n=11380/OF reports=0 cmp=11380 skip=0 227 cases/s
+  [AMD64] 60s n=13696/OF reports=0 cmp=13696 skip=0 228 cases/s
+  [AMD64] 70s n=16051/OF reports=0 cmp=16051 skip=0 229 cases/s
+  [AMD64] 80s n=18358/OF reports=0 cmp=18358 skip=0 229 cases/s
+[AMD64] PASS1 done: 20000 cases, 0 raw under-taint reports (230 cases/s) -> /home/user/microtaint/artifacts/ndss27/results/20260918-121340/camp_amd64.jsonl
+[AMD64]   compared 20000/20000  (skipped: oracle 0, engine 0)  no ground-truth taint 63  -> effective sample 19937
+[AMD64]   flags the oracle moved but the lift does not declare (excluded from scoring, see defined_flags): {'OF': 565, 'PF': 773, 'SF': 1514, 'ZF': 1746}
+=== PASS1 ARM64: 20000 cases (seed 2, 23 instrs) ===
+[ARM64]   SCOPE: comparing 8 GPR(s) (X0, X1, X2, X3, X4, X5, X6, X7) and 4 flag(s) (NG, ZR, CY, OV); per instruction, only the flags its lift DEFINES are scored
+  [ARM64] 10s n=1654/OV reports=0 cmp=1654 skip=0 165 cases/s
+  [ARM64] 20s n=3435/OV reports=0 cmp=3435 skip=0 172 cases/s
+  [ARM64] 30s n=5160/OV reports=0 cmp=5160 skip=0 172 cases/s
+  [ARM64] 40s n=6883/OV reports=0 cmp=6883 skip=0 172 cases/s
+  [ARM64] 50s n=8645/OV reports=0 cmp=8645 skip=0 173 cases/s
+  [ARM64] 60s n=10378/OV reports=0 cmp=10378 skip=0 173 cases/s
+  [ARM64] 70s n=12182/OV reports=0 cmp=12182 skip=0 174 cases/s
+  [ARM64] 80s n=13998/OV reports=0 cmp=13998 skip=0 175 cases/s
+  [ARM64] 90s n=15774/OV reports=0 cmp=15774 skip=0 175 cases/s
+  [ARM64] 100s n=17570/OV reports=0 cmp=17570 skip=0 176 cases/s
+  [ARM64] 110s n=19315/OV reports=0 cmp=19315 skip=0 175 cases/s
+[ARM64] PASS1 done: 20000 cases, 0 raw under-taint reports (175 cases/s) -> /home/user/microtaint/artifacts/ndss27/results/20260918-121340/camp_arm64.jsonl
+[ARM64]   compared 20000/20000  (skipped: oracle 0, engine 0)  no ground-truth taint 0  -> effective sample 20000
+[ARM64]   flags the oracle moved but the lift does not declare (excluded from scoring, see defined_flags): {'CY': 1649, 'ZR': 878}
+=== PASS1 MIPS64BE: 20000 cases (seed 3, 15 instrs) ===
+[MIPS64BE]   SCOPE: comparing 10 GPR(s) (ZERO, AT, V0, V1, A0, A1, A2, A3, T0, T1) and 0 flag(s) (none in this ISA); per instruction, only the flags its lift DEFINES are scored
+[MIPS64BE]   QUARANTINE 'movn $2, $4, $5': Unicorn could not execute it at any of 12 sampled states, so it is excluded and reported as UNMEASURED, not as sound
+[MIPS64BE]   QUARANTINE 'movz $2, $4, $5': Unicorn could not execute it at any of 12 sampled states, so it is excluded and reported as UNMEASURED, not as sound
+  [MIPS64BE] 10s n=2548/20000 reports=0 cmp=2548 skip=0 255 cases/s
+  [MIPS64BE] 20s n=5041/20000 reports=0 cmp=5041 skip=0 252 cases/s
+  [MIPS64BE] 30s n=7510/20000 reports=0 cmp=7510 skip=0 250 cases/s
+  [MIPS64BE] 40s n=10019/20000 reports=0 cmp=10019 skip=0 250 cases/s
+  [MIPS64BE] 50s n=12601/20000 reports=0 cmp=12601 skip=0 252 cases/s
+  [MIPS64BE] 60s n=15077/20000 reports=0 cmp=15077 skip=0 251 cases/s
+  [MIPS64BE] 70s n=17547/20000 reports=0 cmp=17547 skip=0 251 cases/s
+[MIPS64BE] PASS1 done: 20000 cases, 0 raw under-taint reports (251 cases/s) -> /home/user/microtaint/artifacts/ndss27/results/20260918-121340/camp_mips.jsonl
+[MIPS64BE]   compared 20000/20000  (skipped: oracle 0, engine 0)  no ground-truth taint 4023  -> effective sample 15977
+=== PASS1 RISCV64: 20000 cases (seed 4, 26 instrs) ===
+[RISCV64]   SCOPE: comparing 8 GPR(s) (t0, t1, t2, t3, t4, a0, a1, a2) and 0 flag(s) (none in this ISA); per instruction, only the flags its lift DEFINES are scored
+  [RISCV64] 10s n=3063/20000 reports=0 cmp=3063 skip=0 306 cases/s
+  [RISCV64] 20s n=6124/20000 reports=0 cmp=6124 skip=0 306 cases/s
+  [RISCV64] 30s n=9172/20000 reports=0 cmp=9172 skip=0 306 cases/s
+  [RISCV64] 40s n=12261/20000 reports=0 cmp=12261 skip=0 306 cases/s
+  [RISCV64] 50s n=15375/20000 reports=0 cmp=15375 skip=0 307 cases/s
+  [RISCV64] 60s n=18604/20000 reports=0 cmp=18604 skip=0 310 cases/s
+[RISCV64] PASS1 done: 20000 cases, 0 raw under-taint reports (310 cases/s) -> /home/user/microtaint/artifacts/ndss27/results/20260918-121340/camp_riscv.jsonl
+[RISCV64]   compared 20000/20000  (skipped: oracle 0, engine 0)  no ground-truth taint 0  -> effective sample 20000
+=== PASS1 PPC32BE: 20000 cases (seed 5, 21 instrs) ===
+[PPC32BE]   SCOPE: comparing 8 GPR(s) (R0, R1, R2, R3, R4, R5, R6, R7) and 8 flag(s) (cr0, cr1, cr2, cr3, cr4, cr5, cr6, cr7); per instruction, only the flags its lift DEFINES are scored
+  [PPC32BE] 10s n=2617/cr7 reports=0 cmp=2617 skip=0 262 cases/s
+  [PPC32BE] 20s n=5338/cr7 reports=0 cmp=5338 skip=0 267 cases/s
+  [PPC32BE] 30s n=8106/cr7 reports=0 cmp=8106 skip=0 270 cases/s
+  [PPC32BE] 40s n=10809/cr7 reports=0 cmp=10809 skip=0 270 cases/s
+  [PPC32BE] 50s n=13515/cr7 reports=0 cmp=13515 skip=0 270 cases/s
+  [PPC32BE] 60s n=16175/cr7 reports=0 cmp=16175 skip=0 270 cases/s
+  [PPC32BE] 70s n=18873/cr7 reports=0 cmp=18873 skip=0 270 cases/s
+[PPC32BE] PASS1 done: 20000 cases, 0 raw under-taint reports (270 cases/s) -> /home/user/microtaint/artifacts/ndss27/results/20260918-121340/camp_ppc.jsonl
+[PPC32BE]   compared 20000/20000  (skipped: oracle 0, engine 0)  no ground-truth taint 0  -> effective sample 20000
+[coverage] /home/user/microtaint/artifacts/ndss27/results/20260918-121340/camp_coverage.json

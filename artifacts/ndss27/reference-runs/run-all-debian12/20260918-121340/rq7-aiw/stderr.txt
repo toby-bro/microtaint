@@ -1,0 +1,1 @@
+[*] Input file: 'input.bin' (32 bytes — tainted)

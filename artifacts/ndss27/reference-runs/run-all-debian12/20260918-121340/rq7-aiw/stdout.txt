@@ -1,0 +1,25 @@
+{
+  "findings": [
+    {
+      "kind": "taint_source",
+      "address": "0x80000000de60",
+      "description": "Taint introduced: 8 bytes from stdin at 0x80000000de60",
+      "size": 8,
+      "source": "stdin"
+    },
+    {
+      "kind": "arbitrary_indexed_write",
+      "address": "0x40112c",
+      "description": "Arbitrary write: tainted pointer used as store destination at 0x40112c",
+      "instruction": "mov byte ptr [rdx + rax], cl",
+      "pointer_taint": "0xfff"
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "bof": 0,
+    "uaf": 0,
+    "side_channel": 0,
+    "aiw": 1
+  }
+}

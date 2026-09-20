@@ -1,0 +1,212 @@
+{
+  "experiment": "side-channel-localisation",
+  "engine": {
+    "version": "0.7.3.dev0+g2b5d38517.d20260918",
+    "commit": "2b5d385177cff34f20f5e8cf8df3ba27f85fff50",
+    "commit_short": "2b5d385177cf",
+    "branch": null,
+    "dirty": true,
+    "describe": "v0.7.2-dirty"
+  },
+  "binary": "pow_branch",
+  "branch_pc": 4200008,
+  "branch_pc_hex": "0x401648",
+  "n_bits": 32,
+  "n_exact": 32,
+  "localisation": "32/32",
+  "passed": true,
+  "bits": [
+    {
+      "secret_bit": 0,
+      "fired_step": 1,
+      "expected_step": 1,
+      "ok": true
+    },
+    {
+      "secret_bit": 1,
+      "fired_step": 2,
+      "expected_step": 2,
+      "ok": true
+    },
+    {
+      "secret_bit": 2,
+      "fired_step": 3,
+      "expected_step": 3,
+      "ok": true
+    },
+    {
+      "secret_bit": 3,
+      "fired_step": 4,
+      "expected_step": 4,
+      "ok": true
+    },
+    {
+      "secret_bit": 4,
+      "fired_step": 5,
+      "expected_step": 5,
+      "ok": true
+    },
+    {
+      "secret_bit": 5,
+      "fired_step": 6,
+      "expected_step": 6,
+      "ok": true
+    },
+    {
+      "secret_bit": 6,
+      "fired_step": 7,
+      "expected_step": 7,
+      "ok": true
+    },
+    {
+      "secret_bit": 7,
+      "fired_step": 8,
+      "expected_step": 8,
+      "ok": true
+    },
+    {
+      "secret_bit": 8,
+      "fired_step": 9,
+      "expected_step": 9,
+      "ok": true
+    },
+    {
+      "secret_bit": 9,
+      "fired_step": 10,
+      "expected_step": 10,
+      "ok": true
+    },
+    {
+      "secret_bit": 10,
+      "fired_step": 11,
+      "expected_step": 11,
+      "ok": true
+    },
+    {
+      "secret_bit": 11,
+      "fired_step": 12,
+      "expected_step": 12,
+      "ok": true
+    },
+    {
+      "secret_bit": 12,
+      "fired_step": 13,
+      "expected_step": 13,
+      "ok": true
+    },
+    {
+      "secret_bit": 13,
+      "fired_step": 14,
+      "expected_step": 14,
+      "ok": true
+    },
+    {
+      "secret_bit": 14,
+      "fired_step": 15,
+      "expected_step": 15,
+      "ok": true
+    },
+    {
+      "secret_bit": 15,
+      "fired_step": 16,
+      "expected_step": 16,
+      "ok": true
+    },
+    {
+      "secret_bit": 16,
+      "fired_step": 17,
+      "expected_step": 17,
+      "ok": true
+    },
+    {
+      "secret_bit": 17,
+      "fired_step": 18,
+      "expected_step": 18,
+      "ok": true
+    },
+    {
+      "secret_bit": 18,
+      "fired_step": 19,
+      "expected_step": 19,
+      "ok": true
+    },
+    {
+      "secret_bit": 19,
+      "fired_step": 20,
+      "expected_step": 20,
+      "ok": true
+    },
+    {
+      "secret_bit": 20,
+      "fired_step": 21,
+      "expected_step": 21,
+      "ok": true
+    },
+    {
+      "secret_bit": 21,
+      "fired_step": 22,
+      "expected_step": 22,
+      "ok": true
+    },
+    {
+      "secret_bit": 22,
+      "fired_step": 23,
+      "expected_step": 23,
+      "ok": true
+    },
+    {
+      "secret_bit": 23,
+      "fired_step": 24,
+      "expected_step": 24,
+      "ok": true
+    },
+    {
+      "secret_bit": 24,
+      "fired_step": 25,
+      "expected_step": 25,
+      "ok": true
+    },
+    {
+      "secret_bit": 25,
+      "fired_step": 26,
+      "expected_step": 26,
+      "ok": true
+    },
+    {
+      "secret_bit": 26,
+      "fired_step": 27,
+      "expected_step": 27,
+      "ok": true
+    },
+    {
+      "secret_bit": 27,
+      "fired_step": 28,
+      "expected_step": 28,
+      "ok": true
+    },
+    {
+      "secret_bit": 28,
+      "fired_step": 29,
+      "expected_step": 29,
+      "ok": true
+    },
+    {
+      "secret_bit": 29,
+      "fired_step": 30,
+      "expected_step": 30,
+      "ok": true
+    },
+    {
+      "secret_bit": 30,
+      "fired_step": 31,
+      "expected_step": 31,
+      "ok": true
+    },
+    {
+      "secret_bit": 31,
+      "fired_step": 32,
+      "expected_step": 32,
+      "ok": true
+    }
+  ]
+}

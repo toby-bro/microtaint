@@ -1,0 +1,50 @@
+
+========================================================================
+base64-pinned
+========================================================================
+main-binary instructions evaluated (after taint armed): 3,523
+executed TAINTED instructions:                          990
+total tainted output bits:                              26,721
+avalanche-exclusive output bits:                        1,146
+AVALANCHE share of ALL tainted output bits:             4.29%
+  data registers only (>=8-bit outputs):  928/26,314  (3.53%)
+  CPU flag bits only (1-bit outputs):     218/407  (53.56%)
+
+Per-category DYNAMIC frequency (by executed tainted instruction, dominant category):
+   Mapped                                812   82.02%
+   Transportable                         177   17.88%
+   Monotonic                               1    0.10%
+
+Per-category (by tainted OUTPUT assignment) + avalanche bit share:
+   category                         assigns   freq%    outbits  avalbits   aval%
+   Mapped                             1,381  64.32%     22,962         0   0.00%
+   Transportable                        359  16.72%      3,352       928  27.68%
+   Transportable (Eq)                   232  10.81%        232        43  18.53%
+   Avalanche                            146   6.80%        146       146 100.00%
+   Monotonic                             29   1.35%         29        29 100.00%
+
+DATA bits only (>=8-bit outputs), per category -- the paper claims the
+exactly-handled categories propagate "with no over-approximation":
+   category                          data bits   approx  approx%
+   Mapped                               22,962        0    0.00%
+   Transportable                         3,352      928   27.68%
+   -> exactly-handled categories        26,314      928    3.53%
+   NOT free of over-approximation: 928 of 26,314 data bits in the
+   exactly-handled categories exist only because of an approximation.
+
+Approximation bits BY MECHANISM (a bit can be owed to more than one):
+   AvalancheExpr                         1,102
+   FullMaskAvalancheExpr                    43
+
+CLASSIFIER vs EMITTED TREE disagreements:
+        301  Transportable vs tree_approximates=True
+        176  Mapped vs tree_approximates=True
+        131  Conditionally Transportable vs tree_approximates=True
+         29  Monotonic vs tree_approximates=True
+   (the classifier calls an instruction Avalanche while its tree
+    emits no approximating node, or vice versa -- the two halves of
+    Table 6 are answering different questions for these)
+
+[+] wrote /home/user/microtaint/artifacts/ndss27/results/20260918-121340/avalanche_base64_pinned.json
+
+[ok] no failure on any recorded path: every hooked instruction reached the table
