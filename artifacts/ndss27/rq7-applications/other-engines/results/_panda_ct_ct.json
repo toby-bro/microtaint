@@ -9,6 +9,6 @@
     "0x403090": 33
   },
   "error": "",
-  "serial": "timeout: serial Read message \n['cd /root && ./hshare/h ct < payload | xxd', '[  164.915628] watchdog: BUG: soft lockup - CPU#0 stuck for 23s! [h:823]', '[  201.866482] watchdog: BUG: soft lockup - CPU#0 stuck for 22s! [h:823]', bytearray(b'0')]\n",
+  "serial": "timeout: serial Read message \n['cd /root && ./hshare/h ct < payload | xxd', '[  166.047495] watchdog: BUG: soft lockup - CPU#0 stuck for 24s! [h:825]', '[  204.964340] watchdog: BUG: soft lockup - CPU#0 stuck for 24s! [watchdog/0:11]', bytearray(b'0')]\n",
   "serial_timeout": true
 }

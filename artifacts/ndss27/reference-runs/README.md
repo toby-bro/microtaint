@@ -1,9 +1,10 @@
 # Reference runs
 
-Four directories, one per experiment that has a long run behind it.
+Five directories, one per run worth keeping.
 
 | directory | experiment | what it holds |
 | --- | --- | --- |
+| `run-all-quick-ryzen7-5700u` | all of them | a whole `--quick` run **with** the baselines: every experiment, every engine |
 | `run-all-debian12/20260918-121340` | RQ5, RQ6 quick, RQ7, avalanche | a whole `--quick --no-baselines` run |
 | `rq2-comparison-paper-corpus` | RQ2, RQ3, RQ4 | the paper's own 9858-case engine comparison |
 | `rq1-taintinduce` | RQ1 | the full-tier TaintInduce comparison |
@@ -24,6 +25,31 @@ a reader wants to look at is readable without unpacking anything.
 It unpacks every archive in place, skips one whose contents are already there,
 and leaves the archives alone, so it can be run again safely. Every command
 below assumes it has been run.
+
+## The `--quick` run, with the baselines
+
+`run-all-quick-ryzen7-5700u` is one `./run-all.sh --quick` on an AMD Ryzen 7
+5700U, sixteen threads at 1.80 GHz with boost off, which is the machine the
+main README quotes its timings from. It took 2 h 27 min.
+
+It is the only reference run that exercises everything: all seven engines in
+the RQ2 comparison, all eight RQ7 baseline drivers, TaintInduce, and every
+generator. Its `SUMMARY.md` is 28 PASS, 2 NOTE and one SKIP, the SKIP being
+`tables-multiisa`, which comes from the open-ended campaign `run-all.sh` does
+not start.
+
+Two checks worth repeating against it, which are the ones the main README tells
+a reviewer to make:
+
+```sh
+diff <your run>/apps_tables.md \
+     run-all-quick-ryzen7-5700u/20260921-075115/apps_tables.md
+diff <your run>/avalanche_numbers.tex \
+     run-all-quick-ryzen7-5700u/20260921-075115/avalanche_numbers.tex
+```
+
+Its `apps_tables.md` is identical to the Debian run's, and its `\avlBsf*`,
+`\avlNft*` and `\avlSip*` macros are identical to the paper's.
 
 ## The `--quick --no-baselines` run
 

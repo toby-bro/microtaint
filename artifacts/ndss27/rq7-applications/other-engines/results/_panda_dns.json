@@ -8,7 +8,7 @@
   "out_tainted": true,
   "out_value": 1,
   "error": "",
-  "serial": "timeout: serial Read message \n['cd /root && ./hshare/h < payload | xxd', '[  166.397969] watchdog: BUG: soft lockup - CPU#0 stuck for 24s! [h:822]', '[  204.544142] watchdog: BUG: soft lockup - CPU#0 stuck for 23s! [h:822]', bytearray(b'0')]\n",
+  "serial": "timeout: serial Read message \n['cd /root && ./hshare/h < payload | xxd', '[  166.737728] watchdog: BUG: soft lockup - CPU#0 stuck for 25s! [h:825]', '[  205.716501] watchdog: BUG: soft lockup - CPU#0 stuck for 24s! [watchdog/0:11]', bytearray(b'0')]\n",
   "serial_timeout": true,
   "_sample_out": false
 }

@@ -12,6 +12,6 @@
     "0x402fa8": 32
   },
   "error": "",
-  "serial": "timeout: serial Read message \n['cd /root && ./hshare/h vuln < payload | xxd', '[  174.895878] watchdog: BUG: soft lockup - CPU#0 stuck for 32s! [h:822]', bytearray(b'0')]\n",
+  "serial": "timeout: serial Read message \n['cd /root && ./hshare/h vuln < payload | xxd', '[  163.889018] watchdog: BUG: soft lockup - CPU#0 stuck for 22s! [h:822]', '[  200.585656] watchdog: BUG: soft lockup - CPU#0 stuck for 22s! [h:822]', bytearray(b'0')]\n",
   "serial_timeout": true
 }

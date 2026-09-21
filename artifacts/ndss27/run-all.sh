@@ -348,8 +348,16 @@ if [ "$BASELINES" = 1 ]; then
   # is no separate directory for either.  BATCH_TIMEOUT defaults to 0, meaning
   # no ceiling: a non-zero value silently truncates slow engines mid-corpus and
   # still produces a well-formed report.  Set it only as a deliberate guard.
+  # benchmark.py writes report_<unixtime>.json into its own directory, which
+  # accumulates one per run ever made there.  Copying them all put 28 reports
+  # and 140 MB of somebody else's runs into this one, and left RQ2_REPORT below
+  # choosing between them on an `ls -t` tie, since cp gives them all the same
+  # mtime.  Take the note of what was there first and copy only what appeared.
+  _before=$(ls "$HERE"/rq2-comparison/report_*.json 2>/dev/null | sort)
   run rq2-soundness rq2-comparison uv run python benchmark.py "${RQ2_ARGS[@]}"
-  cp "$HERE"/rq2-comparison/report_*.json "$OUT/" 2>/dev/null
+  comm -13 <(printf '%s\n' "$_before") \
+           <(ls "$HERE"/rq2-comparison/report_*.json 2>/dev/null | sort) \
+    | while read -r _r; do [ -n "$_r" ] && cp "$_r" "$OUT/"; done
   echo 'rq3-precision            NOTE scored in the rq2 pass' >> "$OUT/SUMMARY.md"
   echo 'rq4-per-step-cost        NOTE scored in the rq2 pass' >> "$OUT/SUMMARY.md"
 else
