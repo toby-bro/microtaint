@@ -67,11 +67,15 @@ typedef struct {
 
 /* A backend for the HOST the analysis runs on.  Both consume the same
  * ISA-general program, so every guest architecture the engine lifts reaches
- * native taint code on either host.  Anywhere else keeps the interpreter. */
-#if defined(__x86_64__)
+ * native taint code on either host.  Anywhere else keeps the interpreter.
+ *
+ * The host CPU is the only condition.  Page allocation is the one part that
+ * differs per operating system and mt_codebuf.h answers it, so these backends
+ * build on Windows as well as on POSIX. */
+#if defined(__x86_64__) || defined(_M_X64)
 #  define MT_HAVE_JIT 1
 #  include "taint_jit_x64.h"
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(_M_ARM64)
 #  define MT_HAVE_JIT 1
 #  include "taint_jit_a64.h"
 #endif
@@ -79,7 +83,7 @@ typedef struct {
 static void irprog_free(IRProgC *p) {
     if (!p) return;
 #ifdef MT_HAVE_JIT
-    if (p->jit_code) munmap(p->jit_code, p->jit_size);
+    if (p->jit_code) mt_code_free(p->jit_code, p->jit_size);
 #endif
     free(p->op); free(p->a); free(p->b); free(p->c); free(p->imm);
     free(p->inputs); free(p->outputs); free(p->scratch);

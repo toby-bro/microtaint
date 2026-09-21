@@ -36,7 +36,38 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <sys/mman.h>
+
+#include "mt_codebuf.h"
+
+/* Which x86-64 calling convention the emitted function must obey.
+ *
+ * This file emits a function that C code CALLS, so its entry sequence has to
+ * agree with whatever the host compiler believes about argument registers and
+ * about which registers a callee may clobber.  x86-64 has two answers:
+ *
+ *              args 1..3        callee-saved, of the ones this emitter uses
+ *   SysV       rdi, rsi, rdx    rbx, rbp, r12-r15
+ *   Win64      rcx, rdx, r8     rbx, rbp, rsi, rdi, r12-r15
+ *
+ * The difference that bites is rsi and rdi: the allocator has them in its
+ * pool, and on Windows a function that clobbers them and returns has
+ * corrupted its caller.  So Win64 saves two more registers rather than
+ * shrinking the pool, which keeps the allocator's decisions -- and therefore
+ * its spill paths -- identical on both, so the differential harness covers
+ * the same code on either.
+ *
+ * MT_JIT_FORCE_WIN64 exists for that harness: it builds this emitter in Win64
+ * mode on a Linux host and calls the result through an `ms_abi` pointer, so
+ * the Windows entry sequence is EXECUTED and diffed against the interpreter
+ * rather than merely compiled.
+ */
+#if defined(MT_JIT_FORCE_WIN64)
+#  define MT_JIT_WIN64 1
+#elif defined(_WIN32)
+#  define MT_JIT_WIN64 1
+#else
+#  define MT_JIT_WIN64 0
+#endif
 
 #define JR_RAX 0
 #define JR_RCX 1
@@ -46,6 +77,7 @@
 #define JR_RBP 5
 #define JR_RSI 6
 #define JR_RDI 7
+#define JR_R8  8
 #define JR_R12 12
 #define JR_R13 13
 #define JR_R14 14
@@ -385,7 +417,14 @@ static void jit_shift_var(JitCtx *c, int kind, int dst, int ra, int rb,
     j_cmovcc(&c->b, 0x43, dst, tmp);             /* cmovae: count >= 64 */
 }
 
+/* On a Linux host built in Win64 mode (the harness), the pointer must be
+ * declared ms_abi or the compiler would emit a SysV call to Win64 code. */
+#if MT_JIT_WIN64 && !defined(_WIN32)
+typedef void (__attribute__((ms_abi)) *mt_taint_fn)(
+    const uint64_t *, const uint64_t *, uint64_t *);
+#else
 typedef void (*mt_taint_fn)(const uint64_t *, const uint64_t *, uint64_t *);
+#endif
 
 /* True when every opcode in the program has an emission rule here.  Division
  * and count-leading-zeros are the exceptions: both want fixed registers or a
@@ -449,11 +488,24 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
      * known, so it is emitted with a fixed-width immediate. */
     j_push(&c.b, JR_RBX); j_push(&c.b, JR_R12);
     j_push(&c.b, JR_R13); j_push(&c.b, JR_R14); j_push(&c.b, JR_R15);
+#if MT_JIT_WIN64
+    /* Callee-saved on Windows and in the pool, so they must be restored. */
+    j_push(&c.b, JR_RSI); j_push(&c.b, JR_RDI);
+#endif
+    /* Either way the pushes leave rsp 16-byte aligned: entry is 8 mod 16, and
+     * 5 pushes make 48 while 7 make 64.  The frame below is rounded to 16, so
+     * alignment holds all the way to the body. */
     size_t frame_patch = c.b.len + 3;
     j_addsub_rsp(&c.b, 0, 0);
+#if MT_JIT_WIN64
+    j_mov_rr(&c.b, JR_R13, JR_RCX);
+    j_mov_rr(&c.b, JR_R14, JR_RDX);
+    j_mov_rr(&c.b, JR_R15, JR_R8);
+#else
     j_mov_rr(&c.b, JR_R13, JR_RDI);
     j_mov_rr(&c.b, JR_R14, JR_RSI);
     j_mov_rr(&c.b, JR_R15, JR_RDX);
+#endif
 
     for (int i = 0; i < n && c.ok; i++) {
         c.cur = i;
@@ -628,6 +680,9 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
         c.b.buf[frame_patch + 2] = (uint8_t)(frame >> 16);
         c.b.buf[frame_patch + 3] = (uint8_t)(frame >> 24);
         j_addsub_rsp(&c.b, 1, frame);
+#if MT_JIT_WIN64
+        j_pop(&c.b, JR_RDI); j_pop(&c.b, JR_RSI);
+#endif
         j_pop(&c.b, JR_R15); j_pop(&c.b, JR_R14); j_pop(&c.b, JR_R13);
         j_pop(&c.b, JR_R12); j_pop(&c.b, JR_RBX);
         jb_byte(&c.b, 0xC3);
@@ -636,17 +691,15 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
     mt_taint_fn fn = NULL;
     if (c.ok && !c.b.overflow) {
         size_t sz = (c.b.len + 4095) & ~(size_t)4095;
-        void *mem = mmap(NULL, sz, PROT_READ | PROT_WRITE,
-                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mem != MAP_FAILED) {
+        void *mem = mt_code_alloc(sz);
+        if (mem) {
             memcpy(mem, c.b.buf, c.b.len);
-            if (mprotect(mem, sz, PROT_READ | PROT_EXEC) == 0) {
-                __builtin___clear_cache((char *)mem, (char *)mem + c.b.len);
+            if (mt_code_protect_exec(mem, sz, c.b.len) == 0) {
                 fn = (mt_taint_fn)mem;
                 if (code_out) *code_out = mem;
                 if (size_out) *size_out = sz;
             } else {
-                munmap(mem, sz);
+                mt_code_free(mem, sz);
             }
         }
     }

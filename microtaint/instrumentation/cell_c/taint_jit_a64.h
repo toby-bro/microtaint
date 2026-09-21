@@ -54,7 +54,7 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <sys/mman.h>
+#include "mt_codebuf.h"
 
 #define JA_SP    31           /* also XZR, depending on the instruction */
 #define JA_ZR    31
@@ -597,17 +597,15 @@ static mt_taint_fn mt_jit_compile(const IRProgC *p, void **code_out,
     mt_taint_fn fn = NULL;
     if (c.ok && !c.b.overflow) {
         size_t sz = (c.b.len + 4095) & ~(size_t)4095;
-        void *mem = mmap(NULL, sz, PROT_READ | PROT_WRITE,
-                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mem != MAP_FAILED) {
+        void *mem = mt_code_alloc(sz);
+        if (mem) {
             memcpy(mem, c.b.buf, c.b.len);
-            if (mprotect(mem, sz, PROT_READ | PROT_EXEC) == 0) {
-                __builtin___clear_cache((char *)mem, (char *)mem + c.b.len);
+            if (mt_code_protect_exec(mem, sz, c.b.len) == 0) {
                 fn = (mt_taint_fn)mem;
                 if (code_out) *code_out = mem;
                 if (size_out) *size_out = sz;
             } else {
-                munmap(mem, sz);
+                mt_code_free(mem, sz);
             }
         }
     }
