@@ -118,7 +118,16 @@ jobs:
           #
           # A failure here fails build_wheels, and `publish` needs it, so a
           # wheel that cannot taint cannot be released.
-          CIBW_TEST_REQUIRES: pytest
+          # setuptools is not a test dependency, it is keystone's.  keystone
+          # (a qiling dependency, reached when Qiling loads its x86 support)
+          # falls back to `import distutils.sysconfig` when it cannot find its
+          # own library the usual way, and distutils was REMOVED in Python
+          # 3.12, so on a clean 3.12+ environment that fallback raises
+          # ModuleNotFoundError and Qiling reports "Unable to import module
+          # .arch.x86".  setuptools ships the distutils shim that makes it
+          # work again.  A developer machine hides this: anything that ever
+          # installed setuptools has the shim already.
+          CIBW_TEST_REQUIRES: pytest setuptools
           CIBW_TEST_COMMAND: pytest -o addopts= -p no:cacheprovider {project}/tests/test_wheel_smoke.py
 
       - name: Upload wheel artifacts
