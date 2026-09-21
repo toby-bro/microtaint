@@ -50,7 +50,7 @@ The detailed directory of this experiment are unsurprisignly in [rq6-generalisat
 The last part of our evaluation shows two programs in which bit-level granularity enables security analyses that were not achievable before.
 The two examples are a DNS header parser, and a square and multiply implementation.
 We also include four vulnerable binaries in [memory-safety](./rq7-applications/memory-safety/) to show that microtaint finds buffer overflows, use-after-free, side channels and writes through attacker-controlled pointers in classical binaries, which is the battery every engine is expected to have.
-In [rq7-applications](./rq7-applications/) is the dedicated [README](./rq7-applications/README.md), and in [other-engines](./rq7-applications/other-engines/) the same two analyses run against five of the baselines used in `RQ2-4`. PANDA is the exception: its detector is there but it produces no verdict, so it is in neither application table.
+In [rq7-applications](./rq7-applications/) is the dedicated [README](./rq7-applications/README.md), and in [other-engines](./rq7-applications/other-engines/) the same two analyses run against five of the baselines used in `RQ2-4`. PANDA is the exception: its detector is there and runnable, but no run of it is checked in, so it is in neither application table.
 
 ### Avalanche's cost
 
