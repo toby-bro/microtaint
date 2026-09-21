@@ -50,6 +50,35 @@ DNS = {'arm_pc': '0x402f97', 'flag_disp': '-2', 'and_pc': '0x402fb1',
 DNS_PAYLOAD = bytes([0x88])   # QR(bit7)=1, OPCODE(bits6..3)=0001 -> out=0x01
 
 
+# The guests the workers run inside the container.  Same flags as
+# check_side_channel.py uses for the same source, because the PCs below are
+# read off a binary built exactly this way.
+GCC = ['gcc', '-O0', '-g', '-static', '-no-pie', '-fno-stack-protector']
+CT_SRC = HERE.parent / 'crypto' / 'square_and_multiply' / 'test_constant_time.c'
+DNS_SRC = HERE / 'dns_bitfield.c'
+
+
+def build_guests() -> str:
+    """Compile the two guests if they are absent.  '' on success.
+
+    They used to be left to the reader, and the only sign of a missing one was
+    a preflight that passed followed by a container that found no binary.  The
+    other engines' drivers build their own guests, so this one does too.
+    """
+    for src, dst in ((CT_SRC, HERE / CT_BIN), (DNS_SRC, HERE / DNS_BIN)):
+        if dst.exists():
+            continue
+        if not src.exists():
+            return f'{src} is missing, so {dst.name} cannot be built'
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run([*GCC, '-o', str(dst), str(src)],
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            return f'building {dst.name} failed: {proc.stderr.strip()[-300:]}'
+        print(f'[panda] built {dst.relative_to(HERE)}')
+    return ''
+
+
 def preflight() -> str:
     if shutil.which('docker') is None:
         return 'docker CLI not found on PATH'
@@ -105,7 +134,7 @@ def main() -> int:
     RESULTS.mkdir(exist_ok=True)
     out: dict[str, Any] = {'tool': 'PANDA (QEMU full-system) + taint2 byte/register dynamic taint'}
 
-    blocker = preflight()
+    blocker = build_guests() or preflight()
     if blocker:
         # When PANDA could not run, record that and NOTHING ELSE.  This used to
         # pre-fill the two keys the paper quotes -- matches_microtaint: True and
