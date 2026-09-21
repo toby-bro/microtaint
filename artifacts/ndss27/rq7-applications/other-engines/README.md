@@ -7,13 +7,16 @@ assertion into a measurement.
 
 The environments are the ones `rq2-comparison/setup_envs.sh` builds.
 
-PANDA is the one engine with no row below. `detect_panda.py` is here and
-`setup_envs.sh` builds everything it needs, but no run of it is checked in, so
-there is no `results/panda.json` to report and it is absent from both tables
-rather than stated from a run that did not happen. Running it needs the two
-guest binaries built first, and it records a null verdict with `ran: false`
-rather than a plausible-looking one if the container or the guest image is
-missing.
+PANDA is the one engine with no row below. Every other engine has a
+`results/<tool>.json` in this repository, written by its detect script; there
+is no `results/panda.json`, because nobody has run `detect_panda.py` and saved
+its output. The tables read those files, so PANDA has nothing to put in a row,
+and it is left out rather than stated from a run that did not happen.
+
+The script itself works: `setup_envs.sh` installs the container image and the
+guest disk it needs, and it writes a null verdict with `ran: false` rather than
+a plausible-looking one if either is missing. Running it needs the two guest
+binaries, `bin/test_constant_time` and `dns_bitfield`, built first.
 
 ## Constant time (Table VI)
 
