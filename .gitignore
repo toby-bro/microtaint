@@ -180,3 +180,4 @@ benchmark/taint_density/hookcost
 # local backup of the agent memory dir (never tracked)
 memory.bak/
 *.code-workspace
+*.zip
