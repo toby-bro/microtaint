@@ -252,7 +252,13 @@ def plot_perf_latency():
     ax.set_xticks(x)
     ax.set_xticklabels(engines, rotation=15, ha='right', fontsize=10)
     ax.set_yscale('log')
-    ax.legend(fontsize=10)
+    # Above the axes, not inside them.  matplotlib's default loc='best' put the
+    # box in the upper left, which is where PANDA's p100 bar reaches: the tallest
+    # bar of the left half was drawn behind the legend and read as missing.
+    # A horizontal strip above the plot cannot collide with any bar.
+    ax.legend(fontsize=9, ncol=3, loc='lower left',
+              bbox_to_anchor=(0.0, 1.01), frameon=False,
+              columnspacing=1.2, handletextpad=0.5)
 
     fig.tight_layout()
     save(fig, 'fig_perf_latency.pdf')
