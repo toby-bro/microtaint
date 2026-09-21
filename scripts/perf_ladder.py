@@ -322,6 +322,37 @@ _EVENTS = ('instructions:u', 'instructions', 'task-clock', 'page-faults')
 _MARKER = re.compile(r'LADDER loop=([0-9.]+) blocks=(\d+) findings=(\d+)')
 
 
+def _perf_unusable() -> str:
+    """'' if perf can actually count here, otherwise why it cannot.
+
+    Being installed is not the same as being permitted.  A kernel with
+    `perf_event_paranoid` at 2 or 3, or a container that has not been given
+    `CAP_PERFMON`, has the binary and refuses the syscall: perf then exits
+    cleanly, writes a CSV with no counters in it, and the run died on
+    `perf reported no instructions:u` several rungs later.  That is what the
+    GitHub runner does.  Ask perf to count something trivial and look at what
+    comes back, rather than trusting `which`.
+    """
+    if shutil.which('perf') is None:
+        return 'perf not found'
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / 'probe.csv'
+        try:
+            subprocess.run(
+                ['perf', 'stat', '-x,', '-e', 'instructions:u',
+                 '-o', str(out), '--', sys.executable, '-c', 'pass'],
+                capture_output=True, text=True, timeout=120, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f'perf could not be run ({type(exc).__name__})'
+        text = out.read_text(errors='replace') if out.exists() else ''
+        if _count(text, 'instructions:u') is None:
+            paranoid = Path('/proc/sys/kernel/perf_event_paranoid')
+            lvl = paranoid.read_text().strip() if paranoid.exists() else '?'
+            return (f'perf is present but counts nothing here '
+                    f'(perf_event_paranoid={lvl})')
+    return ''
+
+
 def _count(text: str, event: str) -> float | None:
     """One perf CSV counter.
 
@@ -516,10 +547,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.worker:
         return _worker(args.worker, args.guest, int(args.main, 16), args.n)
 
-    use_perf = shutil.which('perf') is not None
+    why = _perf_unusable()
+    use_perf = not why
     if not use_perf:
-        print('perf not found: wall clock only, and wall is load-sensitive '
-              'in a way instructions:u is not', file=sys.stderr)
+        print(f'{why}: wall clock only, and wall is load-sensitive '
+              f'in a way instructions:u is not', file=sys.stderr)
 
     tmp = tempfile.TemporaryDirectory()
     guest = args.guest or _build(Path(tmp.name), 'ladder_guest.elf', _GUEST_SRC)

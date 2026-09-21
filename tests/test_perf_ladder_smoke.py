@@ -27,6 +27,27 @@ pytestmark = pytest.mark.skipif(
 
 _SCRIPT = Path(__file__).resolve().parent.parent / 'scripts' / 'perf_ladder.py'
 
+
+def _why_no_perf() -> str:
+    """'' if perf can count here, else why not.  Asks the script's own probe.
+
+    Installed is not permitted: a kernel at perf_event_paranoid 2 or 3, or a
+    container without CAP_PERFMON, has the binary and refuses the syscall.
+    GitHub's runners are such a machine.  The ladder degrades to wall clock
+    there, which is correct, but a guard that compares instruction counts
+    cannot fire with no instruction counts to compare, so the test for it has
+    nothing to assert and skips instead of failing.
+    """
+    sys.path.insert(0, str(_SCRIPT.parent))
+    try:
+        from perf_ladder import _perf_unusable  # type: ignore[import-not-found]
+    except Exception as exc:  # any import failure means no probe
+        return f'could not import the ladder to ask it ({type(exc).__name__})'
+    return str(_perf_unusable())
+
+
+_NO_PERF = _why_no_perf()
+
 #: A perf CSV exactly as the harness receives it, including the two events
 #: whose names are prefixes of one another.
 _CSV = (
@@ -45,9 +66,7 @@ def test_counter_names_do_not_match_each_others_prefixes() -> None:
     that could never be non-zero, printed as though it were a measurement.
     """
     sys.path.insert(0, str(_SCRIPT.parent))
-    # scripts/ is not a package and the path is added at run time, so the
-    # checker cannot resolve this the way the interpreter does.
-    import perf_ladder  # type: ignore[import-not-found]
+    import perf_ladder
 
     assert perf_ladder._count(_CSV, 'instructions:u') == 1234
     assert perf_ladder._count(_CSV, 'instructions') == 5678, (
@@ -87,11 +106,14 @@ def test_a_rung_runs_and_reports_work_beside_cost() -> None:
     assert 'marginal cost of ONE more input' in out
 
 
+@pytest.mark.skipif(bool(_NO_PERF), reason=f'needs perf counters: {_NO_PERF}')
 def test_the_spread_guard_refuses() -> None:
     """Repeats that disagree must be an error, not a median.
 
     Forced with --max-spread 0 so the test does not depend on the machine
-    actually being noisy.
+    actually being noisy.  The guard compares instructions:u across repeats and
+    is gated on `use_perf`, so where perf cannot count there is nothing for it
+    to disagree about and this skips.
     """
     done = _run('--rungs', 'native', '--repeats', '2', '--max-spread', '0')
     assert done.returncode != 0, (
