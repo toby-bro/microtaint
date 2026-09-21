@@ -15,12 +15,11 @@ Tables emitted, and what each one needs from the report:
   tab:unsound-summary  metrics.ground_truth.per_tool unsound_modes/categories
   tab:perf             metrics.per_tool latency and throughput
   tab:f1-vs-ref        metrics.per_tool precision/recall/f1
-  tab:pe               metrics.path_explosion_scaling_median
+  tab:pe               the path-explosion cases in `results`
 
 Three of the quantities the tables need are not in `metrics`: which pillars and
 categories an engine's unsound cases fall in, how far over budget the skipped
-ground-truth cases were, and the MEDIAN path-explosion latency (`metrics`
-carries the mean, while the paper's table claims a median).  All three are
+ground-truth cases were, and the mean path-explosion latency.  All three are
 recomputed here from `results`, which carries every case, every engine's answer
 and the oracle's.  Deriving them rather than having benchmark.py record them
 keeps one source of truth and works on reports written before this script
@@ -138,11 +137,13 @@ def skipped_k(rep):
     return (round(statistics.mean(ks), 1), max(ks)) if ks else (None, None)
 
 
-def pe_median_ms(rep):
-    """{n_instrs: {engine: median ms}} for the path-explosion cases.
+def pe_mean_ms(rep):
+    """{n_instrs: {engine: mean ms}} for the path-explosion cases.
 
-    `metrics.path_explosion_scaling` holds the MEAN, while the paper's table
-    says median.  Both come from the same per-case timings, which are here.
+    The mean, which is what benchmark.py records in
+    `metrics.path_explosion_scaling` and what the table's caption states.  It
+    is recomputed from the per-case timings rather than read from `metrics`,
+    so a report written before that key existed still produces the table.
     """
     lats: dict = {}
     for entry in _cases(rep):
@@ -154,7 +155,7 @@ def pe_median_ms(rep):
             if tool == ORACLE or 'error' in res or not res.get('time_ns'):
                 continue
             lats.setdefault(n, {}).setdefault(tool, []).append(res['time_ns'] / 1e6)
-    return {n: {t: round(statistics.median(v), 2) for t, v in tm.items()}
+    return {n: {t: round(statistics.mean(v), 2) for t, v in tm.items()}
             for n, tm in lats.items()}
 
 
@@ -353,7 +354,7 @@ def t_f1(rep, reference):
 
 
 def t_pe(rep):
-    pe = pe_median_ms(rep)
+    pe = pe_mean_ms(rep)
     if not pe:
         return None
     ns = sorted(pe, key=int)
@@ -366,7 +367,7 @@ def t_pe(rep):
             tools.append(t)
     rows = [(t, *[texnum(pe[n][t] * 1000) if t in pe[n] else DASH for n in ns])
             for t in tools]
-    return ('tab:pe', r'Path-explosion latency scaling (median $\mu$s per test)',
+    return ('tab:pe', r'Path-explosion latency scaling (mean $\mu$s per test)',
             'l' + 'r' * len(ns), ['Engine'] + [f'$N{{=}}{n}$' for n in ns],
             rows, [])
 
