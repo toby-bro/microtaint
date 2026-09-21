@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import importlib
 import os
-import platform
 import shutil
 import subprocess
 import tempfile
@@ -136,8 +135,10 @@ def test_both_implementations_agree_on_the_sequence() -> None:
 #     same guest, which is also what makes their results comparable.
 #
 # tests/guests/smoke_amd64.c is that binary's source, kept beside it so the
-# blob is readable; test_the_shipped_guest_is_the_source_beside_it rebuilds it
-# wherever a compiler can, so the two cannot drift apart unnoticed.
+# blob is readable.  Where a toolchain CAN emit a Linux ELF, the tests below
+# also build the guest here and emulate that: it keeps the blob from drifting
+# from its source, and a second compiler lowers the same program differently,
+# so it covers instructions the shipped blob does not contain.
 # ---------------------------------------------------------------------------
 
 _GUESTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'guests')
@@ -215,9 +216,9 @@ def test_both_implementations_carry_taint_through_the_binary() -> None:
     """
     differential = _emulate(_GUEST_BIN, '0')
     compiled = _emulate(_GUEST_BIN, '1')
-    assert 'ZF' in differential and 'ZF' in compiled, (
-        f'only one implementation reached the branch: '
-        f'differential={sorted(differential)}, compiled={sorted(compiled)}')
+    both = f'differential={sorted(differential)}, compiled={sorted(compiled)}'
+    assert 'ZF' in differential, f'the differential path did not reach it: {both}'
+    assert 'ZF' in compiled, f'the compiled path did not reach it: {both}'
 
 
 #: How this worker might build the guest, best first.  The source includes no
