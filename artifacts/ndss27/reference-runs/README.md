@@ -80,6 +80,13 @@ uv run python gen_ladder_table.py \
     --md  ../reference-runs/run-all-debian12/20260918-121340/ladder_table.md
 ```
 
+`rq7-other-engines/` beside it holds the six baselines' verdicts, one
+`<tool>.json` each plus the raw traces they were folded from, produced by the
+eight `detect_*` and `localise_*` drivers in `rq7-applications/other-engines/`.
+They are the comparison rows of the two application tables. `run-all.sh` runs
+those drivers when the baselines are enabled; this directory predates that, so
+they were run separately and copied in.
+
 That gives `apps_tables.tex` and `apps_tables.md` (the two RQ7 application tables, both matching the paper), `avalanche_numbers.tex` (the category table's macros), `fig_overhead.pdf` (Figure 6) and `ladder_table.tex` and `ladder_table.md` (the appendix's full overhead ladder).
 The ladder is where the note about virtualisation above becomes concrete: every rung is slower than the paper's, `qiling-only` is 48 times native here against 52, and `microtaint-all` is 3674 against 4115.
 The chain is in the same order and the marginal costs sit in the same places, which is what the rungs are for.

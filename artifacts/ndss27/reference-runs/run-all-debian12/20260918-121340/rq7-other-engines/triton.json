@@ -1,0 +1,51 @@
+{
+  "tool": "triton",
+  "method": "Triton ELF load (dependency-free ELF64 loader) + native x86-64 instruction emulation; target routine driven directly (RIP := function entry, SysV args in registers) to bypass static-glibc startup. Taint engine enabled by default.",
+  "ct": {
+    "workload": "test_constant_time.c (square-and-multiply modexp)",
+    "vuln_branch_leaks": 1,
+    "vuln_branch_leak_sites": [
+      "0x402fa8"
+    ],
+    "vuln_branch_leak_execs": 32,
+    "vuln_cond_branches_total": 65,
+    "ct_branch_leaks": 0,
+    "ct_branch_leak_execs": 0,
+    "ct_cond_branches_total": 33,
+    "matches_microtaint": true,
+    "ran": true
+  },
+  "dns": {
+    "workload": "test_bitpacked_dns.c LDNS_OPCODE_WIRE: AND AL,0x78 (24 78) then SHR AL,3 (C0 E8 03)",
+    "granularity": "register/byte-level. Triton's taint engine exposes taintRegister / taintMemory / setTaintRegister / setTaintMemory only; the smallest addressable taint unit is one byte (an 8-bit sub-register such as AL). No bit-level taint API exists (no taintRegisterBit / taintBit / bit index).",
+    "can_taint_single_bit": false,
+    "subbit_api_probe": {
+      "taint_al_taints_whole_al": true,
+      "has_bit_level_taint_api": false,
+      "taint_api_methods": [
+        "getTaintedMemory",
+        "getTaintedRegisters",
+        "getTaintedSymbolicExpressions",
+        "isMemoryTainted",
+        "isRegisterTainted",
+        "setTaintMemory",
+        "setTaintRegister",
+        "taintAssignment",
+        "taintMemory",
+        "taintRegister",
+        "taintUnion",
+        "untaintMemory",
+        "untaintRegister"
+      ]
+    },
+    "qr_reaches_output": true,
+    "opcode_reaches_output": true,
+    "input_flag_byte": "0xa8",
+    "byte_taint_output_al": "0x5",
+    "byte_taint_output_al_tainted": true,
+    "matches_microtaint": false,
+    "control_untainted_output_al_tainted": false,
+    "can_discriminate_qr_vs_opcode": false,
+    "ran": true
+  }
+}

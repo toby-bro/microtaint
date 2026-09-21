@@ -1,0 +1,10 @@
+{
+  "vuln_ifgoto": 32,
+  "vuln_sites": {
+    "0x4031c8": 32
+  },
+  "ct_ifgoto": 0,
+  "ct_sites": {},
+  "dns_opcode_value": "0x01",
+  "dns_taint_mask": "0xffffff0f"
+}

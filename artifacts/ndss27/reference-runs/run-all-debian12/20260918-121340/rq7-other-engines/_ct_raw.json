@@ -1,0 +1,64 @@
+{
+  "vuln": {
+    "name": "vuln",
+    "entry": "0x402f75",
+    "cond_branches_executed": 65,
+    "leak_count_static": 1,
+    "n_tainted_branch_execs": 32,
+    "leak_pcs": [
+      "0x402fa8"
+    ],
+    "leaks_sample": [
+      {
+        "pc": "0x402fa8",
+        "insn": "je 0x402fc8",
+        "tainted_flags": [
+          "zf"
+        ]
+      },
+      {
+        "pc": "0x402fa8",
+        "insn": "je 0x402fc8",
+        "tainted_flags": [
+          "zf"
+        ]
+      },
+      {
+        "pc": "0x402fa8",
+        "insn": "je 0x402fc8",
+        "tainted_flags": [
+          "zf"
+        ]
+      },
+      {
+        "pc": "0x402fa8",
+        "insn": "je 0x402fc8",
+        "tainted_flags": [
+          "zf"
+        ]
+      },
+      {
+        "pc": "0x402fa8",
+        "insn": "je 0x402fc8",
+        "tainted_flags": [
+          "zf"
+        ]
+      }
+    ],
+    "steps": 579,
+    "reached_ret": true,
+    "error": ""
+  },
+  "ct": {
+    "name": "ct",
+    "entry": "0x402ff8",
+    "cond_branches_executed": 33,
+    "leak_count_static": 0,
+    "n_tainted_branch_execs": 0,
+    "leak_pcs": [],
+    "leaks_sample": [],
+    "steps": 1169,
+    "reached_ret": true,
+    "error": ""
+  }
+}

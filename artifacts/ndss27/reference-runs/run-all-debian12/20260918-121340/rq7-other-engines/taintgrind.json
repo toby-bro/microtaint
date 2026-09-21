@@ -1,0 +1,34 @@
+{
+  "tool": "taintgrind",
+  "config": {
+    "docker_image": "taintgrind:latest",
+    "invocation": "docker run -i --rm -v <dir>:/pwd taintgrind:latest /pwd/<binary> [argv]",
+    "taint_source": "explicit TNT_TAINT(addr,size) from taintgrind.h, applied in-harness right after the read()",
+    "build_flags": "gcc -O0 -g -static -no-pie -fno-stack-protector -I. -I/usr/include/valgrind",
+    "branch_leak_metric": "count of trace lines tagged 'IfGoto' (an Ist_Exit whose guard is tainted, i.e. a tainted conditional jump)"
+  },
+  "ct": {
+    "workload": "test_constant_time.c (square-and-multiply modexp)",
+    "vuln_branch_leaks": 32,
+    "vuln_branch_leak_sites": [
+      "0x4031c8"
+    ],
+    "ct_branch_leaks": 0,
+    "ct_branch_leak_sites": [],
+    "matches_microtaint": true,
+    "ran": true
+  },
+  "dns": {
+    "workload": "test_bitpacked_dns.c LDNS_OPCODE_WIRE: AND AL,0x78 then SHR AL,3",
+    "granularity": "byte / register (VEX Ity_I8 shadow); taintgrind tracks taint per byte, not per bit",
+    "can_taint_single_bit": false,
+    "input_flag_byte": "0x88",
+    "opcode_value": "0x01",
+    "taint_mask": "0xffffff0f",
+    "byte_taint_output_al": "0x0f",
+    "output_tainted": true,
+    "can_discriminate_qr_vs_opcode": false,
+    "matches_microtaint": false,
+    "ran": true
+  }
+}

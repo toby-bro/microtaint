@@ -1,0 +1,35 @@
+{
+  "tool": "libdft64 (Intel Pin DTA, byte-granular tag map)",
+  "ct": {
+    "workload": "test_constant_time.c (square-and-multiply modexp)",
+    "vuln_branch_leaks": 32,
+    "vuln_branch_leak_sites": [
+      "0x402fa8"
+    ],
+    "ct_branch_leaks": 0,
+    "raw_total_tainted_cond_branches": {
+      "vuln": 34,
+      "ct": 2
+    },
+    "shared_plumbing_sites": [
+      "0x4030c0",
+      "0x412f86"
+    ],
+    "note_on_raw_totals": "libdft's read hook taints RAX (the read() byte count), so the length checks in __libc_read and in main count as tainted branches in both variants. They fire identically in vuln and ct, so the sites common to both are excluded and the differential is what is reported.",
+    "matches_microtaint": true,
+    "ran": true
+  },
+  "dns": {
+    "workload": "test_bitpacked_dns.c LDNS_OPCODE_WIRE: AND AL,0x78 then SHR AL,3",
+    "granularity": "byte",
+    "can_taint_single_bit": false,
+    "input_flag_byte": "0x88",
+    "al_tainted_before_and": true,
+    "al_tainted_after_and": true,
+    "al_tainted_after_shr": true,
+    "output_tainted": true,
+    "can_discriminate_qr_vs_opcode": false,
+    "matches_microtaint": false,
+    "ran": true
+  }
+}

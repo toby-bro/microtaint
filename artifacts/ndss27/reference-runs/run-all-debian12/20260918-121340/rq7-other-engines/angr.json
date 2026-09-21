@@ -1,0 +1,76 @@
+{
+  "tool": "angr",
+  "family": "symbolic",
+  "ct": {
+    "vuln_branch_leaks": 1,
+    "ct_branch_leaks": 0,
+    "matches_microtaint": true
+  },
+  "dns": {
+    "granularity": "bit",
+    "can_taint_single_bit": true,
+    "qr_reaches_output": false,
+    "opcode_reaches_output": true,
+    "can_discriminate_qr_vs_opcode": true
+  },
+  "raw": {
+    "vuln": {
+      "name": "vuln",
+      "entry": "0x402f75",
+      "steps": 68,
+      "n_deadended": 1,
+      "cond_branch_sites_total": 1,
+      "secret_dep_branch_sites": [
+        "0x402fa8"
+      ],
+      "secret_dep_branch_count": 1,
+      "secret_dep_branch_execs": 64,
+      "leaks": [
+        {
+          "pc": "0x402fa8",
+          "guard": "<Bool (exponent[7:0] & 1) == 0>",
+          "guard_vars": [
+            "exponent"
+          ]
+        }
+      ],
+      "error": ""
+    },
+    "ct": {
+      "name": "ct",
+      "entry": "0x402ff8",
+      "steps": 36,
+      "n_deadended": 1,
+      "cond_branch_sites_total": 0,
+      "secret_dep_branch_sites": [],
+      "secret_dep_branch_count": 0,
+      "secret_dep_branch_execs": 0,
+      "leaks": [],
+      "error": ""
+    },
+    "dns_full": {
+      "granularity": "bit",
+      "can_taint_single_bit": true,
+      "output_ast": "<BV8 0 .. flag[6:3]>",
+      "per_bit_dependence": {
+        "bit7_QR": false,
+        "bit6": true,
+        "bit5": true,
+        "bit4": true,
+        "bit3": true,
+        "bit2": false,
+        "bit1": false,
+        "bit0": false
+      },
+      "single_bit_symbolic_check": {
+        "qr_only_symbolic_input": true,
+        "qr_only_output_symbolic": false,
+        "opcode_only_symbolic_input": true,
+        "opcode_only_output_symbolic": true
+      },
+      "qr_reaches_output": false,
+      "opcode_reaches_output": true,
+      "can_discriminate_qr_vs_opcode": true
+    }
+  }
+}

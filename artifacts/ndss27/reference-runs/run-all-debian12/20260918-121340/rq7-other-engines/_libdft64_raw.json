@@ -1,0 +1,30 @@
+{
+  "vuln": {
+    "cond_branches_executed": 36221,
+    "tainted_cond_branches": 34,
+    "flag_writes": 61153,
+    "tainted_branch_sites": 3,
+    "sites": {
+      "0x412f86": 1,
+      "0x4030c0": 1,
+      "0x402fa8": 32
+    }
+  },
+  "ct": {
+    "cond_branches_executed": 36189,
+    "tainted_cond_branches": 2,
+    "flag_writes": 61309,
+    "tainted_branch_sites": 2,
+    "sites": {
+      "0x412f86": 1,
+      "0x4030c0": 1
+    }
+  },
+  "dns": {
+    "and_pc": "0x402fb1",
+    "shr_pc": "0x402fb3",
+    "al_tainted_before_and": true,
+    "al_tainted_after_and": true,
+    "al_tainted_after_shr": true
+  }
+}

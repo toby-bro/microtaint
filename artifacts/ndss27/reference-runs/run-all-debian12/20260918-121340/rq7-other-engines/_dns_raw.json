@@ -1,0 +1,87 @@
+{
+  "qr_intent": {
+    "label": "intent=QR-bit7-only (Triton taints whole AL)",
+    "al_in": "0xa8",
+    "input_al_tainted": true,
+    "trace": [
+      {
+        "pc": "0x400000",
+        "insn": "and al, 0x78",
+        "al_after": "0x28",
+        "al_tainted_after": true
+      },
+      {
+        "pc": "0x400002",
+        "insn": "shr al, 3",
+        "al_after": "0x5",
+        "al_tainted_after": true
+      }
+    ],
+    "output_al": "0x5",
+    "output_al_tainted": true
+  },
+  "opcode_intent": {
+    "label": "intent=OPCODE-bits6..3-only (Triton taints whole AL)",
+    "al_in": "0xa8",
+    "input_al_tainted": true,
+    "trace": [
+      {
+        "pc": "0x400000",
+        "insn": "and al, 0x78",
+        "al_after": "0x28",
+        "al_tainted_after": true
+      },
+      {
+        "pc": "0x400002",
+        "insn": "shr al, 3",
+        "al_after": "0x5",
+        "al_tainted_after": true
+      }
+    ],
+    "output_al": "0x5",
+    "output_al_tainted": true
+  },
+  "control_untainted": {
+    "label": "control: AL untainted",
+    "al_in": "0xa8",
+    "input_al_tainted": false,
+    "trace": [
+      {
+        "pc": "0x400000",
+        "insn": "and al, 0x78",
+        "al_after": "0x28",
+        "al_tainted_after": false
+      },
+      {
+        "pc": "0x400002",
+        "insn": "shr al, 3",
+        "al_after": "0x5",
+        "al_tainted_after": false
+      }
+    ],
+    "output_al": "0x5",
+    "output_al_tainted": false
+  },
+  "api": {
+    "taint_al_taints_whole_al": true,
+    "has_bit_level_taint_api": false,
+    "taint_api_methods": [
+      "getTaintedMemory",
+      "getTaintedRegisters",
+      "getTaintedSymbolicExpressions",
+      "isMemoryTainted",
+      "isRegisterTainted",
+      "setTaintMemory",
+      "setTaintRegister",
+      "taintAssignment",
+      "taintMemory",
+      "taintRegister",
+      "taintUnion",
+      "untaintMemory",
+      "untaintRegister"
+    ]
+  },
+  "can_taint_single_bit": false,
+  "can_discriminate_qr_vs_opcode": false,
+  "byte_taint_output_al": "0x5"
+}
