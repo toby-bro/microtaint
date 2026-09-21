@@ -231,7 +231,7 @@ static void mt_am_clear(MtAddrMap *m) {
     m->n = 0;
 }
 
-static void mt_am_free(MtAddrMap *m) {
+static inline void mt_am_free(MtAddrMap *m) {
     mt_am_clear(m);
     free(m->vals); m->vals = NULL;
     free(m->keys); m->keys = NULL;
@@ -271,7 +271,7 @@ static inline MtAddrEntry *mt_am_get(MtAddrMap *m, uint64_t key) {
 }
 
 /* Insert (or return the existing) entry for key.  NULL on OOM. */
-static MtAddrEntry *mt_am_new(MtAddrMap *m, uint64_t key) {
+static inline MtAddrEntry *mt_am_new(MtAddrMap *m, uint64_t key) {
     if (m->cap == 0 && mt_am_init(m, 256) != 0) return NULL;
     if ((m->n + 1) * 10 >= m->cap * 7 && mt_am_grow(m) != 0) return NULL;
     Py_ssize_t i = mt_am_slot(m, key);
@@ -696,7 +696,7 @@ static int mt_ir_mem_step(MtFastCtx *c, MtAddrEntry *ent, MtMemWrite *out,
     return n_w;
 }
 
-static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
+static inline int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
                         PyObject *compiled, int cflags) {
     if (!c->capi || !ent) return MT_FAST_SLOW;
 
@@ -898,7 +898,7 @@ static int mt_fast_step(MtFastCtx *c, uint64_t address, MtAddrEntry *ent,
 
 /* Cache what the express lane needs for this address.  Called from the GIL path
  * once the full step has succeeded, so everything it depends on is resolved. */
-static void mt_express_arm(MtFastCtx *c, MtAddrEntry *ent, PyObject *compiled,
+static inline void mt_express_arm(MtFastCtx *c, MtAddrEntry *ent, PyObject *compiled,
                            int cflags) {
     ent->express = 0;
     ent->cflags = cflags;
@@ -979,7 +979,7 @@ static void mt_express_arm(MtFastCtx *c, MtAddrEntry *ent, PyObject *compiled,
  * been written to the taint array, so the full path starts from an unmodified
  * state and simply repeats the decision.
  */
-static int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size) {
+static inline int mt_fast_step_nogil(MtFastCtx *c, uint64_t address, unsigned int size) {
     if (!c->map || !c->arr_loaded || !*c->arr_loaded) return MT_FAST_SLOW;
     MtAddrEntry *ent = mt_am_get(c->map, address);
     if (!ent || ent->size != (int)size) { c->express_miss[0]++; return MT_FAST_SLOW; }

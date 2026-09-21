@@ -106,7 +106,7 @@ static void jb_byte(JitBuf *b, uint8_t v) {
     if (b->len >= b->cap) { b->overflow = 1; return; }
     b->buf[b->len++] = v;
 }
-static void jb_bytes(JitBuf *b, const uint8_t *v, int n) {
+static inline void jb_bytes(JitBuf *b, const uint8_t *v, int n) {
     for (int i = 0; i < n; i++) jb_byte(b, v[i]);
 }
 static void jb_u32(JitBuf *b, uint32_t v) {
@@ -334,7 +334,7 @@ static int jit_take_reg_ex(JitCtx *c, int e0, int e1, int e2) {
     return best;
 }
 
-static int jit_take_reg(JitCtx *c, int avoid_a, int avoid_b) {
+static inline int jit_take_reg(JitCtx *c, int avoid_a, int avoid_b) {
     (void)avoid_a; (void)avoid_b;
     return jit_take_reg_ex(c, -1, -1, -1);
 }
