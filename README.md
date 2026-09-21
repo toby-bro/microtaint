@@ -35,6 +35,33 @@ If you want to build it locally then once you cloned the repo you can use `uv` t
 uv sync --reinstall-package=microtaint
 ```
 
+### macOS on Apple Silicon
+
+Emulation needs one extra step there, and it is not ours to fix:
+
+```sh
+brew install keystone
+sudo cp -L "$(brew --prefix)/lib/libkeystone.dylib" /usr/local/lib/
+```
+
+`keystone-engine` is a dependency of Qiling. Its last release is 0.9.2, from
+June 2020, which predates Apple Silicon and ships wheels only for
+`macosx_10_14_x86_64`, `manylinux1` and Windows. With no arm64 library to
+load, its loader falls through to `import distutils.sysconfig`, and
+`distutils` was removed in Python 3.12, so what you actually see is
+`ModuleNotFoundError: No module named 'distutils'` followed by Qiling
+reporting `Unable to import module .arch.x86`. The real cause is the missing
+library, not distutils.
+
+Homebrew ships keystone 0.9.2 with arm64 bottles, the same version as the
+Python binding, so the two match. `/usr/local/lib` is where the binding
+looks, and it is on the default dyld search path, so no `DYLD_LIBRARY_PATH`
+is needed (System Integrity Protection would strip it anyway).
+
+The taint API itself does not need any of this; only emulating a guest does.
+Tracked upstream as [keystone-engine#588](https://github.com/keystone-engine/keystone/issues/588)
+for the distutils half. Nothing upstream tracks the missing arm64 wheel.
+
 ## Command Line Usage
 
 Use the provided `microtaint` command to execute and dynamically analyze a binary. Provide flags before the `--` separator. Any arguments after `--` represent the execution format for your compiled target.
