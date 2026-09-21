@@ -169,6 +169,23 @@ jobs:
             test -f /usr/local/lib/libkeystone.dylib &&
             python {project}/scripts/ci/prune_python_fx.py
           CIBW_TEST_COMMAND: pytest -o addopts= -p no:cacheprovider {project}/tests/test_wheel_smoke.py
+          # Windows only, and it removes noise rather than coverage.
+          #
+          # Unicorn's Windows memory management raises access violations that
+          # it handles itself: uc_mem_map returns UC_ERR_OK, no UcError is
+          # raised, the mapping succeeds and the taint is right.  But Python's
+          # faulthandler, which pytest enables by default, prints every
+          # FIRST-CHANCE access violation through a vectored handler before
+          # the owning code gets to handle it.  One CellSimulator is built per
+          # test, so a passing run buried its own result under sixty
+          # forty-line tracebacks.
+          #
+          # That is worse than cosmetic: a genuine crash would have been
+          # indistinguishable from the noise.  Turning it off costs the
+          # traceback on a real fault, but a real fault still kills pytest,
+          # still returns non-zero and still fails this job -- and is now
+          # visible instead of being the sixty-first traceback.
+          CIBW_TEST_COMMAND_WINDOWS: pytest -o addopts= -p no:cacheprovider -p no:faulthandler {project}/tests/test_wheel_smoke.py
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v7
