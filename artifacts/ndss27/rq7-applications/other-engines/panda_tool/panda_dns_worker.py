@@ -116,33 +116,38 @@ def on_insn(cpu, pc):
             state['armed'] = True
             return 0
 
-        if pc == AND_PC:
-            state['al_tainted_before_and'] = _al_tainted()
-        elif pc == SHR_PC:
-            state['al_tainted_after_and'] = _al_tainted()
-        elif pc == STORE_PC:
-            state['al_tainted_after_shr'] = _al_tainted()
-    except Exception:
-        if not state['error']:
-            state['error'] = 'insn: ' + traceback.format_exc()
-    return 0
-
-
-@panda.cb_after_block_exec
-def after_block(cpu, tb, exit_code):
-    # Once the store to `out` has executed, sample the output byte's taint.
-    try:
-        if state['armed'] and state['out_tainted'] is None \
-                and state['al_tainted_after_shr'] is not None:
+        # cb_insn_exec fires BEFORE the instruction, so the store's effect is
+        # only visible on the next one.  FUNC_HI leaves plenty of instrumented
+        # instructions after STORE_PC for that to happen.
+        if state.get('_sample_out') and state['out_tainted'] is None:
+            state['_sample_out'] = False
             state['out_tainted'] = _ram_tainted(cpu, OUT_ADDR, 1)
             try:
                 state['out_value'] = panda.virtual_memory_read(
                     cpu, OUT_ADDR, 1, fmt='int')
             except Exception:
                 pass
+
+        if pc == AND_PC:
+            state['al_tainted_before_and'] = _al_tainted()
+        elif pc == SHR_PC:
+            state['al_tainted_after_and'] = _al_tainted()
+        elif pc == STORE_PC:
+            state['al_tainted_after_shr'] = _al_tainted()
+            state['_sample_out'] = True
     except Exception:
         if not state['error']:
-            state['error'] = 'afterblk: ' + traceback.format_exc()
+            state['error'] = 'insn: ' + traceback.format_exc()
+    return 0
+
+
+# There used to be a cb_after_block_exec here doing the sampling above.  It
+# fired on every basic block in the whole system to notice one condition, and
+# registering it makes PANDA disable TB chaining for the entire session
+# ("Warning: disabling TB chaining to support after_block_exec callback").  The
+# guest then boots slowly enough that copy_to_guest times out on the serial
+# console, which is why this worker had never completed a run while the CT one,
+# which registers no such callback, completes in about fourteen minutes.
 
 
 @panda.queue_blocking
