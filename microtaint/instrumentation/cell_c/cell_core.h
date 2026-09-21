@@ -253,7 +253,7 @@ static inline uint64_t frame_read_reg(const Frame *f, long off, int sz) {
     return 0;
 }
 
-static inline uint64_t frame_read_d(const Frame *f, int sp, unsigned long off, int sz) {
+static inline uint64_t frame_read_d(const Frame *f, int sp, uint64_t off, int sz) {
     if (sp == SP_CONST)    return mask64((uint64_t)off, sz);
     if (sp == SP_REGISTER) return frame_read_reg(f, (long)off, sz);
     if (sp == SP_UNIQUE)   return (off < MAX_UNIQ && f->uniq_set[off]) ? mask64(f->uniq_arr[off], sz) : 0;
@@ -261,7 +261,7 @@ static inline uint64_t frame_read_d(const Frame *f, int sp, unsigned long off, i
     return 0;
 }
 
-static inline void frame_write_d(Frame *f, int sp, unsigned long off, int sz, uint64_t val) {
+static inline void frame_write_d(Frame *f, int sp, uint64_t off, int sz, uint64_t val) {
     val = mask64(val, sz);
     if (sp == SP_REGISTER) { frame_write_reg(f, (long)off, sz, val); return; }
     if (sp == SP_UNIQUE)   { if (off < MAX_UNIQ) { f->uniq_arr[off]=val; f->uniq_set[off]=1; } return; }
@@ -309,7 +309,7 @@ typedef struct {
  * same layout the splittable-op block writes.  For <=8-byte or non-unique sources
  * this is just the zero-extended 64-bit value. */
 static inline unsigned __int128 frame_read_u128(const Frame *f, int sp,
-                                                unsigned long off, int sz) {
+                                                uint64_t off, int sz) {
     if (sz <= 8)
         return (unsigned __int128) frame_read_d(f, sp, off, sz);
     /* Read the low and high 8-byte lanes via frame_read_d so this works for a
@@ -319,7 +319,7 @@ static inline unsigned __int128 frame_read_u128(const Frame *f, int sp,
     unsigned __int128 hi = frame_read_d(f, sp, off + 8, sz - 8);
     return lo | (hi << 64);
 }
-static inline void frame_write_u128(Frame *f, int sp, unsigned long off, int sz,
+static inline void frame_write_u128(Frame *f, int sp, uint64_t off, int sz,
                                     unsigned __int128 val) {
     if (sz > 16) sz = 16;
     if (sz < 16 && sz > 0) {
@@ -844,7 +844,7 @@ static inline int execute_decoded_t(Frame *f, Frame *tf, const DecodedBundle *d,
                      * The splittable block stores the high 8 bytes at compact index
                      * i0_off+8 (it calls frame_write_d with offset+8, so uniq_arr[i0_off+8]
                      * holds the high half).  Read from there and shift by (b-8) bytes. */
-                    unsigned long hi_slot = op->i0_off + 8;
+                    uint64_t hi_slot = op->i0_off + 8;
                     uint64_t hi_val = (hi_slot < MAX_UNIQ && f->uniq_set[hi_slot])
                                       ? f->uniq_arr[hi_slot] : 0;
                     frame_write_d(f, op->o_sp, op->o_off, op->o_sz,

@@ -247,22 +247,28 @@ DEF _FRAME_POOL_SIZE = 32
 # Max pcode ops per instruction (empirically: BT ~44, SHR ~38, typical ~16).
 DEF MAX_PCODE_OPS = 96
 
+# The offsets are uint64_t, not `unsigned long`: a varnode offset in RAM space
+# is a guest ADDRESS, and `unsigned long` is 32 bits on Windows (LLP64) where
+# it is 64 on Linux and macOS (LP64).  Declared as `unsigned long` this raised
+# "Python int too large to convert to C unsigned long" on Windows for any
+# address above 4 GiB, which failed the decode rather than truncating it.
+# Must stay in step with PCOp in cell_c/pcode_defs.h.
 ctypedef struct PCodeOp:
-    int           oid
-    int           o_sp
-    unsigned long o_off
-    int           o_sz
-    int           callother_out
-    int           n_ins
-    int           i0_sp
-    unsigned long i0_off
-    int           i0_sz
-    int           i1_sp
-    unsigned long i1_off
-    int           i1_sz
-    int           i2_sp
-    unsigned long i2_off
-    int           i2_sz
+    int      oid
+    int      o_sp
+    uint64_t o_off
+    int      o_sz
+    int      callother_out
+    int      n_ins
+    int      i0_sp
+    uint64_t i0_off
+    int      i0_sz
+    int      i1_sp
+    uint64_t i1_off
+    int      i1_sz
+    int      i2_sp
+    uint64_t i2_off
+    int      i2_sz
 
 
 cdef class DecodedOps:
@@ -773,7 +779,7 @@ cdef class _PCodeFrame:
             shift = (sz - 1 - i) * 8 if self._is_big_endian else i * 8
             self.vecb[off + i] = <int>((val >> shift) & 0xFF)
 
-    cdef object _read_wide(self, int sp, unsigned long off, int sz):
+    cdef object _read_wide(self, int sp, uint64_t off, int sz):
         """Arbitrary-width read of any operand space, as a Python int (no 64-bit
         cap).  Used by the wide (>8-byte) op handlers."""
         cdef object lo, hi, w
@@ -798,7 +804,7 @@ cdef class _PCodeFrame:
             return self._read_mem_wide(<uint64_t>off, sz)
         return <object>0
 
-    cdef void _write_wide(self, int sp, unsigned long off, int sz, object val):
+    cdef void _write_wide(self, int sp, uint64_t off, int sz, object val):
         """Arbitrary-width write of a Python int to a register or unique varnode
         (the wide COPY/LOAD/bitwise destinations).  Register uses the byte store;
         unique keeps the fast 128-bit low/high split and, for >128 bits, an
@@ -879,7 +885,7 @@ cdef class _PCodeFrame:
     # Fast read/write using pre-decoded space IDs (no string comparison)
     # ------------------------------------------------------------------
 
-    cdef inline uint64_t read_d(self, int sp, unsigned long off, int sz) noexcept:
+    cdef inline uint64_t read_d(self, int sp, uint64_t off, int sz) noexcept:
         """Read a varnode given pre-decoded (space_id, offset, size)."""
         if sp == SP_CONST:
             return _mask64(<uint64_t>off, sz)
@@ -894,7 +900,7 @@ cdef class _PCodeFrame:
             return self._read_mem(off, sz)
         return 0
 
-    cdef inline void write_d(self, int sp, unsigned long off, int sz, uint64_t val) noexcept:
+    cdef inline void write_d(self, int sp, uint64_t off, int sz, uint64_t val) noexcept:
         """Write a varnode given pre-decoded (space_id, offset, size)."""
         val = _mask64(val, sz)
         if sp == SP_REGISTER:
@@ -922,13 +928,13 @@ cdef void _execute_decoded(
     Raises PCodeFallbackNeeded if any op requires Unicorn.
     """
     cdef int          oid, o_sp, o_sz, callother_out, n_ins
-    cdef unsigned long o_off
+    cdef uint64_t     o_off
     cdef int          i0_sp, i0_sz
-    cdef unsigned long i0_off
+    cdef uint64_t     i0_off
     cdef int          i1_sp, i1_sz
-    cdef unsigned long i1_off
+    cdef uint64_t     i1_off
     cdef int          i2_sp, i2_sz
-    cdef unsigned long i2_off
+    cdef uint64_t     i2_off
     cdef uint64_t  a, b, c, result, u_result, dest, cond
     cdef int64_t   sa, sb, sresult, rel
     cdef int       sz, bits, i, pc, new_pc

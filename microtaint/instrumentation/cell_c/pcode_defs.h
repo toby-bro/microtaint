@@ -39,17 +39,24 @@ typedef enum {
     OP_FLOAT_ANY, OP_TRUNC_FLOAT
 } OpcodeID;
 
-/* Pre-decoded P-code op (mirrors PCodeOp in cell.pyx) */
+/* Pre-decoded P-code op (mirrors PCodeOp in cell.pyx)
+ *
+ * The offsets are uint64_t and not `unsigned long`.  A varnode offset in RAM
+ * space is a guest ADDRESS, and `unsigned long` is 32 bits on Windows (LLP64)
+ * where it is 64 on Linux and macOS (LP64).  As `unsigned long` this record
+ * silently truncated every address above 4 GiB on Windows, and the Cython
+ * mirror raised "Python int too large to convert to C unsigned long" instead
+ * of decoding the instruction. */
 typedef struct {
-    int           oid;
-    int           o_sp;
-    unsigned long o_off;
-    int           o_sz;
-    int           callother_out;
-    int           n_ins;
-    int           i0_sp;  unsigned long i0_off;  int i0_sz;
-    int           i1_sp;  unsigned long i1_off;  int i1_sz;
-    int           i2_sp;  unsigned long i2_off;  int i2_sz;
+    int      oid;
+    int      o_sp;
+    uint64_t o_off;
+    int      o_sz;
+    int      callother_out;
+    int      n_ins;
+    int      i0_sp;  uint64_t i0_off;  int i0_sz;
+    int      i1_sp;  uint64_t i1_off;  int i1_sz;
+    int      i2_sp;  uint64_t i2_off;  int i2_sz;
 } PCOp;
 
 #endif /* PCODE_DEFS_H */
