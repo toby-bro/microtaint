@@ -66,10 +66,17 @@ Measured on sixteen cores with CPU boost disabled.
 Every detector here runs in about a second: buffer overflow, use after free,
 side channel and arbitrary write are one second each, the two constant-time
 crypto checks four seconds each, and the DNS case one second. Under fifteen
-seconds for the whole directory, with negligible memory.
+seconds for all of microtaint's own steps, with negligible memory.
 
 Building the guest binaries needs a C compiler and takes a few seconds.
 `run-all.sh` builds them itself.
+
+[`other-engines/`](./other-engines/) is the exception and costs far more.
+`run-all.sh` does **not** run it: the six baselines need the six environments
+`rq2-comparison/setup_envs.sh` builds, and PANDA alone boots three full-system
+guests for about forty minutes. Their verdicts are therefore measured once and
+committed as `other-engines/results/<tool>.json`, which is what the tables
+read. Re-running them is a deliberate act, and that README gives the commands.
 
 ## Regenerating the paper's tables
 

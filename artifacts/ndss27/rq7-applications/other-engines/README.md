@@ -82,3 +82,20 @@ gcc -O0 -g -static -no-pie -fno-stack-protector -I. -I/usr/include/valgrind -o d
 # the image's ENTRYPOINT already runs taintgrind, so pass the guest alone
 docker run -i --rm -v "$PWD:/pwd" taintgrind:latest /pwd/ct_tg vuln
 ```
+
+## Cost
+
+`run-all.sh` does not run any of this: it needs the six environments
+`rq2-comparison/setup_envs.sh` builds, and the verdicts here are measured once
+and committed, which is what the tables read.
+
+| engine | time |
+| --- | --- |
+| angr, Maat, Triton | seconds to a few minutes each, in process |
+| libdft64, TaintGrind | a minute or so each, user-mode instrumentation |
+| PANDA | about 40 min: three full-system guest boots of about 13 min each |
+
+PANDA dominates because it is the only full-system engine here, so each of its
+three workloads boots an entire Ubuntu guest under QEMU before any taint runs.
+That is a fixed cost per workload and says nothing about its propagation speed,
+which is the second fastest of the seven on the RQ2 corpus.
