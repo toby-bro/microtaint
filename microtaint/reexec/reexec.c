@@ -8,14 +8,38 @@
  *   cc -O2 -shared -fPIC -o reexec.so reexec.c reexec_amd64.S
  */
 #define _GNU_SOURCE
+#include <stdint.h>
+
+#include "reexec.h"
+
+#if !MICROTAINT_REEXEC_SUPPORTED
+/* No trampoline on this host: see the comment on MICROTAINT_REEXEC_SUPPORTED
+ * in reexec.h.  The API is still provided so cell_c links and runs unchanged;
+ * every entry point reports "not available" and the engine takes the SLEIGH
+ * path, which is exactly what it does on a host with no trampoline.  This is
+ * the same fallback, expressed in the source rather than in the build script,
+ * so the sources compile on Windows and macOS instead of the wheel failing. */
+
+int  reexec_init(void)                    { return -1; }
+int  reexec_arm(void)                     { return -1; }
+void reexec_disarm(void)                  { }
+int  reexec_set_instr(const unsigned char *i, int n) { (void)i; (void)n; return -1; }
+int  reexec_call(cpu_state_t *s)          { (void)s; return -1; }
+int  reexec_run_one(cpu_state_t *s, const unsigned char *i, int n)
+                                          { (void)s; (void)i; (void)n; return -1; }
+int  reexec_arch_reg_count(const char *a) { (void)a; return 0; }
+const char *reexec_arch_reg_name(const char *a, int i) { (void)a; (void)i; return 0; }
+int  reexec_run_regs(const char *a, const unsigned char *i, int n,
+                     uint64_t *v, int c)
+{ (void)a; (void)i; (void)n; (void)v; (void)c; return -1; }
+
+#else  /* MICROTAINT_REEXEC_SUPPORTED */
+
 #include <setjmp.h>
 #include <signal.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
-
-#include "reexec.h"
 
 extern char reexec_run[];
 extern char reexec_tmpl_hole[];
@@ -363,3 +387,5 @@ int main(void) {
 }
 #endif  /* arch */
 #endif  /* REEXEC_SELFTEST */
+
+#endif  /* MICROTAINT_REEXEC_SUPPORTED */

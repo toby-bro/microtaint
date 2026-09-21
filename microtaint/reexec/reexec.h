@@ -1,14 +1,39 @@
 /* Native re-execution API shared by reexec.c (the implementation) and the
  * cell kernel (cell_c.c), which calls it as the 4th concrete-execution path.
  *
- * Only meaningful on x86_64 hosts; the build hook compiles reexec.c +
- * reexec_amd64.S into cell_c ONLY there and defines MICROTAINT_HAVE_REEXEC, so
- * cell_c gates all reexec use on that macro and falls back to SLEIGH elsewhere.
+ * cell_c gates all reexec use on MICROTAINT_HAVE_REEXEC and falls back to
+ * SLEIGH without it.
  */
 #ifndef MICROTAINT_REEXEC_H
 #define MICROTAINT_REEXEC_H
 
 #include <stdint.h>
+
+/* Where the trampoline can actually be built.  It needs three things, and
+ * having the right CPU is only the first:
+ *
+ *   - an x86-64 or AArch64 host, for which a trampoline exists at all;
+ *   - POSIX mmap and sigaction, to map the template executable and to catch
+ *     the fault when the re-executed instruction misbehaves.  Windows has
+ *     neither: <sys/mman.h> is simply absent there;
+ *   - an ELF assembler.  The .S files end in `.section .note.GNU-stack`,
+ *     which is ELF syntax, and their `.globl` names carry no leading
+ *     underscore, which is what Mach-O expects of a C symbol.
+ *
+ * Deciding that here rather than in the build script means the sources
+ * compile everywhere and simply provide no trampoline where they cannot:
+ * reexec.c becomes stubs that report failure, the .S files assemble to
+ * nothing, and the engine takes the SLEIGH path it already takes on a host
+ * with no trampoline at all.
+ */
+#if defined(MICROTAINT_REEXEC_SUPPORTED)
+  /* honour an explicit override from the build */
+#elif (defined(__x86_64__) || defined(__aarch64__)) \
+      && defined(__ELF__) && !defined(_WIN32)
+#  define MICROTAINT_REEXEC_SUPPORTED 1
+#else
+#  define MICROTAINT_REEXEC_SUPPORTED 0
+#endif
 
 /* Host-native CPU state shuttled to/from the trampoline.  Arch-conditional so
  * the same harness (reexec.c) drives either trampoline; the field layout MUST

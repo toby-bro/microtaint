@@ -36,20 +36,18 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 # cell_c is built without it and falls back to SLEIGH.  When present,
 # MICROTAINT_HAVE_REEXEC is defined so cell_c.c gates every reexec use on it.
 #
-# The machine is not the only requirement, and treating it as one broke both
-# non-Linux wheels:
+# Which hosts can actually build it is decided in the SOURCE, by
+# MICROTAINT_REEXEC_SUPPORTED in reexec.h, not here.  reexec.c compiles to
+# stubs that report "not available" where the trampoline cannot exist, and the
+# .S files assemble to nothing, so these can be handed to the compiler
+# everywhere and the engine falls back to SLEIGH as it already does on a host
+# with no trampoline.
 #
-#   * reexec.c includes <sys/mman.h> for the executable mapping, which Windows
-#     does not have -- `fatal error: sys/mman.h: No such file or directory`.
-#   * the .S files end in `.section .note.GNU-stack,"",@progbits`, which marks
-#     the stack non-executable and is ELF syntax.  macOS is Mach-O and its
-#     assembler rejects it -- `unexpected token in '.section' directive`.
-#     Their `.globl` names would not match Mach-O's leading-underscore
-#     convention either, so the directive is only the first thing that fails.
-#
-# So: Linux, on a machine with a trampoline.  Porting the stubs to Mach-O or
-# Windows is a real piece of work and nobody has done it; claiming the feature
-# by architecture alone only moved the failure into the wheel build.
+# That matters because the requirement is not the machine: it is the machine
+# AND POSIX mmap/sigaction AND an ELF assembler.  Selecting on machine alone
+# broke both non-Linux wheels, Windows on `sys/mman.h: No such file` and macOS
+# on `unexpected token in '.section' directive`, and a build script is the
+# wrong place to encode which C a C file can be compiled by.
 # --------------------------------------------------------------------------
 _REEXEC_DIR = 'microtaint/reexec'
 _REEXEC_ASM = {
@@ -57,7 +55,7 @@ _REEXEC_ASM = {
     'AMD64': 'microtaint/reexec/reexec_amd64.S',
     'aarch64': 'microtaint/reexec/reexec_arm64.S',
     'arm64': 'microtaint/reexec/reexec_arm64.S',
-}.get(platform.machine()) if platform.system() == 'Linux' else None
+}.get(platform.machine())
 _REEXEC_AVAILABLE = _REEXEC_ASM is not None
 _REEXEC_SOURCES = ['microtaint/reexec/reexec.c', _REEXEC_ASM] if _REEXEC_AVAILABLE else []
 

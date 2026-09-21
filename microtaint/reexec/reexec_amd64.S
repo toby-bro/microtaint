@@ -1,3 +1,9 @@
+/* Assembles to nothing where the trampoline cannot exist: see
+ * MICROTAINT_REEXEC_SUPPORTED in reexec.h.  This file uses ELF syntax
+ * (.section .note.GNU-stack, and .globl names with no leading
+ * underscore), which a Mach-O assembler rejects outright. */
+#if (defined(__x86_64__) || defined(__aarch64__)) \
+    && defined(__ELF__) && !defined(_WIN32)
 /* AMD64 native re-execution trampoline template.
  *
  * A copyable code+data blob: reexec_run(cpu_state_t *state /rdi/) loads the
@@ -119,3 +125,5 @@ save_rsp:   .quad 0
 save_flags: .quad 0
 reexec_tmpl_end:
     .section .note.GNU-stack,"",@progbits
+
+#endif  /* ELF host with a trampoline */
