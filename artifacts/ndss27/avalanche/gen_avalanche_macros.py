@@ -30,6 +30,10 @@ ROW_CATS = ('Mapped', 'Transportable', 'Translatable', 'Monotonic',
 #: quoted as variants without colliding with it.
 TAG = {'base64': 'Bsf',
        'base64-debian12': 'Bsf',
+       # What 'base64-debian12' was called before the three base64 columns
+       # were split apart.  Kept so the reference runs recorded under the old
+       # name can still be regenerated from.
+       'base64-pinned': 'Bsf',
        'base64-static': 'BsfStatic',
        'base64-system': 'BsfSystem',
        'nftables': 'Nft', 'siphash': 'Sip'}

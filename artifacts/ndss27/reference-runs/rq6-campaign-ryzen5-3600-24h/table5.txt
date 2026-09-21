@@ -1,0 +1,35 @@
+ISA        Instrs       Cases    Under exact regs% exact flags% Over-taint     skipped
+--------------------------------------------------------------------------------------
+x86-64        518   8,989,920        0       82.4%        62.4%        1.18x          0
+ARM64         400  13,404,944        0       72.9%        59.4%        1.13x          0
+MIPS64        208  33,878,963        0       87.3%         nan%        1.07x     772045
+PPC32         308  10,355,360        0       87.1%         2.7%        1.12x          0
+RV64GC         44  23,206,592        0       70.6%         nan%        1.48x          0
+--------------------------------------------------------------------------------------
+Overall      1478  89,835,779        0       80.3%        53.4%        1.20x     772045
+
+
+
+ISA             cases informative    exact% signal/gt bits
+x86-64      8,989,920   7,975,722     57.2%          38.6%
+ARM64      13,404,944  12,629,450     63.7%          37.9%
+MIPS64     33,878,963  29,036,877     85.7%          40.3%
+PPC32      10,355,360   9,422,642     73.0%          40.0%
+RV64GC     23,206,592  20,913,798     71.2%          42.3%
+Overall    89,835,779  79,978,489     74.1%          40.3%
+"informative" excludes cases whose ground truth is exactly the input
+mask, which a no-op of the same length would reproduce; the last
+column is how much of the ground truth is signal rather than
+registers passing through untouched.
+
+every column is over the Cases shown, which already excludes the
+not-measured population listed above (its under-taints are shown there).
+exact regs%  = cases where the engine matched the ground truth on every
+               scored GENERAL-PURPOSE register
+exact flags% = same, on every scored FLAG.  A case counts as bit-exact
+               overall only if BOTH hold, which is why one coarse flag
+               sinks an otherwise perfect result.
+[tex] /home/jns/Documents/Telecom/PRIM/pcode-taint-engine/artifacts/ndss27/rq6-generalisation/table5/../../reference-runs/rq6-campaign-ryzen5-3600-24h/table5.tex
+[json] /home/jns/Documents/Telecom/PRIM/pcode-taint-engine/artifacts/ndss27/rq6-generalisation/table5/../../reference-runs/rq6-campaign-ryzen5-3600-24h/table5.json
+
+Every ISA produced ground-truth taint, so the zeros above are measurements rather than absences.

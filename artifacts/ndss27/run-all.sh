@@ -376,17 +376,21 @@ fi
 # The paper's five evaluation figures, from the run that just happened.  These
 # need matplotlib and numpy, which the artifact does not otherwise depend on,
 # so they come from `uv run --with` rather than from the project environment.
-if [ -n "$RQ2_REPORT" ]; then
-  OVP=()
-  [ -f "$OUT/overhead_results.json" ] && OVP=("$OUT/overhead_results.json")
+# The two inputs are independent: figures 4 to 7 need the engine comparison,
+# figure 8 needs the overhead ladder.  A --no-baselines run has only the second,
+# and used to get no figure at all rather than the one it had measured.
+FIGARGS=()
+[ -n "$RQ2_REPORT" ] && FIGARGS+=(--report "$RQ2_REPORT")
+[ -f "$OUT/overhead_results.json" ] && FIGARGS+=(--overhead "$OUT/overhead_results.json")
+if [ ${#FIGARGS[@]} -gt 0 ]; then
   ( cd "$HERE/rq2-comparison" && uv run --with matplotlib --with numpy \
-      python plot_figures.py "$RQ2_REPORT" "${OVP[@]}" \
+      python plot_figures.py "${FIGARGS[@]}" \
       && mv -f fig_*.pdf "$OUT/" ) \
     >>"$OUT/log.txt" 2>&1 \
     && record figures PASS "$OUT/fig_*.pdf" \
     || record figures FAIL 'plot_figures.py failed'
 else
-  record figures SKIP 'no rq2 report to plot from'
+  record figures SKIP 'neither an rq2 report nor an overhead ladder to plot from'
 fi
 
 # ------------------------------------------------------------------- tables

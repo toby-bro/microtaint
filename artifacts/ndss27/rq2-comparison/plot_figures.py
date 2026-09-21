@@ -2,7 +2,9 @@
 plot_figures.py  --  the paper's five evaluation figures, from a benchmark run.
 
 Usage:
-    python plot_figures.py REPORT.json [overhead_results.json]
+    python plot_figures.py [REPORT.json] [overhead_results.json]
+    python plot_figures.py --report REPORT.json --overhead overhead_results.json
+    python plot_figures.py --overhead overhead_results.json   # RQ5 figure only
 
 Output files:
     fig_unsoundness.pdf      Figure 4, RQ2: unsound cases per engine
@@ -11,8 +13,10 @@ Output files:
     fig_perf_throughput.pdf  Figure 7, RQ4: throughput per engine
     fig_overhead.pdf         Figure 8, RQ5: wall/CPU time and peak RSS
 
-The overhead figure reads rq5-overhead/overhead_results.json; the other four
-read the benchmark report.
+The overhead figure reads the ladder JSON next to the overhead results; the
+other four read the benchmark report.  The two inputs are independent, so a
+run with no engine comparison (--no-baselines skips it) still gets its RQ5
+figure instead of nothing at all.
 """
 
 # Experiment script, not library code: see artifacts/ndss27/README.md,
@@ -29,13 +33,55 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
+
 # --------------------------------------------------------------------------- #
 # Load metrics from the merged JSON report                                      #
 # --------------------------------------------------------------------------- #
-REPORT_PATH = sys.argv[1] if len(sys.argv) > 1 else 'report_merged_fixed_microtaint.json'
-OVERHEAD_PATH = sys.argv[2] if len(sys.argv) > 2 else '../rq5-overhead/overhead_results.json'
-with open(REPORT_PATH) as _f:
-    REPORT = json.load(_f)
+def _parse_argv(argv):
+    """(report, overhead) from the named flags, the positionals, or both.
+
+    The positional form is what `run-all.sh` and the README have always used.
+    The named form exists so the report can be left out: a --no-baselines run
+    has no engine comparison but does have an overhead ladder.
+    """
+    report = overhead = None
+    rest = []
+    it = iter(argv)
+    for a in it:
+        if a in ('--report', '--overhead'):
+            try:
+                v = next(it)
+            except StopIteration:
+                raise SystemExit(f'{a} needs a path') from None
+            if a == '--report':
+                report = v
+            else:
+                overhead = v
+        elif a in ('-h', '--help'):
+            raise SystemExit(__doc__)
+        elif a.startswith('-'):
+            raise SystemExit(f'unknown option: {a}')
+        else:
+            rest.append(a)
+    if rest and report is None:
+        report = rest.pop(0)
+    if rest and overhead is None:
+        overhead = rest.pop(0)
+    if rest:
+        raise SystemExit(f'unexpected arguments: {" ".join(rest)}')
+    return report, overhead
+
+
+REPORT_PATH, OVERHEAD_PATH = _parse_argv(sys.argv[1:])
+if OVERHEAD_PATH is None:
+    OVERHEAD_PATH = '../rq5-overhead/overhead_results.json'
+# REPORT stays None when there is no engine comparison to plot.  The four
+# figures that need it are skipped by name rather than crashing on load, so a
+# reduced run still produces the figure it did measure.
+REPORT = None
+if REPORT_PATH is not None:
+    with open(REPORT_PATH) as _f:
+        REPORT = json.load(_f)
 
 # Map JSON tool keys → display names used in the figures
 DISPLAY_NAME = {
@@ -48,13 +94,19 @@ DISPLAY_NAME = {
     'libdft64':   'libdft64',
 }
 
+def _report():
+    """The loaded report, or a clear refusal if none was given."""
+    if REPORT is None:
+        raise SystemExit('this figure needs an engine-comparison report')
+    return REPORT
+
 def _gt(tool):
     """Return metrics.ground_truth.per_tool[tool]."""
-    return REPORT['metrics']['ground_truth']['per_tool'][tool]
+    return _report()['metrics']['ground_truth']['per_tool'][tool]
 
 def _pt(tool):
     """Return metrics.per_tool[tool]."""
-    return REPORT['metrics']['per_tool'][tool]
+    return _report()['metrics']['per_tool'][tool]
 
 
 # --------------------------------------------------------------------------- #
@@ -303,10 +355,27 @@ def plot_overhead():
 # Run all plots                                                                 #
 # --------------------------------------------------------------------------- #
 if __name__ == '__main__':
-    print(f'Generating plots from {REPORT_PATH} ...')
-    plot_unsoundness()
-    plot_precision()
-    plot_perf_latency()
-    plot_perf_throughput()
-    plot_overhead()
-    print('Done.')
+    made = []
+    if REPORT is not None:
+        print(f'Generating plots from {REPORT_PATH} ...')
+        plot_unsoundness()
+        plot_precision()
+        plot_perf_latency()
+        plot_perf_throughput()
+        made += ['fig_unsoundness.pdf', 'fig_precision.pdf',
+                 'fig_perf_latency.pdf', 'fig_perf_throughput.pdf']
+    else:
+        print('No engine-comparison report given: skipping figures 4 to 7.')
+
+    ladder = os.path.join(os.path.dirname(OVERHEAD_PATH), 'overhead_ladder.json')
+    if os.path.exists(ladder):
+        plot_overhead()
+        made.append('fig_overhead.pdf')
+    else:
+        print(f'No overhead ladder at {ladder}: skipping figure 8.')
+
+    # Producing nothing and exiting zero is how a plotting step disappears from
+    # a run without anybody noticing.
+    if not made:
+        raise SystemExit('no figure could be generated: neither input was given')
+    print('Done: ' + ', '.join(made))
