@@ -207,7 +207,28 @@ every experiment. We would still suggest 8 GB for the full corpus, since angr
 is the memory-hungry engine and its footprint grows with the number of
 symbolic states a case produces.
 
-For the experiments themselves, `./run-all.sh --quick --no-baselines` took
+For the experiments themselves, here is where a `--quick` run spends its time,
+step by step, measured on sixteen cores with CPU boost disabled. The step names
+are the ones in `SUMMARY.md`, and the order is the order they run in.
+
+| step | time | note |
+| --- | --- | --- |
+| `avalanche-*` (six steps) | 28 s | calibration, three `base64` builds, nftables, siphash |
+| `rq7-bof` `-uaf` `-sc` `-aiw` | 3 s | about a second each |
+| `rq7-crypto-check` `-localise` | 8 s | |
+| `rq7-dns` | 1 s | |
+| `rq1-synthesis` | 10 min | needs TaintInduce; `--no-baselines` skips it |
+| `rq5-ladder` | **58 min** | the longest step by far, and it is one Python process |
+| `rq5-bench` | 4 min | |
+| `rq2-soundness` | 18 min | all seven engines; `--no-baselines` skips it |
+| `rq6-pass1` | 8 min | five ISAs, 20000 cases each |
+| `rq6-pass2` | 5 s | re-checks only what pass 1 flagged |
+| **total** | **99 min** | 71 min with `--no-baselines` |
+
+Two thirds of that is RQ5, which measures each rung of the overhead ladder
+repeatedly to separate configurations whose costs are close together, and it is
+single-threaded, so more cores do not help it. Everything else finishes inside
+half an hour. The same `./run-all.sh --quick --no-baselines` took
 1 h 45 min on eight virtual cores. The full `./run-all.sh` takes about two
 days, dominated by the cross-ISA campaign. As a smaller calibration point,
 forty single-instruction cases scored against all seven engines take one
