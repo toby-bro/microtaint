@@ -35,6 +35,17 @@ If you want to build it locally then once you cloned the repo you can use `uv` t
 uv sync --reinstall-package=microtaint
 ```
 
+That build targets the baseline x86-64, so the result runs anywhere. To tune it
+for the machine you are on, which is what you want for timing work:
+
+```sh
+CFLAGS="-march=native" uv sync --reinstall-package=microtaint
+```
+
+Published wheels are never built that way. `-march=native` on a build machine
+bakes in whatever that CPU happens to support, and a wheel is installed on
+machines that are not the one that built it.
+
 ### macOS on Apple Silicon
 
 Emulation needs one extra step there, and it is not ours to fix:

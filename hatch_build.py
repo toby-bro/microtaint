@@ -92,9 +92,12 @@ def _compiler_command() -> list[str]:
     cc = os.environ.get('CC') or sysconfig.get_config_var('CC') or 'cc'
     # CC from sysconfig may be 'gcc -pthread' etc; split on whitespace.
     cmd = shlex.split(cc)
+    # No -march: see the note in pyproject.toml.  These build a WHEEL, and
+    # -march=native on a CI runner shipped AVX-512 to users who had none.
+    # CFLAGS is appended after these, so `CFLAGS=-march=native` still wins for
+    # a build meant only for this machine.
     base_flags = [
         '-O3',
-        '-march=native',
         '-ffast-math',
         '-shared',
         '-fPIC',

@@ -80,9 +80,21 @@ dependencies = ["hatch-cython"]
 compile_py = false
 includes = ["."]
 cythonize_kwargs = { force = true }
+# NO -march here, deliberately.  These flags build the WHEEL, and a wheel runs
+# on machines that are not the one that built it.  `-march=native` on a CI
+# runner with AVX-512 baked 112 EVEX instructions into microtaint 0.7.2, which
+# then died with SIGILL on `import microtaint` for every user without
+# AVX-512VL: all AMD Zen 1-3, most consumer Intel since Alder Lake.  Nothing in
+# CI could catch it, because CI builds and tests on the SAME machine, where
+# `native` is satisfied by construction.
+#
+# The default is therefore the x86-64 baseline, which runs anywhere.  A build
+# for one known machine asks for it explicitly, and hatch-cython merges CFLAGS
+# after these, so the later -march wins:
+#
+#     CFLAGS="-march=native" uv sync --reinstall-package=microtaint
 compile_args = [
     "-O3",                             # SLP/loop vectorizer, more inlining
-    "-march=native",                   # AVX2/BMI2 on the build host
     "-fno-plt",                        # cheaper indirect calls in PIC
     "-fno-semantic-interposition",     # direct intra-DSO calls
     "-flto",                           # cross-module inlining incl. shadow.pxd
