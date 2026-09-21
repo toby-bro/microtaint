@@ -68,10 +68,7 @@ def main() -> int:
     ct_leaks = ct['leak_count_static']
     qr, op = dns_raw['qr_intent'], dns_raw['opcode_intent']
 
-    out = {
-        'tool': 'triton',
-        'method': METHOD,
-        'ct': {
+    ct_out: dict[str, object] = {
             'workload': 'test_constant_time.c (square-and-multiply modexp)',
             'vuln_branch_leaks': vuln_leaks,
             'vuln_branch_leak_sites': vuln['leak_pcs'],
@@ -82,8 +79,8 @@ def main() -> int:
             'ct_cond_branches_total': ct['cond_branches_executed'],
             'matches_microtaint': vuln_leaks >= MT_VULN_MIN and ct_leaks == MT_CT,
             'ran': True,
-        },
-        'dns': {
+    }
+    dns_out: dict[str, object] = {
             'workload': 'test_bitpacked_dns.c LDNS_OPCODE_WIRE: '
                         'AND AL,0x78 (24 78) then SHR AL,3 (C0 E8 03)',
             'granularity': 'bit' if dns_raw['can_taint_single_bit'] else GRANULARITY,
@@ -102,11 +99,11 @@ def main() -> int:
             'can_discriminate_qr_vs_opcode':
                 dns_raw['can_discriminate_qr_vs_opcode'],
             'ran': True,
-        },
     }
+    out = {'tool': 'triton', 'method': METHOD, 'ct': ct_out, 'dns': dns_out}
     # The control run exists to catch a pipeline that taints everything.  If it
     # comes back tainted, every other verdict here is meaningless.
-    if out['dns']['control_untainted_output_al_tainted']:
+    if dns_out['control_untainted_output_al_tainted']:
         raise SystemExit('the untainted control run reported a tainted output, '
                          'so this pipeline taints regardless of its input and '
                          'none of its verdicts mean anything.')
@@ -114,8 +111,8 @@ def main() -> int:
     (RESULTS / 'triton.json').write_text(json.dumps(out, indent=2) + '\n')
     print(f"[triton] CT vuln={vuln_leaks} site(s), "
           f"{vuln['n_tainted_branch_execs']} exec(s); ct={ct_leaks} | "
-          f"DNS single-bit={out['dns']['can_taint_single_bit']}, "
-          f"separates QR/OPCODE={out['dns']['can_discriminate_qr_vs_opcode']} "
+          f"DNS single-bit={dns_out['can_taint_single_bit']}, "
+          f"separates QR/OPCODE={dns_out['can_discriminate_qr_vs_opcode']} "
           f"-> {RESULTS / 'triton.json'}")
     return 0
 
