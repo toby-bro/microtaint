@@ -407,6 +407,18 @@ else
   record tables-eval SKIP 'no rq2 report to generate from'
 fi
 
+# The appendix's overhead ladder, from the rungs RQ5 measured.
+if [ -f "$OUT/overhead_ladder.json" ]; then
+  ( cd "$HERE/rq5-overhead" && uv run python gen_ladder_table.py \
+      "$OUT/overhead_ladder.json" \
+      --tex "$OUT/ladder_table.tex" --md "$OUT/ladder_table.md" ) \
+    >>"$OUT/log.txt" 2>&1 \
+    && record tables-ladder PASS "$OUT/ladder_table.md" \
+    || record tables-ladder FAIL 'gen_ladder_table.py failed'
+else
+  record tables-ladder SKIP 'rq5 produced no overhead ladder'
+fi
+
 # The two application tables need this run's RQ7 output and the checked-in
 # verdicts of the other engines, which the detect_* scripts produce.
 if [ -f "$OUT/rq7_ct_localise.json" ] && [ -f "$OUT/rq7_dns.json" ]; then

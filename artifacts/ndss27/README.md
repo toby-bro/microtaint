@@ -351,6 +351,9 @@ Everything lands in `results/<timestamp>/`, alongside the raw output:
   built from the run's own report rather than transcribed. A table whose
   inputs a run did not produce is skipped by name, so a `--quick` run emits
   the subset it measured instead of a table of zeroes
+- `ladder_table.tex` and `ladder_table.md`: the appendix's overhead ladder,
+  every rung with its wall, CPU, memory and per-instruction cost and its
+  ratio against native and against bare Qiling
 - `apps_tables.tex` and `apps_tables.md`: the two RQ7 application tables,
   from this run's constant-time and DNS results plus the checked-in verdicts
   of the other engines

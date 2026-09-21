@@ -71,7 +71,17 @@ uv run --with matplotlib --with numpy python plot_figures.py \
 mv fig_overhead.pdf ../reference-runs/run-all-debian12/20260918-121340/
 ```
 
-That gives `apps_tables.tex` and `apps_tables.md` (the two RQ7 application tables, both matching the paper), `avalanche_numbers.tex` (the category table's macros) and `fig_overhead.pdf` (Figure 8).
+```sh
+cd ../rq5-overhead
+uv run python gen_ladder_table.py \
+    ../reference-runs/run-all-debian12/20260918-121340/overhead_ladder.json \
+    --tex ../reference-runs/run-all-debian12/20260918-121340/ladder_table.tex \
+    --md  ../reference-runs/run-all-debian12/20260918-121340/ladder_table.md
+```
+
+That gives `apps_tables.tex` and `apps_tables.md` (the two RQ7 application tables, both matching the paper), `avalanche_numbers.tex` (the category table's macros), `fig_overhead.pdf` (Figure 8) and `ladder_table.tex` and `ladder_table.md` (the appendix's full overhead ladder).
+The ladder is where the note about virtualisation above becomes concrete: every rung is slower than the paper's, `qiling-only` is 48 times native here against 52, and `microtaint-all` is 3674 against 4115.
+The chain is in the same order and the marginal costs sit in the same places, which is what the rungs are for.
 The other four figures and the seven evaluation tables need the engine comparison, which this run skipped, so they cannot be produced from it.
 
 From `rq6-campaign-ryzen5-3600-24h`:

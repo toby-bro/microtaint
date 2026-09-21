@@ -183,3 +183,26 @@ Memory is modest, a few hundred MB.
 other, so they must all be measured at the same clock, and both scripts refuse
 to run with boost enabled. Even with boost off, the reduced corpus cannot
 separate the detectors from the noise: that figure needs the full corpus.
+
+## Regenerating the appendix's ladder table
+
+`gen_ladder_table.py` builds the appendix's full ladder table from the run's
+own `overhead_ladder.json`, in both LaTeX and Markdown:
+
+```sh
+uv run python gen_ladder_table.py ../results/<stamp>/overhead_ladder.json \
+    --tex ladder.tex --md ladder.md
+```
+
+The `ns/instr` column divides by the guest instruction count the run recorded,
+and the last two columns divide by the `native` and `qiling-only` rungs, which
+are found by name. A ladder missing either of them is refused rather than
+given a column of ratios against a rung that was not measured. A rung that is
+in the ladder but not in the appendix's grouping is still printed, under its
+own heading, because this is the table whose job is to list them all.
+
+The Markdown ends with the workload size, the engine version and whether CPU
+boost was on, since a ladder is only comparable with another one measured the
+same way.
+
+`run-all.sh` calls this itself and writes the result to the run directory.
