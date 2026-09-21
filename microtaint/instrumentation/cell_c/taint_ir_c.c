@@ -22,6 +22,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <stdlib.h>
 #include "taint_ir_c_api.h"
 #include "mt_clock.h"
 
@@ -337,6 +338,22 @@ static PyObject *py_jit(PyObject *self, PyObject *args) {
     if (!p) return NULL;
 #ifdef MT_HAVE_JIT
     if (p->jit_fn) Py_RETURN_TRUE;
+    /* A way to take the emitter out of the picture without rebuilding.
+     *
+     * Declining is not a special case here: it is the ordinary outcome for a
+     * program the emitter does not handle (a division, a count-leading-zeros),
+     * the caller already treats a False return as "use the interpreter", and
+     * the interpreter is the reference the emitter is judged against.  So this
+     * costs speed and nothing else.
+     *
+     * It exists because an emitter fault does not produce a wrong answer, it
+     * produces a crash, and a crash in a test run says nothing about which
+     * layer caused it.  Being able to re-run with MICROTAINT_JIT=0 answers
+     * "was it the emitter" in one attempt rather than by rebuilding. */
+    {
+        const char *off = getenv("MICROTAINT_JIT");
+        if (off && off[0] == '0' && off[1] == '\0') Py_RETURN_FALSE;
+    }
     void *code = NULL; size_t sz = 0;
     mt_taint_fn fn = mt_jit_compile(p, &code, &sz);
     if (!fn) Py_RETURN_FALSE;
