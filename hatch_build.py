@@ -31,10 +31,25 @@ from pathlib import Path
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 # --------------------------------------------------------------------------
-# Native re-execution (4th concrete-execution path).  The trampoline is
-# x86-64 assembly, so it is compiled INTO cell_c only on x86_64 build hosts;
-# elsewhere cell_c is built without it and falls back to SLEIGH.  When present,
+# Native re-execution (4th concrete-execution path).  A hand-written
+# trampoline, so it is compiled INTO cell_c only where it can be; elsewhere
+# cell_c is built without it and falls back to SLEIGH.  When present,
 # MICROTAINT_HAVE_REEXEC is defined so cell_c.c gates every reexec use on it.
+#
+# The machine is not the only requirement, and treating it as one broke both
+# non-Linux wheels:
+#
+#   * reexec.c includes <sys/mman.h> for the executable mapping, which Windows
+#     does not have -- `fatal error: sys/mman.h: No such file or directory`.
+#   * the .S files end in `.section .note.GNU-stack,"",@progbits`, which marks
+#     the stack non-executable and is ELF syntax.  macOS is Mach-O and its
+#     assembler rejects it -- `unexpected token in '.section' directive`.
+#     Their `.globl` names would not match Mach-O's leading-underscore
+#     convention either, so the directive is only the first thing that fails.
+#
+# So: Linux, on a machine with a trampoline.  Porting the stubs to Mach-O or
+# Windows is a real piece of work and nobody has done it; claiming the feature
+# by architecture alone only moved the failure into the wheel build.
 # --------------------------------------------------------------------------
 _REEXEC_DIR = 'microtaint/reexec'
 _REEXEC_ASM = {
@@ -42,7 +57,7 @@ _REEXEC_ASM = {
     'AMD64': 'microtaint/reexec/reexec_amd64.S',
     'aarch64': 'microtaint/reexec/reexec_arm64.S',
     'arm64': 'microtaint/reexec/reexec_arm64.S',
-}.get(platform.machine())
+}.get(platform.machine()) if platform.system() == 'Linux' else None
 _REEXEC_AVAILABLE = _REEXEC_ASM is not None
 _REEXEC_SOURCES = ['microtaint/reexec/reexec.c', _REEXEC_ASM] if _REEXEC_AVAILABLE else []
 
