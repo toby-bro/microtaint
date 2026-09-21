@@ -244,7 +244,34 @@ def run_dns() -> dict:
 
 
 # --------------------------------------------------------------------------- #
+#: The same flags every other driver uses on this source.  Symbols are resolved
+#: by name below, so only the build has to match, not any address.
+GCC = ['gcc', '-O0', '-g', '-static', '-no-pie', '-fno-stack-protector']
+CT_SRC = HERE.parent / 'crypto' / 'square_and_multiply' / 'test_constant_time.c'
+
+
+def build_guest() -> None:
+    """Compile the guest if absent.
+
+    It was left to the reader, and the failure was `nm` exiting non-zero on a
+    path that did not exist, four frames deep.  Every other driver here builds
+    what it needs.
+    """
+    if ELF.exists():
+        return
+    if not CT_SRC.exists():
+        raise SystemExit(f'{CT_SRC} is missing, so {ELF.name} cannot be built')
+    ELF.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run([*GCC, '-o', str(ELF), str(CT_SRC)],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(f'building {ELF.name} failed: '
+                         f'{proc.stderr.strip()[-300:]}')
+    print(f'[angr] built {ELF.relative_to(HERE)}')
+
+
 def main() -> int:
+    build_guest()
     pow_branch = _sym_addr(ELF, 'pow_branch')
     pow_ct = _sym_addr(ELF, 'pow_ct')
 

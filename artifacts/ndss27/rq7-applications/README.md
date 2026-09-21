@@ -72,11 +72,11 @@ Building the guest binaries needs a C compiler and takes a few seconds.
 `run-all.sh` builds them itself.
 
 [`other-engines/`](./other-engines/) is the exception and costs far more.
-`run-all.sh` does **not** run it: the six baselines need the six environments
-`rq2-comparison/setup_envs.sh` builds, and PANDA alone boots three full-system
-guests for about forty minutes. Their verdicts are therefore measured once and
-committed as `other-engines/results/<tool>.json`, which is what the tables
-read. Re-running them is a deliberate act, and that README gives the commands.
+`run-all.sh` runs it only with the baselines, because the six engines need the
+environments `rq2-comparison/setup_envs.sh` builds, and PANDA alone boots three
+full-system guests for about forty minutes. Each driver writes one
+`other-engines/results/<tool>.json`, which is what the tables read, and those
+files are committed so a `--no-baselines` run still has the comparison rows.
 
 ## Regenerating the paper's tables
 

@@ -218,17 +218,25 @@ are the ones in `SUMMARY.md`, and the order is the order they run in.
 | `rq7-crypto-check` `-localise` | 8 s | |
 | `rq7-dns` | 1 s | |
 | `rq1-synthesis` | 10 min | needs TaintInduce; `--no-baselines` skips it |
+| `rq7-other-*` (eight steps) | **43 min** | the six compared engines on the same two workloads; `--no-baselines` skips it. PANDA is 40 of those minutes, everything else is under two |
 | `rq5-ladder` | **58 min** | the longest step by far, and it is one Python process |
 | `rq5-bench` | 4 min | |
 | `rq2-soundness` | 18 min | all seven engines; `--no-baselines` skips it |
 | `rq6-pass1` | 8 min | five ISAs, 20000 cases each |
 | `rq6-pass2` | 5 s | re-checks only what pass 1 flagged |
-| **total** | **99 min** | 71 min with `--no-baselines` |
+| **total** | **2 h 22 min** | 71 min with `--no-baselines` |
 
-Two thirds of that is RQ5, which measures each rung of the overhead ladder
-repeatedly to separate configurations whose costs are close together, and it is
-single-threaded, so more cores do not help it. Everything else finishes inside
-half an hour. The same `./run-all.sh --quick --no-baselines` took
+Two steps are most of it. The RQ5 ladder is 58 minutes because it measures each
+rung repeatedly to separate configurations whose costs are close together, and
+it is single-threaded, so more cores do not help it. The RQ7 baselines are 43,
+of which PANDA is 40: it is the only full-system engine of the seven, so each
+of its three workloads boots an entire Ubuntu guest under QEMU before any taint
+runs. That is a fixed cost per workload and says nothing about its propagation
+speed, which is the second fastest of the seven on the RQ2 corpus. Everything
+else put together finishes inside forty minutes.
+
+`--no-baselines` drops RQ1, RQ2 and the RQ7 baselines, which is why it is
+71 minutes rather than 142. The same `./run-all.sh --quick --no-baselines` took
 1 h 45 min on eight virtual cores. The full `./run-all.sh` takes about two
 days, dominated by the cross-ISA campaign. As a smaller calibration point,
 forty single-instruction cases scored against all seven engines take one
