@@ -1,9 +1,8 @@
 # Microtaint
 
-## Benchmarks and evaluation
+## Code artifacts
 
-The benchmark and evaluation scripts used for the submission are present in the [benchmark](./benchmark/) sub directory.
-To know how to run each script a dedicated [README](./benchmark/README.md) is present in the subdir.
+The artifacts for NDSS27 are present in the [artifacts/ndss27](./artifacts/ndss27/) subdirectory, in which there is a [README](./artifacts/ndss27/README.md) explaining how to reproduce all the results presented in the paper.
 
 ## Introduction
 
@@ -32,13 +31,6 @@ If you want to build it locally then once you cloned the repo you can use `uv` t
 
 ```sh
 uv sync --reinstall-package=microtaint
-```
-
-For performance optimized builds of the leftover python code...
-_(I am not so sure this makes any difference since the Cython and C migration of the hotpath. But before this enabled quite a good improvement)_
-
-```sh
-HATCH_BUILD_HOOKS_ENABLE=1 MYPYC_OPT_LEVEL=3 uv sync --reinstall-package=microtaint
 ```
 
 ## Command Line Usage
