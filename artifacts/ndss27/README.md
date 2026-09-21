@@ -323,6 +323,12 @@ Each claim in the artifact abstract is supported by one experiment. `run-all.sh`
 runs them all in the order below, cheapest first, and writes a verdict line per
 experiment into `results/<timestamp>/SUMMARY.md`.
 
+`--quick` reduces three experiments and leaves the rest alone: RQ2 scores 600
+cases instead of 9858, RQ6 fuzzes 20000 cases per ISA instead of 1000000, and
+RQ1 runs the fast instruction families only. RQ5, RQ7 and the avalanche
+workloads have no reduced mode and measure exactly what the full run measures.
+That is why a quick run is two hours and a full one is two days.
+
 **The first success criterion is mechanical**: every line in `SUMMARY.md` reads
 `PASS`, and the script exits zero. A `FAIL` is a broken run. A `SKIP` means the
 experiment did not run at all, usually because software it needs is absent, and
@@ -343,6 +349,7 @@ how far off is reasonable.
 | the overhead is plumbing, not taint propagation | RQ5, `rq5-overhead/` | the taint work is a small part of the total, 18.1x the emulation floor | the ratio is hardware-dependent. Disable CPU boost, or the rungs are not comparable with each other |
 | microtaint is sound across ISAs, with little porting effort | RQ6, `rq6-generalisation/` | no under-taint on any of the five ISAs | zero under-taints. |
 | bit precision finds what byte-granular engines cannot | RQ7, `rq7-applications/` | the DNS case is a false positive for every byte-granular engine | microtaint separates the two fields, the byte-granular engines do not |
+| the same two analyses, on the six compared engines | RQ7, `rq7-applications/other-engines/` | the split is by granularity, not by engine: the three bit-granular engines localise the leak and separate the fields, the four coarser ones do neither | the same split. Each driver writes one `results/<tool>.json` and `gen_apps_tables.py` builds the two tables from them, so the rows are measurements rather than transcriptions |
 | how much the avalanche fallback costs | `avalanche/` | base64 16.1% of data bits, nftables and siphash 0.0% | identical, if the same binaries are measured. See the note on base64 below |
 
 Two of these deserve a warning.
@@ -390,12 +397,34 @@ Everything lands in `results/<timestamp>/`, alongside the raw output:
   every rung with its wall, CPU, memory and per-instruction cost and its
   ratio against native and against bare Qiling
 - `apps_tables.tex` and `apps_tables.md`: the two RQ7 application tables,
-  from this run's constant-time and DNS results plus the checked-in verdicts
-  of the other engines
+  from this run's constant-time and DNS results and the six baselines'
+  verdicts. With the baselines enabled those are measured by this run too and
+  land beside it as `angr.json`, `maat.json`, `triton.json`, `libdft64.json`,
+  `taintgrind.json` and `panda.json`. With `--no-baselines` the committed ones
+  are used, so the comparison rows are still there
 - `table5.tex` and `table5.json`, the cross-ISA table, but only when the
   separate campaign in `rq6-generalisation/table5/` has been run. The RQ6 pass
   in `run-all.sh` uses a different harness and cannot produce it
 - the JSON report behind each experiment, so any number can be recomputed
+
+### Reading a run against ours
+
+The verdict list answers "did it work". To answer "did it get the same answer",
+compare the generated tables, which are plain text and diff cleanly:
+
+```sh
+cd reference-runs && ./extract.sh && cd ..
+diff results/<timestamp>/apps_tables.md \
+     reference-runs/run-all-debian12/20260918-121340/apps_tables.md
+diff results/<timestamp>/avalanche_numbers.tex \
+     reference-runs/run-all-debian12/20260918-121340/avalanche_numbers.tex
+```
+
+The application tables are verdicts, so they should match exactly. The
+avalanche macros should match on `\avlNft*` and `\avlSip*`, and on `\avlBsf*`
+if the pinned Debian binary was used. The overhead ladder and the latency
+numbers are timings and will not match: read the ordering of the rungs and of
+the engines, not the magnitudes.
 
 For comparison, `reference-runs/` holds the full output of runs of our own, so
 a new run can be read against ours without waiting for the long experiments to

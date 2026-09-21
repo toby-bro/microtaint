@@ -309,6 +309,10 @@ if [ "$BASELINES" = 1 ]; then
   run rq7-other-triton "$OE" "$V/.venv_triton/bin/python" detect_triton.py
   run rq7-other-libdft "$OE" python3 detect_libdft64.py
   run rq7-other-tgrind "$OE" python3 detect_taintgrind.py
+  # PANDA is 40 of this block's 43 minutes, because it is the only full-system
+  # engine and boots a guest per workload.  The five above exercise every other
+  # environment in about three minutes, so a broken one is reported before that
+  # cost is paid rather than after it.
   run rq7-other-panda  "$OE" python3 detect_panda.py
   cp "$HERE/$OE"/results/*.json "$OUT/" 2>/dev/null
 else

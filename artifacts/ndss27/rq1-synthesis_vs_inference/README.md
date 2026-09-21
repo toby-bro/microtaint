@@ -51,7 +51,7 @@ In order to understand what happend in TaintInduce easily, we introduced a very 
 
 ```sh
 ./setup_taintinduce.sh          # clone, pin, install, smoke-test; ~2 min
-./run_rq1.sh --quick            # the fast families, ~13 min
+./run_rq1.sh --quick            # the fast families, ~10 min
 ./run_rq1.sh                    # everything but the 64-bit probe, ~1 h
 ./run_rq1.sh --full             # everything, an hour of budget for the last row
 ```
