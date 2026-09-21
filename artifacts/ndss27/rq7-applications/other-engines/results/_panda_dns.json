@@ -1,0 +1,14 @@
+{
+  "armed": true,
+  "labeled_bytes": 1,
+  "input_flag": 136,
+  "al_tainted_before_and": true,
+  "al_tainted_after_and": true,
+  "al_tainted_after_shr": true,
+  "out_tainted": true,
+  "out_value": 1,
+  "error": "",
+  "serial": "timeout: serial Read message \n['cd /root && ./hshare/h < payload | xxd', '[  166.397969] watchdog: BUG: soft lockup - CPU#0 stuck for 24s! [h:822]', '[  204.544142] watchdog: BUG: soft lockup - CPU#0 stuck for 23s! [h:822]', bytearray(b'0')]\n",
+  "serial_timeout": true,
+  "_sample_out": false
+}

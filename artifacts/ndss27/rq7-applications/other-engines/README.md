@@ -7,17 +7,6 @@ assertion into a measurement.
 
 The environments are the ones `rq2-comparison/setup_envs.sh` builds.
 
-PANDA is the one engine with no row below. Every other engine has a
-`results/<tool>.json` in this repository, written by its detect script; there
-is no `results/panda.json`, because nobody has run `detect_panda.py` and saved
-its output. The tables read those files, so PANDA has nothing to put in a row,
-and it is left out rather than stated from a run that did not happen.
-
-The script itself works: `setup_envs.sh` installs the container image and the
-guest disk it needs, and it writes a null verdict with `ran: false` rather than
-a plausible-looking one if either is missing. Running it needs the two guest
-binaries, `bin/test_constant_time` and `dns_bitfield`, built first.
-
 ## Constant time (Table VI)
 
 `../crypto/square_and_multiply/test_constant_time.c`: two square-and-multiply
@@ -35,9 +24,10 @@ depends on the secret.
 | Triton     | yes (tainted ZF, x32)  | no           | yes    |
 | angr       | yes (1 branch)         | no           | yes    |
 | Maat       | yes (1 site, x32)      | no           | yes    |
+| PANDA      | yes (32 execs of 0x402fa8) | no       | yes    |
 
-All six agree, because the leak is a control-flow dependence that every engine
-tracks. So this half certifies that microtaint does not hallucinate a leak on
+All seven agree, because the leak is a control-flow dependence that every
+engine tracks. So this half certifies that microtaint does not hallucinate a leak on
 constant-time code; the bit-vs-byte difference is in *attribution*, which is
 what `localise_angr_ct.py` and `localise_maat_ct.py` measure: with only exponent
 bit `k` tainted, the branch should be flagged at step `k+1` and nowhere else.
@@ -60,6 +50,7 @@ removes bit 7; tainting `OPCODE` taints it.
 | libdft64   | byte        | no                | no                  | false positive |
 | TaintGrind | byte        | no                | no                  | false positive |
 | Triton     | register    | no                | no                  | false positive |
+| PANDA      | byte        | no                | no                  | false positive |
 
 The split is exactly by granularity, not by engine identity: the three
 bit-granular engines all get it right. The others cannot mark a single bit, so
@@ -77,7 +68,7 @@ $V/.venv_maat/bin/python   detect_maat.py            # folds the two drivers bel
 $V/.venv_maat/bin/python   localise_maat_ct.py
 $V/.venv_triton/bin/python detect_triton_ct.py
 $V/.venv_triton/bin/python detect_triton_dns.py
-$V/.venv_panda/bin/python  detect_panda.py           # in the panda container; see the note below
+python3 detect_panda.py                              # three guest boots, about 40 min
 
 # libdft64: two Pin tools against the same binaries
 make tools                                           # PIN_ROOT/LIBDFT_SRC default to $V/external

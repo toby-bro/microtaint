@@ -1,0 +1,17 @@
+{
+  "armed": true,
+  "labeled_bytes": 4,
+  "decoded": 41,
+  "cond_branches_total": 65,
+  "leak_execs": 32,
+  "leak_sites": {
+    "0x402fa8": 32
+  },
+  "site_exec": {
+    "0x402ff1": 33,
+    "0x402fa8": 32
+  },
+  "error": "",
+  "serial": "timeout: serial Read message \n['cd /root && ./hshare/h vuln < payload | xxd', '[  174.895878] watchdog: BUG: soft lockup - CPU#0 stuck for 32s! [h:822]', bytearray(b'0')]\n",
+  "serial_timeout": true
+}

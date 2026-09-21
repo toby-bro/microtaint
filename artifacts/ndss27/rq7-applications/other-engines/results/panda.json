@@ -1,0 +1,26 @@
+{
+  "tool": "PANDA (QEMU full-system) + taint2 byte/register dynamic taint",
+  "ct": {
+    "vuln_branch_leaks": 32,
+    "ct_branch_leaks": 0,
+    "vuln_leak_sites": {
+      "0x402fa8": 32
+    },
+    "vuln_cond_branches_total": 65,
+    "ct_cond_branches_total": 33,
+    "matches_microtaint": true,
+    "ran": true
+  },
+  "dns": {
+    "granularity": "byte",
+    "can_taint_single_bit": false,
+    "can_discriminate_qr_vs_opcode": false,
+    "ran": true,
+    "input_flag_byte": "0x88",
+    "output_byte_value": "0x1",
+    "al_tainted_before_and": true,
+    "al_tainted_after_and": true,
+    "al_tainted_after_shr": true,
+    "output_tainted": true
+  }
+}

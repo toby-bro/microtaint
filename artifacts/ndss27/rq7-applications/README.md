@@ -10,9 +10,8 @@ constant-time leak to one key bit, and separating two fields packed in one byte.
 - `crypto/square_and_multiply/` constant-time verification (Table VI).
 - `dns/` DNS bit-field side channel (Table VII).
 - [`other-engines/`](./other-engines/) the same two analyses against angr, Maat,
-  Triton, libdft64 and TaintGrind, which is what turns "coarser engines cannot"
-  into a measurement. PANDA has a detector there too, but no saved run, so
-  there is no verdict file for it and it is in neither table.
+  Triton, libdft64, TaintGrind and PANDA, which is what turns "coarser engines
+  cannot" into a measurement.
 
 ```sh
 cd crypto/square_and_multiply

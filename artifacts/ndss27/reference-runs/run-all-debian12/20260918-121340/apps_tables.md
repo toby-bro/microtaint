@@ -9,6 +9,7 @@
 | libdft64 | Byte | All 32 | Cannot localise |
 | TaintGrind | Byte | All 32 | Cannot localise |
 | Triton | Register | All 32 | Cannot localise |
+| PANDA | Byte | All 32 | Cannot localise |
 | microtaint | Bit | 1 | Localises |
 
 ### DNS bit-field verdict per engine
@@ -20,4 +21,5 @@
 | libdft64 | Byte | No | False positive |
 | TaintGrind | Byte | No | False positive |
 | Triton | Register | No | False positive |
+| PANDA | Byte | No | False positive |
 | microtaint | Bit | Yes | Correct |

@@ -27,7 +27,7 @@ BASELINE_DIR = os.path.join(HERE, 'other-engines', 'results')
 #: Row order, and the display name for each.  This engine goes last, as in the
 #: paper.
 TOOLS = [('angr', 'angr'), ('maat', 'Maat'), ('libdft64', 'libdft64'),
-         ('taintgrind', 'TaintGrind'), ('triton', 'Triton')]
+         ('taintgrind', 'TaintGrind'), ('triton', 'Triton'), ('panda', 'PANDA')]
 
 #: The square-and-multiply ladder consumes one exponent bit per iteration.
 LADDER_STEPS = 32
