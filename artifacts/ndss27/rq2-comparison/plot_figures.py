@@ -7,11 +7,11 @@ Usage:
     python plot_figures.py --overhead overhead_results.json   # RQ5 figure only
 
 Output files:
-    fig_unsoundness.pdf      Figure 4, RQ2: unsound cases per engine
-    fig_precision.pdf        Figure 5, RQ3: sound%, exact%, mean Jaccard
-    fig_perf_latency.pdf     Figure 6, RQ4: p50 and p99 per-step latency
-    fig_perf_throughput.pdf  Figure 7, RQ4: throughput per engine
-    fig_overhead.pdf         Figure 8, RQ5: wall/CPU time and peak RSS
+    fig_unsoundness.pdf      Figure 2, RQ2: unsound cases per engine
+    fig_precision.pdf        Figure 3, RQ3: sound%, exact%, mean Jaccard
+    fig_perf_latency.pdf     Figure 4, RQ4: p50 and p99 per-step latency
+    fig_perf_throughput.pdf  Figure 5, RQ4: throughput per engine
+    fig_overhead.pdf         Figure 6, RQ5: wall/CPU time and peak RSS
 
 The overhead figure reads the ladder JSON next to the overhead results; the
 other four read the benchmark report.  The two inputs are independent, so a
@@ -150,7 +150,7 @@ def save(fig, name):
 
 
 # --------------------------------------------------------------------------- #
-# Figure 4 - RQ2, unsound cases per engine                                     #
+# Figure 2 - RQ2, unsound cases per engine                                     #
 # --------------------------------------------------------------------------- #
 def plot_unsoundness():
     tool_keys = ['microtaint', 'angr', 'taintgrind', 'libdft64', 'triton', 'maat', 'panda']
@@ -182,7 +182,7 @@ def plot_unsoundness():
 
 
 # --------------------------------------------------------------------------- #
-# Figure 5 - RQ3, soundness and precision per engine                           #
+# Figure 3 - RQ3, soundness and precision per engine                           #
 # --------------------------------------------------------------------------- #
 def plot_precision():
     # bit-precise engines first, then register-level
@@ -219,7 +219,7 @@ def plot_precision():
 
 
 # --------------------------------------------------------------------------- #
-# Figure 6 - RQ4, per-step latency                                             #
+# Figure 4 - RQ4, per-step latency                                             #
 # --------------------------------------------------------------------------- #
 def plot_perf_latency():
     tool_keys = ['microtaint', 'panda', 'triton', 'maat', 'libdft64', 'taintgrind', 'angr']
@@ -259,7 +259,7 @@ def plot_perf_latency():
 
 
 # --------------------------------------------------------------------------- #
-# Figure 7 - RQ4, throughput                                                   #
+# Figure 5 - RQ4, throughput                                                   #
 # --------------------------------------------------------------------------- #
 def plot_perf_throughput():
     tool_keys = ['microtaint', 'panda', 'triton', 'maat', 'libdft64', 'taintgrind', 'angr']
@@ -292,7 +292,7 @@ def plot_perf_throughput():
 
 
 # --------------------------------------------------------------------------- #
-# Figure 8 - RQ5, end-to-end overhead                                          #
+# Figure 6 - RQ5, end-to-end overhead                                          #
 # --------------------------------------------------------------------------- #
 def plot_overhead():
     """The overhead ladder: four rungs, wall time and peak memory.

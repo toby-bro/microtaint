@@ -1,6 +1,6 @@
-# Table 5: cross-ISA soundness and precision
+# The cross-ISA table (Table IV): soundness and precision
 
-The campaign behind Table 5. It runs the full per-ISA corpus against a bit-flip
+The campaign behind Table IV. It runs the full per-ISA corpus against a bit-flip
 noninterference oracle and reports, per ISA, how many cases were checked, how
 many under-tainted, how often the engine's mask was bit-exact, and how much it
 over-tainted.
@@ -25,7 +25,7 @@ lenient, never stricter.
 This is a different experiment from the one in the parent directory.
 `../campaign.py` is a fast soundness smoke test over a small corpus; it answers
 "does anything under-taint", cheaply, and it is what `run-all.sh` runs. This
-directory answers Table 5, which needs the full corpus and the precision
+directory answers Table IV, which needs the full corpus and the precision
 columns, and it takes hours.
 
 ```sh
@@ -211,7 +211,7 @@ than imprecision the engine could remove.
 
 ## The over-taint column
 
-Table 5's over-taint figure is the **mean of the per-case** tainted-to-minimum
+Table IV's over-taint figure is the **mean of the per-case** tainted-to-minimum
 bit ratio. That is not the same as the ratio of summed bits, which weights
 large-taint cases more heavily and gives a materially different number, and it
 cannot be recovered from stored sums after the fact. `run_campaign.py` accumulates it per case; `table5.json` records both

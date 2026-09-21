@@ -287,6 +287,10 @@ if [ "$BASELINES" = 1 ]; then
   # the results rather than a failure.
   if [ "$QUICK" = 1 ]; then run rq1-synthesis rq1-synthesis_vs_inference ./run_rq1.sh --quick
   else                      run rq1-synthesis rq1-synthesis_vs_inference ./run_rq1.sh; fi
+else
+  # An experiment that leaves no line at all is worse than one that says SKIP:
+  # the summary then reads all-PASS for a run that never attempted it.
+  record rq1-synthesis SKIP '--no-baselines'
 fi
 
 # ------------------------------------------------------------------ RQ5
@@ -322,6 +326,10 @@ if [ "$BASELINES" = 1 ]; then
   cp "$HERE"/rq2-comparison/report_*.json "$OUT/" 2>/dev/null
   echo 'rq3-precision            NOTE scored in the rq2 pass' >> "$OUT/SUMMARY.md"
   echo 'rq4-per-step-cost        NOTE scored in the rq2 pass' >> "$OUT/SUMMARY.md"
+else
+  record rq2-soundness     SKIP '--no-baselines'
+  record rq3-precision     SKIP '--no-baselines (scored in the rq2 pass)'
+  record rq4-per-step-cost SKIP '--no-baselines (scored in the rq2 pass)'
 fi
 
 # ------------------------------------------------------------------ RQ6

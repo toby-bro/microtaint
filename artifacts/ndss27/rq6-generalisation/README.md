@@ -1,4 +1,4 @@
-# Generalisation across ISAs (RQ6, Table 5)
+# Generalisation across ISAs (RQ6, Table IV)
 
 The same engine, mapper and P-code evaluator on ARM64, MIPS64BE, PPC32BE and
 RV64GC as on x86-64: a port only names the ISA's registers and status flags. The
@@ -22,7 +22,7 @@ uv run python multiarch_fuzz.py     # randomised cross-ISA, ~10 min
 Throughput differs per ISA because the instruction mixes differ.  The paper's
 per-ISA case count takes far longer than the one-day budget for a whole
 artifact, so the default here is a reduced `--n`,
-about 32 minutes for all five. More cases can only strengthen a zero, so the
+about eight minutes for all five. More cases can only strengthen a zero, so the
 scaled-down run is a weaker instance of the same result. It reproduced at that
 scale, and reports no under-taints.
 
@@ -39,11 +39,11 @@ this corpus they are confined to x86.
 `proto_port.py` is the throwaway prototype that first ported MIPS64 and PPC64 by
 monkeypatch alone, which is what established that no engine edit was needed.
 
-## Table 5 is a different, longer experiment
+## The cross-ISA table is a different, longer experiment
 
 The campaign above is a fast soundness smoke test over about 80 instruction
 forms: it answers "does anything under-taint", cheaply, and it is what
-`run-all.sh` runs. Table 5 needs the full per-ISA corpus and
+`run-all.sh` runs. Table IV needs the full per-ISA corpus and
 the precision columns, and it takes hours. That harness lives in
 [`table5/`](./table5/) with its own README, launcher and validator.
 
@@ -73,7 +73,7 @@ Measured on sixteen cores with CPU boost disabled.
 `run-all.sh --quick` runs 20000 cases per ISA and takes about eight minutes.
 The full corpus is 1000000 cases per ISA, fifty times as many.
 
-The standalone Table 5 campaign in `table5/` is open-ended instead: it takes a
+The standalone cross-ISA campaign in `table5/` is open-ended instead: it takes a
 number of hours as an argument and runs the five ISAs in parallel until that
 deadline. For scale, a 24 hour run on a six-core machine covered 89.8 million
 cases. Memory is modest, a few hundred MB per ISA worker, and the only

@@ -1,6 +1,6 @@
 # Memory safety detectors
 
-The four detectors of §6.8, the ones every production taint engine is expected
+The four detectors of §IX-H, the ones every production taint engine is expected
 to have: buffer overflow, use after free, side channel and arbitrary indexed
 write. microtaint finds all four, and can run them in a single pass.
 

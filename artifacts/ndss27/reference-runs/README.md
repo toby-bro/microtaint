@@ -33,10 +33,11 @@ It is in `run-all-debian12/20260918-121340`, with the summary, the build log, an
 The results agree with the paper.
 The nftables and siphash avalanche figures are identical (nftables 35 instructions and 60.0% of flag bits, siphash 325 and 63.6%), and the five architectures each compared 20000 cases with no under-taint.
 
-The base64 column needs a word, because there are three base64 binaries and the paper's number is one of them.
-The paper's 370 instructions, 16.1% of data bits and 53.3% of flag bits are the machine's own `/usr/bin/base64`, which this run reproduces to the digit under `\avlBsfSystem*`.
-`run-all.sh` now puts the pinned Debian 12 coreutils in the headline column instead, and that binary gives 990 instructions, 3.5% of data bits and 53.6% of flag bits.
-The flag share barely moves, the data share does not: how much of a program avalanches depends on which build of it you measure, which is the point of measuring three.
+The base64 column needs a word, because this run predates the three-column split.
+What it calls `base64-pinned` is a from-source coreutils 9.11 built `-O0 -static`, which is what is now called `base64-static`, and it gives 990 instructions and 3.5% of data bits.
+Its `base64-system` is the machine's own binary and reproduces the paper to the digit: 370 instructions, 16.1% of data bits and 53.3% of flag bits.
+The column the artifact now leads with, `base64-debian12`, is the hash-pinned Debian package (coreutils 9.1), and it gives the paper's 370 and 16.14% as well.
+So the two packaged builds agree and the `-O0 -static` one does not: what moves the number is the build, not the version.
 
 The overhead figures are the exception.
 The machine is virtualised, so everything is slower and the timings are noisier than on real hardware: the emulation floor is 0.588 s here against 0.385 s in the paper, and the rest of the ladder follows.
@@ -79,7 +80,7 @@ uv run python gen_ladder_table.py \
     --md  ../reference-runs/run-all-debian12/20260918-121340/ladder_table.md
 ```
 
-That gives `apps_tables.tex` and `apps_tables.md` (the two RQ7 application tables, both matching the paper), `avalanche_numbers.tex` (the category table's macros), `fig_overhead.pdf` (Figure 8) and `ladder_table.tex` and `ladder_table.md` (the appendix's full overhead ladder).
+That gives `apps_tables.tex` and `apps_tables.md` (the two RQ7 application tables, both matching the paper), `avalanche_numbers.tex` (the category table's macros), `fig_overhead.pdf` (Figure 6) and `ladder_table.tex` and `ladder_table.md` (the appendix's full overhead ladder).
 The ladder is where the note about virtualisation above becomes concrete: every rung is slower than the paper's, `qiling-only` is 48 times native here against 52, and `microtaint-all` is 3674 against 4115.
 The chain is in the same order and the marginal costs sit in the same places, which is what the rungs are for.
 The other four figures and the seven evaluation tables need the engine comparison, which this run skipped, so they cannot be produced from it.
@@ -146,7 +147,7 @@ The full `./run-all.sh` takes about two days, dominated by the cross-ISA campaig
 
 ## The engine comparison, on the paper's corpus
 
-`rq2-comparison-paper-corpus.tar.xz` holds `report_merged_v3.json`, the report the paper's Figures 4 to 7 and its benchmark macros were generated from.
+`rq2-comparison-paper-corpus.tar.xz` holds `report_merged_v3.json`, the report the paper's Figures 2 to 5 and its benchmark macros were generated from.
 It is 9858 cases at seed 12 (7500 single, 1000 sequence, 1310 sweep, plus the extra suites), scored against the exhaustive oracle, with all seven engines.
 Its unsound counts are the paper's: 0 for microtaint, 32 TaintGrind, 43 angr, 206 Triton, 210 libdft64, 300 Maat, 464 PANDA.
 
@@ -165,7 +166,7 @@ uv run python gen_eval_tables.py \
     --md  ../reference-runs/rq2-comparison-paper-corpus/eval_tables.md
 ```
 
-Figure 8 is not here: it reads the overhead ladder, which has nothing to do with this report, and its reference is in the `--quick` run above.
+Figure 6, the overhead one, is not here: it reads the overhead ladder, which has nothing to do with this report, and its reference is in the `--quick` run above.
 
 `--allow-uncertified` is needed, and it is worth saying why.
 A case an engine ERRORED on is not evidence that it is sound on that case, so both generators check what fraction of the corpus each engine actually answered before they will state a soundness figure.

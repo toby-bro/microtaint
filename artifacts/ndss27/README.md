@@ -24,7 +24,7 @@ A dedicated [README](./rq1-synthesis_vs_inference/README.md) is present in this 
 
 ### Engine comparison (`RQ2-4`)
 
-The results obtained in the paper were through a 5h long campaign (because some tools are much slower than microtaint).
+The results obtained in the paper were through a campaign of about three hours (because some tools are much slower than microtaint).
 The exact command we used in [`rq2-comparison`](./rq2-comparison/) is detailed in the dedicated [README](./rq2-comparison/README.md) along with indications on how to run a shorter test.
 
 The results that this dir produce answer the soundness (`RQ2`), as well as the precision (`RQ3`) and speed (`RQ4`) questions with a detailed comparison of all the different engines at our disposal.
@@ -50,7 +50,7 @@ The detailed directory of this experiment are unsurprisignly in [rq6-generalisat
 The last part of our evaluation shows two programs in which bit-level granularity enables security analyses that were not achievable before.
 The two examples are a DNS header parser, and a square and multiply implementation.
 We also include four vulnerable binaries in [memory-safety](./rq7-applications/memory-safety/) to show that microtaint finds buffer overflows, use-after-free, side channels and writes through attacker-controlled pointers in classical binaries, which is the battery every engine is expected to have.
-In [rq7-applications](./rq7-applications/) is the dedicated [README](./rq7-applications/README.md), and in [other-engines](./rq7-applications/other-engines/) the same two analyses run against the six baselines previously used in `RQ2-4`
+In [rq7-applications](./rq7-applications/) is the dedicated [README](./rq7-applications/README.md), and in [other-engines](./rq7-applications/other-engines/) the same two analyses run against five of the baselines used in `RQ2-4`. PANDA is the exception: its detector is there but it produces no verdict, so it is in neither application table.
 
 ### Avalanche's cost
 
@@ -166,7 +166,9 @@ Three experiments need more than that, and each is skipped cleanly if the extra 
   On Arch, where the `docker` package does not start the daemon for you:
 
   ```sh
-  docker valgrind wget openssl
+  sudo pacman -S --needed docker valgrind wget openssl
+  sudo systemctl enable --now docker
+  sudo usermod -aG docker "$USER"   # then start a NEW login session
   ```
 
   `valgrind` because `benchmark.py` compiles TaintGrind's C harness on the host
@@ -184,7 +186,7 @@ Three experiments need more than that, and each is skipped cleanly if the extra 
 #### How long it takes, and how much it costs
 
 Measured on the minimal Debian 12 virtual machine described above, from a
-cold start, with four virtual cores and 4GB of memory.
+cold start, with eight virtual cores and 4GB of memory.
 
 | step | time | disk after |
 | --- | --- | --- |
@@ -264,9 +266,10 @@ environment surfaces in minutes rather than hours. Each one's raw output and a
 verdict land under `results/<timestamp>/`.
 
 ```sh
-./run-all.sh                 # the paper's corpus; about two days, dominated by RQ6
-./run-all.sh --quick         # reduced corpus, about two hours; NOT the paper's numbers
-./run-all.sh --no-baselines  # skip RQ1 and RQ2, the only steps needing the other engines
+./run-all.sh                    # the paper's corpus; about two days, dominated by RQ6
+./run-all.sh --quick            # reduced corpus, about two hours; NOT the paper's numbers
+./run-all.sh --no-baselines     # skip RQ1 and RQ2, the only steps needing the other engines
+./run-all.sh --microtaint-only  # score RQ2 for this engine alone, with no oracle
 ```
 
 Every experiment appends a `PASS`, `FAIL` or `SKIP` line to
@@ -305,7 +308,7 @@ how far off is reasonable.
 | Taint rules can be generated for any instruction, unlike TaintInduce | `rq1-synthesis_vs_inference/run_rq1.sh` | TaintInduce converges on the narrow families only, and not at 64 bits | microtaint synthesises a rule for every instruction attempted. TaintInduce's failures are timeouts and non-convergence, so their exact count moves with the time budget |
 | microtaint is sound on x86-64, and the other engines are not | RQ2, `rq2-comparison/benchmark.py` | 0 unsound cases for microtaint, over 9858 cases. angr 43, TaintGrind 32, Triton 206, libdft64 210, Maat 300, PANDA 464 | 0 for microtaint, exactly, whatever the corpus. The others are counts, not rates, so they fall with the corpus: `--quick` scores 600 cases, a sixteenth as many, and we measured 1, 0, 16, 7, 21 and 62 for the same six. Compare the shape, not the numbers, and expect engines whose paper counts are close (Triton and libdft64 differ by 2%) to swap places |
 | microtaint is precise | RQ3, same run | 100.0% sound, 83.8% bit-exact, mean Jaccard 0.962 (the accepted version reports 82.4% and 0.953, from an earlier run of the same experiment) | within a point or so of either: a `--quick` run of our own gave 100.0%, 84.9% and 0.949. Sound% must stay at 100 |
-| microtaint is faster per propagation than every other engine | RQ4, same run | see Figures 6 and 7 | absolute times are hardware-dependent and will differ. What must hold is that microtaint has the lowest p50 per-step latency of the seven |
+| microtaint is faster per propagation than every other engine | RQ4, same run | see the two RQ4 figures, Figures 4 and 5 | absolute times are hardware-dependent and will differ. What must hold is that microtaint has the lowest p50 per-step latency of the seven |
 | the overhead is plumbing, not taint propagation | RQ5, `rq5-overhead/` | the taint work is a small part of the total, 18.1x the emulation floor | the ratio is hardware-dependent. Disable CPU boost, or the rungs are not comparable with each other |
 | microtaint is sound across ISAs, with little porting effort | RQ6, `rq6-generalisation/` | no under-taint on any of the five ISAs | zero under-taints. |
 | bit precision finds what byte-granular engines cannot | RQ7, `rq7-applications/` | the DNS case is a false positive for every byte-granular engine | microtaint separates the two fields, the byte-granular engines do not |
@@ -342,15 +345,16 @@ Everything lands in `results/<timestamp>/`, alongside the raw output:
   quotes, regenerated from this run. Each line is one value, named as it
   appears in the text, so they can be read against the paper directly
 - `fig_unsoundness.pdf`, `fig_precision.pdf`, `fig_perf_latency.pdf`,
-  `fig_perf_throughput.pdf` and `fig_overhead.pdf`, which are Figures 4 to 8,
+  `fig_perf_throughput.pdf` and `fig_overhead.pdf`, which are Figures 2 to 6,
   from `rq2-comparison/plot_figures.py`. The first four read the engine
   comparison and the fifth reads the overhead ladder, so a run that measured
   only one of the two gets only its figures
 - `eval_tables.tex` and `eval_tables.md`: the soundness, ground-truth coverage,
-  over-taint, unsoundness-summary, latency, F1 and path-explosion tables,
-  built from the run's own report rather than transcribed. A table whose
-  inputs a run did not produce is skipped by name, so a `--quick` run emits
-  the subset it measured instead of a table of zeroes
+  over-taint, unsoundness-summary, latency, F1 and path-explosion tables. These
+  are the long-form counterparts of Figures 2 to 5 rather than tables in the
+  paper, which reports those results as figures and as macros in the prose. A
+  table whose inputs a run did not produce is skipped by name, so a `--quick`
+  run emits the subset it measured instead of a table of zeroes
 - `ladder_table.tex` and `ladder_table.md`: the appendix's overhead ladder,
   every rung with its wall, CPU, memory and per-instruction cost and its
   ratio against native and against bare Qiling

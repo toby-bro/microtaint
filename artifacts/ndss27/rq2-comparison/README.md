@@ -71,14 +71,14 @@ scored, because only there is the truth known rather than approximated.
 
 What to read off the report:
 
-- **RQ2** (Figure 4): unsound cases per engine. The claim is zero for
+- **RQ2** (Figure 2): unsound cases per engine. The claim is zero for
   microtaint and non-zero for every other engine.
-- **RQ3** (Figure 5): exact%, mean Jaccard, over- and under-bits. Precision only
+- **RQ3** (Figure 3): exact%, mean Jaccard, over- and under-bits. Precision only
   means something conditional on soundness, since an engine that taints nothing
   is maximally precise and useless. Byte-granular engines promote a tainted bit
   to its whole byte; scoring accounts for that, which is why they come out
   sound-but-imprecise rather than unsound.
-- **RQ4** (Figures 6 and 7): p50/p99 per-step latency and throughput. The
+- **RQ4** (Figures 4 and 5): p50/p99 per-step latency and throughput. The
   path-explosion tests and tool startup are excluded; Appendix G gives each
   tool's timed region, which differ in scope.
 
@@ -90,11 +90,14 @@ uv run --with matplotlib --with numpy python plot_figures.py REPORT.json ../rq5-
 ```
 
 The first writes the LaTeX macros the paper's text reads, so the prose and the
-run cannot drift apart silently. The second writes the five figures. Both accept
-the reference run shipped with the engine,
-`benchmark/precision_soundess/report_1783378403.json` (seed 12), which is the
-report the paper's numbers were generated from, so a reviewer can check the
-tables and figures without waiting three hours first.
+run cannot drift apart silently. The second writes the figures. Both accept the
+report the paper's numbers came from, which ships in
+[`../reference-runs/rq2-comparison-paper-corpus/`](../reference-runs/rq2-comparison-paper-corpus/)
+after `../reference-runs/extract.sh`, so a reviewer can check the tables and
+figures without waiting three hours first. `gen_paper_macros.py` refuses that
+particular report, because it predates answer-rate accounting and so cannot say
+how many cases each engine declined; the figures and the tables regenerate from
+it, and the four figures come out identical to the paper's.
 
 The corpus and the masks are fixed by the seed, and the ground truth is an
 enumeration, so the *inputs* are deterministic. The oracle's answers are not,
@@ -135,8 +138,10 @@ of disk, dominated by the container images.
 
 ## Regenerating the paper's tables
 
-`gen_eval_tables.py` builds seven of the paper's tables from a report, in both
-LaTeX and Markdown:
+`gen_eval_tables.py` builds seven tables from a report, in both LaTeX and
+Markdown. They are the long-form counterparts of the RQ2, RQ3 and RQ4 figures,
+not tables in the submitted paper, which reports those results as Figures 2 to
+5 and as macros in the prose:
 
 ```sh
 uv run python gen_eval_tables.py report_<stamp>.json --tex eval.tex --md eval.md

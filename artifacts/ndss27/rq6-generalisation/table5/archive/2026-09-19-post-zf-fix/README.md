@@ -3,7 +3,7 @@
 A full 24h cross-ISA soundness campaign at engine `2b5d385`, run after the
 bitwise-ZF under-taint found by the previous campaign was fixed in `71a1c3e`.
 
-**It is not an input to Table 5.** `table5.py` globs `campaign_*.json` in its
+**It is not an input to Table IV.** `table5.py` globs `campaign_*.json` in its
 own directory only, so nothing here is picked up.
 
 ## Result

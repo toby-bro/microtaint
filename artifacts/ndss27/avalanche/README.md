@@ -1,11 +1,11 @@
-# Over-approximation's cost (§6.7, Table 6)
+# Over-approximation's cost (§IX-G, Table V)
 
 Two questions on real code: which of the categories the classifier assigns to
 executed tainted instructions, and how many tainted output bits exist *only*
 because the engine over-approximated.
 
 ```sh
-make -C nftables && make -C siphash
+make -C base64 && make -C nftables && make -C siphash
 
 # every run pins the engine path: taint_ir is the engine DEFAULT and is excluded
 # from the artifacts, so an unpinned run measures the wrong engine.
@@ -13,9 +13,15 @@ export MICROTAINT_TAINT_IR=0 MICROTAINT_BLOCK=0
 
 uv run python calibrate.py            # gate: must pass before any number counts
 
-uv run python avalanche_freq.py --title base64 \
-    --stdin 'The quick brown fox jumps over the lazy dog' \
-    --json-out base64.json /usr/bin/base64
+# three base64 builds: the hash-pinned Debian package is the one the table
+# leads with, the other two show how far the number moves with the binary.
+for b in debian12:./base64/base64_debian12 \
+         static:./base64/base64_static \
+         system:/usr/bin/base64; do
+  uv run python avalanche_freq.py --title "base64-${b%%:*}" \
+      --stdin 'The quick brown fox jumps over the lazy dog' \
+      --json-out "base64_${b%%:*}.json" "${b#*:}"
+done
 
 uv run python avalanche_freq.py --title nftables \
     --stdin-bytes "$(python3 -c 'print((bytes([80,2,0])+bytes(range(80))).hex())')" \
@@ -25,11 +31,11 @@ uv run python avalanche_freq.py --title siphash \
     --stdin 'sixteen byte msg' \
     --json-out siphash.json ./siphash/siphash_bin
 
-uv run python gen_avalanche_macros.py base64.json nftables.json siphash.json \
-    --out ../../../paper/avalanche_numbers.tex
+uv run python gen_avalanche_macros.py \
+    base64_debian12.json nftables.json siphash.json --out avalanche_numbers.tex
 ```
 
-Every number in Table 6 and the three observations around it comes from that
+Every number in Table V and the three observations around it comes from that
 last command. Nothing there is hand-typed.
 
 ## What the workloads are
@@ -39,7 +45,7 @@ alphabet table indexed by the secret. SipHash-2-4 is pure add-rotate-xor over 16
 tainted bytes. **nftables is a small extract** -- `nft_byteorder_eval`, verbatim
 from the unpatched kernel (CVE-2023-35001) -- and is included because it is real
 vulnerable kernel code, not because it is a large sample: it executes **35**
-tainted instructions. Table 6 prints the sample size for exactly that reason.
+tainted instructions. Table V prints the sample size for exactly that reason.
 
 The three all propagate taint end to end *inside the hooked binary*. That is why
 coreutils `sha256sum`, say, is not here: it copies stdin through libc `memcpy`,
@@ -85,7 +91,7 @@ By the engine's own documentation, not by assumption:
 | `VariableMultiplyTaintExpr` | *"a sound fill, not an avalanche ... cannot be made exact cheaply"* |
 | `VariableShift`, `VariableBitSelect`, `Comparison`, `Equality`, `SignedOverflow` | claim EXACT, so not counted |
 
-Counting only the two avalanche nodes is what let Table 6 drift: commits
+Counting only the two avalanche nodes is what let Table V drift: commits
 `4731f08` and `f3f52bb` moved multiply and variable-shift out of the blanket
 fallback into dedicated terms, so their over-approximation stopped being counted
 while `determine_category` still called them Avalanche.
@@ -111,7 +117,7 @@ Four more gates, each closing a way the table used to go quietly wrong:
   fails the run. That, not an exception, was the real source of `Unknown`.
 - **classifier vs tree** -- if `determine_category` says Avalanche while the
   emitted tree has no approximating node, or the reverse, the run reports it.
-  The two halves of Table 6 disagreed for years without anyone noticing.
+  The two halves of Table V disagreed for years without anyone noticing.
 - **calibration** (`calibrate.py`) -- the paper states the attribution matches
   the ground truth: no avalanche share for the bitwise and movement forms, a
   full one for `imul`, and none for a constant shift. That claim previously
@@ -142,7 +148,7 @@ the table cannot be read as describing different taxonomies.
 | `avalanche_freq.py` | the measurement; `--json-out` feeds the macro generator |
 | `exprwalk.py` | reflective traversal, neutralise/restore, the drift gates |
 | `calibrate.py` | the known-answer gate; run it first |
-| `gen_avalanche_macros.py` | emits every Table 6 number as a LaTeX macro |
+| `gen_avalanche_macros.py` | emits every Table V number as a LaTeX macro |
 | `diagnose_unknown.py` | re-runs with every swallowed path reported, for triage |
 | `coreutils_unsound_freq.py` | unrelated: unsound-instruction frequency |
 

@@ -1,4 +1,4 @@
-# End-to-end overhead (RQ5, Figure 8)
+# End-to-end overhead (RQ5, Figure 6)
 
 What a real program costs under microtaint, emulator included. `bench.c` reads
 tainted bytes from stdin, runs 100 rounds of mixed XOR/SBOX/ROL/ADD, then

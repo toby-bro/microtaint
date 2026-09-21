@@ -4,7 +4,7 @@ This is the raw state of the 24h cross-ISA campaign as it stood when it was
 stopped early, on 2026-09-18. It is kept because it is the evidence for a real
 soundness bug, and because the engine it measured no longer exists.
 
-**It is not an input to Table 5.** `table5.py` globs `campaign_*.json` in its own
+**It is not an input to Table IV.** `table5.py` globs `campaign_*.json` in its own
 directory only, so nothing here is picked up. Do not move these files up a level.
 
 ## What it measured

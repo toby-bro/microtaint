@@ -1,4 +1,4 @@
-# The same two analyses on the baseline engines (§6.8)
+# The same two analyses on the baseline engines (§IX-H)
 
 Each engine gets the identical source and the identical question; the only
 variable is the engine. `results/<tool>.json` holds each verdict, with the raw
@@ -7,7 +7,12 @@ assertion into a measurement.
 
 The environments are the ones `rq2-comparison/setup_envs.sh` builds.
 
-## Constant time (Table 7)
+PANDA is the one engine with no row below. `detect_panda.py` is here and
+`setup_envs.sh` builds its environment, but it has never produced a
+`results/panda.json`, so it is absent from both tables rather than reported
+from a run that did not happen.
+
+## Constant time (Table VI)
 
 `../crypto/square_and_multiply/test_constant_time.c`: two square-and-multiply
 modular exponentiations over one arithmetic core, chosen by argv. `vuln`
@@ -34,7 +39,7 @@ bit `k` tainted, the branch should be flagged at step `k+1` and nowhere else.
 both variants show two extra length-check branches from libc; the
 algorithm-level differential is a clean 32 against 0.)
 
-## DNS bit field (Table 8)
+## DNS bit field (Table VII)
 
 The `LDNS_OPCODE_WIRE` extraction of the RFC 1035 flag byte, `AND AL,0x78`
 (`24 78`) then `SHR AL,3` (`c0 e8 03`). `QR` is bit 7 and benign, `OPCODE` is
@@ -66,7 +71,7 @@ $V/.venv_maat/bin/python   detect_maat.py            # folds the two drivers bel
 $V/.venv_maat/bin/python   localise_maat_ct.py
 $V/.venv_triton/bin/python detect_triton_ct.py
 $V/.venv_triton/bin/python detect_triton_dns.py
-$V/.venv_panda/bin/python  detect_panda.py           # runs in the panda container
+$V/.venv_panda/bin/python  detect_panda.py           # in the panda container; see the note below
 
 # libdft64: two Pin tools against the same binaries
 make tools                                           # PIN_ROOT/LIBDFT_SRC default to $V/external

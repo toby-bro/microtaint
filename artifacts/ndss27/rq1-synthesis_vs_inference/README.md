@@ -1,4 +1,4 @@
-# Rule synthesis vs observation-based inference (RQ1, Table 3)
+# Rule synthesis vs observation-based inference (RQ1, Table III)
 
 TaintInduce fuzzes I/O pairs and infers a DNF rule per bit-to-bit flow. The claim
 is that this does not converge where microtaint's synthesis does: carry chains,
@@ -144,7 +144,7 @@ Verdicts are `correct`, `correct (over-taints flags)`, `sound, over-taints data`
 flows at all. Two extra lines report the structural check: `STRUCTURE` for pair
 existence, `FORCED-CARRY` for whether they fire.
 
-`correct (over-taints flags)` is Table 3's "correct", and the over-taint it
+`correct (over-taints flags)` is Table III's "correct", and the over-taint it
 tolerates is the paper's Case 3 in front of you: on `xor eax, ebx` every spurious
 flow is an input bit claiming to reach ZF. ZF is set exactly when the result is
 zero, a predicate with no short DNF over the input bits, so the inference cannot
@@ -170,7 +170,7 @@ points from real x86 registers. The state is 96 bits from `al` upward whatever
 the operand, since the disassembler widens each operand to its architectural
 register; what changes along the sweep is the length of the carry chain, which is
 the thing under test. Flags are not a separate run: every case scores its flag
-flows next to its data flows, so Table 3's CF/ZF/SF/OF row is read off the
+flows next to its data flows, so Table III's CF/ZF/SF/OF row is read off the
 arithmetic cases.
 
 ## Running the sweep

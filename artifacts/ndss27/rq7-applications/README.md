@@ -7,19 +7,20 @@ constant-time leak to one key bit, and separating two fields packed in one byte.
 
 - [`memory-safety/`](./memory-safety/) buffer overflow, use after free, side
   channel, arbitrary indexed write.
-- `crypto/square_and_multiply/` constant-time verification (Table 7).
-- `dns/` DNS bit-field side channel (Table 8).
+- `crypto/square_and_multiply/` constant-time verification (Table VI).
+- `dns/` DNS bit-field side channel (Table VII).
 - [`other-engines/`](./other-engines/) the same two analyses against angr, Maat,
-  Triton, libdft64, TaintGrind and PANDA, which is what turns "coarser engines
-  cannot" into a measurement.
+  Triton, libdft64 and TaintGrind, which is what turns "coarser engines cannot"
+  into a measurement. PANDA has a detector there but produces no verdict, so it
+  is in neither table.
 
 ```sh
 cd crypto/square_and_multiply
-uv run python check_side_channel.py      # ~5 min, is there a leak
-uv run python localise_side_channel.py   # ~5 min, which key bit
+uv run python check_side_channel.py      # ~4 s, is there a leak
+uv run python localise_side_channel.py   # ~4 s, which key bit
 
 cd ../../dns
-uv run python dns_experiment.py          # ~8 min
+uv run python dns_experiment.py          # ~1 s
 ```
 
 Both engines agree with every baseline on the *binary* verdict, so that is not

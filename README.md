@@ -72,8 +72,9 @@ wrapper.check_bof = True  # Track instruction pointers
 wrapper.check_aiw = True  # Track memory addresses
 wrapper.check_uaf = True  # Monitor frees
 
-# Taint specific memory regions (e.g. 12 bytes at 0x1000)
-wrapper.taint_region(0x1000, 12, "my_custom_tag")
+# Taint specific memory regions: one mask byte per memory byte,
+# so 12 fully tainted bytes at 0x1000
+wrapper.taint_region(0x1000, b"\xff" * 12)
 
 # Run Emulator
 ql.run()
