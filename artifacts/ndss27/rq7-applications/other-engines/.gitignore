@@ -20,3 +20,10 @@ _*_raw.json
 # keep the per-tool verdicts, drop raw intermediate dumps
 !results/*.json
 results/_*_raw.json
+# Guests and harnesses the detect_* drivers compile themselves.
+ct_test
+ct_tg
+dns_tg
+dns_bitfield
+bin/
+obj-intel64/
