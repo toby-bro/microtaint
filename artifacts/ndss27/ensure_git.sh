@@ -35,6 +35,6 @@ ensure_git() {
         -c user.name='artifact' -c user.email='artifact@localhost' \
         -c commit.gpgsign=false -c tag.gpgSign=false \
         commit -q -m 'artifacts snapshot' || return 1
-    git -C "$repo" -c tag.gpgSign=false tag "${ARTIFACT_VERSION:-v0.7.2}"
-    echo "[+] created a repository at $repo, tagged ${ARTIFACT_VERSION:-v0.7.2}"
+    git -C "$repo" -c tag.gpgSign=false tag "${ARTIFACT_VERSION:-v0.7.3}"
+    echo "[+] created a repository at $repo, tagged ${ARTIFACT_VERSION:-v0.7.3}"
 }

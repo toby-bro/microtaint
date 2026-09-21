@@ -258,18 +258,29 @@ If all the dependencies are installed, then the following script downloads, comp
 
 ### Long version
 
-The version evaluated in the paper is `v0.7.2` of microtaint, it can be installed locally (the whole compilation process takes a few minutes at most).
+The version evaluated in the paper is `v0.7.3` of microtaint, it can be installed locally (the whole compilation process takes a few minutes at most).
 
 ```sh
-git checkout v0.7.2                   # the engine the paper evaluates
-uv sync --locked --all-extras
+git checkout v0.7.3                   # the engine the paper evaluates
+CFLAGS="-march=native" uv sync --locked --all-extras
 ```
+
+`CFLAGS` is not decoration. This build is for the machine it runs on, and the
+paper measures performance on that machine, so it should use its instruction
+set; the reference runs under `reference-runs/` were produced this way. The
+engine's own defaults no longer pass `-march`, because those defaults also
+build the wheels published to PyPI, and a wheel tuned for its build machine
+fails on any CPU with fewer instructions.
 
 Or using a pre-compiled version from PyPI.
 
 ```sh
-uv init --bare --no-workspace --python 3.13 && uv add 'microtaint==0.7.2'
+uv init --bare --no-workspace --python 3.13 && uv add 'microtaint==0.7.3'
 ```
+
+That wheel targets the baseline x86-64 so it runs anywhere, which is the right
+trade for a package but not for a timing measurement: expect it to be slower
+than the numbers under `reference-runs/`. Build from source for RQ5.
 
 `./setup-all.sh` does the above and the six compared engines and TaintInduce in
 one command, checking the dependencies first so a missing one is reported
