@@ -1,0 +1,6 @@
+# What extract.sh unpacks.  Each reference run ships as one .tar.xz; the files
+# it expands to are the same bytes again, so committing them would double the
+# repository for nothing.  Keep them on disk, out of git.
+rq1-taintinduce/rules/
+rq2-comparison-paper-corpus/report_merged_v3.json
+run-all-quick-ryzen7-5700u/20260921-075115/

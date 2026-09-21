@@ -4287,7 +4287,13 @@ def compute_metrics(report_results: list[dict], reference_tool: str) -> dict:
             # p100: the worst single propagation step in the whole corpus.  The
             # tail is what the engine's hard cases cost, and a percentile hides
             # the one case that is 10x the rest.
-            'latency_p100_per_instr_ms': round(max(per_instr_lats), 4),
+            #
+            # per_instr_lats is in NANOSECONDS.  Every sibling above goes
+            # through pct(), which divides by 1e6; this one used max() and did
+            # not, so the field was nanoseconds under a name ending _ms and the
+            # figure, which multiplies by 1000 for microseconds, drew a bar
+            # 10^6 too tall: microtaint's worst step read as 1,057 seconds.
+            'latency_p100_per_instr_ms': round(max(per_instr_lats) / 1e6, 4),
             'throughput_per_s': round(1e9 / median_lat_non_pe, 1) if median_lat_non_pe > 0 else 0,
             'throughput_per_s_all': round(1e9 / median_lat_all, 1) if median_lat_all > 0 else 0,
             'throughput_per_s_mean': round(1e9 / mean_lat, 1) if mean_lat > 0 else 0,
