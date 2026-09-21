@@ -293,6 +293,28 @@ else
   record rq1-synthesis SKIP '--no-baselines'
 fi
 
+# ---------------------------------------------------- RQ7, the baselines
+# The same two analyses on the six compared engines.  Each writes
+# other-engines/results/<tool>.json, which is what the application tables
+# read.  They need the environments setup_envs.sh builds, so they only run
+# with the baselines, and PANDA boots three full-system guests, which is most
+# of the time this block takes.
+if [ "$BASELINES" = 1 ]; then
+  V="$HERE/rq2-comparison"
+  OE=rq7-applications/other-engines
+  run rq7-other-angr   "$OE" "$V/.venv_angr/bin/python"   detect_angr_apps.py
+  run rq7-other-angr-loc "$OE" "$V/.venv_angr/bin/python" localise_angr_ct.py
+  run rq7-other-maat   "$OE" "$V/.venv_maat/bin/python"   detect_maat.py
+  run rq7-other-maat-loc "$OE" "$V/.venv_maat/bin/python" localise_maat_ct.py
+  run rq7-other-triton "$OE" "$V/.venv_triton/bin/python" detect_triton.py
+  run rq7-other-libdft "$OE" python3 detect_libdft64.py
+  run rq7-other-tgrind "$OE" python3 detect_taintgrind.py
+  run rq7-other-panda  "$OE" python3 detect_panda.py
+  cp "$HERE/$OE"/results/*.json "$OUT/" 2>/dev/null
+else
+  record rq7-other-engines SKIP '--no-baselines'
+fi
+
 # ------------------------------------------------------------------ RQ5
 # A timing measurement, so it runs before the two CPU-saturating steps below.
 # Both scripts refuse to run with CPU boost enabled (ALLOW_CPU_BOOST=1 overrides
