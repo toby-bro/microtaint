@@ -32,14 +32,14 @@ Some of these bugs made the original submission of taintinduce questionnable her
 Instructions with only one register are, for the overwhelming majority, without any conditionnal flows.
 Instructions with two registers (or memory values) on the other hand are way more complex, and on these taintinduce does not manage to converge, this is what we want to prove.
 
-We did not want to shame taintinduce's authors in the main paper, so we decided to spare them and keep these doubts in this README in the artifacts.
+We did not want to shame taintinduce's authors in the main paper, so we decided to spare them and keep these doubts in this sub README in the artifacts.
 
 These conclusions were found after months of work, whilst we honestly wanted to fix and improve taintinduce, and suprised us a lot.
 Our efforts to make it work and the evaluated taintinduce presented in this paper is therefore far better than any implementation of taintinduce released before in terms of speed and correctness.
 
 ### Licensing
 
-After having shown me where taintinduce could be found, the authors did not reply when asked about the licensing of their work. This puts our work in a legal grey-zone as most of the codebase has been rewritten (from git's perspective).
+After having shown us where taintinduce could be found, the authors did not reply when asked about the licensing of their work. This puts our work in a legal grey-zone as most of the codebase has been rewritten (from git's perspective).
 We nevertheless would like to insist once more on the importance of putting a LICENSE file in the artifacts, especially if they are to be published.
 This repository does not distribute TaintInduce only provide scripts that can enable the user to install it, so is legal.
 
