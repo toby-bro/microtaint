@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import importlib
 import os
+import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -74,6 +76,72 @@ def test_the_native_extensions_are_the_ones_that_loaded() -> None:
         if not getattr(mod, '__file__', '').endswith(('.so', '.pyd')):
             missing.append(f'{name} -> {getattr(mod, "__file__", "?")}')
     assert not missing, 'compiled extensions did not load: ' + '; '.join(missing)
+
+
+#: EVEX-encoded AVX-512, including the forms that use ymm/xmm rather than zmm.
+#: `vinserti64x2 ymm0,ymm0,xmm1,0x1` is what killed 0.7.2, and a search for
+#: zmm registers alone does not find it.
+_AVX512 = re.compile(
+    r'%zmm\d|\{%k[0-7]\}|\bv(?:insert|extract)[if](?:32|64)x\d|\bvpermt2|'
+    r'\bvpternlog|\bvpcompress|\bvpexpand|\bvpconflict|\bvplzcnt')
+
+
+def _disassembler() -> str | None:
+    for tool in ('objdump', 'llvm-objdump'):
+        if shutil.which(tool):
+            return tool
+    return None
+
+
+def test_the_extensions_run_on_more_than_the_machine_that_built_them() -> None:
+    """The one defect class no test running on the build machine can catch.
+
+    microtaint 0.7.2 was published with `-march=native`, so its wheels were
+    compiled for the CI runner's CPU and carried 112 AVX-512 instructions.
+    `import microtaint` then died with SIGILL on every machine without
+    AVX-512VL: all AMD Zen 1-3, most consumer Intel since Alder Lake.  Every
+    check in this file passed on all three platforms while shipping it,
+    because CI builds and tests on the SAME machine, where whatever `native`
+    chose is satisfied by construction.
+
+    Running the code cannot detect this.  Reading it can, so this reads it:
+    a wheel that is meant to install anywhere must not contain instructions
+    from an extension the baseline does not include.
+
+    A deliberate local build for one machine is exempt, since that wheel is
+    not going anywhere:
+
+        MICROTAINT_ALLOW_NATIVE=1 pytest ...
+    """
+    if os.environ.get('MICROTAINT_ALLOW_NATIVE') == '1':
+        pytest.skip('built for this machine on purpose (MICROTAINT_ALLOW_NATIVE=1)')
+    tool = _disassembler()
+    if tool is None:
+        pytest.skip('no objdump or llvm-objdump to read the extensions with')
+    if platform.machine() not in ('x86_64', 'AMD64'):
+        pytest.skip('the AVX-512 question is an x86-64 one')
+
+    import microtaint
+    root = os.path.dirname(os.path.abspath(microtaint.__file__))
+    shared = [os.path.join(dirpath, f)
+              for dirpath, _dirs, files in os.walk(root)
+              for f in files if f.endswith(('.so', '.pyd'))]
+    assert shared, f'no compiled extensions found under {root}'
+
+    offenders = {}
+    for so in shared:
+        out = subprocess.run([tool, '-d', so], capture_output=True, text=True,
+                             check=False, errors='replace')
+        if out.returncode != 0:
+            continue
+        hits = _AVX512.findall(out.stdout)
+        if hits:
+            offenders[os.path.relpath(so, root)] = len(hits)
+    assert not offenders, (
+        'these extensions contain AVX-512 instructions and will raise SIGILL '
+        'on any CPU without AVX-512VL: ' + ', '.join(
+            f'{k} ({v})' for k, v in sorted(offenders.items()))
+        + '. A -march has most likely come back into the wheel build.')
 
 
 def _require_emitter(taint_ir_c: ModuleType) -> None:
