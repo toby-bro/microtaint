@@ -30,11 +30,17 @@ import os
 import shutil
 import subprocess
 import tempfile
+from types import ModuleType
+from typing import TYPE_CHECKING
 
 import pytest
 
 from microtaint.taint_api import TaintPath, TaintSequence, taint_step
 from microtaint.types import Architecture
+
+if TYPE_CHECKING:
+    from microtaint.instrumentation.cell_c.taint_ir_c import _Capsule
+    from microtaint.taint_ir.ir import IRKey
 
 pytestmark = pytest.mark.smoke
 
@@ -68,6 +74,93 @@ def test_the_native_extensions_are_the_ones_that_loaded() -> None:
         if not getattr(mod, '__file__', '').endswith(('.so', '.pyd')):
             missing.append(f'{name} -> {getattr(mod, "__file__", "?")}')
     assert not missing, 'compiled extensions did not load: ' + '; '.join(missing)
+
+
+def _require_emitter(taint_ir_c: ModuleType) -> None:
+    """Skip only for the two reasons that are not faults.
+
+    A host with no backend is one: there is nothing to check.  MICROTAINT_JIT=0
+    is the other, and it has to be distinguished explicitly, because from the
+    outside it is indistinguishable from the failure these tests exist to
+    catch -- the emitter present and declining everything.  Verified by using
+    it as the mutation: with the switch set, both checks below fail.
+    """
+    if os.environ.get('MICROTAINT_JIT') == '0':
+        pytest.skip('the emitter was turned off deliberately (MICROTAINT_JIT=0)')
+    if not taint_ir_c.has_backend():
+        pytest.skip('this build has no native emitter for this host')
+
+
+#: Where the tiny program's three names live in the flat slot array.
+_SLOTS: dict[IRKey, int] = {'A': 0, 'B': 1, 'O': 2}
+
+
+def _slot_of(key: IRKey) -> int | None:
+    return _SLOTS.get(key)
+
+
+def _tiny_program() -> _Capsule:
+    """A compiled OR of two tainted inputs: the smallest thing worth emitting."""
+    from microtaint.taint_ir.exec import compile_program
+    from microtaint.taint_ir.ir import OR, IRProg
+
+    prog = IRProg()
+    a = prog.input_taint('A')
+    b = prog.input_taint('B')
+    prog.outputs.append(('O', prog.op(OR, a, b)))
+    cap, _ = compile_program(prog, _slot_of)
+    return cap
+
+
+def test_the_native_emitter_actually_emitted_something() -> None:
+    """A green run must not be compatible with the emitter never engaging.
+
+    `jit()` returning False is the correct answer on a host with no backend,
+    and it is ALSO what a failed page allocation looks like: mt_jit_compile
+    returns NULL either way, every caller falls back to the interpreter, and
+    the answers stay right.  So every other check in this file passes whether
+    the emitter works or silently never runs, and on a platform whose page
+    allocation is untested -- Windows uses VirtualAlloc and VirtualProtect
+    where POSIX uses mmap and mprotect -- that is the difference between a
+    working JIT and a dead one.
+
+    Hence the two halves: where the build HAS a backend the trivial program
+    must be taken, and what it emits must agree with the interpreter.
+    """
+    from microtaint.instrumentation.cell_c import taint_ir_c
+
+    _require_emitter(taint_ir_c)
+    cap = _tiny_program()
+    assert taint_ir_c.jit(cap), (
+        'the host has an emitter and it refused a two-input OR, which is not '
+        'a program it is allowed to decline: page allocation most likely '
+        'failed (VirtualAlloc/VirtualProtect on Windows, mmap/mprotect '
+        'elsewhere), leaving the engine correct but silently interpreted')
+    assert taint_ir_c.jit_size(cap) > 0, 'emitted zero bytes of code'
+    assert taint_ir_c.fn_addr(cap) != 0, 'emitted code has no entry point'
+
+
+def test_the_emitted_code_agrees_with_the_interpreter() -> None:
+    """Emitting is not the same as emitting correctly.
+
+    The same program is compiled twice and only one copy is emitted, so the
+    other stays interpreted and the two are compared on this host.  That is
+    what catches a wrong calling convention: the Win64 entry sequence differs
+    from SysV in its argument registers and in which registers it must
+    preserve, and a fault there produces wrong values rather than a refusal.
+    """
+    from microtaint.instrumentation.cell_c import taint_ir_c
+
+    _require_emitter(taint_ir_c)
+    values = [0, 0, 0]
+    taints = [0b0101, 0b0011, 0]
+    emitted, interpreted = _tiny_program(), _tiny_program()
+    assert taint_ir_c.jit(emitted)
+    got = taint_ir_c.run(emitted, values, list(taints))
+    want = taint_ir_c.run(interpreted, values, list(taints))
+    assert got == want, f'emitted code disagrees: {got} vs interpreted {want}'
+    # And against the answer itself, so both agreeing on nonsense still fails.
+    assert got[2] == 0b0111, f'OR of 0b0101 and 0b0011 came out as {got[2]:#b}'
 
 
 @pytest.mark.parametrize('path', [TaintPath.COMPILED, TaintPath.DIFFERENTIAL])

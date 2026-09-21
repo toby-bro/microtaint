@@ -364,6 +364,26 @@ static PyObject *py_jit(PyObject *self, PyObject *args) {
 #endif
 }
 
+/* Does this build have a native emitter at all?
+ *
+ * Without it, "jit() returned False" is ambiguous, and dangerously so: it is
+ * the correct answer on a host with no backend, and it is also what a FAILED
+ * page allocation looks like, because mt_jit_compile returns NULL either way
+ * and every caller then uses the interpreter.  Both produce right answers, so
+ * no correctness test can tell them apart, and a platform where the emitter
+ * silently never engages would look exactly like a healthy one.
+ *
+ * Reporting the build-time fact separately is what makes the difference
+ * testable: where this is True, a trivial program MUST be taken. */
+static PyObject *py_has_backend(PyObject *self, PyObject *args) {
+    (void)self; (void)args;
+#ifdef MT_HAVE_JIT
+    Py_RETURN_TRUE;
+#else
+    Py_RETURN_FALSE;
+#endif
+}
+
 static PyObject *py_jit_size(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *cap;
@@ -411,6 +431,8 @@ static PyMethodDef methods[] = {
     {"bench", py_bench, METH_VARARGS, "time the program; returns (ns, sink)"},
     {"n_nodes", py_n_nodes, METH_VARARGS, "node count of a compiled program"},
     {"jit", py_jit, METH_VARARGS, "emit native code; True if the host emitter took it"},
+    {"has_backend", py_has_backend, METH_NOARGS,
+     "True if this build has a native emitter for the host"},
     {"jit_size", py_jit_size, METH_VARARGS, "bytes of native code, or 0"},
     {"fn_addr", py_fn_addr, METH_VARARGS, "address of the emitted function, or 0"},
     {"prog_addr", py_prog_addr, METH_VARARGS,

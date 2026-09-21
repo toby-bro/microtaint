@@ -34,6 +34,18 @@ def prog_addr(program: _Capsule) -> int:
     the capsule alive.
     """
 
+def has_backend() -> bool:
+    """True if this build has a native emitter for the host.
+
+    Without this, a False from `jit` is ambiguous, and dangerously so: it is
+    the right answer on a host with no backend, and it is equally what a
+    FAILED page allocation looks like, because both leave the caller using the
+    interpreter and therefore still correct.  No correctness test can tell the
+    two apart, so a platform where the emitter silently never engages would
+    look exactly like a healthy one.  Where this is True, a trivial program
+    must be taken.
+    """
+
 def jit_size(program: _Capsule) -> int:
     """Bytes of native code, or 0."""
 
