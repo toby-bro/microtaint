@@ -158,13 +158,31 @@ exclude = [
     "/microtaint/emulator/shadow.py",
     "/microtaint/emulator/heap.py",
     "/microtaint/emulator/reporter.py",
+    # mypyc cannot compile a recursive type alias: it recurses until the native
+    # stack overflows, and the build dies with no diagnostic at all (exit 245
+    # under the CLI, 139 in-process).  python/mypy#15092, open since 2023-04
+    # with no fix.  boolsynth declares `type BoolExpr = ... | tuple[..., BoolExpr]`
+    # and ir.py annotates one local function with it, so both hit the crash.
+    # Every spelling crashes (`type`, `TypeAlias`, bare alias), so this is not a
+    # syntax we can write our way around.  Interpreted is the only option.
+    "/microtaint/taint_ir/boolsynth.py",
+    "/microtaint/taint_ir/ir.py",
+    # mypyc cannot make a native class that inherits a builtin, and both of
+    # these define an exception deriving from RuntimeError.  Upstream's
+    # workaround is @mypy_extensions.mypyc_attr(native_class=False), which
+    # would make mypy_extensions a RUNTIME dependency of the package purely to
+    # carry a compile-time hint.  Neither module is on the hot path (ctypes
+    # glue, and checkpoint/restore, which is dominated by Unicorn calls), so
+    # leaving them interpreted is cheaper than growing the dependency set.
+    "/microtaint/emulator/snapshot.py",
+    "/microtaint/reexec/__init__.py",
 ]
 # mypyc stops on any message mypy produced, NOTES included: build.py tests
 # `result.errors`, which is the message list and not an error count.  The hook
-# checks only the modules it compiles, and none of them import angr, qiling or
-# the other engines, so `warn_unused_configs` reports those override sections
-# as unused every time.  The check is a whole-project one and means nothing on
-# a subset, so it is scoped out here rather than in [tool.mypy], where `mypy .`
+# checks only the ~27 modules it compiles, and none of them import angr, qiling
+# or the other engines, so `warn_unused_configs` reports those override sections
+# as unused every time.  The check is a whole-project one and means nothing on a
+# subset, so it is scoped out here rather than in [tool.mypy], where `mypy .`
 # keeps it and still reports genuinely stale sections.
 mypy-args = [
     "--ignore-missing-imports",
