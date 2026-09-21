@@ -138,6 +138,11 @@ of disk, dominated by the container images.
 
 ## Regenerating the paper's tables
 
+`run-all.sh` moves the report its own pass produced into that run's results
+directory, so after a full run the file is at `results/<stamp>/report_*.json`
+rather than here. A `benchmark.py` you start yourself leaves its report here,
+untouched.
+
 `gen_eval_tables.py` builds seven tables from a report, in both LaTeX and
 Markdown. They are the long-form counterparts of the RQ2, RQ3 and RQ4 figures,
 not tables in the submitted paper, which reports those results as Figures 2 to

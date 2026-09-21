@@ -348,16 +348,23 @@ if [ "$BASELINES" = 1 ]; then
   # is no separate directory for either.  BATCH_TIMEOUT defaults to 0, meaning
   # no ceiling: a non-zero value silently truncates slow engines mid-corpus and
   # still produces a well-formed report.  Set it only as a deliberate guard.
-  # benchmark.py writes report_<unixtime>.json into its own directory, which
-  # accumulates one per run ever made there.  Copying them all put 28 reports
-  # and 140 MB of somebody else's runs into this one, and left RQ2_REPORT below
-  # choosing between them on an `ls -t` tie, since cp gives them all the same
-  # mtime.  Take the note of what was there first and copy only what appeared.
+  # benchmark.py writes report_<unixtime>.json into its OWN directory, so that
+  # directory accumulates one per run ever made there.  This used to copy them
+  # all with a glob: 28 reports and 140 MB of other runs landed here, and
+  # RQ2_REPORT below picked "the newest" with `ls -t`, which after a copy means
+  # the file cp happened to write last, i.e. the alphabetically last name.
+  #
+  # MOVE the one this pass produced instead of copying.  Three things follow:
+  # the report ends up with the run that made it, rq2-comparison/ stops
+  # collecting them, and there is exactly one candidate below so no selection
+  # rule is needed.  Both paths are on one filesystem, so this is a rename.
+  # The snapshot is still required: a standalone benchmark.py run may have left
+  # reports there, and those are not ours to move.
   _before=$(ls "$HERE"/rq2-comparison/report_*.json 2>/dev/null | sort)
   run rq2-soundness rq2-comparison uv run python benchmark.py "${RQ2_ARGS[@]}"
   comm -13 <(printf '%s\n' "$_before") \
            <(ls "$HERE"/rq2-comparison/report_*.json 2>/dev/null | sort) \
-    | while read -r _r; do [ -n "$_r" ] && cp "$_r" "$OUT/"; done
+    | while read -r _r; do [ -n "$_r" ] && mv "$_r" "$OUT/"; done
   echo 'rq3-precision            NOTE scored in the rq2 pass' >> "$OUT/SUMMARY.md"
   echo 'rq4-per-step-cost        NOTE scored in the rq2 pass' >> "$OUT/SUMMARY.md"
 else
