@@ -4,6 +4,8 @@
 
 The artifacts for NDSS27 are present in the [artifacts/ndss27](./artifacts/ndss27/) subdirectory, in which there is a [README](./artifacts/ndss27/README.md) explaining how to reproduce all the results presented in the paper.
 
+They are archived at [`10.5281/zenodo.22865047`](https://doi.org/10.5281/zenodo.22865047).
+
 ## Introduction
 
 Microtaint is a strictly typed Python library and command-line engine for performing **bit-precise, dynamic Information Flow Tracking (IFT)** on compiled binaries.
