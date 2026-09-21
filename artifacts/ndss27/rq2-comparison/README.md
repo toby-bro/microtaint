@@ -150,4 +150,9 @@ stderr and left out: a `--no-baselines` report has one engine, and a one-row
 comparison is not a comparison. The path-explosion table needs the extra
 suites, which the paper's corpus runs and a `--quick` corpus does not.
 
+It refuses to state a soundness figure from a report that cannot say how many
+cases each engine declined to answer, because an engine that errors on the hard
+ones scores perfectly on a corpus it selected for itself. `--allow-uncertified`
+emits the tables anyway and writes the caveat into them.
+
 `run-all.sh` calls this itself and writes the result to the run directory.

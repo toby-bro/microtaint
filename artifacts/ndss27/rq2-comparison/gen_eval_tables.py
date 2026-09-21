@@ -17,6 +17,15 @@ Tables emitted, and what each one needs from the report:
   tab:f1-vs-ref        metrics.per_tool precision/recall/f1
   tab:pe               metrics.path_explosion_scaling_median
 
+Three of the quantities the tables need are not in `metrics`: which pillars and
+categories an engine's unsound cases fall in, how far over budget the skipped
+ground-truth cases were, and the MEDIAN path-explosion latency (`metrics`
+carries the mean, while the paper's table claims a median).  All three are
+recomputed here from `results`, which carries every case, every engine's answer
+and the oracle's.  Deriving them rather than having benchmark.py record them
+keeps one source of truth and works on reports written before this script
+existed.
+
 A table whose inputs the run did not produce is skipped with a note on stderr,
 rather than emitted with zeros.  A run with --no-baselines has one engine, and
 a one-row comparison table is not a comparison.
@@ -28,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import sys
 
 #: Display name per report key.  Anything the report names but this does not is
@@ -42,11 +52,110 @@ MODE_CODE = {'single': 'S', 'sequence': 'Q', 'sweep': 'W'}
 #: How many categories the unsoundness table names before it stops.
 TOP_CATEGORIES = 6
 
+#: An engine that refuses the hard cases and answers the easy ones scores 100%
+#: sound on a subset it chose for itself.  Mirrors benchmark.GT_MIN_ANSWER_RATE
+#: and the floor gen_paper_macros.py applies before emitting a soundness macro,
+#: kept as a literal for the same reason they do.
+MIN_ANSWER_RATE = 0.5
+
 #: The report carries the oracle under this key alongside the engines.  It is
 #: what the others are scored against, so it never gets a row of its own.
 ORACLE = 'ground_truth'
 
 DASH = '---'
+
+class Corpus(str):
+    """A cell whose text comes from the corpus rather than from this script.
+
+    Instruction categories carry things like `shrd_cl` and
+    `partial_write_xor8_keeps`, so they have to be escaped before they reach
+    LaTeX.  Marking them at the point they are built is what keeps the escaping
+    off the cells that are meant to be LaTeX.
+    """
+
+
+#: A thin space, as the paper sets between a category and its count.  Built
+#: with chr() rather than written out, because a literal one in the source is
+#: indistinguishable from an ordinary space to anyone reading it.
+THIN = chr(0x2009)
+
+
+MASK64 = (1 << 64) - 1
+
+
+def _cases(rep):
+    return rep.get('results') or []
+
+
+def unsound_breakdown(rep):
+    """{engine: {'modes': {...}, 'categories': {...}}} over the unsound cases.
+
+    Replays the comparison benchmark.py makes: for each case the oracle scored
+    exactly, an engine is unsound when the oracle has a bit (or, for a
+    register-level engine, a register) that the engine does not.  The registers
+    are whichever ones the oracle reported, so nothing is hardcoded.
+    """
+    gran = rep['metadata'].get('granularity', {})
+    out: dict = {}
+    for entry in _cases(rep):
+        gt = entry.get('tool_results', {}).get(ORACLE)
+        if gt is None or 'error' in gt:
+            continue
+        gt_mask = gt.get('output_taint', {})
+        inst = entry.get('instruction', {})
+        for tool, res in entry['tool_results'].items():
+            if tool == ORACLE or 'error' in res:
+                continue
+            tool_out = res.get('output_taint', {})
+            bitwise = gran.get(tool, 'reg') == 'bit'
+            unsound = False
+            for reg, gt_v in gt_mask.items():
+                got = tool_out.get(reg, 0)
+                if bitwise:
+                    unsound = bool((gt_v & MASK64) & ~(got & MASK64))
+                else:
+                    unsound = bool(gt_v) and not got
+                if unsound:
+                    break
+            if not unsound:
+                continue
+            d = out.setdefault(tool, {'modes': {}, 'categories': {}})
+            for field, bucket in (('mode', 'modes'), ('category', 'categories')):
+                k = inst.get(field) or 'unknown'
+                d[bucket][k] = d[bucket].get(k, 0) + 1
+    return out
+
+
+def skipped_k(rep):
+    """(mean, max) of k over the cases the oracle refused, or (None, None).
+
+    The k histogram in `metrics` folds every skipped case into one bucket, so
+    it cannot say how far over budget they were.
+    """
+    ks = [gt['skipped_k'] for e in _cases(rep)
+          if (gt := e.get('tool_results', {}).get(ORACLE)) is not None
+          and 'error' in gt and gt.get('skipped_k') is not None]
+    return (round(statistics.mean(ks), 1), max(ks)) if ks else (None, None)
+
+
+def pe_median_ms(rep):
+    """{n_instrs: {engine: median ms}} for the path-explosion cases.
+
+    `metrics.path_explosion_scaling` holds the MEAN, while the paper's table
+    says median.  Both come from the same per-case timings, which are here.
+    """
+    lats: dict = {}
+    for entry in _cases(rep):
+        inst = entry.get('instruction', {})
+        if inst.get('mode') != 'path_explosion':
+            continue
+        n = inst.get('n_instrs', 0)
+        for tool, res in entry['tool_results'].items():
+            if tool == ORACLE or 'error' in res or not res.get('time_ns'):
+                continue
+            lats.setdefault(n, {}).setdefault(tool, []).append(res['time_ns'] / 1e6)
+    return {n: {t: round(statistics.median(v), 2) for t, v in tm.items()}
+            for n, tm in lats.items()}
 
 
 def name(key):
@@ -71,6 +180,35 @@ def texnum(x, decimals=0):
 # where `rules` holds row indices after which a horizontal rule is drawn.  Both
 # emitters then render the same structure, so the LaTeX and the Markdown cannot
 # drift apart.
+
+
+def certify_answer_rates(rep, allow_uncertified):
+    """Refuse soundness figures a report cannot stand behind.
+
+    A case an engine ERRORED on is not evidence that it is sound on that case.
+    Reports written before that was counted have no `answer_rate`, so they
+    cannot say what fraction each engine actually answered, and an engine that
+    answered a third of the corpus would read as flawless.
+    """
+    problems = []
+    for key, g in rep['metrics']['ground_truth']['per_tool'].items():
+        rate = g.get('answer_rate')
+        if rate is None:
+            problems.append(f'{key}: no answer-rate accounting in this report')
+        elif rate < MIN_ANSWER_RATE:
+            problems.append(
+                f'{key}: answered {g["cases_compared"]} of '
+                f'{g.get("cases_attempted", "?")} cases ({100 * rate:.1f}%)')
+    if not problems:
+        return None
+    if not allow_uncertified:
+        detail = '\n  '.join(problems)
+        raise SystemExit(
+            f'the soundness figures in this report cannot be certified:\n'
+            f'  {detail}\n'
+            f'  Re-run benchmark.py, or pass --allow-uncertified to emit them '
+            f'anyway with the caveat recorded in the output.')
+    return problems
 
 
 def t_soundness(rep):
@@ -120,7 +258,7 @@ def t_gt_coverage(rep):
     if not gt.get('cases_total'):
         return None
     budget = gt['budget_bits']
-    mean_k, max_k = gt.get('skipped_k_mean'), gt.get('skipped_k_max')
+    mean_k, max_k = skipped_k(rep)
     if mean_k is None:
         skipped = f'Skipped ($k > {budget}$)'
     else:
@@ -157,20 +295,22 @@ def t_over_taint(rep):
 
 def t_unsound_summary(rep):
     gt = rep['metrics']['ground_truth']['per_tool']
-    if len(gt) < 3 or not any('unsound_modes' in d for d in gt.values()):
+    breakdown = unsound_breakdown(rep)
+    if len(gt) < 3 or not _cases(rep):
         return None
     keys = sorted((k for k in gt if k != ORACLE),
                   key=lambda k: (gt[k]['unsound_cases'], k))
     rows = []
     for k in keys:
         d = gt[k]
-        modes = d.get('unsound_modes') or {}
-        cats = d.get('unsound_categories') or {}
+        b = breakdown.get(k, {})
+        modes = b.get('modes') or {}
+        cats = b.get('categories') or {}
         # S, Q, W in the pillar order the caption gives, not in whichever order
         # the run happened to hit them.
         code = ', '.join(c for m, c in MODE_CODE.items() if modes.get(m)) or DASH
         top = sorted(cats.items(), key=lambda kv: (-kv[1], kv[0]))[:TOP_CATEGORIES]
-        cat_s = ', '.join(f'{c}({n})' for c, n in top) or DASH
+        cat_s = Corpus(', '.join(f'{c}{THIN}({n})' for c, n in top) or DASH)
         rows.append((k, d['unsound_cases'], code, cat_s))
     caption = ('Per-engine unsoundness summary on the ground-truth-evaluable '
                'cases.  Modes: S=single-instruction, Q=sequence, W=sweep.')
@@ -213,8 +353,7 @@ def t_f1(rep, reference):
 
 
 def t_pe(rep):
-    pe = (rep['metrics'].get('path_explosion_scaling_median')
-          or {}).get('path_explosion_branching')
+    pe = pe_median_ms(rep)
     if not pe:
         return None
     ns = sorted(pe, key=int)
@@ -238,12 +377,28 @@ BUILDERS = [t_soundness, t_gt_coverage, t_over_taint, t_unsound_summary,
 
 # ------------------------------------------------------------------- emitters
 
+#: The characters LaTeX reads as markup.  Instruction categories come from the
+#: corpus, so they carry things like `shrd_cl` and `partial_write_xor8_keeps`,
+#: and an unescaped underscore is a compile error rather than a typo.
+_TEX_ESCAPE = {'\u2009': r'\,', '_': r'\_', '&': r'\&', '%': r'\%', '#': r'\#', '$': r'\$'}
+
+
+def _tex_escape(text):
+    return ''.join(_TEX_ESCAPE.get(c, c) for c in text)
+
+
 def _cell(v, tex):
-    """A row cell.  A (text, bold) pair is emphasised, everything else is not."""
+    """A row cell.  A (text, bold) pair is emphasised, everything else is not.
+
+    Only a `Corpus` cell is escaped.  The other cells are written in this file
+    and some are deliberately LaTeX, such as the `$k \\le 12$` in the coverage
+    table, which escaping would turn into a compile error.
+    """
+    bold = False
     if isinstance(v, tuple):
-        text, bold = v
-        return (r'\textbf{%s}' % text) if (tex and bold) else text
-    return str(v)
+        v, bold = v
+    text = _tex_escape(v) if (tex and isinstance(v, Corpus)) else str(v)
+    return (r'\textbf{%s}' % text) if (tex and bold) else text
 
 
 def as_tex(tables):
@@ -276,7 +431,7 @@ def as_tex(tables):
 def _plain(s):
     """The LaTeX our own captions and headers use, as readable text."""
     for a, b in ((r'$\mu$', 'u'), (r'\le', '<='), (r'\,', ''), (r'\%', '%'),
-                 ('{=}', '='), ('$', '')):
+                 ('{=}', '='), ('$', ''), (THIN, ' ')):
         s = s.replace(a, b)
     return s
 
@@ -310,10 +465,15 @@ def main():
     ap.add_argument('--md', metavar='PATH')
     ap.add_argument('--reference', default='microtaint',
                     help='the engine the F1 table scores the others against')
+    ap.add_argument('--allow-uncertified', action='store_true',
+                    help='emit the soundness tables from a report that cannot '
+                         'account for the cases each engine refused')
     args = ap.parse_args()
 
     with open(args.report) as fh:
         rep = json.load(fh)
+
+    caveats = certify_answer_rates(rep, args.allow_uncertified)
 
     tables = []
     for build in BUILDERS:
@@ -334,13 +494,22 @@ def main():
             f'{args.report} supports none of the evaluation tables.  A report '
             f'from a --no-baselines run cannot produce a comparison.',
         )
+    # The caveat travels with the tables.  A caveat that lives only in the
+    # terminal is a caveat nobody reads.
+    note = ''
+    if caveats:
+        head = ['',
+                '% Uncertified: this report cannot account for the cases each',
+                '% engine refused, so its soundness and exactness columns are',
+                '% over a population each engine selected for itself.']
+        note = '\n'.join([*head, *['%   ' + c for c in caveats]]) + '\n'
     if args.tex:
         with open(args.tex, 'w') as fh:
-            fh.write(as_tex(tables))
+            fh.write(as_tex(tables) + note)
         print(f'[+] wrote {args.tex} ({len(tables)} tables)')
     if args.md:
         with open(args.md, 'w') as fh:
-            fh.write(as_md(tables))
+            fh.write(as_md(tables) + note.replace('%', '>'))
         print(f'[+] wrote {args.md} ({len(tables)} tables)')
     if not (args.tex or args.md):
         print(as_md(tables))

@@ -1,4 +1,31 @@
-# Reference run
+# Reference runs
+
+Four directories, one per experiment that has a long run behind it.
+
+| directory | experiment | what it holds |
+| --- | --- | --- |
+| `run-all-debian12/20260918-121340` | RQ5, RQ6 quick, RQ7, avalanche | a whole `--quick --no-baselines` run |
+| `rq2-comparison-paper-corpus` | RQ2, RQ3, RQ4 | the paper's own 9858-case engine comparison |
+| `rq1-taintinduce` | RQ1 | the full-tier TaintInduce comparison |
+| `rq6-campaign-ryzen5-3600-24h` | RQ6 | a 24 hour, 89.8 million case cross-ISA campaign |
+
+## Unpack first
+
+The bulky evidence is stored compressed, one `.tar.xz` per directory named
+after it. The engine comparison report is 12.7 MB of JSON and the rules
+TaintInduce synthesised are another 6.2 MB, which xz takes to 1.2 MB and
+0.35 MB together. Summaries, tables and figures are left as they are, so what
+a reader wants to look at is readable without unpacking anything.
+
+```sh
+./extract.sh
+```
+
+It unpacks every archive in place, skips one whose contents are already there,
+and leaves the archives alone, so it can be run again safely. Every command
+below assumes it has been run.
+
+## The `--quick --no-baselines` run
 
 One run of `./run-all.sh --quick --no-baselines` on a minimal Debian 12 machine.
 It is in `run-all-debian12/20260918-121340`, with the summary, the build log, and the stdout, the stderr and the JSON output of every experiment.
@@ -106,3 +133,48 @@ It is what we used on a fresh Debian 12 and it is only tested there, so on any o
 Both setup scripts can be run again if the network drops part way through; they pick up where they stopped rather than starting over.
 `setup_envs.sh` downloads about 5 GB, most of it PANDA's guest image, and the whole tree then occupies 15 GB.
 The full `./run-all.sh` takes about two days, dominated by the cross-ISA campaign.
+
+## The engine comparison, on the paper's corpus
+
+`rq2-comparison-paper-corpus.tar.xz` holds `report_merged_v3.json`, the report the paper's Figures 4 to 7 and its benchmark macros were generated from.
+It is 9858 cases at seed 12 (7500 single, 1000 sequence, 1310 sweep, plus the extra suites), scored against the exhaustive oracle, with all seven engines.
+Its unsound counts are the paper's: 0 for microtaint, 32 TaintGrind, 43 angr, 206 Triton, 210 libdft64, 300 Maat, 464 PANDA.
+
+The four figures beside it were regenerated from it here and are **pixel for pixel identical** to the ones in the paper.
+
+```sh
+cd ../rq2-comparison
+uv run --with matplotlib --with numpy python plot_figures.py \
+    --report ../reference-runs/rq2-comparison-paper-corpus/report_merged_v3.json
+mv fig_*.pdf ../reference-runs/rq2-comparison-paper-corpus/
+
+uv run python gen_eval_tables.py \
+    ../reference-runs/rq2-comparison-paper-corpus/report_merged_v3.json \
+    --allow-uncertified \
+    --tex ../reference-runs/rq2-comparison-paper-corpus/eval_tables.tex \
+    --md  ../reference-runs/rq2-comparison-paper-corpus/eval_tables.md
+```
+
+Figure 8 is not here: it reads the overhead ladder, which has nothing to do with this report, and its reference is in the `--quick` run above.
+
+`--allow-uncertified` is needed, and it is worth saying why.
+A case an engine ERRORED on is not evidence that it is sound on that case, so both generators check what fraction of the corpus each engine actually answered before they will state a soundness figure.
+This report predates that accounting: it records how many cases each engine was compared on and not how many it refused.
+The numbers are almost certainly right, and a re-run on the same corpus gives the same ones with a full answer rate, but this file cannot establish that on its own, so the caveat is written into the bottom of the generated tables rather than dropped.
+`gen_paper_macros.py` applies the same rule and refuses outright, which is why there is no `benchmark_numbers.tex` here.
+
+The seven tables generated from it are not the ones in the accepted paper.
+The paper's `eval_tables.tex` comes from an older and much smaller run: 2003 cases against 9858, a 12 bit oracle budget against 15, and 694 ground-truth-evaluable cases against 3263.
+That is why its microtaint row reads 84.9% bit-exact and 0.9602 Jaccard while this corpus gives 83.8% and 0.9617, and why its unsoundness summary names four `cmov` cases where this corpus finds 29.
+The paper's macros and the paper's tables were generated from different runs.
+
+## The TaintInduce comparison
+
+`rq1-taintinduce` is one full-tier `run_rq1.sh` (no `--quick`), with the per-instruction JSON loose and the logs and the synthesised rules in its archive.
+`SUMMARY.md` is the table: correct on bit-moving, logic and control flow, correct on 4 bit arithmetic, and unsound from 8 bits upward, which is the carry row of the paper's table.
+The held-out under-taint column is the evidence: 74 cases on `add al,bl`, 220 on `add ax,bx`, 562 on `add eax,ebx`.
+It took about an hour.
+
+## The cross-ISA campaign
+
+See the commands above.

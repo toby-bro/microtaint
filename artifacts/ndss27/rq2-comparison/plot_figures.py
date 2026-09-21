@@ -73,8 +73,10 @@ def _parse_argv(argv):
 
 
 REPORT_PATH, OVERHEAD_PATH = _parse_argv(sys.argv[1:])
-if OVERHEAD_PATH is None:
-    OVERHEAD_PATH = '../rq5-overhead/overhead_results.json'
+# No default for the overhead path.  It used to fall back to
+# ../rq5-overhead/overhead_results.json, so plotting one run's report picked up
+# whatever ladder happened to be in the tree and wrote a figure 8 that belonged
+# to a different run.  A figure comes from a named input or not at all.
 # REPORT stays None when there is no engine comparison to plot.  The four
 # figures that need it are skipped by name rather than crashing on load, so a
 # reduced run still produces the figure it did measure.
@@ -367,12 +369,15 @@ if __name__ == '__main__':
     else:
         print('No engine-comparison report given: skipping figures 4 to 7.')
 
-    ladder = os.path.join(os.path.dirname(OVERHEAD_PATH), 'overhead_ladder.json')
-    if os.path.exists(ladder):
-        plot_overhead()
-        made.append('fig_overhead.pdf')
+    if OVERHEAD_PATH is None:
+        print('No --overhead given: skipping figure 8.')
     else:
-        print(f'No overhead ladder at {ladder}: skipping figure 8.')
+        ladder = os.path.join(os.path.dirname(OVERHEAD_PATH), 'overhead_ladder.json')
+        if os.path.exists(ladder):
+            plot_overhead()
+            made.append('fig_overhead.pdf')
+        else:
+            print(f'No overhead ladder at {ladder}: skipping figure 8.')
 
     # Producing nothing and exiting zero is how a plotting step disappears from
     # a run without anybody noticing.

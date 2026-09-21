@@ -1,0 +1,224 @@
+{
+  "name": "ADD R1, R2 (JN)",
+  "arch": "JN",
+  "bytes": "0",
+  "state_bits": 12,
+  "seeds_exhaustive": true,
+  "observations": 4096,
+  "rule_pairs": 56,
+  "seconds": {
+    "observe": 3.0018439292907715,
+    "infer": 5.354495286941528,
+    "score": 0.02519679069519043
+  },
+  "holdout_states": 32,
+  "holdout_seed": 1000,
+  "infer_seed": 1,
+  "counts": {
+    "flows": 384,
+    "exact": 384,
+    "under": 0,
+    "over": 0,
+    "under_bits": 0,
+    "over_bits": 0,
+    "flows_flags": 124,
+    "under_flags": 0,
+    "flows_data": 256,
+    "under_data": 0,
+    "over_data": 0,
+    "over_flags": 0,
+    "under_carry_like": 0
+  },
+  "carry": {
+    "shape": "triangle",
+    "width": 4,
+    "dst": [
+      "R1"
+    ],
+    "src": [
+      "R1",
+      "R2"
+    ],
+    "per_source": [
+      {
+        "src": "R1",
+        "dst": "R1",
+        "required": 10,
+        "present": 10,
+        "missing": 0,
+        "forbidden_present": 0,
+        "holes": [],
+        "span": 4
+      },
+      {
+        "src": "R2",
+        "dst": "R1",
+        "required": 10,
+        "present": 10,
+        "missing": 0,
+        "forbidden_present": 0,
+        "holes": [],
+        "span": 4
+      }
+    ],
+    "required": 20,
+    "present": 20,
+    "missing": 0,
+    "forbidden_present": 0,
+    "by_distance": {
+      "0": [
+        8,
+        8
+      ],
+      "1": [
+        6,
+        6
+      ],
+      "2": [
+        4,
+        4
+      ],
+      "3": [
+        2,
+        2
+      ]
+    }
+  },
+  "forced_carry": {
+    "width": 4,
+    "shape": "triangle",
+    "dst": "R1",
+    "random_states": 64,
+    "per_source": [
+      {
+        "src": "R1",
+        "span": 4,
+        "cells": {
+          "0,0": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "0,1": {
+            "forced": "fires",
+            "rand_seen": 37,
+            "rand_fires": 37
+          },
+          "0,2": {
+            "forced": "fires",
+            "rand_seen": 19,
+            "rand_fires": 19
+          },
+          "0,3": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 7
+          },
+          "1,1": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "1,2": {
+            "forced": "fires",
+            "rand_seen": 39,
+            "rand_fires": 39
+          },
+          "1,3": {
+            "forced": "fires",
+            "rand_seen": 17,
+            "rand_fires": 17
+          },
+          "2,2": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "2,3": {
+            "forced": "fires",
+            "rand_seen": 33,
+            "rand_fires": 33
+          },
+          "3,3": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          }
+        }
+      },
+      {
+        "src": "R2",
+        "span": 4,
+        "cells": {
+          "0,0": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "0,1": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "0,2": {
+            "forced": "fires",
+            "rand_seen": 16,
+            "rand_fires": 16
+          },
+          "0,3": {
+            "forced": "fires",
+            "rand_seen": 10,
+            "rand_fires": 10
+          },
+          "1,1": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "1,2": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 30
+          },
+          "1,3": {
+            "forced": "fires",
+            "rand_seen": 15,
+            "rand_fires": 15
+          },
+          "2,2": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "2,3": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "3,3": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          }
+        }
+      }
+    ],
+    "totals": {
+      "required": 20,
+      "forced_fires": 20,
+      "forced_silent": 0,
+      "forced_unwitnessed": 0,
+      "rand_cells_seen": 20,
+      "rand_cells_always": 20,
+      "rand_cells_partial": 0,
+      "rand_cells_never": 0,
+      "rand_cells_unseen": 0,
+      "rand_witnesses": 796,
+      "rand_witness_fires": 796
+    },
+    "seconds": 0.05388164520263672
+  },
+  "examples": [],
+  "over_examples": [],
+  "verdict": "correct"
+}

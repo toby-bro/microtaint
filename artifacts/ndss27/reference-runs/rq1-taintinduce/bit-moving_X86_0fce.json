@@ -1,0 +1,37 @@
+{
+  "name": "bswap esi",
+  "arch": "X86",
+  "bytes": "0fce",
+  "state_bits": 32,
+  "seeds_exhaustive": false,
+  "observations": 242,
+  "rule_pairs": 32,
+  "seconds": {
+    "observe": 2.9096131324768066,
+    "infer": 0.3684730529785156,
+    "score": 1.44547438621521
+  },
+  "holdout_states": 32,
+  "holdout_seed": 1000,
+  "infer_seed": 1,
+  "counts": {
+    "flows": 1024,
+    "exact": 1024,
+    "under": 0,
+    "over": 0,
+    "under_bits": 0,
+    "over_bits": 0,
+    "flows_flags": 0,
+    "under_flags": 0,
+    "flows_data": 1024,
+    "under_data": 0,
+    "over_data": 0,
+    "over_flags": 0,
+    "under_carry_like": 0
+  },
+  "carry": null,
+  "forced_carry": null,
+  "examples": [],
+  "over_examples": [],
+  "verdict": "correct"
+}

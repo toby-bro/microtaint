@@ -1,0 +1,37 @@
+{
+  "name": "jz .+16",
+  "arch": "X86",
+  "bytes": "740e",
+  "state_bits": 64,
+  "seeds_exhaustive": false,
+  "observations": 360,
+  "rule_pairs": 32,
+  "seconds": {
+    "observe": 11.652021884918213,
+    "infer": 0.4887416362762451,
+    "score": 3.0265886783599854
+  },
+  "holdout_states": 32,
+  "holdout_seed": 1000,
+  "infer_seed": 1,
+  "counts": {
+    "flows": 960,
+    "exact": 960,
+    "under": 0,
+    "over": 0,
+    "under_bits": 0,
+    "over_bits": 0,
+    "flows_flags": 960,
+    "under_flags": 0,
+    "flows_data": 32,
+    "under_data": 0,
+    "over_data": 0,
+    "over_flags": 0,
+    "under_carry_like": 0
+  },
+  "carry": null,
+  "forced_carry": null,
+  "examples": [],
+  "over_examples": [],
+  "verdict": "correct"
+}

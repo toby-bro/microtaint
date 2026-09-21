@@ -131,6 +131,10 @@ microtaint/emulator/hook_core.c
 *.rej
 *.orig
 *.tar.*
+# The reference runs ship their bulky evidence compressed, one archive per
+# directory.  Those are committed on purpose, unlike the tarballs the setup
+# scripts download.
+!artifacts/ndss27/reference-runs/*/*.tar.xz
 
 output/
 stubs/

@@ -117,7 +117,7 @@ sudo apt install git build-essential curl
 On Arch
 
 ```sh
-git base-devel curl python
+sudo pacman -S --needed git base-devel curl python
 ```
 
 <details>

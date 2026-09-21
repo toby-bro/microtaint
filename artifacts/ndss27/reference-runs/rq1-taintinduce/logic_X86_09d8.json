@@ -1,0 +1,432 @@
+{
+  "name": "or eax, ebx",
+  "arch": "X86",
+  "bytes": "09d8",
+  "state_bits": 96,
+  "seeds_exhaustive": false,
+  "observations": 797,
+  "rule_pairs": 202,
+  "seconds": {
+    "observe": 27.70760202407837,
+    "infer": 86.97965359687805,
+    "score": 6.768864154815674
+  },
+  "holdout_states": 32,
+  "holdout_seed": 1000,
+  "infer_seed": 1,
+  "counts": {
+    "flows": 3008,
+    "exact": 3008,
+    "under": 0,
+    "over": 0,
+    "under_bits": 0,
+    "over_bits": 0,
+    "flows_flags": 1058,
+    "under_flags": 0,
+    "flows_data": 1525,
+    "under_data": 0,
+    "over_data": 0,
+    "over_flags": 0,
+    "under_carry_like": 0
+  },
+  "carry": {
+    "shape": "diagonal",
+    "width": 32,
+    "dst": [
+      "EAX"
+    ],
+    "src": [
+      "EAX",
+      "EBX"
+    ],
+    "per_source": [
+      {
+        "src": "EAX",
+        "dst": "EAX",
+        "required": 32,
+        "present": 32,
+        "missing": 0,
+        "forbidden_present": 0,
+        "holes": [],
+        "span": 32
+      },
+      {
+        "src": "EBX",
+        "dst": "EAX",
+        "required": 32,
+        "present": 32,
+        "missing": 0,
+        "forbidden_present": 0,
+        "holes": [],
+        "span": 32
+      }
+    ],
+    "required": 64,
+    "present": 64,
+    "missing": 0,
+    "forbidden_present": 0,
+    "by_distance": {
+      "0": [
+        64,
+        64
+      ]
+    }
+  },
+  "forced_carry": {
+    "width": 32,
+    "shape": "diagonal",
+    "dst": "EAX",
+    "random_states": 64,
+    "per_source": [
+      {
+        "src": "EAX",
+        "span": 32,
+        "cells": {
+          "0,0": {
+            "forced": "fires",
+            "rand_seen": 43,
+            "rand_fires": 43
+          },
+          "1,1": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "2,2": {
+            "forced": "fires",
+            "rand_seen": 27,
+            "rand_fires": 27
+          },
+          "3,3": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "4,4": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "5,5": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "6,6": {
+            "forced": "fires",
+            "rand_seen": 43,
+            "rand_fires": 43
+          },
+          "7,7": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "8,8": {
+            "forced": "fires",
+            "rand_seen": 37,
+            "rand_fires": 37
+          },
+          "9,9": {
+            "forced": "fires",
+            "rand_seen": 37,
+            "rand_fires": 37
+          },
+          "10,10": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "11,11": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 30
+          },
+          "12,12": {
+            "forced": "fires",
+            "rand_seen": 40,
+            "rand_fires": 40
+          },
+          "13,13": {
+            "forced": "fires",
+            "rand_seen": 36,
+            "rand_fires": 36
+          },
+          "14,14": {
+            "forced": "fires",
+            "rand_seen": 26,
+            "rand_fires": 26
+          },
+          "15,15": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "16,16": {
+            "forced": "fires",
+            "rand_seen": 27,
+            "rand_fires": 27
+          },
+          "17,17": {
+            "forced": "fires",
+            "rand_seen": 28,
+            "rand_fires": 28
+          },
+          "18,18": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 30
+          },
+          "19,19": {
+            "forced": "fires",
+            "rand_seen": 33,
+            "rand_fires": 33
+          },
+          "20,20": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "21,21": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 30
+          },
+          "22,22": {
+            "forced": "fires",
+            "rand_seen": 39,
+            "rand_fires": 39
+          },
+          "23,23": {
+            "forced": "fires",
+            "rand_seen": 37,
+            "rand_fires": 37
+          },
+          "24,24": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "25,25": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "26,26": {
+            "forced": "fires",
+            "rand_seen": 34,
+            "rand_fires": 34
+          },
+          "27,27": {
+            "forced": "fires",
+            "rand_seen": 36,
+            "rand_fires": 36
+          },
+          "28,28": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "29,29": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "30,30": {
+            "forced": "fires",
+            "rand_seen": 35,
+            "rand_fires": 35
+          },
+          "31,31": {
+            "forced": "fires",
+            "rand_seen": 36,
+            "rand_fires": 36
+          }
+        }
+      },
+      {
+        "src": "EBX",
+        "span": 32,
+        "cells": {
+          "0,0": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "1,1": {
+            "forced": "fires",
+            "rand_seen": 33,
+            "rand_fires": 33
+          },
+          "2,2": {
+            "forced": "fires",
+            "rand_seen": 40,
+            "rand_fires": 40
+          },
+          "3,3": {
+            "forced": "fires",
+            "rand_seen": 37,
+            "rand_fires": 37
+          },
+          "4,4": {
+            "forced": "fires",
+            "rand_seen": 28,
+            "rand_fires": 28
+          },
+          "5,5": {
+            "forced": "fires",
+            "rand_seen": 27,
+            "rand_fires": 27
+          },
+          "6,6": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "7,7": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "8,8": {
+            "forced": "fires",
+            "rand_seen": 38,
+            "rand_fires": 38
+          },
+          "9,9": {
+            "forced": "fires",
+            "rand_seen": 40,
+            "rand_fires": 40
+          },
+          "10,10": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 30
+          },
+          "11,11": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "12,12": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "13,13": {
+            "forced": "fires",
+            "rand_seen": 34,
+            "rand_fires": 34
+          },
+          "14,14": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "15,15": {
+            "forced": "fires",
+            "rand_seen": 34,
+            "rand_fires": 34
+          },
+          "16,16": {
+            "forced": "fires",
+            "rand_seen": 27,
+            "rand_fires": 27
+          },
+          "17,17": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "18,18": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "19,19": {
+            "forced": "fires",
+            "rand_seen": 28,
+            "rand_fires": 28
+          },
+          "20,20": {
+            "forced": "fires",
+            "rand_seen": 35,
+            "rand_fires": 35
+          },
+          "21,21": {
+            "forced": "fires",
+            "rand_seen": 25,
+            "rand_fires": 25
+          },
+          "22,22": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 29
+          },
+          "23,23": {
+            "forced": "fires",
+            "rand_seen": 36,
+            "rand_fires": 36
+          },
+          "24,24": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "25,25": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "26,26": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "27,27": {
+            "forced": "fires",
+            "rand_seen": 39,
+            "rand_fires": 39
+          },
+          "28,28": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "29,29": {
+            "forced": "fires",
+            "rand_seen": 36,
+            "rand_fires": 36
+          },
+          "30,30": {
+            "forced": "fires",
+            "rand_seen": 37,
+            "rand_fires": 37
+          },
+          "31,31": {
+            "forced": "fires",
+            "rand_seen": 39,
+            "rand_fires": 39
+          }
+        }
+      }
+    ],
+    "totals": {
+      "required": 64,
+      "forced_fires": 64,
+      "forced_silent": 0,
+      "forced_unwitnessed": 0,
+      "rand_cells_seen": 64,
+      "rand_cells_always": 64,
+      "rand_cells_partial": 0,
+      "rand_cells_never": 0,
+      "rand_cells_unseen": 0,
+      "rand_witnesses": 2091,
+      "rand_witness_fires": 2091
+    },
+    "seconds": 8.488708972930908
+  },
+  "examples": [],
+  "over_examples": [],
+  "verdict": "correct"
+}

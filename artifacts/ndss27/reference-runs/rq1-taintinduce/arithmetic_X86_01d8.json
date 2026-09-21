@@ -1,0 +1,5690 @@
+{
+  "name": "add eax, ebx",
+  "arch": "X86",
+  "bytes": "01d8",
+  "state_bits": 96,
+  "seeds_exhaustive": false,
+  "observations": 797,
+  "rule_pairs": 1392,
+  "seconds": {
+    "observe": 23.03632378578186,
+    "infer": 726.8159899711609,
+    "score": 9.93793511390686
+  },
+  "holdout_states": 32,
+  "holdout_seed": 1000,
+  "infer_seed": 1,
+  "counts": {
+    "flows": 3008,
+    "exact": 1720,
+    "under": 562,
+    "over": 930,
+    "under_bits": 1127,
+    "over_bits": 2051,
+    "flows_flags": 1276,
+    "under_flags": 90,
+    "flows_data": 2048,
+    "under_data": 522,
+    "over_data": 809,
+    "over_flags": 121,
+    "under_carry_like": 273
+  },
+  "carry": {
+    "shape": "triangle",
+    "width": 32,
+    "dst": [
+      "EAX"
+    ],
+    "src": [
+      "EAX",
+      "EBX"
+    ],
+    "per_source": [
+      {
+        "src": "EAX",
+        "dst": "EAX",
+        "required": 528,
+        "present": 528,
+        "missing": 0,
+        "forbidden_present": 0,
+        "holes": [],
+        "span": 32
+      },
+      {
+        "src": "EBX",
+        "dst": "EAX",
+        "required": 528,
+        "present": 528,
+        "missing": 0,
+        "forbidden_present": 0,
+        "holes": [],
+        "span": 32
+      }
+    ],
+    "required": 1056,
+    "present": 1056,
+    "missing": 0,
+    "forbidden_present": 0,
+    "by_distance": {
+      "0": [
+        64,
+        64
+      ],
+      "1": [
+        62,
+        62
+      ],
+      "2": [
+        60,
+        60
+      ],
+      "3": [
+        58,
+        58
+      ],
+      "4": [
+        56,
+        56
+      ],
+      "5": [
+        54,
+        54
+      ],
+      "6": [
+        52,
+        52
+      ],
+      "7": [
+        50,
+        50
+      ],
+      "8": [
+        48,
+        48
+      ],
+      "9": [
+        46,
+        46
+      ],
+      "10": [
+        44,
+        44
+      ],
+      "11": [
+        42,
+        42
+      ],
+      "12": [
+        40,
+        40
+      ],
+      "13": [
+        38,
+        38
+      ],
+      "14": [
+        36,
+        36
+      ],
+      "15": [
+        34,
+        34
+      ],
+      "16": [
+        32,
+        32
+      ],
+      "17": [
+        30,
+        30
+      ],
+      "18": [
+        28,
+        28
+      ],
+      "19": [
+        26,
+        26
+      ],
+      "20": [
+        24,
+        24
+      ],
+      "21": [
+        22,
+        22
+      ],
+      "22": [
+        20,
+        20
+      ],
+      "23": [
+        18,
+        18
+      ],
+      "24": [
+        16,
+        16
+      ],
+      "25": [
+        14,
+        14
+      ],
+      "26": [
+        12,
+        12
+      ],
+      "27": [
+        10,
+        10
+      ],
+      "28": [
+        8,
+        8
+      ],
+      "29": [
+        6,
+        6
+      ],
+      "30": [
+        4,
+        4
+      ],
+      "31": [
+        2,
+        2
+      ]
+    }
+  },
+  "forced_carry": {
+    "width": 32,
+    "shape": "triangle",
+    "dst": "EAX",
+    "random_states": 64,
+    "per_source": [
+      {
+        "src": "EAX",
+        "span": 32,
+        "cells": {
+          "0,0": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "0,1": {
+            "forced": "fires",
+            "rand_seen": 21,
+            "rand_fires": 21
+          },
+          "0,2": {
+            "forced": "fires",
+            "rand_seen": 11,
+            "rand_fires": 11
+          },
+          "0,3": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 4
+          },
+          "0,4": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "0,5": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "0,6": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "0,7": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "0,8": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,9": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,10": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,1": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "1,2": {
+            "forced": "fires",
+            "rand_seen": 34,
+            "rand_fires": 34
+          },
+          "1,3": {
+            "forced": "fires",
+            "rand_seen": 23,
+            "rand_fires": 23
+          },
+          "1,4": {
+            "forced": "fires",
+            "rand_seen": 11,
+            "rand_fires": 11
+          },
+          "1,5": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 2
+          },
+          "1,6": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "1,7": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "1,8": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "1,9": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "1,10": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "1,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,2": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "2,3": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 31
+          },
+          "2,4": {
+            "forced": "fires",
+            "rand_seen": 20,
+            "rand_fires": 19
+          },
+          "2,5": {
+            "forced": "fires",
+            "rand_seen": 10,
+            "rand_fires": 6
+          },
+          "2,6": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 0
+          },
+          "2,7": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 2
+          },
+          "2,8": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,9": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,10": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,3": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "3,4": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 28
+          },
+          "3,5": {
+            "forced": "fires",
+            "rand_seen": 14,
+            "rand_fires": 12
+          },
+          "3,6": {
+            "forced": "fires",
+            "rand_seen": 9,
+            "rand_fires": 2
+          },
+          "3,7": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 2
+          },
+          "3,8": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "3,9": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,10": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,4": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "4,5": {
+            "forced": "fires",
+            "rand_seen": 27,
+            "rand_fires": 26
+          },
+          "4,6": {
+            "forced": "fires",
+            "rand_seen": 12,
+            "rand_fires": 8
+          },
+          "4,7": {
+            "forced": "fires",
+            "rand_seen": 11,
+            "rand_fires": 3
+          },
+          "4,8": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 1
+          },
+          "4,9": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "4,10": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "4,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,5": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "5,6": {
+            "forced": "fires",
+            "rand_seen": 42,
+            "rand_fires": 31
+          },
+          "5,7": {
+            "forced": "fires",
+            "rand_seen": 18,
+            "rand_fires": 11
+          },
+          "5,8": {
+            "forced": "fires",
+            "rand_seen": 11,
+            "rand_fires": 2
+          },
+          "5,9": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 1
+          },
+          "5,10": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "5,11": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "5,12": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "5,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,6": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "6,7": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 28
+          },
+          "6,8": {
+            "forced": "fires",
+            "rand_seen": 13,
+            "rand_fires": 11
+          },
+          "6,9": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 1
+          },
+          "6,10": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 2
+          },
+          "6,11": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "6,12": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "6,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,7": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "7,8": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 24
+          },
+          "7,9": {
+            "forced": "fires",
+            "rand_seen": 21,
+            "rand_fires": 12
+          },
+          "7,10": {
+            "forced": "fires",
+            "rand_seen": 12,
+            "rand_fires": 2
+          },
+          "7,11": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "7,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,8": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "8,9": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 26
+          },
+          "8,10": {
+            "forced": "fires",
+            "rand_seen": 15,
+            "rand_fires": 9
+          },
+          "8,11": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 1
+          },
+          "8,12": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "8,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,9": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "9,10": {
+            "forced": "fires",
+            "rand_seen": 33,
+            "rand_fires": 28
+          },
+          "9,11": {
+            "forced": "fires",
+            "rand_seen": 16,
+            "rand_fires": 9
+          },
+          "9,12": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 2
+          },
+          "9,13": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 2
+          },
+          "9,14": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "9,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,10": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "10,11": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 20
+          },
+          "10,12": {
+            "forced": "fires",
+            "rand_seen": 19,
+            "rand_fires": 14
+          },
+          "10,13": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 2
+          },
+          "10,14": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "10,15": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "10,16": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "10,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,11": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "11,12": {
+            "forced": "fires",
+            "rand_seen": 43,
+            "rand_fires": 36
+          },
+          "11,13": {
+            "forced": "fires",
+            "rand_seen": 18,
+            "rand_fires": 3
+          },
+          "11,14": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 1
+          },
+          "11,15": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "11,16": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "11,17": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "11,18": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "11,19": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "11,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,12": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "12,13": {
+            "forced": "fires",
+            "rand_seen": 28,
+            "rand_fires": 16
+          },
+          "12,14": {
+            "forced": "fires",
+            "rand_seen": 15,
+            "rand_fires": 4
+          },
+          "12,15": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 1
+          },
+          "12,16": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "12,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,13": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "13,14": {
+            "forced": "fires",
+            "rand_seen": 34,
+            "rand_fires": 21
+          },
+          "13,15": {
+            "forced": "fires",
+            "rand_seen": 14,
+            "rand_fires": 5
+          },
+          "13,16": {
+            "forced": "fires",
+            "rand_seen": 9,
+            "rand_fires": 0
+          },
+          "13,17": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 1
+          },
+          "13,18": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "13,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,14": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "14,15": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 26
+          },
+          "14,16": {
+            "forced": "fires",
+            "rand_seen": 20,
+            "rand_fires": 11
+          },
+          "14,17": {
+            "forced": "fires",
+            "rand_seen": 9,
+            "rand_fires": 3
+          },
+          "14,18": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 0
+          },
+          "14,19": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 1
+          },
+          "14,20": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "14,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,15": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "15,16": {
+            "forced": "fires",
+            "rand_seen": 33,
+            "rand_fires": 27
+          },
+          "15,17": {
+            "forced": "fires",
+            "rand_seen": 17,
+            "rand_fires": 2
+          },
+          "15,18": {
+            "forced": "fires",
+            "rand_seen": 9,
+            "rand_fires": 2
+          },
+          "15,19": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 1
+          },
+          "15,20": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "15,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,16": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "16,17": {
+            "forced": "fires",
+            "rand_seen": 37,
+            "rand_fires": 27
+          },
+          "16,18": {
+            "forced": "fires",
+            "rand_seen": 17,
+            "rand_fires": 6
+          },
+          "16,19": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 2
+          },
+          "16,20": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "16,21": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "16,22": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "16,23": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "16,24": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "16,25": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "16,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,17": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "17,18": {
+            "forced": "fires",
+            "rand_seen": 37,
+            "rand_fires": 26
+          },
+          "17,19": {
+            "forced": "fires",
+            "rand_seen": 21,
+            "rand_fires": 8
+          },
+          "17,20": {
+            "forced": "fires",
+            "rand_seen": 14,
+            "rand_fires": 4
+          },
+          "17,21": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 0
+          },
+          "17,22": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "17,23": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "17,24": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "17,25": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "17,26": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "17,27": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "17,28": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "17,29": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "17,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,18": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "18,19": {
+            "forced": "fires",
+            "rand_seen": 39,
+            "rand_fires": 26
+          },
+          "18,20": {
+            "forced": "fires",
+            "rand_seen": 21,
+            "rand_fires": 8
+          },
+          "18,21": {
+            "forced": "fires",
+            "rand_seen": 9,
+            "rand_fires": 0
+          },
+          "18,22": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "18,23": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "18,24": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "18,25": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "18,26": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "18,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,19": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "19,20": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 22
+          },
+          "19,21": {
+            "forced": "fires",
+            "rand_seen": 18,
+            "rand_fires": 7
+          },
+          "19,22": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 1
+          },
+          "19,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,20": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "20,21": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 23
+          },
+          "20,22": {
+            "forced": "fires",
+            "rand_seen": 20,
+            "rand_fires": 8
+          },
+          "20,23": {
+            "forced": "fires",
+            "rand_seen": 10,
+            "rand_fires": 3
+          },
+          "20,24": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 1
+          },
+          "20,25": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "20,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "21,21": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "21,22": {
+            "forced": "fires",
+            "rand_seen": 27,
+            "rand_fires": 10
+          },
+          "21,23": {
+            "forced": "fires",
+            "rand_seen": 18,
+            "rand_fires": 3
+          },
+          "21,24": {
+            "forced": "fires",
+            "rand_seen": 10,
+            "rand_fires": 0
+          },
+          "21,25": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 1
+          },
+          "21,26": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "21,27": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "21,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "21,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "21,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "21,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "22,22": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "22,23": {
+            "forced": "fires",
+            "rand_seen": 25,
+            "rand_fires": 14
+          },
+          "22,24": {
+            "forced": "fires",
+            "rand_seen": 10,
+            "rand_fires": 4
+          },
+          "22,25": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "22,26": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "22,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "22,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "22,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "22,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "22,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "23,23": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "23,24": {
+            "forced": "fires",
+            "rand_seen": 27,
+            "rand_fires": 12
+          },
+          "23,25": {
+            "forced": "fires",
+            "rand_seen": 11,
+            "rand_fires": 1
+          },
+          "23,26": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 2
+          },
+          "23,27": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "23,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "23,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "23,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "23,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "24,24": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "24,25": {
+            "forced": "fires",
+            "rand_seen": 26,
+            "rand_fires": 16
+          },
+          "24,26": {
+            "forced": "fires",
+            "rand_seen": 12,
+            "rand_fires": 5
+          },
+          "24,27": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 1
+          },
+          "24,28": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "24,29": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "24,30": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "24,31": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "25,25": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "25,26": {
+            "forced": "fires",
+            "rand_seen": 38,
+            "rand_fires": 24
+          },
+          "25,27": {
+            "forced": "fires",
+            "rand_seen": 17,
+            "rand_fires": 4
+          },
+          "25,28": {
+            "forced": "fires",
+            "rand_seen": 11,
+            "rand_fires": 1
+          },
+          "25,29": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "25,30": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "25,31": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "26,26": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "26,27": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 17
+          },
+          "26,28": {
+            "forced": "fires",
+            "rand_seen": 14,
+            "rand_fires": 2
+          },
+          "26,29": {
+            "forced": "fires",
+            "rand_seen": 9,
+            "rand_fires": 0
+          },
+          "26,30": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 2
+          },
+          "26,31": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "27,27": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "27,28": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 13
+          },
+          "27,29": {
+            "forced": "fires",
+            "rand_seen": 14,
+            "rand_fires": 2
+          },
+          "27,30": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 1
+          },
+          "27,31": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "28,28": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "28,29": {
+            "forced": "fires",
+            "rand_seen": 33,
+            "rand_fires": 13
+          },
+          "28,30": {
+            "forced": "fires",
+            "rand_seen": 19,
+            "rand_fires": 5
+          },
+          "28,31": {
+            "forced": "fires",
+            "rand_seen": 8,
+            "rand_fires": 1
+          },
+          "29,29": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "29,30": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 10
+          },
+          "29,31": {
+            "forced": "fires",
+            "rand_seen": 19,
+            "rand_fires": 6
+          },
+          "30,30": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "30,31": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 24
+          },
+          "31,31": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          }
+        }
+      },
+      {
+        "src": "EBX",
+        "span": 32,
+        "cells": {
+          "0,0": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "0,1": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "0,2": {
+            "forced": "fires",
+            "rand_seen": 21,
+            "rand_fires": 21
+          },
+          "0,3": {
+            "forced": "fires",
+            "rand_seen": 11,
+            "rand_fires": 11
+          },
+          "0,4": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 4
+          },
+          "0,5": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 1
+          },
+          "0,6": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,7": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,8": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,9": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,10": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "0,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,1": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "1,2": {
+            "forced": "fires",
+            "rand_seen": 38,
+            "rand_fires": 38
+          },
+          "1,3": {
+            "forced": "fires",
+            "rand_seen": 23,
+            "rand_fires": 23
+          },
+          "1,4": {
+            "forced": "fires",
+            "rand_seen": 10,
+            "rand_fires": 9
+          },
+          "1,5": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 3
+          },
+          "1,6": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 2
+          },
+          "1,7": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 1
+          },
+          "1,8": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "1,9": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "1,10": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "1,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "1,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,2": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "2,3": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 32
+          },
+          "2,4": {
+            "forced": "fires",
+            "rand_seen": 15,
+            "rand_fires": 15
+          },
+          "2,5": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 4
+          },
+          "2,6": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 2
+          },
+          "2,7": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,8": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,9": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,10": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "2,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,3": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "3,4": {
+            "forced": "fires",
+            "rand_seen": 27,
+            "rand_fires": 27
+          },
+          "3,5": {
+            "forced": "fires",
+            "rand_seen": 17,
+            "rand_fires": 16
+          },
+          "3,6": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 2
+          },
+          "3,7": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 1
+          },
+          "3,8": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "3,9": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,10": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "3,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,4": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "4,5": {
+            "forced": "fires",
+            "rand_seen": 35,
+            "rand_fires": 35
+          },
+          "4,6": {
+            "forced": "fires",
+            "rand_seen": 19,
+            "rand_fires": 16
+          },
+          "4,7": {
+            "forced": "fires",
+            "rand_seen": 8,
+            "rand_fires": 6
+          },
+          "4,8": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 1
+          },
+          "4,9": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 1
+          },
+          "4,10": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "4,11": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,12": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "4,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,5": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "5,6": {
+            "forced": "fires",
+            "rand_seen": 33,
+            "rand_fires": 27
+          },
+          "5,7": {
+            "forced": "fires",
+            "rand_seen": 18,
+            "rand_fires": 16
+          },
+          "5,8": {
+            "forced": "fires",
+            "rand_seen": 13,
+            "rand_fires": 8
+          },
+          "5,9": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 1
+          },
+          "5,10": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "5,11": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "5,12": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "5,13": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "5,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "5,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,6": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "6,7": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 26
+          },
+          "6,8": {
+            "forced": "fires",
+            "rand_seen": 10,
+            "rand_fires": 4
+          },
+          "6,9": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 0
+          },
+          "6,10": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "6,11": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "6,12": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "6,13": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "6,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,7": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "7,8": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 25
+          },
+          "7,9": {
+            "forced": "fires",
+            "rand_seen": 14,
+            "rand_fires": 10
+          },
+          "7,10": {
+            "forced": "fires",
+            "rand_seen": 10,
+            "rand_fires": 4
+          },
+          "7,11": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 2
+          },
+          "7,12": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "7,13": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "7,14": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "7,15": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "7,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "7,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,8": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "8,9": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 25
+          },
+          "8,10": {
+            "forced": "fires",
+            "rand_seen": 16,
+            "rand_fires": 10
+          },
+          "8,11": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 2
+          },
+          "8,12": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 0
+          },
+          "8,13": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "8,14": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,15": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "8,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,9": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "9,10": {
+            "forced": "fires",
+            "rand_seen": 39,
+            "rand_fires": 30
+          },
+          "9,11": {
+            "forced": "fires",
+            "rand_seen": 18,
+            "rand_fires": 15
+          },
+          "9,12": {
+            "forced": "fires",
+            "rand_seen": 10,
+            "rand_fires": 4
+          },
+          "9,13": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 0
+          },
+          "9,14": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "9,15": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "9,16": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,17": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "9,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,10": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "10,11": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 22
+          },
+          "10,12": {
+            "forced": "fires",
+            "rand_seen": 13,
+            "rand_fires": 9
+          },
+          "10,13": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 0
+          },
+          "10,14": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 0
+          },
+          "10,15": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "10,16": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "10,17": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "10,18": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "10,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,11": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "11,12": {
+            "forced": "fires",
+            "rand_seen": 34,
+            "rand_fires": 27
+          },
+          "11,13": {
+            "forced": "fires",
+            "rand_seen": 16,
+            "rand_fires": 5
+          },
+          "11,14": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 3
+          },
+          "11,15": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "11,16": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "11,17": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "11,18": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "11,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "11,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,12": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "12,13": {
+            "forced": "fires",
+            "rand_seen": 28,
+            "rand_fires": 25
+          },
+          "12,14": {
+            "forced": "fires",
+            "rand_seen": 13,
+            "rand_fires": 6
+          },
+          "12,15": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 0
+          },
+          "12,16": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "12,17": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "12,18": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "12,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "12,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,13": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "13,14": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 20
+          },
+          "13,15": {
+            "forced": "fires",
+            "rand_seen": 16,
+            "rand_fires": 3
+          },
+          "13,16": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 1
+          },
+          "13,17": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "13,18": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "13,19": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "13,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,14": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "14,15": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 21
+          },
+          "14,16": {
+            "forced": "fires",
+            "rand_seen": 17,
+            "rand_fires": 7
+          },
+          "14,17": {
+            "forced": "fires",
+            "rand_seen": 8,
+            "rand_fires": 3
+          },
+          "14,18": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 1
+          },
+          "14,19": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "14,20": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,21": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "14,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,15": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "15,16": {
+            "forced": "fires",
+            "rand_seen": 35,
+            "rand_fires": 23
+          },
+          "15,17": {
+            "forced": "fires",
+            "rand_seen": 14,
+            "rand_fires": 6
+          },
+          "15,18": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 2
+          },
+          "15,19": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "15,20": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "15,21": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "15,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "15,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,16": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "16,17": {
+            "forced": "fires",
+            "rand_seen": 35,
+            "rand_fires": 26
+          },
+          "16,18": {
+            "forced": "fires",
+            "rand_seen": 17,
+            "rand_fires": 8
+          },
+          "16,19": {
+            "forced": "fires",
+            "rand_seen": 11,
+            "rand_fires": 2
+          },
+          "16,20": {
+            "forced": "fires",
+            "rand_seen": 8,
+            "rand_fires": 0
+          },
+          "16,21": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "16,22": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,23": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "16,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,17": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "17,18": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 20
+          },
+          "17,19": {
+            "forced": "fires",
+            "rand_seen": 15,
+            "rand_fires": 6
+          },
+          "17,20": {
+            "forced": "fires",
+            "rand_seen": 8,
+            "rand_fires": 1
+          },
+          "17,21": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "17,22": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "17,23": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "17,24": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,25": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,26": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "17,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,18": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "18,19": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 15
+          },
+          "18,20": {
+            "forced": "fires",
+            "rand_seen": 17,
+            "rand_fires": 3
+          },
+          "18,21": {
+            "forced": "fires",
+            "rand_seen": 9,
+            "rand_fires": 4
+          },
+          "18,22": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 1
+          },
+          "18,23": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "18,24": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "18,25": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "18,26": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 1
+          },
+          "18,27": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "18,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,19": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "19,20": {
+            "forced": "fires",
+            "rand_seen": 35,
+            "rand_fires": 27
+          },
+          "19,21": {
+            "forced": "fires",
+            "rand_seen": 20,
+            "rand_fires": 4
+          },
+          "19,22": {
+            "forced": "fires",
+            "rand_seen": 11,
+            "rand_fires": 1
+          },
+          "19,23": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 0
+          },
+          "19,24": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "19,25": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "19,26": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "19,27": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "19,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "19,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,20": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "20,21": {
+            "forced": "fires",
+            "rand_seen": 35,
+            "rand_fires": 19
+          },
+          "20,22": {
+            "forced": "fires",
+            "rand_seen": 20,
+            "rand_fires": 4
+          },
+          "20,23": {
+            "forced": "fires",
+            "rand_seen": 9,
+            "rand_fires": 3
+          },
+          "20,24": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 1
+          },
+          "20,25": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "20,26": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "20,27": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "20,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "20,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "21,21": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "21,22": {
+            "forced": "fires",
+            "rand_seen": 36,
+            "rand_fires": 25
+          },
+          "21,23": {
+            "forced": "fires",
+            "rand_seen": 19,
+            "rand_fires": 6
+          },
+          "21,24": {
+            "forced": "fires",
+            "rand_seen": 14,
+            "rand_fires": 0
+          },
+          "21,25": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 0
+          },
+          "21,26": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "21,27": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "21,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "21,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "21,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "21,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "22,22": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "22,23": {
+            "forced": "fires",
+            "rand_seen": 34,
+            "rand_fires": 25
+          },
+          "22,24": {
+            "forced": "fires",
+            "rand_seen": 16,
+            "rand_fires": 3
+          },
+          "22,25": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "22,26": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "22,27": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "22,28": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "22,29": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "22,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "22,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "23,23": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "23,24": {
+            "forced": "fires",
+            "rand_seen": 36,
+            "rand_fires": 24
+          },
+          "23,25": {
+            "forced": "fires",
+            "rand_seen": 18,
+            "rand_fires": 5
+          },
+          "23,26": {
+            "forced": "fires",
+            "rand_seen": 14,
+            "rand_fires": 3
+          },
+          "23,27": {
+            "forced": "fires",
+            "rand_seen": 12,
+            "rand_fires": 3
+          },
+          "23,28": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 0
+          },
+          "23,29": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "23,30": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "23,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "24,24": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "24,25": {
+            "forced": "fires",
+            "rand_seen": 30,
+            "rand_fires": 15
+          },
+          "24,26": {
+            "forced": "fires",
+            "rand_seen": 12,
+            "rand_fires": 4
+          },
+          "24,27": {
+            "forced": "fires",
+            "rand_seen": 9,
+            "rand_fires": 3
+          },
+          "24,28": {
+            "forced": "fires",
+            "rand_seen": 5,
+            "rand_fires": 0
+          },
+          "24,29": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "24,30": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "24,31": {
+            "forced": "fires",
+            "rand_seen": 0,
+            "rand_fires": 0
+          },
+          "25,25": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "25,26": {
+            "forced": "fires",
+            "rand_seen": 29,
+            "rand_fires": 20
+          },
+          "25,27": {
+            "forced": "fires",
+            "rand_seen": 15,
+            "rand_fires": 5
+          },
+          "25,28": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 0
+          },
+          "25,29": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 1
+          },
+          "25,30": {
+            "forced": "fires",
+            "rand_seen": 3,
+            "rand_fires": 0
+          },
+          "25,31": {
+            "forced": "fires",
+            "rand_seen": 1,
+            "rand_fires": 0
+          },
+          "26,26": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "26,27": {
+            "forced": "fires",
+            "rand_seen": 32,
+            "rand_fires": 16
+          },
+          "26,28": {
+            "forced": "fires",
+            "rand_seen": 15,
+            "rand_fires": 1
+          },
+          "26,29": {
+            "forced": "fires",
+            "rand_seen": 6,
+            "rand_fires": 1
+          },
+          "26,30": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 1
+          },
+          "26,31": {
+            "forced": "fires",
+            "rand_seen": 2,
+            "rand_fires": 0
+          },
+          "27,27": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "27,28": {
+            "forced": "fires",
+            "rand_seen": 34,
+            "rand_fires": 17
+          },
+          "27,29": {
+            "forced": "fires",
+            "rand_seen": 13,
+            "rand_fires": 3
+          },
+          "27,30": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 1
+          },
+          "27,31": {
+            "forced": "fires",
+            "rand_seen": 4,
+            "rand_fires": 0
+          },
+          "28,28": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "28,29": {
+            "forced": "fires",
+            "rand_seen": 37,
+            "rand_fires": 15
+          },
+          "28,30": {
+            "forced": "fires",
+            "rand_seen": 18,
+            "rand_fires": 8
+          },
+          "28,31": {
+            "forced": "fires",
+            "rand_seen": 7,
+            "rand_fires": 2
+          },
+          "29,29": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "29,30": {
+            "forced": "fires",
+            "rand_seen": 27,
+            "rand_fires": 6
+          },
+          "29,31": {
+            "forced": "fires",
+            "rand_seen": 8,
+            "rand_fires": 3
+          },
+          "30,30": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          },
+          "30,31": {
+            "forced": "fires",
+            "rand_seen": 31,
+            "rand_fires": 17
+          },
+          "31,31": {
+            "forced": "fires",
+            "rand_seen": 64,
+            "rand_fires": 64
+          }
+        }
+      }
+    ],
+    "totals": {
+      "required": 1056,
+      "forced_fires": 1056,
+      "forced_silent": 0,
+      "forced_unwitnessed": 0,
+      "rand_cells_seen": 411,
+      "rand_cells_always": 93,
+      "rand_cells_partial": 182,
+      "rand_cells_never": 136,
+      "rand_cells_unseen": 645,
+      "rand_witnesses": 7987,
+      "rand_witness_fires": 6193
+    },
+    "seconds": 23.79101300239563
+  },
+  "examples": [
+    {
+      "input": "EBX[3]",
+      "state": "0xe1e9efebddc0069c56abe49e",
+      "missing": [
+        "EAX[6]",
+        "EAX[7]"
+      ],
+      "predicted": [
+        "EAX[3]",
+        "EAX[4]",
+        "EAX[5]",
+        "EBX[3]",
+        "EFLAGS[2]=PF",
+        "EFLAGS[4]=AF"
+      ]
+    },
+    {
+      "input": "EAX[29]",
+      "state": "0xe1e9efe3fdc0069c56abe49e",
+      "missing": [
+        "EAX[30]"
+      ],
+      "predicted": [
+        "EAX[29]",
+        "EFLAGS[0]=CF"
+      ]
+    },
+    {
+      "input": "EBX[27]",
+      "state": "0xe9e9efe3ddc0069c56abe49e",
+      "missing": [
+        "EAX[28]",
+        "EAX[30]"
+      ],
+      "predicted": [
+        "EAX[27]",
+        "EAX[29]",
+        "EBX[27]",
+        "EFLAGS[0]=CF"
+      ]
+    },
+    {
+      "input": "EAX[7]",
+      "state": "0xe1e9efe3ddc0061c56abe49e",
+      "missing": [
+        "EAX[8]"
+      ],
+      "predicted": [
+        "EAX[28]",
+        "EAX[7]",
+        "EAX[9]",
+        "EFLAGS[2]=PF"
+      ]
+    },
+    {
+      "input": "EAX[25]",
+      "state": "0xe1e9efe3dfc0069c56abe49e",
+      "missing": [
+        "EAX[28]",
+        "EAX[29]",
+        "EAX[30]"
+      ],
+      "predicted": [
+        "EAX[25]",
+        "EAX[26]",
+        "EAX[27]"
+      ]
+    },
+    {
+      "input": "EBX[12]",
+      "state": "0xe1e9ffe3ddc0069c56abe49e",
+      "missing": [
+        "EAX[14]",
+        "EAX[15]",
+        "EAX[16]",
+        "EAX[17]"
+      ],
+      "predicted": [
+        "EAX[12]",
+        "EAX[13]",
+        "EBX[12]"
+      ]
+    },
+    {
+      "input": "EBX[25]",
+      "state": "0xe3e9efe3ddc0069c56abe49e",
+      "missing": [
+        "EAX[27]",
+        "EAX[29]",
+        "EAX[30]"
+      ],
+      "predicted": [
+        "EAX[25]",
+        "EAX[26]",
+        "EAX[28]",
+        "EBX[25]"
+      ]
+    },
+    {
+      "input": "EAX[5]",
+      "state": "0xe1e9efe3ddc006bc56abe49e",
+      "missing": [
+        "EAX[7]"
+      ],
+      "predicted": [
+        "EAX[28]",
+        "EAX[5]",
+        "EAX[6]",
+        "EAX[8]",
+        "EFLAGS[2]=PF"
+      ]
+    }
+  ],
+  "over_examples": [
+    {
+      "input": "EAX[29]",
+      "state": "0xe1e9efe3fdc0069c56abe49e",
+      "spurious": [
+        "EFLAGS[0]=CF"
+      ]
+    },
+    {
+      "input": "EBX[10]",
+      "state": "0xe1e9ebe3ddc0069c56abe49e",
+      "spurious": [
+        "EAX[12]"
+      ]
+    },
+    {
+      "input": "EBX[16]",
+      "state": "0xe1e8efe3ddc0069c56abe49e",
+      "spurious": [
+        "EAX[17]",
+        "EAX[24]",
+        "EAX[25]",
+        "EAX[26]",
+        "EAX[27]"
+      ]
+    },
+    {
+      "input": "EAX[24]",
+      "state": "0xe1e9efe3dcc0069c56abe49e",
+      "spurious": [
+        "EFLAGS[11]=OF"
+      ]
+    },
+    {
+      "input": "EAX[26]",
+      "state": "0xe1e9efe3d9c0069c56abe49e",
+      "spurious": [
+        "EAX[29]"
+      ]
+    },
+    {
+      "input": "EBX[27]",
+      "state": "0xe9e9efe3ddc0069c56abe49e",
+      "spurious": [
+        "EFLAGS[0]=CF"
+      ]
+    },
+    {
+      "input": "EAX[11]",
+      "state": "0xe1e9efe3ddc00e9c56abe49e",
+      "spurious": [
+        "EAX[15]"
+      ]
+    },
+    {
+      "input": "EAX[7]",
+      "state": "0xe1e9efe3ddc0061c56abe49e",
+      "spurious": [
+        "EAX[28]"
+      ]
+    }
+  ],
+  "verdict": "UNSOUND"
+}
