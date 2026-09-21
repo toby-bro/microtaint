@@ -446,7 +446,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "pypcode", "pypcode.*", "unicorn", "unicorn.*", "qiling", "qiling.*",
-    "capstone", "capstone.*", "keystone", "keystone.*",
+    "capstone", "keystone",  # no module imports a capstone./keystone. SUBMODULE
     "riscv_encoder",  # test-only RISC-V encoder in tests/, on the path via pytest
 ]
 ignore_missing_imports = true
