@@ -187,8 +187,14 @@ def main() -> int:
     out['ct'] = ct
 
     # ---- DNS workload ------------------------------------------------------
-    dns = {'granularity': 'byte', 'can_taint_single_bit': False,
-           'can_discriminate_qr_vs_opcode': False, 'ran': False}
+    # Every verdict key starts null.  This dict used to be seeded with
+    # granularity 'byte' and can_discriminate_qr_vs_opcode False, which are the
+    # two the paper's table quotes, so a DNS run that failed still published
+    # them as though PANDA had been measured -- and it did fail, on a serial
+    # timeout, while the run exited 0.  The preflight path was fixed for this
+    # exact reason; this path was not.
+    dns: dict[str, Any] = {'granularity': None, 'can_taint_single_bit': None,
+                           'can_discriminate_qr_vs_opcode': None, 'ran': False}
     try:
         rd = run_dns()
         (RESULTS / '_panda_dns.json').write_text(json.dumps(rd, indent=2))
@@ -204,6 +210,11 @@ def main() -> int:
             'output_tainted': out_tainted,
             'ran': bool(rd.get('armed')),
         })
+        if dns['ran']:
+            # PANDA's taint2 shadows whole bytes and registers, so the flag byte
+            # is one tag: this is read off the run, not assumed before it.
+            dns.update({'granularity': 'byte', 'can_taint_single_bit': False,
+                        'can_discriminate_qr_vs_opcode': False})
         if rd.get('error'):
             dns['worker_error'] = rd['error'].splitlines()[-1][:200]
     except Exception as exc:
@@ -213,10 +224,21 @@ def main() -> int:
     out['dns'] = dns
 
     (RESULTS / 'panda.json').write_text(json.dumps(out, indent=2))
-    print(f"[panda] CT vuln={out['ct'].get('vuln_branch_leaks')} "
-          f"ct={out['ct'].get('ct_branch_leaks')} | DNS out_tainted="
-          f"{out['dns'].get('output_tainted')} (byte-granular, cannot separate QR/OPCODE) "
+    ct_ok, dns_ok = bool(out['ct'].get('ran')), bool(out['dns'].get('ran'))
+    print(f"[panda] CT {'vuln=%s ct=%s' % (out['ct'].get('vuln_branch_leaks'),
+                                           out['ct'].get('ct_branch_leaks'))
+                 if ct_ok else 'DID NOT RUN'} | "
+          f"DNS {'out_tainted=%s (byte-granular)' % out['dns'].get('output_tainted')
+                if dns_ok else 'DID NOT RUN'} "
           f"-> {RESULTS / 'panda.json'}")
+    # Exiting 0 on a half-run told the caller the comparison was made.
+    if not (ct_ok and dns_ok):
+        for name, ok, blob in (('CT', ct_ok, out['ct']), ('DNS', dns_ok, out['dns'])):
+            if not ok:
+                print(f'[panda] {name} produced no measurement: '
+                      f'{blob.get("error") or blob.get("worker_error") or "see the _panda_* file"}',
+                      file=sys.stderr)
+        return 1
     return 0
 
 

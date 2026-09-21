@@ -156,7 +156,10 @@ def driver():
             shutil.rmtree(share)
         os.makedirs(share)
         shutil.copy('/work/' + HARNESS, share + '/h')
-        panda.copy_to_guest(share)
+        # The guest mounts the share over a serial console, and the default
+        # 30 s is not always enough for a cold boot: the DNS run timed out on
+        # it while the two CT runs did not.
+        panda.copy_to_guest(share, timeout=300)
         panda.run_serial_cmd('chmod +x /root/hshare/h', timeout=60)
         panda.run_serial_cmd(
             'echo ' + PAYLOAD_B64 + ' | base64 -d > /root/payload', timeout=60)
