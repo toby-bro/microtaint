@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "taint_ir_c_api.h"
+#include "mt_clock.h"
 
 /* Opcodes.  Order is arbitrary but must match _OP_ID in taint_ir/exec.py. */
 enum {
@@ -304,9 +305,9 @@ static PyObject *py_bench(PyObject *self, PyObject *args) {
     if (load_slots(vals, v, n) < 0 || load_slots(tnts, t, n) < 0) {
         free(v); free(t); free(o); return NULL;
     }
-    struct timespec t0, t1;
+    uint64_t t0, t1;
     Py_BEGIN_ALLOW_THREADS
-    clock_gettime(CLOCK_MONOTONIC, &t0);
+    t0 = mt_now_ns();
     /* The output array is seeded once, not per iteration: what is being timed
      * is the taint program, and a per-iteration copy of the register file would
      * add several nanoseconds of unrelated work to a program that may itself
@@ -317,10 +318,9 @@ static PyObject *py_bench(PyObject *self, PyObject *args) {
     } else {
         for (long i = 0; i < iters; i++) ir_run(p, v, t, o);
     }
-    clock_gettime(CLOCK_MONOTONIC, &t1);
+    t1 = mt_now_ns();
     Py_END_ALLOW_THREADS
-    double ns = ((double)(t1.tv_sec - t0.tv_sec) * 1e9
-                 + (double)(t1.tv_nsec - t0.tv_nsec)) / (double)iters;
+    double ns = (double)(t1 - t0) / (double)iters;
     uint64_t sink = 0;
     for (int i = 0; i < n; i++) sink ^= o[i];
     free(v); free(t); free(o);
