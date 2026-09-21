@@ -104,6 +104,22 @@ jobs:
             git config --global --add safe.directory '*' &&
             python -c "import pathlib, shutil; shutil.rmtree('build', ignore_errors=True); [p.unlink() for ext in ('*.so', '*.pyd', '*.c', '*.o') for p in pathlib.Path('microtaint').rglob(ext)]" &&
             git checkout -- .
+          # Smoke-test every wheel, on the platform it was built for, before
+          # it can be uploaded.  This pipeline published three wheels, cut a
+          # release and pushed to PyPI without ever asking whether any of them
+          # produced a taint answer; a wheel whose extensions silently failed
+          # to build imports fine and would have shipped.
+          #
+          # cibuildwheel installs the wheel into a fresh environment and runs
+          # this there, so it tests the artifact rather than the checkout.
+          # It covers both taint implementations and a real emulated binary on
+          # all three platforms: Qiling EMULATES its guest, so the Linux ELF in
+          # tests/guests runs from Windows and macOS too.
+          #
+          # A failure here fails build_wheels, and `publish` needs it, so a
+          # wheel that cannot taint cannot be released.
+          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_COMMAND: pytest -o addopts= -p no:cacheprovider {project}/tests/test_wheel_smoke.py
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v7
