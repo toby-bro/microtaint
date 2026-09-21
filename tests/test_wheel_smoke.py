@@ -220,29 +220,80 @@ def test_both_implementations_carry_taint_through_the_binary() -> None:
         f'differential={sorted(differential)}, compiled={sorted(compiled)}')
 
 
-def test_the_shipped_guest_is_the_source_beside_it() -> None:
+#: How this worker might build the guest, best first.  The source includes no
+#: header at all -- inline syscalls and builtins only -- so a build needs a
+#: compiler and an ELF-capable linker and NO sysroot, which is what makes this
+#: worth attempting away from Linux at all.  On a Linux worker the system
+#: linker already emits ELF; elsewhere it takes lld, which the Windows LLVM
+#: install has and Apple's toolchain does not.
+_TOOLCHAINS: list[tuple[str, list[str]]] = [
+    ('gcc', ['-O0']),
+    ('cc', ['-O0']),
+    ('clang', ['-O0']),
+    ('clang', ['-O0', '--target=x86_64-unknown-linux-gnu', '-fuse-ld=lld']),
+]
+
+
+def _build_guest_here(tmp: str) -> tuple[str, str] | None:
+    """Build the guest with whatever this worker has; (path, how) or None."""
+    for name, extra in _TOOLCHAINS:
+        cc = shutil.which(name)
+        if not cc:
+            continue
+        out = os.path.join(tmp, 'guest_' + str(abs(hash((name, tuple(extra))))))
+        proc = subprocess.run(
+            [cc, *extra, '-static', '-nostdlib', '-fno-stack-protector',
+             '-o', out, _GUEST_SRC],
+            capture_output=True, text=True, check=False)
+        if proc.returncode == 0 and os.path.exists(out):
+            return out, ' '.join([name, *extra])
+    return None
+
+
+@pytest.mark.parametrize('taint_ir', ['0', '1'], ids=['differential', 'compiled'])
+def test_a_guest_this_worker_built_runs_too(taint_ir: str) -> None:
+    """The committed blob is one compiler's idea of this program.
+
+    Another toolchain lowers the same source differently, and the difference
+    is not cosmetic: gcc and clang builds of this guest leave taint in
+    different registers (RDX against RCX), because they allocate the fold
+    differently.  So a guest built HERE, by whatever the worker has, emulates
+    instructions the shipped blob does not contain, and the release gate
+    covers this platform's toolchain as well as its wheel.
+
+    Skipped where nothing can emit a Linux ELF, which is the case on a stock
+    macOS runner.  That costs only this test: the committed blob is what the
+    gate rests on, and it runs everywhere.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        built = _build_guest_here(tmp)
+        if built is None:
+            pytest.skip('no toolchain here emits a Linux ELF')
+        guest, how = built
+        # Which toolchain a release runner actually had is the thing worth
+        # reading back out of its log.  Not via capsys: asking for that
+        # fixture switches pytest to sys-level capture, and Qiling's logger
+        # needs a stream with a real fileno.
+        print(f'guest built by: {how}')
+        tainted = _emulate(guest, taint_ir)
+        assert 'ZF' in tainted, (
+            f'taint_ir={taint_ir}: a guest built here by {how} did not carry '
+            f'taint to the branch; tainted={sorted(tainted)}')
+
+
+def test_the_shipped_guest_still_matches_its_source() -> None:
     """A committed binary nobody can rebuild is a binary nobody can review.
 
-    Skipped where no compiler emits a Linux ELF, which is the case on the
-    very runners the blob exists for, so this runs on Linux and keeps the two
-    from drifting there.
+    Not a byte comparison: the compiler version decides those bytes, and
+    pinning them would fail on every toolchain but one.  What must hold is
+    that the source beside the blob still describes a guest the engine sees
+    taint in, so the two cannot drift apart unnoticed.
     """
-    if platform.system() != 'Linux' or platform.machine() != 'x86_64':
-        pytest.skip('only an x86-64 Linux host can rebuild this guest')
-    cc = shutil.which('gcc') or shutil.which('cc')
-    if not cc:
-        pytest.skip('no C compiler')
     with tempfile.TemporaryDirectory() as tmp:
-        rebuilt = os.path.join(tmp, 'guest')
-        proc = subprocess.run(
-            [cc, '-O0', '-static', '-nostdlib', '-fno-stack-protector',
-             '-Wl,--build-id=none', '-o', rebuilt, _GUEST_SRC],
-            capture_output=True, text=True, check=False)
-        if proc.returncode != 0:
-            pytest.skip(f'this toolchain cannot build the guest: {proc.stderr[:200]}')
-        # Not byte-identical: the compiler version decides that, and pinning it
-        # would make this fail on every toolchain but one.  What must hold is
-        # that the source still describes a guest the engine sees taint in.
-        assert 'ZF' in _emulate(rebuilt, '1'), (
-            'the committed guest and its source no longer agree: a build from '
-            'the .c beside it does not carry taint to the branch')
+        built = _build_guest_here(tmp)
+        if built is None:
+            pytest.skip('no toolchain here can rebuild the guest')
+        guest, how = built
+        assert 'ZF' in _emulate(guest, '1'), (
+            f'the committed guest and its source no longer agree: a build by '
+            f'{how} from the .c beside it does not carry taint to the branch')
