@@ -112,6 +112,10 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'slow: a release-grade check (full-bank sweep or full-budget fuzz); '
         'deselected unless --slow or MICROTAINT_SLOW_TESTS=1')
+    config.addinivalue_line(
+        'markers',
+        'smoke: runs against an INSTALLED wheel on a bare runner, so it may '
+        'use no fixture and no repository file but the guest beside it')
 
 
 def pytest_collection_modifyitems(config: pytest.Config,
