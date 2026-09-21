@@ -50,7 +50,16 @@ typedef struct IRProgC {
 
 #if defined(__x86_64__)
 #  include "taint_jit_x64.h"
-#  define BACKEND "x86-64"
+   /* MT_JIT_FORCE_WIN64 builds the x86-64 emitter for the Windows convention
+    * on this Linux host.  mt_taint_fn is then an `ms_abi` pointer, so calling
+    * `fn` below really does enter the Windows sequence -- different argument
+    * registers, two more callee-saved registers -- and the comparison against
+    * the interpreter is a test of that sequence and not of its compilation. */
+#  if MT_JIT_WIN64
+#    define BACKEND "x86-64/win64"
+#  else
+#    define BACKEND "x86-64"
+#  endif
 #elif defined(__aarch64__)
 #  include "taint_jit_a64.h"
 #  define BACKEND "aarch64"
@@ -282,6 +291,107 @@ static int directed(void) {
     return bad;
 }
 
+
+/* ---------------------------------------------------------------------------
+ * Does the emitted function keep the registers its convention says it must?
+ *
+ * The value comparison cannot see this.  The harness keeps nothing live in a
+ * callee-saved register across the call, so a backend that forgot to save one
+ * still agrees with the interpreter on every output, and the check passes
+ * while the bug ships.  That is not hypothetical: it is precisely the fault
+ * Win64 invites, because rsi and rdi are callee-saved there, caller-saved
+ * under SysV, and in the allocator's pool either way.
+ *
+ * So the registers are loaded with sentinels, the call is made by hand, and
+ * the sentinels are read back.  Returns a bitmask of the ones that did not
+ * survive, 0 when all did.
+ * ------------------------------------------------------------------------ */
+#if defined(__x86_64__)
+
+#if MT_JIT_WIN64
+#  define CS_ARG1 "rcx"
+#  define CS_ARG2 "rdx"
+#  define CS_ARG3 "r8"
+#else
+#  define CS_ARG1 "rdi"
+#  define CS_ARG2 "rsi"
+#  define CS_ARG3 "rdx"
+#endif
+
+struct cs_probe {
+    const uint64_t *v;
+    const uint64_t *t;
+    uint64_t       *o;
+    mt_taint_fn     fn;
+    uint64_t        got[7];
+};
+
+static const uint64_t CS_SENT[7] = {
+    0xB1B1B1B1B1B1B1B1ull,  /* rbx */
+    0x1212121212121212ull,  /* r12 */
+    0x1313131313131313ull,  /* r13 */
+    0x1414141414141414ull,  /* r14 */
+    0x1515151515151515ull,  /* r15 */
+    0x5151515151515151ull,  /* rsi, Win64 only */
+    0x7171717171717171ull,  /* rdi, Win64 only */
+};
+
+static int callee_saved_survived(mt_taint_fn fn, const uint64_t *v,
+                                 const uint64_t *t, uint64_t *o) {
+    struct cs_probe st;
+    st.v = v; st.t = t; st.o = o; st.fn = fn;
+    for (int i = 0; i < 7; i++) st.got[i] = 0;
+
+    __asm__ volatile(
+        "leaq %[st], %%r11\n\t"
+        "movq 0(%%r11), %%" CS_ARG1 "\n\t"
+        "movq 8(%%r11), %%" CS_ARG2 "\n\t"
+        "movq 16(%%r11), %%" CS_ARG3 "\n\t"
+        "movq 24(%%r11), %%r10\n\t"
+        "movabsq $0xB1B1B1B1B1B1B1B1, %%rbx\n\t"
+        "movabsq $0x1212121212121212, %%r12\n\t"
+        "movabsq $0x1313131313131313, %%r13\n\t"
+        "movabsq $0x1414141414141414, %%r14\n\t"
+        "movabsq $0x1515151515151515, %%r15\n\t"
+#if MT_JIT_WIN64
+        "movabsq $0x5151515151515151, %%rsi\n\t"
+        "movabsq $0x7171717171717171, %%rdi\n\t"
+        /* Win64 callers own 32 bytes of shadow space above the return
+         * address.  This callee does not use it, but the call is meant to
+         * look exactly like one from a Windows compiler.  32 is a multiple of
+         * 16, so the alignment the call needs is unchanged. */
+        "subq $32, %%rsp\n\t"
+        "call *%%r10\n\t"
+        "addq $32, %%rsp\n\t"
+#else
+        "call *%%r10\n\t"
+#endif
+        /* rsp is back where it was, so the operand's frame-relative address
+         * is valid again. */
+        "leaq %[st], %%r11\n\t"
+        "movq %%rbx, 32(%%r11)\n\t"
+        "movq %%r12, 40(%%r11)\n\t"
+        "movq %%r13, 48(%%r11)\n\t"
+        "movq %%r14, 56(%%r11)\n\t"
+        "movq %%r15, 64(%%r11)\n\t"
+        "movq %%rsi, 72(%%r11)\n\t"
+        "movq %%rdi, 80(%%r11)\n\t"
+        : [st] "+m" (st)
+        :
+        : "rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11",
+          "rbx", "r12", "r13", "r14", "r15", "memory", "cc");
+
+    /* rsi and rdi are caller-saved under SysV, so the emitter is entitled to
+     * leave anything in them there; only Win64 has to bring them back. */
+    int n = MT_JIT_WIN64 ? 7 : 5;
+    int bad = 0;
+    for (int i = 0; i < n; i++)
+        if (st.got[i] != CS_SENT[i]) bad |= 1 << i;
+    return bad;
+}
+#define HAVE_CS_PROBE 1
+#endif  /* __x86_64__ */
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "directed") == 0) {
         printf("%s backend, one opcode at a time:\n", BACKEND);
@@ -290,7 +400,7 @@ int main(int argc, char **argv) {
         return bad ? 1 : 0;
     }
     int iters = (argc > 1) ? atoi(argv[1]) : 4000;
-    int failures = 0, compiled = 0, declined = 0;
+    int failures = 0, compiled = 0, declined = 0, cs_bad = 0;
 
     for (int it = 0; it < iters; it++) {
         /* Sized to cross the register file: ten nodes fit in registers on both
@@ -303,6 +413,23 @@ int main(int argc, char **argv) {
         mt_taint_fn fn = mt_jit_compile(p, &code, &sz);
         if (!fn) { declined++; free_program(p); continue; }
         compiled++;
+
+#ifdef HAVE_CS_PROBE
+        {
+            uint64_t pv[N_SLOTS], pt[N_SLOTS], po[N_SLOTS];
+            for (int i = 0; i < N_SLOTS; i++) { pv[i] = rnd(); pt[i] = rnd(); po[i] = 0; }
+            int bad = callee_saved_survived(fn, pv, pt, po);
+            if (bad) {
+                if (cs_bad == 0) {
+                    static const char *RN[7] = {"rbx","r12","r13","r14","r15","rsi","rdi"};
+                    printf("CLOBBERED iter %d:", it);
+                    for (int i = 0; i < 7; i++) if (bad & (1 << i)) printf(" %s", RN[i]);
+                    printf("  (callee-saved under this convention)\n");
+                }
+                cs_bad++;
+            }
+        }
+#endif
 
         for (int trial = 0; trial < 4; trial++) {
             uint64_t vals[N_SLOTS], taints[N_SLOTS];
@@ -349,6 +476,11 @@ int main(int argc, char **argv) {
 
     printf("%s backend: %d programs compiled, %d declined, %d mismatches\n",
            BACKEND, compiled, declined, failures);
+#ifdef HAVE_CS_PROBE
+    printf("  callee-saved: %d programs clobbered a register they must keep\n",
+           cs_bad);
+    failures += cs_bad;
+#endif
 #ifdef MT_JIT_DEBUG
     { extern int mt_dbg_spill, mt_dbg_takereg, mt_dbg_default;
       printf("  declines: spill-slots %d, no-register %d, no-rule %d\n",

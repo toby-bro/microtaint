@@ -22,6 +22,7 @@ the developer's tools, and a machine without them can still run everything else.
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 import sysconfig
@@ -92,6 +93,60 @@ def test_host_backend_matches_the_interpreter_on_random_programs(host_harness: s
     # nothing, so the count that matters is what it accepted.
     compiled = int(out.split('backend:')[1].split()[0])
     assert compiled > int(_ITERS) // 2, f'the emitter took almost nothing: {out}'
+
+
+@pytest.fixture(scope='module')
+def win64_harness(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """The x86-64 emitter built for the WINDOWS convention, run on this host.
+
+    There is no Windows runner here and cross-compiling would only prove the
+    file compiles, which is not the part that breaks.  What breaks is the
+    convention: Windows passes the three pointers in rcx/rdx/r8 rather than
+    rdi/rsi/rdx, and requires rsi and rdi to come back unchanged, and both are
+    registers this emitter uses.
+
+    So the emitter is built in Win64 mode and the result is called through an
+    `ms_abi` pointer, which every x86-64 GCC and clang supports on Linux.  The
+    Windows entry sequence is then genuinely EXECUTED and compared against the
+    interpreter on this machine.
+    """
+    if platform.machine() not in ('x86_64', 'AMD64'):
+        pytest.skip('the Win64 convention is an x86-64 question')
+    cc = sysconfig.get_config_var('CC') or 'cc'
+    cc = cc.split()[0]
+    if not shutil.which(cc):
+        pytest.skip(f'no host compiler ({cc})')
+    out = str(tmp_path_factory.mktemp('jit') / 'selftest_win64')
+    return _build(cc, ['-DMT_JIT_FORCE_WIN64'], out)
+
+
+def test_win64_backend_matches_the_interpreter_per_opcode(win64_harness: str) -> None:
+    out = _run([win64_harness, 'directed'])
+    assert '0 opcodes wrong' in out, out
+
+
+def test_win64_backend_matches_the_interpreter_on_random_programs(
+        win64_harness: str) -> None:
+    out = _run([win64_harness, _ITERS])
+    assert '0 mismatches' in out, out
+    compiled = int(out.split('backend:')[1].split()[0])
+    assert compiled > int(_ITERS) // 2, f'the emitter took almost nothing: {out}'
+
+
+@pytest.mark.parametrize('which', ['host_harness', 'win64_harness'])
+def test_the_emitter_keeps_the_registers_its_convention_reserves(
+        which: str, request: pytest.FixtureRequest) -> None:
+    """Agreeing on every output does not mean the call was legal.
+
+    This harness keeps nothing live in a callee-saved register across the
+    call, so an emitter that forgot to save one still produces the right
+    answers and the comparison above passes.  Dropping the rsi/rdi save from
+    the Win64 prologue is invisible to it, and that is the single most likely
+    way this port goes wrong.  The selftest therefore loads sentinels into
+    every register the active convention reserves and checks them afterwards.
+    """
+    out = _run([request.getfixturevalue(which), _ITERS])
+    assert '0 programs clobbered' in out, out
 
 
 def test_aarch64_backend_matches_the_interpreter_per_opcode(a64_harness: str) -> None:
