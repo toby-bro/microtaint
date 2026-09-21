@@ -16,7 +16,8 @@ MASK64 = 0xFFFFFFFFFFFFFFFF
 
 
 def sweep(isa: str, n_per: int = 40, seed: int = 7) -> int:
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
+
     from tests.oracle_harness import UC_DESCS, build_circuit, classify, ground_truth, reference_taint
     from tests.perop_floors import NeedsMonolithic, Unsupported, engine_perop_floors
     from tests.test_perop_floors import _gt_vectors, _under_bits
@@ -96,7 +97,8 @@ def sweep_slicewise(isa: str, n_per: int = 40, seed: int = 11) -> int:
     """Per-output-slice window sweep (the integration model): report slice
     coverage (clean vs total), exactness on clean slices vs the oracle, and any
     new under-taint on clean slices (must be 0)."""
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
+
     from tests.oracle_harness import UC_DESCS, build_circuit, ground_truth, reference_taint
     from tests.perop_floors import NeedsMonolithic, Unsupported, perop_floors_slicewise
     from tests.test_perop_floors import _gt_vectors

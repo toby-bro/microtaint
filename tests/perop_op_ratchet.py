@@ -70,7 +70,7 @@ def _vector(reg_names: list[str], label: str,
 
 def measure(isas: list[str] | None = None) -> Measured:
     """-> {isa: {'ops': {label: n}, 'declined': [label, ...]}}"""
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
 
     out: Measured = {}
     specs = load_bank(isas=set(isas) if isas else None)

@@ -594,7 +594,8 @@ def engine_perop_floors(arch: Architecture,
 
 
 if __name__ == '__main__':
-    from benchmark.instruction_bank import isa_registers
+    from instruction_bank import isa_registers
+
     from microtaint.types import Architecture as A
     from tests.oracle_harness import classify, reference_taint
     regs = list(isa_registers('AMD64'))

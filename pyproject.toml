@@ -372,7 +372,17 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 disallow_any_generics = true
 disallow_any_explicit = true
-mypy_path = ["stubs"]
+# scripts/sweep/pinned holds the instruction bank the perf and coverage tests
+# draw their cases from.  It is excluded from checking below (it is a pinned
+# snapshot) but still has to be findable, or every test importing it is an
+# import-not-found.
+# Two directories that are not packages but that other code imports from by
+# bare module name at runtime, after putting them on sys.path: the pinned
+# instruction bank the perf and coverage tests draw their cases from, and the
+# table5 campaign helpers that rq6-generalisation/campaign.py imports for its
+# flag scoring.  Both are excluded from checking below; they still have to be
+# findable, or every importer is an import-not-found.
+mypy_path = ["stubs", "scripts/sweep/pinned"]
 no_implicit_optional = false
 strict_equality = true
 strict = true
@@ -411,10 +421,28 @@ exclude = [
     # Not ours to type-check, and not in git either.
     "artifacts/.*/external/",
     "artifacts/.*/results/",
+    # The same exemption scripts/sweep/pinned/ gets, for the same reason: this
+    # is the campaign that produced the published cross-ISA numbers, vendored
+    # verbatim, and its own README says correctness is gated by
+    # validate_table5_oracle.py rather than by restyling it.  Crawling it also
+    # defeats the follow_imports override that campaign.py's optional import
+    # of mt_multiarch needs.
+    "artifacts/ndss27/rq6-generalisation/table5/",
 ]
 
 # C-extension / native deps with no bundled type stubs (assemblers and emulators
 # used only by tests and tooling).
+[[tool.mypy.overrides]]
+# campaign.py imports written_flags from the table5 campaign helpers, after
+# putting their directory on sys.path, and falls back to None when the import
+# fails.  mypy crawls table5/ anyway, infers the non-Optional function type,
+# and then calls the fallback an error and every `is None` test below it dead
+# code.  Skipping the follow makes the import Any, which is what an optional
+# import of a module this project does not own actually is.
+module = ["mt_multiarch"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]
 module = [
     "pypcode", "pypcode.*", "unicorn", "unicorn.*", "qiling", "qiling.*",

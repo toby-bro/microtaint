@@ -89,7 +89,8 @@ def test_value_stable_still_hits() -> None:
 def test_classifier_flags_mov_vi_and_add_vd() -> None:
     # Pure structural check (no emulation): mov/not/movzx are value-INDEPENDENT;
     # flag-setting / arithmetic ops are value-DEPENDENT.
-    from benchmark.instruction_bank import isa_registers
+    from instruction_bank import isa_registers
+
     from microtaint.instrumentation.ast import EvalContext
     from microtaint.simulator import CellSimulator
     from microtaint.sleigh.engine import generate_static_rule

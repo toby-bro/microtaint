@@ -17,6 +17,14 @@ from microtaint.sleigh.lifter import clear_contexts
 # Make cell_c importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'microtaint', 'instrumentation', 'cell_c'))
 
+# The instruction bank the perf and coverage tests draw their cases from.  It
+# used to be imported as `benchmark.instruction_bank`, from a `benchmark/`
+# directory that was never in the repository, so twenty-two test modules failed
+# at collection in a clean clone and `uv run pytest` did not start.  The bank
+# itself is here, under scripts/sweep/pinned/, pinned by MANIFEST.sha256
+# because the perf ratchet compares against it.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts', 'sweep', 'pinned'))
+
 if os.environ.get('MICROTAINT_USE_C') == '1':
     import microtaint.simulator as sim_mod
 

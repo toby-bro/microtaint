@@ -28,7 +28,7 @@ from microtaint.simulator import CellSimulator, MachineState
 from microtaint.sleigh.engine import generate_static_rule
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
-from instruction_bank import load_bank  # type: ignore[import-not-found]
+from instruction_bank import load_bank
 
 from microtaint.types import Architecture, Register
 
@@ -42,7 +42,7 @@ _CASE_LABELS = [
     'nor $2, $4, 7',
 ]
 
-_MIPS_SPEC = load_bank(isas=['MIPS64BE'])['MIPS64BE']
+_MIPS_SPEC = load_bank(isas={'MIPS64BE'})['MIPS64BE']
 _CASE_BYTES = {i.label: i.bytes for i in _MIPS_SPEC.instructions if i.label in _CASE_LABELS}
 
 

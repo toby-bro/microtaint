@@ -61,11 +61,11 @@ well-formed report:
   reported. Most of one ISA's cases were scored that way on 2026-09-12, better
   than a third of that whole campaign.
 
-So `validate_oracle.py` checks the properties that make a zero mean something,
+So `validate_table5_oracle.py` checks the properties that make a zero mean something,
 and exits non-zero if any fails:
 
 ```sh
-python validate_oracle.py --cases 4 --forms 8
+python validate_table5_oracle.py --cases 4 --forms 8
 ```
 
 | property | what it proves |
@@ -240,8 +240,8 @@ Some forms are excluded from scoring, and the campaign says which and why:
 
 ## Files
 
-Everything here except `run_table5.sh`, `table5.py` and `validate_oracle.py` is
+Everything here except `run_table5.sh`, `table5.py` and `validate_table5_oracle.py` is
 vendored from the campaign harness that produced the published numbers, so the
 artifact reproduces the paper rather than a re-derivation of it. The files carry
 lint-suppression headers for that reason: restyling proven code is a behaviour
-risk, and correctness is gated by `validate_oracle.py` instead.
+risk, and correctness is gated by `validate_table5_oracle.py` instead.

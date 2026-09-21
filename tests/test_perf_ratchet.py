@@ -85,7 +85,7 @@ LOG_DIR = _HERE / 'perf.log.d'
 # shared with the benchmark scripts; it stores pre-assembled bytes, so the gate
 # needs no keystone. See benchmark/instruction_bank/README.md.
 sys.path.insert(0, str(_HERE.parent / 'benchmark'))
-from instruction_bank import load_bank  # type: ignore[import-not-found]  # noqa: E402
+from instruction_bank import load_bank  # noqa: E402
 
 FULL = 0xFFFFFFFFFFFFFFFF
 

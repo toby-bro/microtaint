@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
-from instruction_bank import isa_registers  # type: ignore[import-not-found]
+from instruction_bank import isa_registers
 
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext

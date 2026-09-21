@@ -130,7 +130,7 @@ IsaTally = tuple[int, 'Counter[str]', int]
 
 
 def run(isas: list[str] | None = None) -> dict[str, IsaTally]:
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
     specs = load_bank(isas=set(isas) if isas else None)
     per_isa: dict[str, IsaTally] = {}
     for name, spec in specs.items():

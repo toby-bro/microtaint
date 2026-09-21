@@ -52,7 +52,8 @@ def test_ground_truth_rsp_depends_on_rsp_not_rbp() -> None:
 
 def _answers(taint: dict[str, int],
              ) -> tuple[dict[str, int], dict[str, int]]:
-    from benchmark.instruction_bank import isa_registers
+    from instruction_bank import isa_registers
+
     from microtaint.types import Architecture
     from tests.oracle_harness import _uc_desc_amd64, build_circuit, reference_taint
     from tests.perop_c_bank import uc_initial_state

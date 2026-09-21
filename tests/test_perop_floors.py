@@ -62,7 +62,8 @@ def soundness_report(isa: str, n_per: int, seed: int = 7,
                      ) -> tuple[int, int, int, list[object]]:
     """Three-way check: per-op vs ground truth vs engine oracle.  Returns
     (n_cases, n_exact_vs_gt, n_new_under, new_under_examples)."""
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
+
     from tests.oracle_harness import UC_DESCS, build_circuit, classify, ground_truth, reference_taint
     from tests.perop_floors import Unsupported, engine_perop_floors
 
@@ -116,7 +117,8 @@ def slicewise_report(isa: str, n_per: int, seed: int = 11,
     """Per-output-slice window (the integration model): trust per-op only on
     outputs whose cone is reconvergence-free.  Returns
     (n_cases, tot_slices, clean_slices, n_new_under_on_clean, examples)."""
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
+
     from tests.oracle_harness import UC_DESCS, build_circuit, ground_truth, reference_taint
     from tests.perop_floors import NeedsMonolithic, Unsupported, perop_floors_slicewise
 
@@ -209,8 +211,8 @@ def test_perop_control_flow_routes_to_monolithic() -> None:
     the monolithic window (NeedsMonolithic) rather than execute the move
     unconditionally and drop the not-taken side's taint."""
     import keystone
+    from instruction_bank import isa_registers
 
-    from benchmark.instruction_bank import isa_registers
     from microtaint.types import Architecture
     from tests.perop_floors import NeedsMonolithic, perop_floors_taint
 
@@ -231,8 +233,8 @@ def test_perop_core_alu_exact_vs_ground_truth() -> None:
     (ZF/SF via compare ops keep a sound coarse floor, tightened at integration.)"""
     pytest.importorskip('unicorn')
     import keystone
+    from instruction_bank import isa_registers
 
-    from benchmark.instruction_bank import isa_registers
     from microtaint.types import Architecture
     from tests.oracle_harness import UC_DESCS, classify, ground_truth
     from tests.perop_floors import perop_floors_taint
@@ -266,8 +268,8 @@ def test_perop_reconvergence_routes_to_monolithic() -> None:
     result against the full product -> shared source) are reconvergent: the per-op
     window widens to the monolithic differential rather than over-taint."""
     import keystone
+    from instruction_bank import isa_registers
 
-    from benchmark.instruction_bank import isa_registers
     from microtaint.types import Architecture
     from tests.perop_floors import NeedsMonolithic, perop_floors_taint
 

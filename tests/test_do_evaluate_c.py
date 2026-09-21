@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'benchmark'))
-from instruction_bank import load_bank  # type: ignore[import-not-found]
+from instruction_bank import load_bank
 
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.simulator import CellSimulator
@@ -23,7 +23,7 @@ from microtaint.sleigh.engine import generate_static_rule
 
 
 def _check_isa(isa: str) -> tuple[int, int, list[tuple[str, str, str, str]]]:
-    spec = load_bank(isas=[isa])[isa]
+    spec = load_bank(isas={isa})[isa]
     sim = CellSimulator(spec.arch)
     rn = [r.name for r in spec.regs]
     rbits = {r.name: r.bits for r in spec.regs}

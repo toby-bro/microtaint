@@ -6,7 +6,7 @@
 #   to the harness that produced the published numbers.
 #   Style only, suppressed rather than rewritten: vendored from the campaign
 #   that produced the published numbers.  Correctness is gated by
-#   validate_oracle.py, not by restyling proven code.
+#   validate_table5_oracle.py, not by restyling proven code.
 # Experiment script, not library code: see artifacts/ndss27/README.md,
 # "Lint and type checking", for why annotations are not required here.
 # mypy: disable-error-code="no-untyped-def, no-untyped-call, type-arg, no-any-return, var-annotated, assignment, index, arg-type, union-attr, operator, attr-defined, misc, call-overload, return-value, unreachable"

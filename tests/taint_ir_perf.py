@@ -21,7 +21,8 @@ import random
 from pathlib import Path
 from typing import TypedDict
 
-from benchmark.instruction_bank import ISASpec
+from instruction_bank import ISASpec
+
 from microtaint.taint_ir.ir import IRKey, IRProg
 from microtaint.types import Architecture
 
@@ -228,7 +229,7 @@ def summarize(isa: str, res: IsaPerf) -> str:
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
 
     ap = argparse.ArgumentParser()
     ap.add_argument('--isas', nargs='*', default=None)

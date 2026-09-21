@@ -28,8 +28,8 @@ from __future__ import annotations
 import random
 
 import pytest
+from instruction_bank import isa_registers
 
-from benchmark.instruction_bank import isa_registers
 from microtaint.types import Architecture
 
 _ARCH = Architecture.AMD64
@@ -152,7 +152,7 @@ def test_it_is_not_an_x86_rule() -> None:
     free.  This is the check that says so.
     """
     pytest.importorskip('unicorn')
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
 
     spec = load_bank(isas={'ARM64'})['ARM64']
     forms = [i for i in spec.instructions

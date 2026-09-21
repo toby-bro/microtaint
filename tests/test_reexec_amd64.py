@@ -16,7 +16,8 @@ import pytest
 from microtaint.reexec import AVAILABLE, FLAG_BITS, NativeReExec
 
 if TYPE_CHECKING:
-    from benchmark.instruction_bank import ISASpec
+    from instruction_bank import ISASpec
+
     from microtaint.simulator import CellSimulator
 
 pytestmark = pytest.mark.skipif(not AVAILABLE, reason='native re-exec needs an x86_64 host with cc')
@@ -44,7 +45,8 @@ def rx() -> NativeReExec:
 
 @pytest.fixture(scope='module')
 def bank_sim() -> tuple[ISASpec, CellSimulator]:
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
+
     from microtaint.simulator import CellSimulator
     bank = load_bank(isas={'AMD64'})['AMD64']
     return bank, CellSimulator(bank.arch)

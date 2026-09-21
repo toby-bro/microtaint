@@ -30,8 +30,8 @@ from __future__ import annotations
 import random
 
 import pytest
+from instruction_bank import isa_registers
 
-from benchmark.instruction_bank import isa_registers
 from microtaint.taint_ir.frompcode import Unsupported, build_ir
 from microtaint.types import Architecture
 

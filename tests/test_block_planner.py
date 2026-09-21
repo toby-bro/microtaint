@@ -240,7 +240,7 @@ def test_the_planner_covers_blocks_on_every_bank_isa(isa: str) -> None:
     bench = Path(__file__).resolve().parent.parent / 'benchmark'
     if str(bench) not in sys.path:
         sys.path.insert(0, str(bench))
-    from instruction_bank import load_bank  # type: ignore[import-not-found]
+    from instruction_bank import load_bank
 
     from microtaint.taint_ir.blocks import _translate
     from microtaint.taint_ir.frompcode import Builder

@@ -9,7 +9,7 @@
 #   vendored from the campaign that produced the published numbers, and
 #   e.g. adding zip(strict=True) would change behaviour where the
 #   original silently truncated.  Correctness is gated by
-#   validate_oracle.py, not by restyling proven code.
+#   validate_table5_oracle.py, not by restyling proven code.
 # Vendored verbatim from the soundness-campaign harness; see README.md.
 # Experiment script, not library code: see artifacts/ndss27/README.md,
 # "Lint and type checking", for why annotations are not required here.
@@ -42,7 +42,7 @@ if any fails.
                 in polarity i; that single form produced 2,810 of the 2,875
                 "under-taints" in the 12h campaign of 2026-07-24.
 
-Run:  python validate_oracle.py [--cases N] [--json PATH]
+Run:  python validate_table5_oracle.py [--cases N] [--json PATH]
 """
 from __future__ import annotations
 

@@ -352,7 +352,8 @@ def run_bank_perop_c(*, isas: list[str] | None = None, n_dense: int = 3,
     reports genuine precision gains as under-taint.  `ref=Ref.DIFFERENTIAL` keeps
     the old comparison for measuring how the two answers differ.
     """
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
+
     from tests import oracle_harness as oh
 
     if step is None:

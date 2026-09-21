@@ -708,7 +708,7 @@ def run_bank(engine_fn: EngineFn, *, isas: list[str] | None = None,
                             + precision).  Uses only the sparse vectors (GT is
                             per-bit-expensive and exact only for few bits).
     """
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
 
     rep = Report()
     specs = load_bank(isas=set(isas) if isas else None)

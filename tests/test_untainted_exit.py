@@ -27,8 +27,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import pytest
+from instruction_bank import load_bank
 
-from benchmark.instruction_bank import load_bank
 from microtaint.instrumentation.ast import EvalContext, LogicCircuit
 from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule

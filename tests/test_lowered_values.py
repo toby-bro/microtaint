@@ -126,8 +126,8 @@ class _Cpu:
 @pytest.mark.parametrize('isa', ['AMD64', 'RISCV64'])
 def test_lowered_values_match_the_cpu(isa: str) -> None:
     import oracle_harness as OH  # type: ignore[import-not-found]
+    from instruction_bank import load_bank
 
-    from benchmark.instruction_bank import load_bank
     from microtaint.instrumentation.cell_c import taint_ir_c
     from microtaint.taint_ir import frompcode
     from microtaint.taint_ir.exec import compile_program
@@ -236,7 +236,8 @@ def test_lowered_values_match_the_cpu(isa: str) -> None:
 
 def test_value_mode_does_not_change_the_taint_program() -> None:
     """The shipped path must be untouched: same instruction, same taint program."""
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
+
     from microtaint.taint_ir import frompcode
 
     spec = load_bank()['AMD64']
@@ -258,7 +259,8 @@ def test_both_mode_agrees_with_each_alone() -> None:
     registers once per block instead of once per instruction.  What it must not
     do is answer either question differently from the single-purpose program.
     """
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
+
     from microtaint.taint_ir import frompcode
 
     spec = load_bank()['AMD64']
@@ -298,7 +300,8 @@ def test_publishing_values_is_nearly_free() -> None:
     """
     import statistics
 
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
+
     from microtaint.taint_ir import frompcode
     from microtaint.taint_ir.exec import serialize_for_c
 

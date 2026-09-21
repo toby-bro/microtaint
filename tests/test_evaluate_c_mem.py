@@ -14,8 +14,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from instruction_bank import isa_registers
 
-from benchmark.instruction_bank import isa_registers
 from microtaint.emulator.shadow import BitPreciseShadowMemory
 from microtaint.instrumentation.ast import EvalContext
 from microtaint.instrumentation.cell_c.cell_c import PCodeCellEvaluatorC

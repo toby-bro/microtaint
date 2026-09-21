@@ -9,7 +9,7 @@
 #   vendored from the campaign that produced the published numbers, and
 #   e.g. adding zip(strict=True) would change behaviour where the
 #   original silently truncated.  Correctness is gated by
-#   validate_oracle.py, not by restyling proven code.
+#   validate_table5_oracle.py, not by restyling proven code.
 # Vendored verbatim from the soundness-campaign harness; see README.md.
 # Experiment script, not library code: see artifacts/ndss27/README.md,
 # "Lint and type checking", for why annotations are not required here.

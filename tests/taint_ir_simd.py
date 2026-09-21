@@ -156,8 +156,8 @@ def run_simd_bank(n_vec: int = 5, seed: int = 99,
                              list[str]]:
     """-> (n_cases, {label: [(lane, missing_bits, taint)]})"""
     import unicorn
+    from instruction_bank import load_bank
 
-    from benchmark.instruction_bank import load_bank
     from microtaint.taint_ir.frompcode import build_ir
 
     spec = load_bank(isas={'AMD64_SIMD'})['AMD64_SIMD']

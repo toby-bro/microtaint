@@ -66,13 +66,12 @@ import multiarch_oracle as O
 # this pass had before flags were added: the fallback is never worse than the
 # status quo, and it says so rather than silently scoring the wrong thing.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'table5'))
+_WRITTEN_FLAGS_ERR = ''
 try:
     from mt_multiarch import written_flags as _written_flags
-except Exception as _exc:
+except Exception as _exc:  # the fallback scores no flag at all, and says so
     _written_flags = None
     _WRITTEN_FLAGS_ERR = str(_exc)
-else:
-    _WRITTEN_FLAGS_ERR = None
 import unicorn.riscv_const as _rv
 from unicorn import UC_ARCH_RISCV, UC_MODE_RISCV64
 
@@ -254,6 +253,8 @@ def defined_flags(b: Bench, code: bytes) -> frozenset:
         # test showing 0 oracle flag bits and 0 engine flag bits.
         shim = _FlagShim(b.arch.name, [_FlagName(n) for n, _ in b.flag_regs])
         try:
+            # `shim` is the whole point: see the comment above.  It is
+            # structurally what written_flags reads, not an ISA.
             got = frozenset(_written_flags(shim, code)) & {n for n, _ in b.flag_regs}
         except Exception:  # unknown means "do not score it"
             got = frozenset()
@@ -332,7 +333,7 @@ def quarantine_unexecutable(b, rng):
             taint = gen_taint(rng, b, srcs)
             state, taint = b.canonicalize(state, taint)
             try:
-                O.bitflip_lower_bound(b, code, state, taint)  # type: ignore[arg-type]
+                O.bitflip_lower_bound(b, code, state, taint)
                 ran += 1
                 break
             except Exception:  # not executing IS the result here
@@ -500,7 +501,7 @@ def pass1_arch(b: Bench, n, seed, out_path, beat=10.0):
         'scored_registers': list(b.regs),
         'scored_flags': [n for n, _ in b.flag_regs],
         'flag_scoring': ('per-instruction, only flags the lift defines'
-                         if _written_flags else 'UNAVAILABLE'),
+                         if _written_flags is not None else 'UNAVAILABLE'),
         'per_form': dict(sorted(per_form.items())),
     }
 
@@ -536,7 +537,8 @@ def pass2_verify(report):
     # raises CaseInvalid on any incomplete run and starts every run from a
     # pristine context, so the independence pass 2 was written for is kept.
     try:
-        lb = O.bitflip_lower_bound(b, code, state, taint)
+        # A Bench carries the attributes the oracle reads off an IsaSpec.
+        lb = O.bitflip_lower_bound(b, code, state, taint)  # type: ignore[arg-type]
     except Exception as exc:
         return 0, {'error': f'could not re-run: {exc}', 'unverifiable': True}
 
@@ -630,7 +632,10 @@ def main():
                     f'{cov.get("attempted", 0)} attempted, so this ISA is an '
                     f'absence of measurement, not a clean result',
                 )
-            for form, n in sorted(cov.get('dead_forms', {}).items()):
+            # The coverage dict mixes counters and maps, so mypy types this
+            # access as int | dict and cannot know which one it is here.
+            _dead: object = cov.get('dead_forms') or {}
+            for form, n in sorted(_dead.items() if isinstance(_dead, dict) else []):
                 problems.append(
                     f'{label}: {form!r} could not be executed on ANY of its {n} '
                     f'cases, so it is untested rather than sound',

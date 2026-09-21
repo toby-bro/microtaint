@@ -10,8 +10,8 @@ from __future__ import annotations
 import collections
 
 import pytest
+from instruction_bank import all_instructions
 
-from benchmark.instruction_bank import all_instructions
 from microtaint.emulator import archregs
 from microtaint.emulator.wrapper import X64_FORMAT, register_file
 from microtaint.instrumentation.cell import _build_reg_maps, _get_decoded

@@ -81,8 +81,7 @@ def _pcode(isa: str, code: bytes, base: int) -> list[PcodeOp]:
 def test_block_equivalence_big_endian(isa: str) -> None:
     import oracle_harness as OH  # type: ignore[import-not-found]
     import unicorn
-
-    from benchmark.instruction_bank import load_bank
+    from instruction_bank import load_bank
 
     bank = load_bank()
     if isa not in bank:

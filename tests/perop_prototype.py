@@ -245,7 +245,8 @@ def engine_scheme_b(arch: Architecture,
 
 if __name__ == '__main__':
     # quick single-instruction sanity vs the differential oracle
-    from benchmark.instruction_bank import isa_registers
+    from instruction_bank import isa_registers
+
     from microtaint.types import Architecture as A
     from tests.oracle_harness import classify, reference_taint
     regs = list(isa_registers('AMD64'))

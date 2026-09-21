@@ -29,8 +29,8 @@ imm-logic sequences) was invisible -- this test inspects sub-circuits.
 from __future__ import annotations
 
 import pytest
+from instruction_bank import load_bank
 
-from benchmark.instruction_bank import load_bank
 from microtaint.instrumentation.ast import (
     ChainedCircuit,
     EvalContext,

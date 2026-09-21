@@ -46,8 +46,8 @@ from __future__ import annotations
 
 import pytest
 from _pytest.mark import ParameterSet
+from instruction_bank import isa_registers
 
-from benchmark.instruction_bank import isa_registers
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture
 

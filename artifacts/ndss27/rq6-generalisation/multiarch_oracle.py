@@ -566,7 +566,7 @@ def bitflip_lower_bound(spec: IsaSpec, code: bytes, state: dict[str, int], taint
     if w is None:
         w = getattr(spec, 'canon', None)
     _narrow = w is not None and w < spec.bits
-    if _narrow:
+    if _narrow and w is not None:  # the second test is for the type checker
         _low = (1 << w) - 1
         _sign = 1 << (w - 1)
         _high = spec.mask ^ _low
