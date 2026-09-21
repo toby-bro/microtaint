@@ -159,7 +159,18 @@ exclude = [
     "/microtaint/emulator/heap.py",
     "/microtaint/emulator/reporter.py",
 ]
-mypy-args = ["--ignore-missing-imports", "--disable-error-code=attr-defined"]
+# mypyc stops on any message mypy produced, NOTES included: build.py tests
+# `result.errors`, which is the message list and not an error count.  The hook
+# checks only the modules it compiles, and none of them import angr, qiling or
+# the other engines, so `warn_unused_configs` reports those override sections
+# as unused every time.  The check is a whole-project one and means nothing on
+# a subset, so it is scoped out here rather than in [tool.mypy], where `mypy .`
+# keeps it and still reports genuinely stale sections.
+mypy-args = [
+    "--ignore-missing-imports",
+    "--disable-error-code=attr-defined",
+    "--no-warn-unused-configs",
+]
 options = { debug_level = "0" }
 
 # ---------------------------------------------------------------------------
