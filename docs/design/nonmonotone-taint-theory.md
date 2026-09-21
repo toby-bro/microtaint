@@ -81,10 +81,10 @@ For the residue where Mechanism A cannot orient consistently, the codebase alrea
 **exact** replacement terms instead of floors:
 
 * `SignedOverflowTaintExpr` — `_build_signed_overflow_taint` (engine.py:837); proof
-  `benchmark/soundness/prove_signed_overflow.py` (identity + no-under-taint for w=2..64,
+  `artifacts/ndss27/rq2-comparison/proofs/prove_signed_overflow.py` (identity + no-under-taint for w=2..64,
   no-over-taint for w<=6).
 * `VariableBitSelectExpr` — `_build_variable_bit_select_taint`; proof
-  `benchmark/soundness/prove_variable_bit_select.py`.
+  `artifacts/ndss27/rq2-comparison/proofs/prove_variable_bit_select.py`.
 
 These are the template. Each is a small `Expr` computing the *exact* sensitivity of one
 non-monotone primitive from `(V,T)` in closed form, gated to fire only when the slice is
@@ -295,7 +295,7 @@ delta (the precision we are buying back).
    ARM `cmp;cset` splits the comparison across two instructions with correlated flags
    (N,V both from X1-X2) materialized in between, so the sequence stays over-tainted even
    though each rule is exact.  This is the intermediate-materialization boundary.
-5. **Document the irreducible boundary (§6)** in `KNOWN_ISSUES.md`; it is the honest
+5. **Document the irreducible boundary (§6)** in this file; it is the honest
    statement of the avalanche limitation the paper already claims.
 
 Net: four floors -> two free polarity rules + two Z3-proved exact terms + a characterised

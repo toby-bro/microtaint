@@ -28,7 +28,7 @@
 
 `CellSimulator` forces `use_unicorn=True` for any `*BE` arch (MIPS64BE, PPC32BE,
 SPARC32BE) and leaves the native evaluator disabled, because the native register
-file is byte-offset indexed assuming little-endian (KNOWN_ISSUES §0).  The BE
+file is byte-offset indexed assuming little-endian.  The BE
 engine therefore rests on Unicorn alone — no independent second implementation to
 cross-check (a weaker soundness guarantee) and no native fast path.
 

@@ -9,8 +9,8 @@ soundness property, not a coverage statistic.
 This file records what the refusals were, how each was removed, and what is
 still declined and why. Measurements are on a **static-glibc x86-64 binary**
 (`fgets`, `strlen`, `malloc`, `memcpy`, a byte loop, `snprintf`), because the
-hand-written `-nostdlib` guests in `benchmark/taint_density/` refuse nothing at
-all and hid every one of these.
+hand-written `-nostdlib` guests we measured first refuse nothing at all and hid
+every one of these.
 
 The gate is `tests/test_block_skips_nothing.py`, which asserts
 `hook_stats()['unhandled'] == 0` on that binary and separately asserts the
@@ -325,7 +325,7 @@ pypcode retention has to bisect caches instead.
 as losses.** Block mode is legitimately tighter in places: it leaves SF clean
 after `and $0x1,%edi`, and Unicorn agrees that flipping every bit of RDI moves
 PF and ZF and never SF. Score against ground truth, and exclude the flags the
-ISA leaves undefined (`benchmark/ISA_UNDEFINED_FLAGS.md`). A bit scan leaves
+ISA leaves undefined. A bit scan leaves
 CF, OF, SF, AF and PF undefined, the hardware moves them, and no engine reading
 that p-code can know what it left.
 
