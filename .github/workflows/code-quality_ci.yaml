@@ -78,6 +78,42 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   # ---------------------------------------------------------------------------
+  # The check the master ruleset requires, and the only job that reports under
+  # that exact name.
+  #
+  # The ruleset requires a status check called `build`.  Since the taint-path
+  # matrix arrived the jobs report as `build (taint path 0)` and `build (taint
+  # path 1)`, and nothing has reported plain `build` since: PRs sat at
+  # mergeStateStatus BLOCKED with every check green, waiting for a context no
+  # run produces.
+  #
+  # Naming the matrix legs `build` instead is not an option -- they would
+  # collide -- and pinning the ruleset to the expanded names puts matrix values
+  # in repository settings, where adding a third taint path silently stops
+  # being required.  A gate needs no maintenance: whatever the matrix becomes,
+  # this passes only if all of it passed.
+  #
+  # `if: always()` is load-bearing.  Without it a failed or skipped matrix leg
+  # would SKIP this job, and a skipped required check never reports, which is
+  # the same stuck PR by another route.  So it always runs and decides from the
+  # result.
+  # ---------------------------------------------------------------------------
+  build-gate:
+    name: build
+    needs: [build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every matrix leg must have succeeded
+        run: |
+          result='${{ needs.build.result }}'
+          echo "build matrix result: $result"
+          if [ "$result" != "success" ]; then
+            echo "::error::the build matrix did not succeed ($result)"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
   # Performance job.  Runs on EVERY pull request, because the whole suite takes
   # well under a minute (~41 s locally, all seven ISAs and three workloads).
   #
