@@ -2200,6 +2200,27 @@ import select as _select
 _NO_BATCH_DEADLINE_S = 365 * 24 * 3600.0
 
 
+def _eta_str(elapsed_s: float, done: list[int], total: int) -> str:
+    """"N% done, ~Xm left" from observed throughput, or "eta unknown".
+
+    The estimate follows the SLOWEST worker, because the batch is finished
+    when the last one is.  Anything else reports the batch as nearly done
+    while one engine still has thousands of cases to go.
+    """
+    if not done or total <= 0 or elapsed_s <= 0:
+        return 'eta unknown'
+    slowest = min(done)
+    if slowest <= 0:
+        return 'eta unknown (no results yet)'
+    frac = slowest / total
+    remaining = elapsed_s * (1.0 / frac - 1.0)
+    # int() rather than rounding: 9800 of 9810 is not "100% done", and a
+    # progress line that says 100% while work remains is the same class of
+    # lie as the one this replaced.
+    return f'{int(100 * frac)}% done, ~{remaining / 60:.0f}m left'
+
+
+
 class BatchedWorkerPool:
     """
     Manages a set of persistent worker subprocesses.
@@ -2440,10 +2461,19 @@ class BatchedWorkerPool:
             if now - _last_progress_print >= _PROGRESS_INTERVAL:
                 _span = self.BATCH_TIMEOUT if self.BATCH_TIMEOUT > 0 else _NO_BATCH_DEADLINE_S
                 elapsed = now - (_deadline - _span)
-                remaining_s = max(0.0, _deadline - now)
                 parts = '  '.join(f'{w}: {counts[w]}/{N}' for w in active if w not in dead)
+                # What "left" used to mean here was the time until the batch
+                # DEADLINE, and with no timeout configured that deadline is the
+                # one-year sentinel: the line said "31529122s left" and counted
+                # down with the clock, so a healthy run looked like it needed
+                # another year.  Report progress instead, and only mention a
+                # deadline when one actually exists.
                 print(
-                    f'[run_batch] {elapsed:.0f}s elapsed  {remaining_s:.0f}s left  results: {parts}',
+                    f'[run_batch] {elapsed:.0f}s elapsed  '
+                    f'{_eta_str(elapsed, [counts[w] for w in active if w not in dead], N)}'
+                    + (f'  (timeout in {max(0.0, _deadline - now):.0f}s)'
+                       if self.BATCH_TIMEOUT > 0 else '')
+                    + f'  results: {parts}',
                     flush=True,
                 )
                 _last_progress_print = now
@@ -5200,12 +5230,25 @@ def main():
             i = 0
             while not _hb_stop.wait(timeout=15.0):
                 elapsed = time.monotonic() - _hb_start
-                remaining = max(0.0, _run_deadline - time.monotonic())
                 i += 1
                 parts = '  '.join(f'{k}={v}' for k, v in sorted(_hb_counts.items()))
+                # Progress, not the deadline.  `_run_deadline` is the one-year
+                # sentinel whenever BATCH_TIMEOUT is 0, and printing it as
+                # "left" told a reader the run had 525,485 minutes to go while
+                # it was three hours from finishing.  The line two hundred
+                # lines up already says "wall-clock budget: none"; this one now
+                # agrees with it.
+                _done, _tot = [], 0
+                for _v in _hb_counts.values():
+                    _d, _, _t = _v.partition('/')
+                    if _t.isdigit() and _d.isdigit():
+                        _done.append(int(_d))
+                        _tot = int(_t)
+                _eta = _eta_str(elapsed, _done, _tot)
                 print(
-                    f'[heartbeat {i:>4d}] {elapsed/60:5.1f}m elapsed '
-                    f'| {remaining/60:5.1f}m left'
+                    f'[heartbeat {i:>4d}] {elapsed/60:5.1f}m elapsed | {_eta}'
+                    + (f' | timeout in {max(0.0, _run_deadline - time.monotonic())/60:.0f}m'
+                       if _bt > 0 else '')
                     + (f' | {parts}' if parts else ' | waiting for workers to start ...'),
                     flush=True,
                 )
