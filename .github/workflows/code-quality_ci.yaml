@@ -101,7 +101,12 @@ jobs:
   build-gate:
     name: build
     needs: [build]
-    if: always()
+    # Not always(): a run superseded by the concurrency rule above is
+    # CANCELLED, and always() makes the gate run anyway and report a failure
+    # against a commit nobody will merge.  !cancelled() still runs it when a
+    # leg FAILS -- which is the case that must block -- and skips only when the
+    # whole run was cancelled.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Every matrix leg must have succeeded
@@ -175,8 +180,19 @@ jobs:
       # because the comparison iterates the very tier that produced no rows.
       # That is what PR #19 reported -- numbers with nothing to compare them
       # to.  hookcost links the venv's Unicorn, so it comes after uv sync.
+      # `all` is required: without the guests the end-to-end tier silently
+      # measures nothing, which is the bug this step exists to fix.
+      #
+      # `hookcost` is NOT required.  It links the venv's Unicorn, which is not
+      # guaranteed to be linkable on every runner, and it feeds only the
+      # advisory "primitives" tier -- bench_suite.py already reports
+      # "hookcost did not build" and carries on.  Making it fatal turned a tier
+      # that has always been optional into a job failure.
       - name: Build the benchmark guests
-        run: make -C benchmark/taint_density all hookcost
+        run: |
+          make -C benchmark/taint_density all
+          make -C benchmark/taint_density hookcost \
+            || echo "::notice::hookcost did not build; the primitives tier will say so"
 
       - name: Run the performance suite
         run: uv run python benchmark/bench_suite.py --json .bench_current.json

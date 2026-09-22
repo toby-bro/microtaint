@@ -61,7 +61,10 @@ bench_sparse_arm64.elf: bench_sparse_arm64.c
 # a distinction run_overhead.py alone cannot make, because every configuration
 # it times has a Python interpreter in the process.  Links the venv's Unicorn so
 # it measures the same library the engine runs against.
-UC ?= ../../.venv/lib/python3.13/site-packages/unicorn
+# Whatever Python the venv was built with, not a hardcoded one: CI pins no
+# version (requires-python is >=3.12), so python3.13 was true here and false
+# there, and the link failed with no hint as to why.
+UC ?= $(firstword $(wildcard ../../.venv/lib/python3.*/site-packages/unicorn))
 
 hookcost: hookcost.c
 	$(CC) -O2 -o $@ $< -I$(UC)/include -L$(UC)/lib -l:libunicorn.so.2 \
