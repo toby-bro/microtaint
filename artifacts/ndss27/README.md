@@ -262,20 +262,8 @@ The version evaluated in the paper is `v0.7.3` of microtaint, it can be installe
 
 ```sh
 git checkout v0.7.3                   # the engine the paper evaluates
-CFLAGS="-march=native" uv sync --locked --all-extras --reinstall-package microtaint
+uv sync --locked --all-extras --reinstall-package microtaint
 ```
-
-`CFLAGS` is not decoration. This build is for the machine it runs on, and the
-paper measures performance on that machine, so it should use its instruction
-set; the reference runs under `reference-runs/` were produced this way. The
-engine's own defaults no longer pass `-march`, because those defaults also
-build the wheels published to PyPI, and a wheel tuned for its build machine
-fails on any CPU with fewer instructions.
-
-`--reinstall-package` is what makes `CFLAGS` mean anything: uv caches a built
-wheel by source revision and does not key that cache on `CFLAGS`, so a plain
-`uv sync` can silently reuse a build made without them. `setup-all.sh` does
-this for you.
 
 Or using a pre-compiled version from PyPI.
 
