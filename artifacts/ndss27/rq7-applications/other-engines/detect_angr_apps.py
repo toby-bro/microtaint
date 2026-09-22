@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 import angr
+
 # angr 10 absorbed claripy into the angr package; before that it was a
 # separate distribution, so try that first and fall back.
 #
