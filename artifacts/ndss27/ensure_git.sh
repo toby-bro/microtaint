@@ -11,7 +11,12 @@
 # commit once, so the version can be derived and so every experiment can record
 # which tree produced its results.
 #
-# $ARTIFACT_VERSION overrides the tag, for a snapshot of some other release.
+# This is the one place a version still has to be stated, because an unpacked
+# archive has no history to derive one from and every experiment records which
+# tree produced it.  Set $ARTIFACT_VERSION when archiving a different release;
+# the default below is only a fallback and will go stale.  Nothing else in the
+# artifact pins a version: the repository is the living version and the Zenodo
+# archive is the frozen one.
 ensure_git() {
     local repo=$1
     [ -d "$repo/.git" ] && return 0

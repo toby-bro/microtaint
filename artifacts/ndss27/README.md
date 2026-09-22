@@ -258,17 +258,19 @@ If all the dependencies are installed, then the following script downloads, comp
 
 ### Long version
 
-The version evaluated in the paper is `v0.7.4` of microtaint, it can be installed locally (the whole compilation process takes a few minutes at most).
+The paper evaluates microtaint `0.7.x`. There is no tag to check out: the
+frozen, citable snapshot is the Zenodo archive linked at the top of this file,
+and this repository is the living version, where fixes to the harness land as
+they are found. Clone it and build what you get.
 
 ```sh
-git checkout v0.7.4                   # the engine the paper evaluates
-uv sync --locked --all-extras --reinstall-package microtaint
+uv sync --locked --all-extras
 ```
 
 Or using a pre-compiled version from PyPI.
 
 ```sh
-uv init --bare --no-workspace --python 3.13 && uv add 'microtaint==0.7.4'
+uv init --bare --no-workspace --python 3.13 && uv add microtaint
 ```
 
 That wheel targets the baseline x86-64 so it runs anywhere, which is the right
