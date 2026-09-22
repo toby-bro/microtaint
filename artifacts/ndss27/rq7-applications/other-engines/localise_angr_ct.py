@@ -25,7 +25,16 @@ import sys
 from pathlib import Path
 
 import angr
-import claripy
+# angr 10 absorbed claripy into the angr package; before that it was a
+# separate distribution, so try that first and fall back.
+#
+# Do NOT "fix" this by installing the standalone claripy package alongside
+# angr 10: it pulls a different z3 and breaks angr itself with
+#   ImportError: libz3.so.5.1: cannot open shared object file
+try:
+    import claripy
+except ModuleNotFoundError:
+    from angr import claripy
 
 logging.getLogger('angr').setLevel(logging.CRITICAL)
 
