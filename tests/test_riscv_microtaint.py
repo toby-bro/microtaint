@@ -60,6 +60,21 @@ from microtaint.simulator import CellSimulator
 from microtaint.sleigh.engine import generate_static_rule
 from microtaint.types import Architecture, ImplicitTaintPolicy, Register
 
+#: Release tier.  This one file is 16,721 of the suite's 20,048 tests and
+#: 22.5% of its wall time under CI conditions (serial, with coverage) --
+#: measured, not estimated -- which is more than the next two heaviest files
+#: together.  It is a broad parametrised sweep of one ISA, so on a pull request
+#: it re-proves on every push what the release run proves properly.
+#:
+#: `slow` is the mechanism the suite already has: deselected by default, run by
+#: --slow or MICROTAINT_SLOW_TESTS=1, which the release-soundness workflow sets
+#: for both taint paths.  So RISC-V is checked before every release and not on
+#: every commit.
+#:
+#: The trade is real and worth stating: a RISC-V regression now surfaces at
+#: release rather than on the PR that caused it.
+pytestmark = pytest.mark.slow
+
 # ===========================================================================
 # State format — RISC-V uses ABI-name registers (matches Ghidra SLEIGH spec)
 # ===========================================================================
