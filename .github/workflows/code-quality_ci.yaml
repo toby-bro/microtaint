@@ -141,7 +141,7 @@ jobs:
       pull-requests: write # to post the report on PRs
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
