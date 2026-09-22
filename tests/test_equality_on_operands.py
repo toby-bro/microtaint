@@ -34,6 +34,20 @@ from microtaint.taint_ir import frompcode
 from microtaint.taint_ir.blockcompile import compile_block
 from microtaint.types import Architecture
 
+#: Release tier: this file is 50s of the suite's 1903s under CI conditions
+#: (serial, with coverage), and the cost is the ground-truth oracle rather than
+#: anything here.  `ground_truth` re-executes the instruction under Unicorn once
+#: per tainted input bit, over four bases -- on AMD64 with every GP register
+#: tainted that is ~1,540 emulations per case -- so these tests are inherently
+#: expensive and cannot be tuned down without weakening the evidence.
+#:
+#: Deselected by default, run by --slow or MICROTAINT_SLOW_TESTS=1, which
+#: release-soundness.yml sets for both taint paths.  The CHEAP ground-truth
+#: files stay on the fast tier on purpose -- the per-bug regression tests in
+#: test_unsoundness_fixes_*, test_push_rsp_taint, test_oracle_harness and the
+#: rest are ~37s together -- so a pull request still exercises the oracle.
+pytestmark = pytest.mark.slow
+
 FULL = (1 << 64) - 1
 _BASE = 0x401000
 
