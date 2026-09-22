@@ -5,8 +5,6 @@ on:
     branches: ["master"]
   pull_request:
     branches: ["master"]
-  release:
-    types: [published]
 
 permissions:
   contents: read
@@ -65,45 +63,6 @@ jobs:
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-
-  # ---------------------------------------------------------------------------
-  # The SLOW tier: the full-bank ground-truth sweeps and the fuzzers at full
-  # budget.  On releases only -- these are release-grade questions ("is the
-  # engine sound across 1569 instructions and many vectors") whose answer does
-  # not change between two adjacent commits, and running them on every push
-  # would spend the day re-answering a settled one.
-  #
-  # It is REQUIRED on a release, not merely available.  A marker nobody is
-  # obliged to run is a marker that quietly deletes its tests, and these are the
-  # soundness checks -- the ones that must never be the ones we skipped.
-  #
-  # Both implementations, because a release has to be correct on both.
-  # ---------------------------------------------------------------------------
-  release-soundness:
-    if: github.event_name == 'release'
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        taint_path: ['0', '1']
-
-    name: release soundness (taint path ${{ matrix.taint_path }})
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Install the project
-        run: uv sync --locked --all-extras --dev
-
-      - name: Full-bank sweeps and full-budget fuzzing
-        env:
-          MICROTAINT_TAINT_IR: ${{ matrix.taint_path }}
-          MICROTAINT_SLOW_TESTS: '1'
-        run: uv run pytest -o addopts="" -p no:xdist -q
 
   # ---------------------------------------------------------------------------
   # Performance job.  Runs on EVERY pull request, because the whole suite takes

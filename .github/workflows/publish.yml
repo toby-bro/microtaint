@@ -234,3 +234,22 @@ jobs:
 
       - name: Publish to PyPI
         run: uv publish dist/*
+
+  # ---------------------------------------------------------------------------
+  # The full soundness suite, on both taint implementations, after the upload.
+  #
+  # Called directly rather than left to `on: release: [published]`.  That event
+  # is raised by the job above using GITHUB_TOKEN, and GitHub does not start
+  # workflow runs from GITHUB_TOKEN events, so the soundness job subscribed to
+  # it never ran once in 94 CI runs.  Invoking it here cannot be swallowed.
+  #
+  # It runs AFTER publishing on purpose: the wheels are already gated by their
+  # smoke test in build_wheels, and this suite takes long enough that blocking
+  # on it would make releasing painful.  What it buys is that a release is
+  # always followed by the full both-paths soundness run, reported against the
+  # released commit, instead of depending on somebody remembering.
+  # ---------------------------------------------------------------------------
+  release_soundness:
+    name: Release soundness
+    needs: [publish]
+    uses: ./.github/workflows/release-soundness.yml

@@ -1,0 +1,66 @@
+name: Release soundness
+
+# The full soundness suite, on both taint implementations.
+#
+# This lived in code-quality_ci.yaml behind `if: github.event_name == 'release'`,
+# with that workflow subscribed to `release: [published]`.  The configuration
+# was correct and the job never ran once in 94 CI runs, because the only thing
+# that creates a release here is the publish workflow, using GITHUB_TOKEN, and
+# GitHub does not start workflow runs from events raised with GITHUB_TOKEN.
+# The v0.7.2 release says `github-actions[bot]` as its author, which is exactly
+# the case that is suppressed.  So the job was unreachable rather than merely
+# unlucky, and moving it out is what makes it run at all.
+#
+# Three ways in now, and none of them relies on that suppressed event:
+#
+#   workflow_call      publish.yml invokes it directly after uploading, which
+#                      is deterministic: no event plumbing to be swallowed.
+#   workflow_dispatch  so it can be run by hand against any ref.
+#   release published  still honoured, because a release created by a PERSON
+#                      does raise the event.  Kept as a second way in, never
+#                      as the only one.
+on:
+  workflow_call:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The engine has TWO implementations of one specification -- the
+  # whole-instruction differential and the compiled taint program -- and they
+  # disagree in both directions on about twelve percent of AMD64 cases, so a
+  # release is only correct if BOTH are.  One axis, one env var, and the suite
+  # exercises one implementation from top to bottom per job.
+  #
+  # It is REQUIRED on a release, not merely available.  A marker nobody is
+  # obliged to run is a marker that quietly deletes its tests, and these are the
+  # soundness checks -- the ones that must never be the ones we skipped.
+  # ---------------------------------------------------------------------------
+  soundness:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        taint_path: ['0', '1']
+
+    name: release soundness (taint path ${{ matrix.taint_path }})
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install the project
+        run: uv sync --locked --all-extras --dev
+
+      - name: Full-bank sweeps and full-budget fuzzing
+        env:
+          MICROTAINT_TAINT_IR: ${{ matrix.taint_path }}
+          MICROTAINT_SLOW_TESTS: '1'
+        run: uv run pytest -o addopts="" -p no:xdist -q
