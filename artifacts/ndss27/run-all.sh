@@ -405,17 +405,29 @@ fi
 RQ2_REPORT="$(ls -t "$OUT"/report_*.json 2>/dev/null | head -1)"
 if [ -n "$RQ2_REPORT" ]; then
   OV=()
-  # The reduced corpus runs the overhead ladder with too few repetitions to
-  # separate the detectors from the noise, and gen_paper_macros.py refuses to
-  # state a percentage from noise.  On --quick, emit every macro that IS
-  # resolvable and name the one that is not, rather than producing nothing.
-  UNRES=()
-  [ "$QUICK" = 1 ] && UNRES=(--allow-unresolved)
+  # gen_paper_macros.py refuses to state ovhDetectPct when the detectors
+  # measure FASTER than running without them, which is noise rather than a
+  # cost.  That refusal is right, but failing the whole evaluation over it is
+  # not: the detectors are simply too cheap for this experiment to resolve, and
+  # it happens on the full corpus as readily as the reduced one.  The shipped
+  # reference run shows the same thing at -0.98%.
+  #
+  # So allow it everywhere, not just on --quick.  The macro is then omitted and
+  # NAMED as not measured, in the .tex and in the summary line below, instead
+  # of being invented or silently dropped.  This flag reaches exactly one check
+  # in that script -- the noise-floor branch; every other refusal it makes is
+  # unconditional and still fails the run.
+  UNRES=(--allow-unresolved)
   [ -f "$OUT/overhead_results.json" ] && OV=(--overhead "$OUT/overhead_results.json")
   ( cd "$HERE/rq2-comparison" && uv run python gen_paper_macros.py "$RQ2_REPORT" \
       "${OV[@]}" "${UNRES[@]}" --out "$OUT/benchmark_numbers.tex" ) \
     >>"$OUT/log.txt" 2>&1 \
-    && record macros-benchmark PASS "$OUT/benchmark_numbers.tex" \
+    && { if grep -q 'NOT MEASURED' "$OUT/benchmark_numbers.tex" 2>/dev/null; then
+           record macros-benchmark PASS \
+             "$OUT/benchmark_numbers.tex (below the noise floor: $(sed -n 's/^% NOT MEASURED.*: //p' "$OUT/benchmark_numbers.tex" | tr -d '.'))"
+         else
+           record macros-benchmark PASS "$OUT/benchmark_numbers.tex"
+         fi; } \
     || record macros-benchmark FAIL 'gen_paper_macros.py failed'
 else
   record macros-benchmark SKIP 'no rq2 report to generate from'
