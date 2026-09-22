@@ -220,6 +220,28 @@ build_guest 'avalanche siphash'      avalanche/siphash             make
 # step below reports SKIP with the command, and base64-system still runs.
 build_guest 'avalanche base64'       avalanche/base64              make
 
+# The constant-time guest four RQ7 steps READ and none of them builds.
+#
+# localise_angr_ct, detect_maat_ct, localise_maat_ct and detect_triton_ct all
+# open bin/test_constant_time; the only thing that compiles it is
+# detect_libdft64's build(), which run-all.sh invokes AFTER all four.  So on a
+# fresh clone those four fail -- "No such file", "Not a valid binary file",
+# "LoaderLIEF: Couldn't parse file" -- and then libdft builds it and passes,
+# leaving a results directory where the file exists and four steps failed for
+# want of it.  Building it here makes the four independent of their order.
+#
+# detect_angr_apps is NOT one of them: it builds its own
+# bin/test_constant_time_angr and is unaffected.
+#
+# Same flags as detect_libdft64.py, which must stay the compiler of record:
+# it skips the build when the file already exists, so this simply gets there
+# first.
+[ -e "$HERE/rq7-applications/other-engines/bin/test_constant_time" ] || \
+  build_guest 'rq7 constant-time guest' rq7-applications/other-engines \
+    sh -c 'mkdir -p bin && gcc -O0 -g -static -no-pie -fno-stack-protector \
+             -o bin/test_constant_time \
+             ../crypto/square_and_multiply/test_constant_time.c'
+
 # Neither rq5 artefact is tracked (git ls-files confirms), so a fresh clone has
 # neither.  Built here with the others rather than half-way down the script.
 [ -e "$HERE/rq5-overhead/bench.elf" ] || \
