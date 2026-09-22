@@ -8,7 +8,7 @@
 # Pin the engine under test with $MT_ENGINE_ROOT; without it the campaign
 # measures this repository.  The paper's numbers come from a frozen tag:
 #
-#   MT_ENGINE_ROOT=/path/to/pcode-taint-engine-at-v0.7.3 ./run_table5.sh 12
+#   MT_ENGINE_ROOT=/path/to/pcode-taint-engine-at-v0.7.4 ./run_table5.sh 12
 #
 # Each ISA runs under a supervisor loop because the harness has historically
 # segfaulted roughly every 10k cases; it resumes from its own checkpoint and
