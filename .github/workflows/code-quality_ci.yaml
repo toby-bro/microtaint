@@ -153,7 +153,7 @@ jobs:
       # advance.
       - name: Restore baseline
         id: cache-bench
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .bench_baseline.json
           key: benchmark-baseline-${{ runner.os }}-py313-${{ github.sha }}
@@ -282,7 +282,7 @@ jobs:
 
       - name: Store the baseline (master only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .bench_baseline.json
           key: benchmark-baseline-${{ runner.os }}-py313-${{ github.sha }}
