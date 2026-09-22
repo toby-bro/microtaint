@@ -45,22 +45,7 @@ step() {  # step <label> <dir> <cmd...>
 ensure_git "$REPO" || exit 1
 
 # microtaint itself: builds the C and Cython extensions.
-#
-# CFLAGS=-march=native, because this build is for THIS machine and the paper
-# measures performance on it.  The engine's own defaults no longer pass -march:
-# they also build the wheels published to PyPI, and a wheel tuned for its build
-# machine crashes on any CPU with fewer instructions (v0.7.2 shipped AVX-512
-# and died with SIGILL on every CPU without it).  A local build has no such
-# problem, and the reference runs in reference-runs/ were produced this way, so
-# asking for it here is what keeps timings comparable to them.
-#
-# --reinstall-package is what makes the CFLAGS above mean anything.  uv caches
-# a built wheel by source revision and does NOT key that cache on CFLAGS, so a
-# plain `uv sync` silently reuses a build made without them: measured here as
-# 0 AVX2 instructions in the engine where a real native build has 703.  Setup
-# then looks like it succeeded and every timing afterwards is quietly wrong.
-step 'microtaint' "$REPO" env CFLAGS="-march=native" \
-     uv sync --locked --all-extras --reinstall-package microtaint || exit 1
+step 'microtaint' "$REPO" uv sync --locked --all-extras || exit 1
 
 if [ "$BASELINES" -eq 0 ]; then
   echo
