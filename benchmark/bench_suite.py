@@ -146,9 +146,18 @@ def tier_a(quick: bool) -> dict:
     out: dict = {}
     guests = _WORKLOADS[:2] if quick else _WORKLOADS
     iters = 2 if quick else 3
+    missing = []
     for name in guests:
         guest = str(_DENSITY / f'{name}.elf')
         if not Path(guest).exists():
+            # Say so.  These guests are built artifacts and *.elf is
+            # gitignored, so on a fresh checkout they are all absent and this
+            # tier measures nothing.  Skipping quietly produced an empty table
+            # in the PR comment, and an empty comparison with it, with nothing
+            # anywhere saying why (PR #19).  Build them with
+            # `make -C benchmark/taint_density all`.
+            missing.append(name)
+            print(f'  tier A: {name}.elf not built, skipping', file=sys.stderr)
             continue
         n = _instruction_count(guest)
         bare = _run_worker('bare', guest, iters)
@@ -163,6 +172,8 @@ def tier_a(quick: bool) -> dict:
             'x_bare': full / bare,
             'x_bare_hook_only': hooked / bare,
         }
+    if missing:
+        out['_missing'] = missing
     return out
 
 

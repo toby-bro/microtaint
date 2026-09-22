@@ -119,6 +119,16 @@ jobs:
           restore-keys: |
             benchmark-baseline-${{ runner.os }}-py313-
 
+      # Without this the end-to-end tier measures NOTHING.  Its guests are
+      # built artifacts (*.elf is gitignored), tier_a skips any guest that is
+      # not on disk, and the skip is silent: the PR comment then shows an
+      # empty "End to end" table and an empty "Against the baseline" section,
+      # because the comparison iterates the very tier that produced no rows.
+      # That is what PR #19 reported -- numbers with nothing to compare them
+      # to.  hookcost links the venv's Unicorn, so it comes after uv sync.
+      - name: Build the benchmark guests
+        run: make -C benchmark/taint_density all hookcost
+
       - name: Run the performance suite
         run: uv run python benchmark/bench_suite.py --json .bench_current.json
 
@@ -189,12 +199,20 @@ jobs:
                'the column that matters is the ratio to bare emulation measured in the '
                'same run._', '']
 
-          L += ['### End to end', '',
-                '| workload | bare | + hooked | + taint | x bare |',
-                '|---|---|---|---|---|']
-          for name, v in sorted(cur['a_end_to_end'].items()):
-              L.append(f"| `{name}` | {v['bare_ns']:.1f} ns | {v['hooked_ns']:.1f} ns "
-                       f"| {v['full_ns']:.1f} ns | **{v['x_bare']:.2f}x** |")
+          e2e = {k: v for k, v in cur['a_end_to_end'].items() if k != '_missing'}
+          missing = cur['a_end_to_end'].get('_missing') or []
+          if e2e:
+              L += ['### End to end', '',
+                    '| workload | bare | + hooked | + taint | x bare |',
+                    '|---|---|---|---|---|']
+              for name, v in sorted(e2e.items()):
+                  L.append(f"| `{name}` | {v['bare_ns']:.1f} ns | {v['hooked_ns']:.1f} ns "
+                           f"| {v['full_ns']:.1f} ns | **{v['x_bare']:.2f}x** |")
+          if missing:
+              # An empty table used to appear here with no explanation.
+              L += ['### End to end', '',
+                    '> not measured: ' + ', '.join(f'`{m}`' for m in sorted(missing))
+                    + ' were not built (`make -C benchmark/taint_density all`).']
 
           b = cur.get('b_throughput') or {}
           if b:
@@ -215,16 +233,35 @@ jobs:
               L += ['', '### Primitives (pure C)', '',
                     ' / '.join(f'{k} {v} ns' for k, v in sorted(cur['d_primitives'].items()))]
 
-          if base:
-              L += ['', '### Against the baseline', '']
-              for name, v in sorted(cur['a_end_to_end'].items()):
-                  o = base.get('a_end_to_end', {}).get(name)
-                  if not o:
+          # Against the baseline.  This used to compare a_end_to_end ONLY, so
+          # when that tier measured nothing the section rendered as a bare
+          # heading and the per-instruction table -- the one with numbers in
+          # it -- had nothing to compare against at all.  Both are compared
+          # now, and the section says when there is no baseline rather than
+          # disappearing.
+          L += ['', '### Against the baseline', '']
+          if not base:
+              L.append('_No baseline cached yet; this run records one for master._')
+          else:
+              rows = []
+              for name, v in sorted(e2e.items()):
+                  o = (base.get('a_end_to_end') or {}).get(name)
+                  if not isinstance(o, dict):
                       continue
                   d = 100 * (v['x_bare'] - o['x_bare']) / o['x_bare']
                   mark = '🔴' if d > 10 else ('🟢' if d < -5 else '⚪')
-                  L.append(f"- {mark} `{name}`: {o['x_bare']:.2f}x -> {v['x_bare']:.2f}x "
-                           f"({d:+.1f}%)")
+                  rows.append(f"- {mark} `{name}` end-to-end: {o['x_bare']:.2f}x -> "
+                              f"{v['x_bare']:.2f}x ({d:+.1f}%)")
+              for isa, v in sorted((cur.get('c_per_instruction') or {}).items()):
+                  o = (base.get('c_per_instruction') or {}).get(isa)
+                  if not isinstance(o, dict) or not o.get('p50'):
+                      continue
+                  d = 100 * (v['p50'] - o['p50']) / o['p50']
+                  mark = '🔴' if d > 10 else ('🟢' if d < -5 else '⚪')
+                  rows.append(f"- {mark} {isa} p50: {o['p50']:.2f} ns -> "
+                              f"{v['p50']:.2f} ns ({d:+.1f}%)")
+              L += rows or ['_A baseline was restored but shares no measurement '
+                            'with this run._']
 
           body = '\n'.join(L)
           print(body)
