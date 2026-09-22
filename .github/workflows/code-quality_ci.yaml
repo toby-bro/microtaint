@@ -9,6 +9,19 @@ on:
 permissions:
   contents: read
 
+# One run per ref, and the newest wins.
+#
+# Dependabot force-pushes its branches, and every push started another full
+# run while the previous one kept going: two in-flight runs of the same PR
+# were visible at once, each a two-way matrix of the whole fast suite.  The
+# superseded one can only report on code nobody will merge.
+#
+# Not applied to publish.yml on purpose: cancelling a release half way through
+# is a worse outcome than paying for it twice.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
