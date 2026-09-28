@@ -412,11 +412,18 @@ log 'paper macros'
 # builds are measured alongside it to show the spread, but feeding all three
 # here would also skew the cross-workload aggregates, which average over
 # workloads and would then count base64 three times.
+# The calibration gate's own output, when this run produced it: it carries the
+# percentages the method paragraph quotes.  Optional, so a --quick run that
+# skipped the gate still gets the Table 6 macros.
+AVL_CAL=''
+[ -f "$OUT/avalanche_calibrate.json" ] && AVL_CAL="$OUT/avalanche_calibrate.json"
+
 if [ -f "$OUT/avalanche_base64_debian12.json" ] && [ -f "$OUT/avalanche_nftables.json" ] \
    && [ -f "$OUT/avalanche_siphash.json" ]; then
   ( cd "$HERE/avalanche" && uv run python gen_avalanche_macros.py \
       "$OUT/avalanche_base64_debian12.json" "$OUT/avalanche_nftables.json" \
-      "$OUT/avalanche_siphash.json" --out "$OUT/avalanche_numbers.tex" ) \
+      "$OUT/avalanche_siphash.json" --out "$OUT/avalanche_numbers.tex" \
+      ${AVL_CAL:+--calibration "$AVL_CAL"} ) \
     >>"$OUT/log.txt" 2>&1 \
     && record macros-avalanche PASS "$OUT/avalanche_numbers.tex" \
     || record macros-avalanche FAIL 'gen_avalanche_macros.py failed'
