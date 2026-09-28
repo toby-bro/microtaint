@@ -248,11 +248,18 @@ def t_soundness(rep):
             seen += 1
         rules.append(seen)
     rules.pop()  # the last group is closed by the table's own bottom rule
+    # The Over/Under columns carry BITS for the bit-precise rows and REGISTERS
+    # for the register-level ones, per the substitution above, so the header
+    # cannot name a unit.  It used to say "Over-bits" over both, which labelled
+    # TaintGrind's 483 over-tainted REGISTERS as bits.
+    caption = ('Soundness and precision against exhaustive ground truth. '
+               'Over and Under are bits for the bit-precise engines and '
+               'registers for the register-level ones.')
     return ('tab:soundness',
-            'Soundness and precision against exhaustive ground truth',
+            caption,
             'lrrrrrr',
             ['Engine', r'Sound\,\%', r'Exact\,\%', 'Mean Jaccard',
-             'Over-bits', 'Under-bits', 'Unsound cases'],
+             'Over', 'Under', 'Unsound cases'],
             rows, rules)
 
 
