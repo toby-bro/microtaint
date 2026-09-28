@@ -41,6 +41,73 @@ import sys
 #: refuses an under-answered report even when run against an old benchmark.py.
 MIN_ANSWER_RATE = 0.5
 
+#: Instruction families the evaluation prose names when it breaks an engine's
+#: unsoundness down.  The paper used to carry these counts as literals, and they
+#: went stale: it said TaintGrind missed "29x cmov" with a three-case tail on
+#: variable shifts, which was 32 cases, while the run it shipped beside reported
+#: 7.  Each family emits <prefix>Uns<Family> when the engine has any, so the
+#: sentence and the run cannot disagree.
+#:
+#: Matched on the MNEMONIC, longest prefix first, so `cmovnp` is a cmov and not a
+#: `cmp`.  A mnemonic in no family lands in `Other`, which is emitted too: a
+#: breakdown that silently omits cases is a breakdown that adds up to less than
+#: the total.
+UNSOUND_FAMILIES = (
+    ('Cmov', ('cmov',)),
+    # No other x86 mnemonic begins with `set`, so this is the setcc family.
+    ('Setcc', ('set',)),
+    ('Shift', ('shrd', 'shld', 'shlx', 'shrx', 'sarx', 'shl', 'shr', 'sar',
+               'rol', 'ror', 'rcl', 'rcr')),
+    # pdep and pext are named individually because the prose names them
+    # individually; `BitPerm` keeps the rest of the family.
+    ('Pdep', ('pdep',)),
+    ('Pext', ('pext',)),
+    ('BitPerm', ('bzhi', 'bextr')),
+    ('Mul', ('imul', 'mul')),
+    ('Lea', ('lea',)),
+)
+
+
+def unsound_families(rep, tool):
+    """Unsound cases per instruction family, for one tool.
+
+    Unsound means the ground truth tainted something the tool left clean.  What
+    "something" is depends on the tool's granularity, and it must be decided the
+    same way benchmark.py decides it, or the breakdown describes a different
+    population from the total it is broken down from:
+
+      bit-granular tools  a MISSED BIT (`gt & ~got`), so a tool that taints the
+                          register but not every dependent bit is unsound
+      reg-granular tools  binarised, a register the tool left entirely clean
+
+    Scoring maat (bit) with the register test found 93 of its 300 unsound cases,
+    because most of its misses are individual bits inside a register it did
+    taint.  The caller's sum check is what caught that.
+    """
+    regs = ('RAX', 'RBX', 'RCX', 'RDX')
+    mask64 = (1 << 64) - 1
+    gran = (rep['metadata'].get('granularity') or {}).get(tool, 'bit')
+    counts = {}
+    for case in rep['results']:
+        tr = case['tool_results']
+        gt_m = (tr.get('ground_truth') or {}).get('output_taint')
+        t_m = (tr.get(tool) or {}).get('output_taint')
+        if gt_m is None or t_m is None:
+            continue
+        if gran == 'reg':
+            unsound = any(gt_m.get(r, 0) and not t_m.get(r, 0) for r in regs)
+        else:
+            unsound = any((gt_m.get(r, 0) & ~t_m.get(r, 0)) & mask64
+                          for r in regs)
+        if not unsound:
+            continue
+        mnem = (case['instruction'].get('assembly') or '').split()
+        mnem = mnem[0].lower() if mnem else ''
+        fam = next((name for name, pres in UNSOUND_FAMILIES
+                    if any(mnem.startswith(x) for x in pres)), 'Other')
+        counts[fam] = counts.get(fam, 0) + 1
+    return counts
+
 #: Below this, the detector overhead is indistinguishable from noise and is not
 #: emitted as a percentage.  The six detector configurations in the shipped run
 #: all fall within 0.5% of one another.
@@ -206,6 +273,17 @@ def main():
             v[pre + 'Jac'] = jac(g['mean_jaccard_bit'])
         v[pre + 'Over'] = texint(g['over_bits_total'])
         v[pre + 'Under'] = texint(g['under_bits_total'])
+        # The breakdown the prose quotes, from the same run as the total.
+        _fams = unsound_families(rep, key)
+        for _fam, _n in sorted(_fams.items()):
+            v[f'{pre}Uns{_fam}'] = str(_n)
+        if _fams and sum(_fams.values()) != g['unsound_cases']:
+            raise SystemExit(
+                f'{key}: the unsound-family breakdown sums to '
+                f'{sum(_fams.values())} but the report says '
+                f"{g['unsound_cases']} unsound cases.  One of the two is "
+                f'measuring a different population, so neither is emitted.',
+            )
 
     # ---- Per-step performance ----
     if not args.no_performance:
@@ -351,6 +429,9 @@ def main():
                                'numSeqTmpl', 'numSeqClasses']),
         ('Ground-truth soundness / precision (per engine)',
          [pre + suf for pre in ENGINES for suf in ('Sound', 'Exact', 'Jac', 'Over', 'Under', 'Uns')]),
+        ('Unsoundness by instruction family (per engine)',
+         [f'{pre}Uns{fam}' for pre in ENGINES
+          for fam in (*(n for n, _ in UNSOUND_FAMILIES), 'Other')]),
         ('Per-step performance', [pre + suf for pre in ENGINES for suf in ('Lat', 'Tps', 'Speedup')]),
         ('End-to-end overhead', ['ovhVsQilingHooks', 'ovhFloorNs', 'ovhAllRun', 'ovhFloorRun',
                                  'ovhRssFloor', 'ovhRssAll', 'ovhRssDelta', 'ovhSetupS', 'ovhDetectPct',
@@ -375,6 +456,18 @@ def main():
         lines.append(f'% ------- {title} -------')
         for n in emitted:
             lines.append(f'\\newcommand{{\\{n}}}{{{v[n]}}}')
+    # `order` is a whitelist, so a macro computed above but not named in it is
+    # dropped WITHOUT a word.  That is how the unsound-family macros first came
+    # out of this script as an empty section: they were measured, put in `v`, and
+    # silently discarded.  Refuse instead.
+    _listed = {n for _, names in order for n in names}
+    _dropped = sorted(set(v) - _listed)
+    if _dropped:
+        raise SystemExit(
+            'these macros were computed but are not listed in `order`, so they '
+            'would be silently dropped: ' + ', '.join(_dropped) +
+            '.  Add them to a group in `order`.',
+        )
     block = '\n'.join(lines) + '\n'
 
     sys.stdout.write(block)
