@@ -79,6 +79,26 @@ def collect(results_dir):
         # Attribution: with a single exponent bit as the secret, a bit-granular
         # engine flags the one step that consumes it.  An engine with no
         # sub-byte source taints the whole exponent and flags every step.
+        #
+        # The discriminator is `can_taint_single_bit`, which each detect_*
+        # script probes against the tool's own API.  `ct.vuln_branch_leaks` is
+        # NOT usable here and must not be substituted in: the scripts disagree
+        # on what it counts.  angr, Maat and Triton report leaking SITES (1),
+        # while libdft64, PANDA and TaintGrind report EXECUTIONS of that site
+        # (32).  Maat and Triton report the identical 1 site / 32 execs and are
+        # separated only by the bit-taint probe, which is why the probe is the
+        # column's basis.
+        #
+        # What the attribution does assume is checked below: one leaky branch
+        # site, so that "all steps" means repeated execution of a single site
+        # rather than several distinct leaks.
+        _sites = (d.get('ct') or {}).get('vuln_branch_leak_sites')
+        if isinstance(_sites, list) and len(_sites) != 1:
+            raise SystemExit(
+                f'{key}: the constant-time workload leaked at {len(_sites)} '
+                f'branch sites, not 1, so "1 step" and "all {LADDER_STEPS} '
+                f'steps" no longer describe it.  Re-derive the column.',
+            )
         localises = gran == 'Bit'
         ct.append((name, gran, '1' if localises else f'All {LADDER_STEPS}',
                    'Localises' if localises else 'Cannot localise'))
