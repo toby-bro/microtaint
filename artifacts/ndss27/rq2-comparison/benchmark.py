@@ -3899,18 +3899,16 @@ def _build_c_source_freestanding(tc: dict) -> str:
     optimised string routines disabled via GLIBC_TUNABLES.  A -nostdlib binary
     runs cleanly.
 
-    This docstring used to add "and TaintGrind's expr2vbits_Unop has no case for
-    Iop_Ctz64/Iop_Clz64", i.e. an upstream gap.  That was WRONG and e8ddd2f
-    retracted it: the pinned commit DOES handle Iop_Ctz64 and Iop_Clz64, and it
-    is upstream b0d02d5 ("Fix Clz/Ctz VEX ops for newer Valgrind") that deletes
-    those cases and keeps only the *Nat* ones.  The panic was the fingerprint of
-    a DRIFTED image, built before the inner clone was pinned, not of the version
-    this harness runs against.
+    The panic is a symptom of a DRIFTED image rather than of the pinned version,
+    which handles Iop_Ctz64 and Iop_Clz64 at tnt_translate.c:173-178; upstream
+    b0d02d5 removes those cases in favour of the *Nat* forms.  setup_envs.sh
+    pins the clone inside the image for this reason, and that pin is what keeps
+    a libc harness viable here at all.
 
-    The harness therefore stays freestanding for the reason below (a tighter
-    measurement), not for the reason it was introduced.  Note the consequence:
-    TaintGrind is the only C baseline measured without libc startup in the timed
-    region, so its latency is not directly comparable to libdft64's.
+    This variant is kept for the tighter measurement described below.  It has a
+    consequence for RQ4: TaintGrind is the only C baseline whose timed region
+    excludes libc startup, so its latency is not directly comparable to
+    libdft64's.
 
     So this variant talks to the kernel directly: write(2) for the result line
     and clock_gettime(2) for the timing, with a hand-rolled integer formatter.

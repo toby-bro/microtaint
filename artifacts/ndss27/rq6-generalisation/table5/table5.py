@@ -547,9 +547,8 @@ def main() -> int:
         print(f'[tex-dir] {out}')
 
     if args.macros:
-        # Every RQ6 number the prose quotes, from the same totals the table uses.
-        # The paper had these as literals in two places that disagreed with each
-        # other; a macro makes that impossible.
+        # Every RQ6 number the prose quotes, from the same totals the table
+        # uses, so a sentence cannot state a figure the table contradicts.
         _hours = max((r.get('elapsed_h') or 0) for r in out_rows)
         _best = max(out_rows, key=lambda r: r['bit_exact'])
         mac = {

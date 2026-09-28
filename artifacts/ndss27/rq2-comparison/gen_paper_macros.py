@@ -42,11 +42,8 @@ import sys
 MIN_ANSWER_RATE = 0.5
 
 #: Instruction families the evaluation prose names when it breaks an engine's
-#: unsoundness down.  The paper used to carry these counts as literals, and they
-#: went stale: it said TaintGrind missed "29x cmov" with a three-case tail on
-#: variable shifts, which was 32 cases, while the run it shipped beside reported
-#: 7.  Each family emits <prefix>Uns<Family> when the engine has any, so the
-#: sentence and the run cannot disagree.
+#: unsoundness down.  Each emits <prefix>Uns<Family> when the engine has any, so
+#: the sentence and the run it describes come from one measurement.
 #:
 #: Matched on the MNEMONIC, longest prefix first, so `cmovnp` is a cmov and not a
 #: `cmp`.  A mnemonic in no family lands in `Other`, which is emitted too: a
@@ -80,9 +77,10 @@ def unsound_families(rep, tool):
                           register but not every dependent bit is unsound
       reg-granular tools  binarised, a register the tool left entirely clean
 
-    Scoring maat (bit) with the register test found 93 of its 300 unsound cases,
-    because most of its misses are individual bits inside a register it did
-    taint.  The caller's sum check is what caught that.
+    Using the register test on a bit-granular tool undercounts it badly, because
+    most of its misses are bits inside a register it did taint.  The caller
+    checks this against the report's own `unsound_cases` and refuses on a
+    mismatch.
     """
     regs = ('RAX', 'RBX', 'RCX', 'RDX')
     mask64 = (1 << 64) - 1
@@ -342,10 +340,9 @@ def main():
         v['ovhVsQilingHooks'] = f'{mt_all / floor:.1f}'
         v['ovhFloorNs'] = f"{floor * 1e9 / lad['guest_instructions']:,.1f}".replace(',', '{,}')
         # The TAINT PHASE (`ql.run`) of each, for the parenthetical in the
-        # prose.  These were called ovhAllWall/ovhFloorWall and documented as
-        # "wall-clock of the whole process" while assigning run_s, so the paper
-        # said "wall" about a number that excluded interpreter start-up and
-        # emulator construction.  Named for what they hold.
+        # prose.  This is run_s: it EXCLUDES interpreter start-up and emulator
+        # construction, so neither macro may be quoted as a wall-clock figure.
+        # `ovhSetupS` below is the part they leave out.
         v['ovhAllRun'] = f'{mt_all:.3f}'
         v['ovhFloorRun'] = f'{floor:.3f}'
         _rss = lad['layers']['microtaint-all'].get('peak_rss_mib') or 0
@@ -456,10 +453,9 @@ def main():
         lines.append(f'% ------- {title} -------')
         for n in emitted:
             lines.append(f'\\newcommand{{\\{n}}}{{{v[n]}}}')
-    # `order` is a whitelist, so a macro computed above but not named in it is
-    # dropped WITHOUT a word.  That is how the unsound-family macros first came
-    # out of this script as an empty section: they were measured, put in `v`, and
-    # silently discarded.  Refuse instead.
+    # `order` is a whitelist, so a macro computed above but not named in it
+    # would be dropped WITHOUT a word, leaving an empty section and no
+    # complaint.  Refuse instead.
     _listed = {n for _, names in order for n in names}
     _dropped = sorted(set(v) - _listed)
     if _dropped:
