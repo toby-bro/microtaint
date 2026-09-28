@@ -480,9 +480,16 @@ fi
 # The paper's tables, from this run rather than transcribed by hand.  Each
 # generator refuses to emit a table whose inputs the run did not produce, so a
 # --quick or --no-baselines run gets the subset it actually measured.
+#
+# Each also writes ONE FILE PER TABLE into $OUT/tables/, named tab_<label>.tex.
+# The paper \inputs those individually at the place each table belongs, which is
+# what stops a measured table from being retyped into main.tex and then drifting
+# from the run that produced it.
+mkdir -p "$OUT/tables"
 if [ -n "$RQ2_REPORT" ]; then
   ( cd "$HERE/rq2-comparison" && uv run python gen_eval_tables.py "$RQ2_REPORT" \
-      --tex "$OUT/eval_tables.tex" --md "$OUT/eval_tables.md" ) \
+      --tex "$OUT/eval_tables.tex" --md "$OUT/eval_tables.md" \
+      --tex-dir "$OUT/tables" ) \
     >>"$OUT/log.txt" 2>&1 \
     && record tables-eval PASS "$OUT/eval_tables.md" \
     || record tables-eval FAIL 'gen_eval_tables.py failed'
@@ -494,7 +501,8 @@ fi
 if [ -f "$OUT/overhead_ladder.json" ]; then
   ( cd "$HERE/rq5-overhead" && uv run python gen_ladder_table.py \
       "$OUT/overhead_ladder.json" \
-      --tex "$OUT/ladder_table.tex" --md "$OUT/ladder_table.md" ) \
+      --tex "$OUT/ladder_table.tex" --md "$OUT/ladder_table.md" \
+      --tex-dir "$OUT/tables" ) \
     >>"$OUT/log.txt" 2>&1 \
     && record tables-ladder PASS "$OUT/ladder_table.md" \
     || record tables-ladder FAIL 'gen_ladder_table.py failed'
@@ -506,7 +514,8 @@ fi
 # verdicts of the other engines, which the detect_* scripts produce.
 if [ -f "$OUT/rq7_ct_localise.json" ] && [ -f "$OUT/rq7_dns.json" ]; then
   ( cd "$HERE/rq7-applications" && uv run python gen_apps_tables.py \
-      --results-dir "$OUT" --tex "$OUT/apps_tables.tex" --md "$OUT/apps_tables.md" ) \
+      --results-dir "$OUT" --tex "$OUT/apps_tables.tex" --md "$OUT/apps_tables.md" \
+      --tex-dir "$OUT/tables" ) \
     >>"$OUT/log.txt" 2>&1 \
     && record tables-apps PASS "$OUT/apps_tables.md" \
     || record tables-apps FAIL 'gen_apps_tables.py failed'
@@ -520,7 +529,8 @@ fi
 # that campaign has been run, and never pretend the RQ6 pass produced it.
 if ls "$HERE"/rq6-generalisation/table5/campaign_*.json >/dev/null 2>&1; then
   ( cd "$HERE/rq6-generalisation/table5" && uv run python table5.py \
-      --tex "$OUT/table5.tex" --json "$OUT/table5.json" ) \
+      --tex "$OUT/table5.tex" --json "$OUT/table5.json" \
+      --tex-dir "$OUT/tables" --macros "$OUT/rq6_numbers.tex" ) \
     >>"$OUT/log.txt" 2>&1 \
     && record tables-multiisa PASS "$OUT/table5.tex" \
     || record tables-multiisa FAIL 'table5.py refused to certify the campaign'

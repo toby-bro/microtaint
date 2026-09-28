@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 import sys
 
 NATIVE = 'native'
@@ -176,6 +177,9 @@ def main():
     ap.add_argument('ladder', help='an overhead_ladder.json')
     ap.add_argument('--tex', metavar='PATH')
     ap.add_argument('--md', metavar='PATH')
+    ap.add_argument('--tex-dir', metavar='DIR',
+                    help='write the table as DIR/tab_appendix_ladder.tex, the '
+                         'one-file-per-table name the paper \\inputs')
     args = ap.parse_args()
 
     with open(args.ladder) as fh:
@@ -188,11 +192,17 @@ def main():
         with open(args.tex, 'w') as fh:
             fh.write(as_tex(lad))
         print(f'[+] wrote {args.tex}')
+    if args.tex_dir:
+        d = pathlib.Path(args.tex_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        out = d / 'tab_appendix_ladder.tex'
+        out.write_text(as_tex(lad))
+        print(f'[+] wrote {out}')
     if args.md:
         with open(args.md, 'w') as fh:
             fh.write(as_md(lad))
         print(f'[+] wrote {args.md}')
-    if not (args.tex or args.md):
+    if not (args.tex or args.md or args.tex_dir):
         print(as_md(lad))
     return 0
 
