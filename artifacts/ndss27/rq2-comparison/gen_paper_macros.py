@@ -223,10 +223,9 @@ def main():
     if args.overhead and not args.no_overhead:
         with open(args.overhead) as f:
             ov = json.load(f)
-        nat = ov['native']['wall_s']
-        mta = ov['microtaint-all']['wall_s']
-        run = ov['microtaint-all']['extra'].get('run_s') or mta
-
+        # overhead_results.json is still read, but ONLY for the vacuity check
+        # below: every published overhead macro now comes from the ladder, so a
+        # ratio in one sentence cannot describe a different run from the next.
         # A run in which the guest never executed the workload is FAST and clean,
         # so no threshold on the timings can catch it -- only the guest's own
         # output can.  The shipped 2026-05 json had `guest_bytes` absent entirely
@@ -264,9 +263,13 @@ def main():
         mt_all = lad['layers']['microtaint-all']['run_s']
         v['ovhVsQilingHooks'] = f'{mt_all / floor:.1f}'
         v['ovhFloorNs'] = f"{floor * 1e9 / lad['guest_instructions']:,.1f}".replace(',', '{,}')
-        # Wall-clock of the whole process, for the parenthetical in the prose.
-        v['ovhAllWall'] = f"{lad['layers']['microtaint-all']['run_s']:.3f}"
-        v['ovhFloorWall'] = f'{floor:.3f}'
+        # The TAINT PHASE (`ql.run`) of each, for the parenthetical in the
+        # prose.  These were called ovhAllWall/ovhFloorWall and documented as
+        # "wall-clock of the whole process" while assigning run_s, so the paper
+        # said "wall" about a number that excluded interpreter start-up and
+        # emulator construction.  Named for what they hold.
+        v['ovhAllRun'] = f'{mt_all:.3f}'
+        v['ovhFloorRun'] = f'{floor:.3f}'
         _rss = lad['layers']['microtaint-all'].get('peak_rss_mib') or 0
         _rss0 = lad['layers']['c-codehook-regs'].get('peak_rss_mib') or 0
         v['ovhRssFloor'] = f'{round(_rss0)}'
@@ -309,7 +312,37 @@ def main():
         # from the ladder is how two numbers in the same paragraph end up
         # describing two different runs.
         v['ovhNativeX'] = f'{mt_all / lad["layers"]["native"]["run_s"]:,.0f}'.replace(',', '{,}')
-        v['ovhAmort'] = f'{run / nat:.1f}'
+
+        # The workload's size, counted by a code hook on this same ladder, so
+        # that no caption or sentence has to carry it as a literal.
+        _instr = lad['guest_instructions']
+        v['ovhInstrExact'] = f'{_instr:,}'.replace(',', '{,}')
+        v['ovhInstrM'] = f'{_instr / 1e6:.1f}'
+
+        # The emulator's OWN share of the engine's run.  This is the number that
+        # decides the paragraph's conclusion: if it is small, the dominant cost
+        # is what we hang off the emulator, not the emulator.
+        _qil = lad['layers']['qiling-only']['run_s']
+        v['ovhQilRun'] = f'{_qil:.3f}'
+        v['ovhQilPct'] = f'{100 * _qil / mt_all:.1f}'
+
+        # The hosting-language penalty, from the two rungs that differ ONLY in
+        # whether the identical empty hook body is C or Python.
+        _c_hook = lad['layers']['c-codehook']['run_s']
+        _py_hook = lad['layers']['codehook']['run_s']
+        v['ovhCHookRun'] = f'{_c_hook:.3f}'
+        v['ovhPyHookRun'] = f'{_py_hook:.3f}'
+        v['ovhPyPenalty'] = f'{_py_hook / _c_hook:.0f}'
+        v['ovhPyHookRegsRun'] = f'{lad["layers"]["codehook-regs"]["run_s"]:.1f}'
+        v['ovhPlumbingRun'] = f'{lad["layers"]["microtaint-plumbing"]["run_s"]:.3f}'
+        v['ovhNoneRun'] = f'{_none:.3f}'
+
+        # Repetitions, so the appendix's method sentence is generated too.  The
+        # two Python-hosted rungs get fewer because at seconds per run they
+        # would otherwise dominate the ladder's wall-clock.
+        v['ovhRuns'] = str(lad['layers']['microtaint-all'].get('n_runs') or 0)
+        v['ovhRunsPyHook'] = str(lad['layers']['codehook'].get('n_runs') or 0)
+        v['ovhRunsPyHookRegs'] = str(lad['layers']['codehook-regs'].get('n_runs') or 0)
 
     # ---- Emit, in the same order/grouping as main.tex ----
     order = [
@@ -319,9 +352,12 @@ def main():
         ('Ground-truth soundness / precision (per engine)',
          [pre + suf for pre in ENGINES for suf in ('Sound', 'Exact', 'Jac', 'Over', 'Under', 'Uns')]),
         ('Per-step performance', [pre + suf for pre in ENGINES for suf in ('Lat', 'Tps', 'Speedup')]),
-        ('End-to-end overhead', ['ovhVsQilingHooks', 'ovhFloorNs', 'ovhAllWall', 'ovhFloorWall',
+        ('End-to-end overhead', ['ovhVsQilingHooks', 'ovhFloorNs', 'ovhAllRun', 'ovhFloorRun',
                                  'ovhRssFloor', 'ovhRssAll', 'ovhRssDelta', 'ovhSetupS', 'ovhDetectPct',
-                                 'ovhAmort', 'ovhNativeX']),
+                                 'ovhNativeX', 'ovhInstrExact', 'ovhInstrM', 'ovhQilRun', 'ovhQilPct',
+                                 'ovhCHookRun', 'ovhPyHookRun', 'ovhPyPenalty', 'ovhPyHookRegsRun',
+                                 'ovhPlumbingRun', 'ovhNoneRun', 'ovhRuns',
+                                 'ovhRunsPyHook', 'ovhRunsPyHookRegs']),
     ]
     lines = ['% Auto-generated by gen_paper_macros.py from ' + os.path.basename(args.report)
              + f" (seed {md.get('seed')}). Do not edit by hand; re-run the script."]
