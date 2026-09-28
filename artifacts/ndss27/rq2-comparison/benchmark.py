@@ -3905,10 +3905,11 @@ def _build_c_source_freestanding(tc: dict) -> str:
     pins the clone inside the image for this reason, and that pin is what keeps
     a libc harness viable here at all.
 
-    This variant is kept for the tighter measurement described below.  It has a
-    consequence for RQ4: TaintGrind is the only C baseline whose timed region
-    excludes libc startup, so its latency is not directly comparable to
-    libdft64's.
+    This variant is kept for the tighter measurement described below.  Note that
+    it does NOT change the timed region: both C harnesses bracket the inline
+    assembly block alone, and both already exclude libc startup, loader and
+    container init (see `_build_c_source`).  What changes is how much other code
+    Valgrind has to translate and instrument around it.
 
     So this variant talks to the kernel directly: write(2) for the result line
     and clock_gettime(2) for the timing, with a hand-rolled integer formatter.
