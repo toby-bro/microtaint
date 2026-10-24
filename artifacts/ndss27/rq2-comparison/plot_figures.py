@@ -173,6 +173,20 @@ LEGEND_SIZE = 9
 #: reads it too: a rotated label is as tall as this size makes it.
 VALUE_LABEL_SIZE = 10
 
+#: The paper's column width.  Figures 4 and 6 are drawn at it and included at
+#: \linewidth, so the PDF prints at 1:1 and PRINT_SIZE is the size readers see.
+#: Drawn wider and shrunk to their slot_geometry factor, as they were, their
+#: 8pt ticks printed at about 5pt.  At that narrower slot, 10pt labels collide.
+COLUMN_WIDTH_IN = 3.5
+
+#: Point size of all text in the figures drawn at print size.
+PRINT_SIZE = 10
+
+#: Times-like text for the figures drawn at print size.  At the same 10pt,
+#: matplotlib's default serif (DejaVu) reads visibly larger than the paper's
+#: Times body.  STIX ships with matplotlib, so the artifact needs no extra font.
+PRINT_RC = {'font.family': 'STIXGeneral', 'mathtext.fontset': 'stix'}
+
 
 def slot_geometry(n, slot, group_w, margin=EDGE_MARGIN):
     """Axis limits that hug the bars, and the factor the FIGURE shrinks by.
@@ -240,18 +254,18 @@ def plot_unsoundness():
     engines = [DISPLAY_NAME[t] for t in tool_keys]
     unsound = [_gt(t)['unsound_cases'] for t in tool_keys]
 
-    fig, ax = plt.subplots(figsize=(4, 2.3 * PLOT_SCALE))
-    colors = bar_colors(engines)
     slot, bw = 0.88, 0.8
     x = slot_x(len(engines), slot)
-    xlim, kw = slot_geometry(len(engines), slot, bw)
-    fig.set_size_inches(4 * kw, 2.3 * PLOT_SCALE)
+    xlim, _ = slot_geometry(len(engines), slot, bw)
+    fig, ax = plt.subplots(figsize=(COLUMN_WIDTH_IN, 2.6 * PLOT_SCALE), layout='constrained')
+    colors = bar_colors(engines)
     bars = ax.bar(x, unsound, width=bw, color=colors, edgecolor='black', linewidth=0.6)
 
-    ax.set_ylabel('Unsound cases', fontsize=AXIS_LABEL_SIZE)
+    ax.set_ylabel('Unsound cases', fontsize=PRINT_SIZE)
     ax.set_xticks(x)
-    ax.set_xticklabels(engines, rotation=30, ha='right', fontsize=VALUE_LABEL_SIZE)
+    ax.set_xticklabels(engines, rotation=30, ha='right', fontsize=PRINT_SIZE)
     ax.set_xlim(*xlim)
+    ax.tick_params(axis='y', labelsize=PRINT_SIZE)
 
     # label every bar (including 0)
     for bar, val in zip(bars, unsound, strict=True):
@@ -261,11 +275,10 @@ def plot_unsoundness():
             str(val),
             ha='center',
             va='bottom',
-            fontsize=VALUE_LABEL_SIZE,
+            fontsize=PRINT_SIZE,
         )
 
     ax.set_ylim(0, max(unsound) * 1.30)
-    fig.tight_layout()
     save(fig, 'fig_unsoundness.pdf')
 
 
@@ -282,9 +295,9 @@ def plot_precision():
     # Bars at their original width; the slot closes the gap instead.
     slot, width = 0.80, 0.35
     x = slot_x(len(engines), slot)
-    xlim, kw = slot_geometry(len(engines), slot, 2 * width)
+    xlim, _ = slot_geometry(len(engines), slot, 2 * width)
 
-    fig, ax = plt.subplots(figsize=(4 * kw, 2.2 * PLOT_SCALE))
+    fig, ax = plt.subplots(figsize=(COLUMN_WIDTH_IN, 2.6 * PLOT_SCALE), layout='constrained')
     colors = bar_colors(engines)
 
     ax.bar(x - width / 2, sound_pct, width, label='Sound %', color=colors, edgecolor='black', linewidth=0.6)
@@ -292,27 +305,29 @@ def plot_precision():
         x + width / 2, exact_pct, width, label='Exact %', color=colors, edgecolor='black', linewidth=0.6, hatch='//',
     )
 
-    ax.set_ylabel('Cases (%)', fontsize=AXIS_LABEL_SIZE)
+    ax.set_ylabel('Cases (%)', fontsize=PRINT_SIZE)
     ax.set_xticks(x)
-    ax.set_xticklabels(engines, rotation=30, ha='right', fontsize=VALUE_LABEL_SIZE)
+    ax.set_xticklabels(engines, rotation=30, ha='right', fontsize=PRINT_SIZE)
     ax.set_xlim(*xlim)
-    # Headroom for the two group labels at y=107: at 125 the axis frame sat on
-    # top of them.
-    ax.set_ylim(0, 130)
+    # Headroom for the two group labels above the 100% line: at 130, with the
+    # shorter axes this figure used to have, the frame cut through them.
+    ax.set_ylim(0, 145)
+    ax.set_yticks([0, 50, 100])
+    ax.tick_params(axis='y', labelsize=PRINT_SIZE)
     ax.axhline(100, color='gray', linewidth=0.5, linestyle='--')
     # Above the axes on a white ground: inside the axes the box sat over the
     # bars, and the series differ by hatch, not by colour, so the swatches are
     # neutral and the labels black.
     ax.legend(handles=legend_handles(['Sound %', 'Exact %'], ['', '//']),
-              fontsize=LEGEND_SIZE, ncol=2, loc='lower left', bbox_to_anchor=(0.0, 1.01),
+              fontsize=PRINT_SIZE, ncol=2, loc='lower left', bbox_to_anchor=(0.0, 1.01),
               columnspacing=1.2, handletextpad=0.5, **LEGEND_BOX)
 
-    # divider between bit-precise and register-level groups
+    # divider between bit-precise and register-level groups, each label centred
+    # over its own engines
     ax.axvline(2.5 * slot, color='black', linewidth=0.7, linestyle=':')
-    ax.text(0.9 * slot, 107, 'bit-precise', fontsize=7, color='black')
-    ax.text(3.3 * slot, 107, 'register-level', fontsize=7, color='black')
+    ax.text(1.0 * slot, 104, 'Bit-precise', fontsize=PRINT_SIZE, ha='center', va='bottom')
+    ax.text(4.5 * slot, 104, 'Register-level', fontsize=PRINT_SIZE, ha='center', va='bottom')
 
-    fig.tight_layout()
     save(fig, 'fig_precision.pdf')
 
 
@@ -335,29 +350,34 @@ def plot_perf_latency():
     slot = 0.80
     x = slot_x(len(engines), slot)
     width = 0.35 * 2 / 3
-    xlim, kw = slot_geometry(len(engines), slot, 3 * width)
+    xlim, _ = slot_geometry(len(engines), slot, 3 * width)
 
-    fig, ax = plt.subplots(figsize=(5.5 * kw, 3.0 * PLOT_SCALE))
+    # Constrained, not tight_layout: tight_layout lets the rotated first label
+    # and the legend spill past the figure, so the saved PDF comes out wider
+    # than the column and LaTeX shrinks the text below PRINT_SIZE again.
+    fig, ax = plt.subplots(figsize=(COLUMN_WIDTH_IN, 2.6 * PLOT_SCALE), layout='constrained')
     colors = bar_colors(engines)
 
     ax.bar(x - width, p50_us, width, color=colors, edgecolor='black', linewidth=0.6)
     ax.bar(x, p99_us, width, color=colors, edgecolor='black', linewidth=0.6, hatch='//')
     ax.bar(x + width, p100_us, width, color=colors, edgecolor='black', linewidth=0.6, hatch='xx')
 
-    ax.set_ylabel('Latency (µs)', fontsize=AXIS_LABEL_SIZE)
+    ax.set_ylabel('Latency (µs)', fontsize=PRINT_SIZE)
     ax.set_xticks(x)
-    ax.set_xticklabels(engines, rotation=30, ha='right', fontsize=VALUE_LABEL_SIZE)
+    ax.set_xticklabels(engines, rotation=30, ha='right', fontsize=PRINT_SIZE)
     ax.set_xlim(*xlim)
     ax.set_yscale('log')
+    # At this height the default locator keeps only every fifth decade.
+    ax.yaxis.set_major_locator(mpl.ticker.LogLocator(numticks=4))
+    ax.tick_params(axis='y', labelsize=PRINT_SIZE)
     # Above the axes, not inside them.  matplotlib's default loc='best' put the
     # box in the upper left, which is where PANDA's p100 bar reaches: the tallest
     # bar of the left half was drawn behind the legend and read as missing.
     # A horizontal strip above the plot cannot collide with any bar.
     ax.legend(handles=legend_handles(['p50', 'p99', 'p100'], ['', '//', 'xx']),
-              fontsize=LEGEND_SIZE, ncol=3, loc='lower left', bbox_to_anchor=(0.0, 1.01),
+              fontsize=PRINT_SIZE, ncol=3, loc='lower left', bbox_to_anchor=(0.0, 1.01),
               columnspacing=1.2, handletextpad=0.5, **LEGEND_BOX)
 
-    fig.tight_layout()
     save(fig, 'fig_perf_latency.pdf')
 
 
@@ -371,8 +391,8 @@ def plot_perf_throughput():
     tps = [round(_pt(t)['throughput_per_s']) for t in tool_keys]
 
     slot, bw = 0.80, 0.70
-    xlim, kw = slot_geometry(len(engines), slot, bw)
-    fig, ax = plt.subplots(figsize=(4.5 * kw, 2.8 * PLOT_SCALE))
+    xlim, _ = slot_geometry(len(engines), slot, bw)
+    fig, ax = plt.subplots(figsize=(COLUMN_WIDTH_IN, 2.6 * PLOT_SCALE), layout='constrained')
     colors = bar_colors(engines)
     # Narrower bars, because the value sits VERTICALLY above each one and a wide
     # bar under a tall label reads as a column of text rather than a bar.  The
@@ -380,28 +400,31 @@ def plot_perf_throughput():
     x = slot_x(len(engines), slot)
     bars = ax.bar(x, tps, width=bw, color=colors, edgecolor='black', linewidth=0.6)
 
-    ax.set_ylabel('Tests/s', fontsize=AXIS_LABEL_SIZE)
+    ax.set_ylabel('Tests/s', fontsize=PRINT_SIZE)
     ax.set_xticks(x)
-    ax.set_xticklabels(engines, rotation=45, ha='right', fontsize=VALUE_LABEL_SIZE)
+    ax.set_xticklabels(engines, rotation=45, ha='right', fontsize=PRINT_SIZE)
     ax.set_xlim(*xlim)
     ax.set_yscale('log')
+    ax.tick_params(axis='y', labelsize=PRINT_SIZE)
     # Headroom for the rotated labels: a rotated number is as TALL as it is
     # long, and the tallest bar carries the longest number, so the clearance is
     # set by that label's length rather than by a fixed number of decades.
-    ax.set_ylim(top=max(tps) * 10 ** (0.050 * VALUE_LABEL_SIZE * len(f'{max(tps):,}')))
+    ax.set_ylim(top=max(tps) * 10 ** (0.050 * PRINT_SIZE * len(f'{max(tps):,}')))
 
+    # A fixed gap in points: a factor above the bar is a sliver on a log axis,
+    # and the rotated label sat on the bar's top edge.
     for bar, val in zip(bars, tps, strict=True):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height() * 1.08,
+        ax.annotate(
             f'{val:,}',
+            xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
+            xytext=(0, 2),
+            textcoords='offset points',
             ha='center',
             va='bottom',
-            fontsize=VALUE_LABEL_SIZE,
+            fontsize=PRINT_SIZE,
             rotation=90,
         )
 
-    fig.tight_layout()
     save(fig, 'fig_perf_throughput.pdf')
 
 
@@ -447,29 +470,32 @@ def plot_overhead():
     # Bars keep their width; the slot closes the gap, on BOTH panels.
     slot = 0.72
     x = slot_x(len(keys), slot)
-    xlim, kw = slot_geometry(len(keys), slot, 0.6)
+    xlim, _ = slot_geometry(len(keys), slot, 0.6)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(5.2 * kw, 2.9 * PLOT_SCALE))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(COLUMN_WIDTH_IN, 2.6 * PLOT_SCALE),
+                                   layout='constrained')
 
     ax1.bar(x, wall_s, 0.6, color=colors, edgecolor='black', linewidth=0.6)
     ax1.set_yscale('log')
-    ax1.set_ylabel('Wall time (s)', fontsize=AXIS_LABEL_SIZE)
-    ax1.set_title('Time', fontsize=AXIS_LABEL_SIZE)
+    # At this height the default locator keeps only every third decade.
+    ax1.yaxis.set_major_locator(mpl.ticker.LogLocator(numticks=5))
+    ax1.set_ylabel('Wall time (s)', fontsize=PRINT_SIZE)
+    ax1.set_title('Time', fontsize=PRINT_SIZE)
 
     ax2.bar(x, rss_mib, 0.6, color=colors, edgecolor='black', linewidth=0.6)
-    ax2.set_ylabel('Peak RSS (MiB)', fontsize=AXIS_LABEL_SIZE)
-    ax2.set_title('Peak memory', fontsize=AXIS_LABEL_SIZE)
+    ax2.set_ylabel('Peak RSS (MiB)', fontsize=PRINT_SIZE)
+    ax2.set_title('Peak memory', fontsize=PRINT_SIZE)
     ax2.set_ylim(0)
 
     for ax in (ax1, ax2):
         ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=30, ha='right', fontsize=VALUE_LABEL_SIZE)
+        # 45 degrees: at 10pt, four labels per half-column collide at 30.
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=PRINT_SIZE)
         ax.set_xlim(*xlim)
-        ax.tick_params(axis='y', labelsize=8)
+        ax.tick_params(axis='y', labelsize=PRINT_SIZE)
         ax.grid(axis='y', alpha=0.3, linewidth=0.5)
         ax.set_axisbelow(True)
 
-    fig.tight_layout()
     save(fig, 'fig_overhead.pdf')
 
 
@@ -480,10 +506,14 @@ if __name__ == '__main__':
     made = []
     if REPORT is not None:
         print(f'Generating plots from {REPORT_PATH} ...')
-        plot_unsoundness()
-        plot_precision()
-        plot_perf_latency()
-        plot_perf_throughput()
+        with plt.rc_context(PRINT_RC):
+            plot_unsoundness()
+        with plt.rc_context(PRINT_RC):
+            plot_precision()
+        with plt.rc_context(PRINT_RC):
+            plot_perf_latency()
+        with plt.rc_context(PRINT_RC):
+            plot_perf_throughput()
         made += ['fig_unsoundness.pdf', 'fig_precision.pdf',
                  'fig_perf_latency.pdf', 'fig_perf_throughput.pdf']
     else:
@@ -494,7 +524,8 @@ if __name__ == '__main__':
     else:
         ladder = os.path.join(os.path.dirname(OVERHEAD_PATH), 'overhead_ladder.json')
         if os.path.exists(ladder):
-            plot_overhead()
+            with plt.rc_context(PRINT_RC):
+                plot_overhead()
             made.append('fig_overhead.pdf')
         else:
             print(f'No overhead ladder at {ladder}: skipping figure 8.')

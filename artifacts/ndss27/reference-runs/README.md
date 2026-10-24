@@ -184,7 +184,7 @@ The full `./run-all.sh` takes about two days, dominated by the cross-ISA campaig
 It is 9810 cases at seed 12 (7500 single, 1000 sequence, 1310 sweep), scored against the exhaustive oracle, with all seven engines.
 Its unsound counts are the paper's: 0 for microtaint, 7 TaintGrind, 43 angr, 206 Triton, 210 libdft64, 300 Maat, 1080 PANDA.
 
-The four figures beside it were regenerated from it here and plot the same values as the ones in the paper, which differ only in style.
+The four figures beside it were regenerated from it here and are the paper's Figures 2 to 5.
 
 ```sh
 cd ../rq2-comparison

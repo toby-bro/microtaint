@@ -400,8 +400,9 @@ Everything lands in `results/<timestamp>/`, alongside the raw output:
   table whose inputs a run did not produce is skipped by name, so a `--quick`
   run emits the subset it measured instead of a table of zeroes
 - `ladder_table.tex` and `ladder_table.md`: the appendix's overhead ladder,
-  every rung with its wall, CPU, memory and per-instruction cost and its
-  ratio against native and against bare Qiling
+  every rung with its wall time, memory and per-instruction cost and its
+  ratio against native and against bare Qiling. Only the Markdown version
+  also gives CPU time
 - `apps_tables.tex` and `apps_tables.md`: the two RQ7 application tables,
   from this run's constant-time and DNS results and the six baselines'
   verdicts. With the baselines enabled those are measured by this run too and
