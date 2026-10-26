@@ -132,9 +132,9 @@ MICROTAINT_COLOR = 'orange'
 OTHER_COLOR = 'lightgray'
 HATCHES = ['', '//', 'xx', '..', '\\\\', 'oo', '++']  # one per engine
 
-# Global size knob: scales every figure's HEIGHT. Lower = shorter plots (the
-# paper includes them at width=\\linewidth, so only height sets vertical
-# footprint). Retune all plots from this one line.
+# Global size knob: scales every figure's HEIGHT. Lower = shorter plots (each
+# figure is COLUMN_WIDTH_IN wide, so only height sets vertical footprint).
+# Retune all plots from this one line.
 PLOT_SCALE = 0.7  # cumulative height scale (was 0.8, then 0.8 again)
 
 
@@ -162,52 +162,32 @@ LEGEND_BOX = {
     'borderpad': 0.35,
 }
 
-#: One scale for every figure, so no panel reads heavier than its neighbours.
-#: The latency figure used to set its own 11pt y-label against everyone else's
-#: 9pt, and the two legends disagreed at 7 and 9.
-AXIS_LABEL_SIZE = 10
-LEGEND_SIZE = 9
-
-#: Point size of the value printed on top of a bar AND of the engine names
-#: under the axis, so the two read at the same weight.  The throughput headroom
-#: reads it too: a rotated label is as tall as this size makes it.
-VALUE_LABEL_SIZE = 10
-
-#: The paper's column width.  Figures 4 and 6 are drawn at it and included at
-#: \linewidth, so the PDF prints at 1:1 and PRINT_SIZE is the size readers see.
-#: Drawn wider and shrunk to their slot_geometry factor, as they were, their
-#: 8pt ticks printed at about 5pt.  At that narrower slot, 10pt labels collide.
+#: The paper's column width.  All five figures are drawn at it and the paper
+#: includes them at natural size, so the PDF prints at 1:1 and PRINT_SIZE is the
+#: size readers see.  Drawn wider and shrunk to fit, as they were, their 8pt
+#: ticks printed at about 5pt.
 COLUMN_WIDTH_IN = 3.5
 
-#: Point size of all text in the figures drawn at print size.
+#: Point size of all text in every figure, so no panel reads heavier than its
+#: neighbours.  The throughput headroom reads it too: a rotated label is as tall
+#: as this size makes it.
 PRINT_SIZE = 10
 
-#: Times-like text for the figures drawn at print size.  At the same 10pt,
-#: matplotlib's default serif (DejaVu) reads visibly larger than the paper's
-#: Times body.  STIX ships with matplotlib, so the artifact needs no extra font.
+#: Times-like text for every figure.  At the same 10pt, matplotlib's default
+#: serif (DejaVu) reads visibly larger than the paper's Times body.  STIX ships
+#: with matplotlib, so the artifact needs no extra font.
 PRINT_RC = {'font.family': 'STIXGeneral', 'mathtext.fontset': 'stix'}
 
 
 def slot_geometry(n, slot, group_w, margin=EDGE_MARGIN):
-    """Axis limits that hug the bars, and the factor the FIGURE shrinks by.
+    """X-limits that hug the bars once slot_x has closed the gaps between them.
 
-    Closing the gaps shortens the axis.  Two things then have to move together
-    or the bars change size:
-
-      * the x-limits hug the content, so no dead margin appears inside the axes
-      * the figure's WIDTH scales by the same factor, which holds
-        pixels-per-axis-unit constant, so a bar keeps its width on the page
-
-    The figure is therefore narrower than the column, and the paper includes it
-    at `width = <factor> \\linewidth` rather than at full width.  Scaling the
-    x-limits without the figure inflates the bars; scaling neither leaves the
-    gap space as dead margin inside the axes.
+    Without them, the space the closed gaps freed would stay as dead margin
+    inside the axes.
     """
-    span_old = (n - 1) + group_w + 2 * margin
-    span_new = (n - 1) * slot + group_w + 2 * margin
     lo = -group_w / 2 - margin
     hi = (n - 1) * slot + group_w / 2 + margin
-    return (lo, hi), span_new / span_old
+    return lo, hi
 
 
 def legend_handles(labels, hatches):
@@ -256,7 +236,7 @@ def plot_unsoundness():
 
     slot, bw = 0.88, 0.8
     x = slot_x(len(engines), slot)
-    xlim, _ = slot_geometry(len(engines), slot, bw)
+    xlim = slot_geometry(len(engines), slot, bw)
     fig, ax = plt.subplots(figsize=(COLUMN_WIDTH_IN, 2.6 * PLOT_SCALE), layout='constrained')
     colors = bar_colors(engines)
     bars = ax.bar(x, unsound, width=bw, color=colors, edgecolor='black', linewidth=0.6)
@@ -295,7 +275,7 @@ def plot_precision():
     # Bars at their original width; the slot closes the gap instead.
     slot, width = 0.80, 0.35
     x = slot_x(len(engines), slot)
-    xlim, _ = slot_geometry(len(engines), slot, 2 * width)
+    xlim = slot_geometry(len(engines), slot, 2 * width)
 
     fig, ax = plt.subplots(figsize=(COLUMN_WIDTH_IN, 2.6 * PLOT_SCALE), layout='constrained')
     colors = bar_colors(engines)
@@ -350,7 +330,7 @@ def plot_perf_latency():
     slot = 0.80
     x = slot_x(len(engines), slot)
     width = 0.35 * 2 / 3
-    xlim, _ = slot_geometry(len(engines), slot, 3 * width)
+    xlim = slot_geometry(len(engines), slot, 3 * width)
 
     # Constrained, not tight_layout: tight_layout lets the rotated first label
     # and the legend spill past the figure, so the saved PDF comes out wider
@@ -391,7 +371,7 @@ def plot_perf_throughput():
     tps = [round(_pt(t)['throughput_per_s']) for t in tool_keys]
 
     slot, bw = 0.80, 0.70
-    xlim, _ = slot_geometry(len(engines), slot, bw)
+    xlim = slot_geometry(len(engines), slot, bw)
     fig, ax = plt.subplots(figsize=(COLUMN_WIDTH_IN, 2.6 * PLOT_SCALE), layout='constrained')
     colors = bar_colors(engines)
     # Narrower bars, because the value sits VERTICALLY above each one and a wide
@@ -470,7 +450,7 @@ def plot_overhead():
     # Bars keep their width; the slot closes the gap, on BOTH panels.
     slot = 0.72
     x = slot_x(len(keys), slot)
-    xlim, _ = slot_geometry(len(keys), slot, 0.6)
+    xlim = slot_geometry(len(keys), slot, 0.6)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(COLUMN_WIDTH_IN, 2.6 * PLOT_SCALE),
                                    layout='constrained')
